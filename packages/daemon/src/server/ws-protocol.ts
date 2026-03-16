@@ -1,0 +1,186 @@
+/**
+ * Zod schemas for incoming WebSocket messages.
+ *
+ * Implements the Viewport wire protocol (plan/03_protocol.md):
+ * launch, kill, prompt, respond-permission, subscribe/unsubscribe,
+ * rollback, branch-retry, squash-merge, list-sessions, resume, sync-request.
+ */
+
+import { z } from 'zod';
+
+const MAX_PROMPT_CHARS = 100_000;
+const MAX_MODEL_CHARS = 200;
+const MAX_THINKING_MODE_CHARS = 32;
+const MAX_REQUEST_ID_CHARS = 128;
+const MAX_IMAGE_BYTES_BASE64_CHARS = 2_000_000;
+const MAX_IMAGE_COUNT = 4;
+const MAX_LIST_SESSIONS_LIMIT = 200;
+
+const ImageSchema = z.object({
+  data: z.string().max(MAX_IMAGE_BYTES_BASE64_CHARS),
+  mediaType: z.string().max(100),
+});
+
+// ---------------------------------------------------------------------------
+// Individual message schemas
+// ---------------------------------------------------------------------------
+
+export const LaunchSchema = z.object({
+  type: z.literal('launch'),
+  directoryId: z.string().min(1).max(512),
+  prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
+  model: z.string().max(MAX_MODEL_CHARS).optional(),
+  thinkingMode: z.string().max(MAX_THINKING_MODE_CHARS).optional(),
+  images: z.array(ImageSchema).max(MAX_IMAGE_COUNT).optional(),
+  configOverrides: z
+    .object({
+      agent: z.string().max(64).optional(),
+      model: z.string().max(MAX_MODEL_CHARS).optional(),
+      costCapUsd: z.number().optional(),
+      trust: z.enum(['operator', 'automated', 'external']).optional(),
+    })
+    .optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const KillSchema = z.object({
+  type: z.literal('kill'),
+  sessionId: z.string().min(1).max(256),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const PromptSchema = z.object({
+  type: z.literal('prompt'),
+  sessionId: z.string().min(1).max(256),
+  text: z.string().max(MAX_PROMPT_CHARS),
+  images: z.array(ImageSchema).max(MAX_IMAGE_COUNT).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const RespondPermissionSchema = z.object({
+  type: z.literal('respond-permission'),
+  sessionId: z.string().min(1).max(256),
+  permissionRequestId: z.string().min(1).max(256),
+  decision: z.object({
+    behavior: z.enum(['allow', 'deny', 'allow-always']),
+    message: z.string().max(500).optional(),
+  }),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const SubscribeSchema = z.object({
+  type: z.literal('subscribe'),
+  sessionId: z.string().min(1).max(256),
+  lastSeq: z.number().int().nonnegative().optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const UnsubscribeSchema = z.object({
+  type: z.literal('unsubscribe'),
+  sessionId: z.string().min(1).max(256),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const RollbackSchema = z.object({
+  type: z.literal('rollback'),
+  sessionId: z.string().min(1).max(256),
+  toSha: z.string().regex(/^[a-f0-9]{7,40}$/),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const BranchRetrySchema = z.object({
+  type: z.literal('branch-retry'),
+  sessionId: z.string().min(1).max(256),
+  fromSha: z.string().regex(/^[a-f0-9]{7,40}$/),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const SquashMergeSchema = z.object({
+  type: z.literal('squash-merge'),
+  sessionId: z.string().min(1).max(256),
+  targetBranch: z.string().min(1).max(256),
+  commitMessage: z.string().min(1).max(5000),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const ListSessionsSchema = z.object({
+  type: z.literal('list-sessions'),
+  directoryId: z.string().min(1).max(512),
+  limit: z.number().int().positive().max(MAX_LIST_SESSIONS_LIMIT).optional(),
+  offset: z.number().int().nonnegative().optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const ResumeSchema = z.object({
+  type: z.literal('resume'),
+  sessionId: z.string().min(1).max(256),
+  directoryId: z.string().min(1).max(512),
+  prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
+  model: z.string().max(MAX_MODEL_CHARS).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const WatchDiscoveredSessionSchema = z.object({
+  type: z.literal('watch-discovered-session'),
+  sessionId: z.string().min(1).max(256),
+  directoryId: z.string().min(1).max(512).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const UnwatchDiscoveredSessionSchema = z.object({
+  type: z.literal('unwatch-discovered-session'),
+  sessionId: z.string().min(1).max(256),
+  directoryId: z.string().min(1).max(512).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const SyncRequestSchema = z.object({
+  type: z.literal('sync-request'),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Supervision (hook-based remote permission control)
+// ---------------------------------------------------------------------------
+
+export const SuperviseSchema = z.object({
+  type: z.literal('supervise'),
+  sessionId: z.string().min(1).max(256),
+  active: z.boolean(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const RespondHookPermissionSchema = z.object({
+  type: z.literal('respond-hook-permission'),
+  hookRequestId: z.string().min(1).max(256),
+  decision: z.object({
+    behavior: z.enum(['allow', 'deny']),
+    message: z.string().max(500).optional(),
+  }),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Discriminated union of all incoming messages
+// ---------------------------------------------------------------------------
+
+export const IncomingMessageSchema = z.discriminatedUnion('type', [
+  LaunchSchema,
+  KillSchema,
+  PromptSchema,
+  RespondPermissionSchema,
+  SubscribeSchema,
+  UnsubscribeSchema,
+  RollbackSchema,
+  BranchRetrySchema,
+  SquashMergeSchema,
+  ListSessionsSchema,
+  ResumeSchema,
+  WatchDiscoveredSessionSchema,
+  UnwatchDiscoveredSessionSchema,
+  SyncRequestSchema,
+  SuperviseSchema,
+  RespondHookPermissionSchema,
+]);
+
+export type IncomingMessage = z.infer<typeof IncomingMessageSchema>;

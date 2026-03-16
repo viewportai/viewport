@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-03-04",
+  "notes": "Deterministic vectors for relay handshake profile validation (noise-ik / noise-ikpsk2).",
+  "vectors": [
+    {
+      "id": "ik-basic",
+      "profile": "noise-ik",
+      "requestId": "kex-vector-ik-1",
+      "clientPrivateKey": "ERERERERERERERERERERERERERERERERERERERERERE",
+      "clientPublicKey": "BAIX5hfwtkQ5KCePlpmeaaI6TywVK99tbN9m5bgCgtTtGUp968uXcS0t2jyoWqh2Wlb0X8dYWZZS8ol8ZTBuV5Q",
+      "daemonPrivateKey": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI",
+      "daemonPublicKey": "BNZak5d8qj0bCBhS_1ennkZfFmBXcwS66tUF3TpIWJzzUBheiVNy32Ih6joTdVfkc_3bZ1XwW9UHw8Uz_OnJEoU",
+      "clientNonce": "ABEiM0RVZneImaq7zN3u_w",
+      "daemonNonce": "_-7dzLuqmYh3ZlVEMyIRAA",
+      "sessionId": "rs_vector_ik_001",
+      "epoch": 1,
+      "expectedClientProof": "V1-7QcRCwkCgpUZdz92mmA",
+      "expectedSessionKey": "2Bw_9xNEr7U2bshJajaT6a63Bm77dZmgmGiPw9fbS58",
+      "expectedDaemonProof": "m15GgIvhB0WjKzB3oZU3Kw"
+    },
+    {
+      "id": "ikpsk2-basic",
+      "profile": "noise-ikpsk2",
+      "requestId": "kex-vector-ikpsk2-1",
+      "clientPrivateKey": "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM",
+      "clientPublicKey": "BFGnWAgziY6hsYPL1zUKQJkHjG7xweGOlwzXaDA18l59ARBSJxKwtafP8IFoVIaYSpTmgx7axG5zYPqdg0p6gaE",
+      "daemonPrivateKey": "REREREREREREREREREREREREREREREREREREREREREQ",
+      "daemonPublicKey": "BFs2iQ2svXyalrt0oe4os9LXW3LgmiDvJc-Ob9ip8DUNDhS-2NRoKjTYNTi9_1uW6JpmZuwNtXRdAvoSEAct91o",
+      "pairingSecret": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU",
+      "clientNonce": "ECEyQ1RldoeYqbq8vdzt_g",
+      "daemonNonce": "ASNFZ4mrze_-3LqYdlQyEA",
+      "sessionId": "rs_vector_ikpsk2_001",
+      "previousSessionId": "rs_prev_ikpsk2_000",
+      "epoch": 2,
+      "expectedClientProof": "gxbCj7oTAia0k6YEW5T2PA",
+      "expectedSessionKey": "vm3VqaI4W7Ck1qvRYSFQzK4qXr8phYC8D6pNVuAmRmI",
+      "expectedDaemonProof": "vLWX1F1A5AIvXwS9E9B3wA"
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+/**
+ * Claude Code hook installer — merges Viewport hooks into ~/.claude/settings.json.
+ *
+ * Claude Code reads hooks from the global settings file on session start.
+ * This installer adds/updates Viewport hook entries without disturbing
+ * any user-configured hooks.
+ *
+ * Hook entries are tagged with a marker comment in the command so we can
+ * identify and update them on reinstall or remove them on uninstall.
+ */
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import type { HookInstaller, HookInstallerConfig } from './base.js';
+import type { HookEventKind } from '../types.js';
+
+const VIEWPORT_MARKER = '--viewport-hook';
+
+function settingsPath(): string {
+  return path.join(os.homedir(), '.claude', 'settings.json');
+}
+
+/** Build the hook command string for a given event. */
+function buildCommand(vpdPath: string, port: number, event: HookEventKind): string {
+  // vpdPath may be multi-word in dev mode (e.g. "npx tsx /path/to/index.ts")
+  // Only quote single-word paths that might contain spaces
+  const cmd = vpdPath.includes(' ') ? vpdPath : `"${vpdPath}"`;
+  return `${cmd} hook notify --event ${event} --port ${port} ${VIEWPORT_MARKER}`;
+}
+
+/** Determine the timeout for a hook event. */
+function timeoutForEvent(event: HookEventKind): number {
+  // PermissionRequest blocks waiting for supervisor response — long timeout
+  if (event === 'PermissionRequest') return 120;
+  return 5;
+}
+
+export class ClaudeHookInstaller implements HookInstaller {
+  readonly adapterName = 'Claude Code';
+
+  async install(config: HookInstallerConfig): Promise<boolean> {
+    const filePath = settingsPath();
+    const settings = await readSettings(filePath);
+
+    const hooks = (settings.hooks ?? {}) as Record<
+      string,
+      Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>
+    >;
+    settings.hooks = hooks;
+
+    let changed = false;
+
+    for (const event of config.events) {
+      const hookEntry = {
+        type: 'command' as const,
+        command: buildCommand(config.vpdBinaryPath, config.daemonPort, event),
+        timeout: timeoutForEvent(event),
+      };
+
+      const existing = hooks[event] ?? [];
+
+      // Remove any existing Viewport entries
+      const filtered = existing.filter(
+        (entry) =>
+          !entry.hooks?.some(
+            (h: Record<string, unknown>) =>
+              typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
+          ),
+      );
+
+      // Add our entry
+      filtered.push({ hooks: [hookEntry] });
+
+      if (JSON.stringify(filtered) !== JSON.stringify(existing)) {
+        hooks[event] = filtered;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await writeSettings(filePath, settings);
+    }
+    return changed;
+  }
+
+  async uninstall(): Promise<boolean> {
+    const filePath = settingsPath();
+
+    let settings: Record<string, unknown>;
+    try {
+      settings = await readSettings(filePath);
+    } catch {
+      return false; // No settings file — nothing to uninstall
+    }
+
+    const hooks = settings.hooks as Record<
+      string,
+      Array<{ hooks: Array<Record<string, unknown>> }>
+    >;
+    if (!hooks) return false;
+
+    let changed = false;
+
+    for (const [event, entries] of Object.entries(hooks)) {
+      const filtered = entries.filter(
+        (entry) =>
+          !entry.hooks?.some(
+            (h) => typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
+          ),
+      );
+
+      if (filtered.length !== entries.length) {
+        if (filtered.length === 0) {
+          delete hooks[event];
+        } else {
+          hooks[event] = filtered;
+        }
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await writeSettings(filePath, settings);
+    }
+    return changed;
+  }
+
+  async isInstalled(): Promise<boolean> {
+    try {
+      const settings = await readSettings(settingsPath());
+      const hooks = settings.hooks as Record<
+        string,
+        Array<{ hooks: Array<Record<string, unknown>> }>
+      >;
+      if (!hooks) return false;
+
+      return Object.values(hooks).some((entries) =>
+        entries.some((entry) =>
+          entry.hooks?.some(
+            (h) => typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
+          ),
+        ),
+      );
+    } catch {
+      return false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Settings file I/O
+// ---------------------------------------------------------------------------
+
+async function readSettings(filePath: string): Promise<Record<string, unknown>> {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    return JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function writeSettings(filePath: string, settings: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(settings, null, 2) + '\n', {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+}

@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "messages": [
+    {
+      "type": "launch",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#LaunchSchema",
+      "handler": "src/server/ws-command-handlers.ts#launch",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
+      "type": "kill",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#KillSchema",
+      "handler": "src/server/ws-command-handlers.ts#kill",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "prompt",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#PromptSchema",
+      "handler": "src/server/ws-command-handlers.ts#prompt",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
+      "type": "respond-permission",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#RespondPermissionSchema",
+      "handler": "src/server/ws-command-handlers.ts#respond-permission",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
+      "type": "subscribe",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#SubscribeSchema",
+      "handler": "src/server/ws-command-handlers.ts#subscribe",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ring-buffer.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
+      "type": "unsubscribe",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#UnsubscribeSchema",
+      "handler": "src/server/ws-command-handlers.ts#unsubscribe",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "rollback",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#RollbackSchema",
+      "handler": "src/server/ws-command-handlers.ts#rollback",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "branch-retry",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#BranchRetrySchema",
+      "handler": "src/server/ws-command-handlers.ts#branch-retry",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "squash-merge",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#SquashMergeSchema",
+      "handler": "src/server/ws-command-handlers.ts#squash-merge",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "list-sessions",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#ListSessionsSchema",
+      "handler": "src/server/ws-command-handlers.ts#list-sessions",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "resume",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#ResumeSchema",
+      "handler": "src/server/ws-command-handlers.ts#resume",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "sync-request",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#SyncRequestSchema",
+      "handler": "src/server/ws-command-handlers.ts#sync-request",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "watch-discovered-session",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#WatchDiscoveredSessionSchema",
+      "handler": "src/server/ws-command-handlers.ts#watch-discovered-session",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-discovery-hooks.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "unwatch-discovered-session",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#UnwatchDiscoveredSessionSchema",
+      "handler": "src/server/ws-command-handlers.ts#unwatch-discovered-session",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-discovery-hooks.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "supervise",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#SuperviseSchema",
+      "handler": "src/server/ws-command-handlers.ts#supervise",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/e2e/protocol-discovery-hooks.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "respond-hook-permission",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#RespondHookPermissionSchema",
+      "handler": "src/server/ws-command-handlers.ts#respond-hook-permission",
+      "unitTests": ["tests/server/ws-protocol.test.ts"],
+      "integrationTests": ["tests/e2e/protocol-discovery-hooks.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    }
+  ]
+}

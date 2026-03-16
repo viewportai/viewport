@@ -1,0 +1,19 @@
+{
+  "maxLines": 400,
+  "waived": [
+    "src/adapters/claude.ts",
+    "src/cli/lifecycle-commands.ts",
+    "src/core/config.ts",
+    "src/discovery/jsonl-reader.ts",
+    "src/relay/bridge-noise-v3.ts",
+    "src/relay/daemon-relay-bridge.ts",
+    "src/server/http-server.ts",
+    "src/server/pairing-offers.ts",
+    "src/server/ring-buffer.ts",
+    "src/server/ws-daemon-event-bridge.ts",
+    "src/server/ws-server.ts",
+    "src/startup.ts",
+    "src/core/session-manager.ts",
+    "src/tracking/git-tracker.ts"
+  ]
+}

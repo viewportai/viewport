@@ -1,0 +1,56 @@
+name: Release Preflight
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  npm-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validate publish metadata
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node <<'EOF'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const expectedRepoUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}`;
+          const repoUrl = pkg?.repository?.url;
+          if (repoUrl !== expectedRepoUrl) {
+            console.error(`package.json repository.url must equal ${expectedRepoUrl}, got: ${repoUrl}`);
+            process.exit(1);
+          }
+          const bin = pkg?.bin?.vpd;
+          if (bin !== 'bin/vpd.js') {
+            console.error(`package.json bin.vpd must equal bin/vpd.js, got: ${bin}`);
+            process.exit(1);
+          }
+          EOF
+
+      - name: Verify release secret is configured
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN is not configured for this repository."
+            exit 1
+          fi
+
+      - name: Verify npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry https://registry.npmjs.org/
+
+      - name: Verify commit-analyzer preset dependency
+        run: node -p "require.resolve('conventional-changelog-conventionalcommits')"

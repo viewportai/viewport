@@ -1,0 +1,339 @@
+/**
+ * Daemon — the orchestrator that wires everything together.
+ *
+ * Manages adapters, trackers, permissions, sessions, and directories.
+ * All external-facing operations go through this class. Internal modules
+ * communicate via the typed event bus.
+ *
+ * Session lifecycle is delegated to SessionManager.
+ * Permission handling is delegated to PermissionCoordinator.
+ */
+
+import type {
+  AgentAdapter,
+  DiscoveredSession,
+  RunTrackerFactory,
+  SessionDiscovery,
+} from './interfaces.js';
+import type {
+  PendingPermissionRequest,
+  SessionAgentMode,
+  SessionConfig,
+  SessionState,
+  PermissionDecision,
+  Step,
+} from './types.js';
+import { TypedEventEmitter } from './events.js';
+import type { DaemonEvents } from './events.js';
+import { ConfigManager } from './config.js';
+import { DirectoryManager } from '../directories/manager.js';
+import { SessionManager } from './session-manager.js';
+import { PermissionCoordinator } from './permission-coordinator.js';
+import { logger } from './logger.js';
+import { dedupeDiscoveredSessions } from './discovered-sessions.js';
+
+const log = logger.child({ module: 'daemon' });
+
+// ---------------------------------------------------------------------------
+// Daemon
+// ---------------------------------------------------------------------------
+
+export class Daemon extends TypedEventEmitter<DaemonEvents> {
+  readonly configManager: ConfigManager;
+  readonly directoryManager: DirectoryManager;
+
+  private adapters = new Map<string, AgentAdapter>();
+  private discoveries = new Map<string, SessionDiscovery>();
+  private trackerFactory: RunTrackerFactory | null = null;
+
+  private readonly permissionCoordinator: PermissionCoordinator;
+  private readonly sessionManager: SessionManager;
+
+  /**
+   * Discovered sessions from JSONL files, keyed by directoryId.
+   * These are historical sessions not launched by the daemon.
+   */
+  private discoveredSessions = new Map<string, DiscoveredSession[]>();
+
+  constructor() {
+    super();
+    this.configManager = new ConfigManager();
+    this.directoryManager = new DirectoryManager(this.configManager);
+    this.permissionCoordinator = new PermissionCoordinator(this);
+    this.sessionManager = new SessionManager(
+      this,
+      this.configManager,
+      this.directoryManager,
+      this.permissionCoordinator,
+      this.adapters,
+      () => this.trackerFactory,
+    );
+  }
+
+  /** Register an agent adapter (e.g. ClaudeAdapter). */
+  registerAdapter(adapter: AgentAdapter): void {
+    this.adapters.set(adapter.agentId, adapter);
+  }
+
+  /** Register a session discovery provider (e.g. ClaudeDiscovery). */
+  registerDiscovery(discovery: SessionDiscovery): void {
+    this.discoveries.set(discovery.agentId, discovery);
+  }
+
+  /** Set the factory used to create RunTrackers for new sessions. */
+  setTrackerFactory(factory: RunTrackerFactory): void {
+    this.trackerFactory = factory;
+  }
+
+  /** Initialize the daemon — loads config from disk. */
+  async initialize(): Promise<void> {
+    await this.configManager.load();
+  }
+
+  /**
+   * Run discovery for all registered directories.
+   * Finds existing sessions from agent-specific sources (e.g. ~/.claude/projects/).
+   */
+  async runDiscovery(): Promise<void> {
+    const directories = this.directoryManager.list();
+    const nextDiscovered = new Map<string, DiscoveredSession[]>();
+
+    log.debug(
+      {
+        directories: directories.length,
+        discoveries: this.discoveries.size,
+        agents: [...this.discoveries.keys()],
+      },
+      'Starting discovery run',
+    );
+
+    for (const dir of directories) {
+      const allSessions: DiscoveredSession[] = [];
+
+      for (const [agentId, discovery] of this.discoveries) {
+        try {
+          const sessions = await discovery.discoverSessions(dir.path);
+          log.debug(
+            {
+              directoryId: dir.id,
+              directoryPath: dir.path,
+              agentId,
+              sessions: sessions.length,
+            },
+            'Discovery result',
+          );
+          allSessions.push(...sessions);
+        } catch (err) {
+          log.warn({ err, agentId, directory: dir.path }, 'Discovery failed for directory');
+        }
+      }
+
+      const dedupedSessions = dedupeDiscoveredSessions(allSessions);
+      log.debug(
+        {
+          directoryId: dir.id,
+          directoryPath: dir.path,
+          totalSessions: allSessions.length,
+          dedupedSessions: dedupedSessions.length,
+        },
+        'Discovery aggregate result',
+      );
+      if (dedupedSessions.length > 0) {
+        // Sort by most recent first
+        nextDiscovered.set(dir.id, dedupedSessions);
+      }
+    }
+
+    // Replace atomically so stale entries are removed when sessions disappear.
+    this.discoveredSessions = nextDiscovered;
+    log.debug(
+      {
+        directoriesWithSessions: nextDiscovered.size,
+        totalSessions: [...nextDiscovered.values()].reduce(
+          (sum, sessions) => sum + sessions.length,
+          0,
+        ),
+      },
+      'Discovery run complete',
+    );
+  }
+
+  /** Get discovered sessions for a directory. */
+  getDiscoveredSessions(directoryId?: string): Map<string, DiscoveredSession[]> {
+    if (directoryId) {
+      const sessions = this.discoveredSessions.get(directoryId);
+      const result = new Map<string, DiscoveredSession[]>();
+      if (sessions) result.set(directoryId, sessions);
+      return result;
+    }
+    return new Map(this.discoveredSessions);
+  }
+
+  /** Get available agent IDs from registered adapters. */
+  getAvailableAgents(): string[] {
+    return [...this.adapters.keys()];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session operations — delegated to SessionManager
+  // ---------------------------------------------------------------------------
+
+  /** Launch a new agent session in a registered directory. */
+  async launchSession(
+    directoryId: string,
+    prompt: string,
+    overrides?: Partial<SessionConfig>,
+  ): Promise<string> {
+    return this.sessionManager.launchSession(directoryId, prompt, overrides);
+  }
+
+  /** Resume a discovered session via the adapter's resume support. */
+  async resumeSession(
+    originalSessionId: string,
+    directoryId: string,
+    prompt?: string,
+    overrides?: Partial<SessionConfig>,
+  ): Promise<string> {
+    return this.sessionManager.resumeSession(originalSessionId, directoryId, prompt, overrides);
+  }
+
+  /** Kill an active session. */
+  async killSession(sessionId: string): Promise<void> {
+    return this.sessionManager.killSession(sessionId);
+  }
+
+  /** Roll back a session to a specific commit. */
+  async rollback(sessionId: string, toSha: string): Promise<void> {
+    return this.sessionManager.rollback(sessionId, toSha);
+  }
+
+  /** Create a retry branch from a specific commit. */
+  async branchRetry(sessionId: string, fromSha: string): Promise<string> {
+    return this.sessionManager.branchRetry(sessionId, fromSha);
+  }
+
+  /** Squash-merge a session's changes into the target branch. */
+  async squashMerge(sessionId: string, targetBranch: string, commitMessage: string): Promise<void> {
+    return this.sessionManager.squashMerge(sessionId, targetBranch, commitMessage);
+  }
+
+  /** Send a follow-up prompt to a session. */
+  async sendPrompt(sessionId: string, text: string): Promise<void> {
+    return this.sessionManager.sendPrompt(sessionId, text);
+  }
+
+  /** Get all active session IDs. */
+  getActiveSessions(): string[] {
+    return this.sessionManager.getActiveSessions();
+  }
+
+  /** Get session state and metadata. */
+  getSessionInfo(sessionId: string): {
+    state: SessionState;
+    directoryId: string;
+    agent: string;
+    mode: SessionAgentMode;
+    steps: ReadonlyArray<Step>;
+  } {
+    return this.sessionManager.getSessionInfo(sessionId);
+  }
+
+  listActiveSessions(): Array<{
+    sessionId: string;
+    directoryId: string;
+    agent: string;
+    state: SessionState;
+    mode: SessionAgentMode;
+    startedAt: number;
+  }> {
+    return this.sessionManager.listSessionSummaries();
+  }
+
+  listWorktrees(sessionId?: string): Array<{
+    sessionId: string;
+    directoryId: string;
+    agent: string;
+    state: SessionState;
+    mode: SessionAgentMode;
+    worktreePath: string;
+    stepCount: number;
+    lastStepSha: string | null;
+    lastStepAt: number | null;
+  }> {
+    return this.sessionManager.listWorktreeSummaries(sessionId);
+  }
+
+  /** Get diffs for a session. */
+  async getSessionDiffs(
+    sessionId: string,
+  ): Promise<Array<{ step: number; sha: string; diff: string }>> {
+    return this.sessionManager.getSessionDiffs(sessionId);
+  }
+
+  /** Get the total diff across a session. */
+  async getSessionSummaryDiff(sessionId: string): Promise<string> {
+    return this.sessionManager.getSessionSummaryDiff(sessionId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Permission operations — delegated to PermissionCoordinator
+  // ---------------------------------------------------------------------------
+
+  /** Respond to a pending permission request. */
+  async respondPermission(
+    sessionId: string,
+    requestId: string,
+    decision: PermissionDecision,
+  ): Promise<void> {
+    this.permissionCoordinator.respondPermissionForSession(
+      sessionId,
+      requestId,
+      decision,
+      this.sessionManager.hasSession(sessionId),
+    );
+  }
+
+  /** Add a tool to a session's auto-approve list (for "always allow"). */
+  addAutoApprove(sessionId: string, toolName: string): void {
+    const config = this.sessionManager.getSessionConfig(sessionId);
+    if (config) {
+      const next = this.permissionCoordinator.addAutoApprove(config, toolName);
+      if (next !== config) {
+        this.sessionManager.updateSessionConfig(sessionId, next);
+      }
+    }
+  }
+
+  /** Get the tool name for a pending permission request. */
+  getRequestToolName(requestId: string): string | undefined {
+    return this.permissionCoordinator.getRequestToolName(requestId);
+  }
+
+  listPendingPermissions(sessionId?: string): PendingPermissionRequest[] {
+    return this.permissionCoordinator.listPendingPermissions(sessionId);
+  }
+
+  setSessionMode(sessionId: string, mode: SessionAgentMode): void {
+    this.sessionManager.setSessionMode(sessionId, mode);
+  }
+
+  getSessionMode(sessionId: string): SessionAgentMode {
+    return this.sessionManager.getSessionMode(sessionId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shutdown
+  // ---------------------------------------------------------------------------
+
+  /** Gracefully shut down: tear down all active sessions. */
+  async shutdown(): Promise<void> {
+    return this.sessionManager.shutdown();
+  }
+}
+
+/** Convenience: create and initialize a Daemon with defaults. */
+export async function createDaemon(): Promise<Daemon> {
+  const daemon = new Daemon();
+  await daemon.initialize();
+  return daemon;
+}

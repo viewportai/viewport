@@ -1,0 +1,122 @@
+name: OSS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      daemon: ${{ steps.filter.outputs.daemon }}
+      relay: ${{ steps.filter.outputs.relay }}
+      integration: ${{ steps.filter.outputs.integration }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            daemon:
+              - 'packages/daemon/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+            relay:
+              - 'services/relay/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+            integration:
+              - 'integration/**'
+              - 'packages/daemon/**'
+              - 'services/relay/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+
+  daemon:
+    name: Daemon
+    needs: changes
+    if: needs.changes.outputs.daemon == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/daemon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+        working-directory: .
+      - run: npm run check
+
+  relay:
+    name: Relay
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+        working-directory: .
+      - run: npm run check
+
+  integration:
+    name: Integration
+    needs: changes
+    if: needs.changes.outputs.integration == 'true' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: viewportai/platform
+          token: ${{ secrets.PLATFORM_REPO_READ_TOKEN }}
+          path: platform
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            platform/apps/api/package-lock.json
+      - run: npm ci
+        working-directory: .
+      - run: composer install --no-interaction --prefer-dist --optimize-autoloader
+        working-directory: platform/apps/api
+      - run: cp .env.example .env
+        working-directory: platform/apps/api
+      - run: touch database/database.sqlite
+        working-directory: platform/apps/api
+      - run: php artisan key:generate --force
+        working-directory: platform/apps/api
+      - run: php artisan migrate --force
+        working-directory: platform/apps/api
+      - run: PLATFORM_ROOT="$GITHUB_WORKSPACE/platform" npm run test:smoke

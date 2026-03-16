@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validate publish metadata
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node <<'EOF'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const expectedRepoUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}`;
+          const repoUrl = pkg?.repository?.url;
+          if (repoUrl !== expectedRepoUrl) {
+            console.error(`package.json repository.url must equal ${expectedRepoUrl}, got: ${repoUrl}`);
+            process.exit(1);
+          }
+          const bin = pkg?.bin?.vpd;
+          if (bin !== 'bin/vpd.js') {
+            console.error(`package.json bin.vpd must equal bin/vpd.js, got: ${bin}`);
+            process.exit(1);
+          }
+          EOF
+
+      - name: Verify release secrets
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN is not configured."
+            exit 1
+          fi
+
+      - name: Verify npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry https://registry.npmjs.org/
+
+      - name: Verify baseline tag for pre-1.0 stream
+        run: |
+          if ! git rev-parse -q --verify refs/tags/v0.0.0 >/dev/null; then
+            echo "Missing baseline tag v0.0.0. Create it on the bootstrap main commit to start releases at 0.1.0."
+            exit 1
+          fi
+
+      - name: Semantic release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: |
+          npx -y \
+            -p semantic-release \
+            -p @semantic-release/changelog \
+            -p @semantic-release/commit-analyzer \
+            -p conventional-changelog-conventionalcommits \
+            -p @semantic-release/git \
+            -p @semantic-release/github \
+            -p @semantic-release/npm \
+            -p @semantic-release/release-notes-generator \
+            semantic-release

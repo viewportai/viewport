@@ -1,0 +1,85 @@
+{
+  "name": "@viewportai/daemon",
+  "version": "0.2.0",
+  "description": "Viewport daemon — supervision and orchestration layer for AI coding agents",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/viewportai/viewport.git",
+    "directory": "packages/daemon"
+  },
+  "bugs": {
+    "url": "https://github.com/viewportai/viewport/issues"
+  },
+  "homepage": "https://github.com/viewportai/viewport/tree/main/packages/daemon#readme",
+  "bin": {
+    "vpd": "bin/vpd.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "bash ./scripts/test.sh",
+    "test:unit": "vitest run",
+    "test:verify": "npm run test -- --verify",
+    "test:setup": "vitest run tests/cli/setup-command.test.ts tests/cli/service-commands.test.ts tests/startup-prereqs.test.ts tests/core/built-in-agents.test.ts",
+    "test:e2e": "vitest run tests/e2e",
+    "test:e2e:fullstack": "VIEWPORT_RUN_NET_E2E=1 vitest run tests/e2e/cli-fullstack-workflow.test.ts",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check:file-size": "node ./scripts/check-file-sizes.mjs",
+    "check:protocol-matrix": "node ./scripts/check-protocol-matrix.mjs",
+    "lint": "eslint src/ tests/ --no-error-on-unmatched-pattern",
+    "format": "prettier --write \"{src,tests}/**/*.ts\"",
+    "format:check": "prettier --check \"{src,tests}/**/*.ts\"",
+    "check": "npm run check:file-size && npm run check:protocol-matrix && npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "dev:install": "bash ./scripts/install-dev.sh --yes --no-service --no-prereqs --no-hooks",
+    "dev:link": "bash ./scripts/install-dev.sh --link --yes --no-service --no-prereqs --no-hooks",
+    "dev:uninstall": "bash ./scripts/uninstall.sh --service",
+    "dev:uninstall:all": "bash ./scripts/uninstall.sh --service --purge-home",
+    "dev:reinstall": "npm run dev:uninstall && npm run dev:install",
+    "verify:repo": "bash ./scripts/verify.sh",
+    "verify:linux:ci": "bash ./scripts/verify-linux-ci.sh",
+    "verify:env": "bash ./scripts/test-env.sh",
+    "verify:env:service": "bash ./scripts/test-env.sh --service",
+    "verify:install": "bash ./scripts/install-verify.sh"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.63",
+    "@fastify/cors": "^10.0.1",
+    "@fastify/websocket": "^11.0.1",
+    "@openai/codex-sdk": "^0.107.0",
+    "fastify": "^5.2.1",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.1.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^3.0.5",
+    "conventional-changelog-conventionalcommits": "^9.2.0",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.1",
+    "eslint-plugin-prettier": "^5.2.3",
+    "prettier": "^3.5.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.1",
+    "vitest": "^3.0.5"
+  }
+}
