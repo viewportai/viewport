@@ -1,0 +1,77 @@
+name: Relay Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/relay/**'
+      - '.github/workflows/relay-image.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/relay/**'
+      - '.github/workflows/relay-image.yml'
+  workflow_dispatch:
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: relay_version
+        shell: bash
+        run: |
+          current="$(python3 -c "import json;print(json.load(open('services/relay/package.json'))['version'])")"
+          previous="$(git show HEAD^:services/relay/package.json 2>/dev/null | python3 -c "import json,sys; data=sys.stdin.read().strip(); print(json.loads(data)['version'] if data else '')" || true)"
+          changed=false
+          if [[ -z "$previous" || "$previous" != "$current" ]]; then
+            changed=true
+          fi
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          echo "previous_version=$previous" >> "$GITHUB_OUTPUT"
+          echo "version_changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "release_tag=relay-v${current}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}/relay
+          tags: |
+            type=raw,value=${{ steps.relay_version.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+            type=sha
+            type=ref,event=branch
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./services/relay
+          file: ./services/relay/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - name: Create relay release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.relay_version.outputs.version_changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.relay_version.outputs.release_tag }}
+          name: ${{ steps.relay_version.outputs.release_tag }}
+          generate_release_notes: true
+          body: |
+            Relay image release for version `${{ steps.relay_version.outputs.version }}`.
+
+            Published image tags include:
+
+            - `ghcr.io/${{ github.repository }}/relay:${{ steps.relay_version.outputs.version }}`
+            - `ghcr.io/${{ github.repository }}/relay:latest`
+            - `ghcr.io/${{ github.repository }}/relay:sha-${{ github.sha }}`

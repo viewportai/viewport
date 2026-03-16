@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "notes": "Deterministic canonical Noise v3 vectors (IK + IKpsk2 over P256/AESGCM/SHA256).",
+  "daemonIdentity": {
+    "publicKey": "BEjeT9qtvf7dbK9yPDuvSgIT_gIuC9_8DdJNtM6yu70uaCxRVd08fy2qBFGWRo_HfQ_Ic8IWNb0I-PaM9El6Bxw",
+    "privateKey": "1V4lEUVCsNxmJrw8SKKiloYegBmQXbjg6ULOYaCbExA"
+  },
+  "clientDeterministicKeys": {
+    "staticPrivateKey": "v4lfwcrqWG-_LamDGhdRAKpVCdMdZH9AYp4yVI7pZgs",
+    "ephemeralPrivateKey": "Y4yFYdFFptSiqrsWLNb0BF8FujQ4Gp54yOiuUO2wnSw"
+  },
+  "daemonDeterministicEphemeralPrivateKey": "xwtFlQfRSqj7TfIfVp2cPcD2TrrzTZc-5E61gdW4XjM",
+  "vectors": [
+    {
+      "id": "noise-v3-ik-basic",
+      "profile": "noise-ik",
+      "requestId": "kex-v3-vector-1",
+      "sessionId": "rs_v3_ik_001",
+      "epoch": 1,
+      "init": {
+        "clientEphemeralPublicKey": "BHErztyDPFhPO3RxajbwuTwrAEesaf3--FHDHImukoCoxQIw6ew2a-qL-c6dnQh2bOvKeVgoJTZT2Zx_PJLD0s4",
+        "encryptedClientStatic": "9K4kr_VZJmhalGOiYr_IpvLDm0PEp0jDZtSd6YxdOpuNBD1vGD4C1-Pxv6MBQtYJ6I_9lw6e2qW9sIE2ySIhFFFrC97k2e2tO0wc8c_gZleu"
+      },
+      "response": {
+        "daemonEphemeralPublicKey": "BCFLYWYVAiqwpxnxZm11SNq3fv1hFPtla1C9kBqczCEtnAQbFDtdcg9SzT8ko_YoWCBzcEc-XYe3LVTtDVXTWmk",
+        "encryptedMetadata": "kh17Tgmt2gdzgTzpZVQHYr7DJ7FmU8Kx-iF0cSoCilnADs4JMDgnHQ71P4aP4m47y54W_VEK",
+        "proof": "EsL1rhQdgvL_2AoOh8BWMxNX4VShoDtt3YRlG2HHbxs"
+      },
+      "sessionKey": "CtfvOunKO94iXJLzudF7smlvEG5lkoxvMh3fvFRVehw"
+    },
+    {
+      "id": "noise-v3-ikpsk2-basic",
+      "profile": "noise-ikpsk2",
+      "requestId": "kex-v3-vector-1",
+      "pairingSecret": "uMcC7ZiGjk2YUNTDxbfbvhRHAQ59gVld9ip-w6-ho_g",
+      "sessionId": "rs_v3_ikpsk2_001",
+      "epoch": 1,
+      "init": {
+        "clientEphemeralPublicKey": "BHErztyDPFhPO3RxajbwuTwrAEesaf3--FHDHImukoCoxQIw6ew2a-qL-c6dnQh2bOvKeVgoJTZT2Zx_PJLD0s4",
+        "encryptedClientStatic": "FrVP0AVl8_uQgoHC2KW_7cmtwkv1oSxYam82utmGOxYduS0tjBU4UZQXv-scDEojEsrhkgQwSRoa7gLR97PIfswEjmS9vHlFtiYoRkdzPlMy"
+      },
+      "response": {
+        "daemonEphemeralPublicKey": "BCFLYWYVAiqwpxnxZm11SNq3fv1hFPtla1C9kBqczCEtnAQbFDtdcg9SzT8ko_YoWCBzcEc-XYe3LVTtDVXTWmk",
+        "encryptedMetadata": "hd-OUzTSqxTDw0_o3gRF0VbCU7IUDX9aDbQ9WFisV1oRLvZkQp7mPeFDakxNTzappXSiG5IaU2U_vA",
+        "proof": "zx6bUnDrHuanKjH9XBOnyx_m-sVfuL6j_esaWMJS9H0"
+      },
+      "sessionKey": "bgjWrm-nTtATWBYP1ph0wfFbZSlSbLhOQcCvR8PjrOA"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+coverage/
+
+*.log
+*.db
+*.db-wal
+*.db-shm
+
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Viewport runtime
+.viewport/

@@ -1,0 +1,32 @@
+{
+  "name": "@viewportai/integration",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:smoke": "INTEGRATION_SCENARIO=smoke node ./run-e2e.mjs",
+    "test:backplane:single": "INTEGRATION_SCENARIO=backplane-single node ./run-e2e.mjs",
+    "test:backplane:server": "INTEGRATION_SCENARIO=backplane-server node ./run-e2e.mjs",
+    "test:backplane:redis": "INTEGRATION_SCENARIO=backplane-redis node ./run-e2e.mjs",
+    "test:replay": "INTEGRATION_SCENARIO=replay node ./run-e2e.mjs",
+    "test:e2e": "INTEGRATION_SCENARIO=full node ./run-e2e.mjs",
+    "test:expiry": "INTEGRATION_SCENARIO=expiry node ./run-e2e.mjs",
+    "test:load": "INTEGRATION_SCENARIO=load node ./run-e2e.mjs",
+    "test:load:single": "INTEGRATION_SCENARIO=load INTEGRATION_BACKPLANE_MODE=single INTEGRATION_DUAL_RELAY=0 node ./run-e2e.mjs",
+    "test:load:server": "INTEGRATION_SCENARIO=load INTEGRATION_BACKPLANE_MODE=server INTEGRATION_DUAL_RELAY=1 node ./run-e2e.mjs",
+    "test:load:redis": "INTEGRATION_SCENARIO=load INTEGRATION_BACKPLANE_MODE=redis INTEGRATION_DUAL_RELAY=1 node ./run-e2e.mjs",
+    "test:soak": "INTEGRATION_SCENARIO=soak node ./run-e2e.mjs",
+    "test:soak:server": "INTEGRATION_SCENARIO=soak INTEGRATION_BACKPLANE_MODE=server INTEGRATION_DUAL_RELAY=1 node ./run-e2e.mjs",
+    "test:soak:redis": "INTEGRATION_SCENARIO=soak INTEGRATION_BACKPLANE_MODE=redis INTEGRATION_DUAL_RELAY=1 node ./run-e2e.mjs",
+    "test:chaos": "INTEGRATION_SCENARIO=chaos node ./run-e2e.mjs",
+    "test:conformance": "node ./run-conformance.mjs",
+    "test:zero-trust": "INTEGRATION_SCENARIO=full INTEGRATION_ASSERT_ZERO_TRUST=1 node ./run-e2e.mjs",
+    "test:regression": "npm run test:conformance && SERVER_PORT=7780 RELAY_PORT=7781 DAEMON_PORT=7790 npm run test:smoke && SERVER_PORT=8780 RELAY_PORT=8781 DAEMON_PORT=8790 npm run test:e2e && SERVER_PORT=9780 RELAY_PORT=9781 DAEMON_PORT=9790 npm run test:zero-trust"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "redis-memory-server": "^0.16.0"
+  }
+}

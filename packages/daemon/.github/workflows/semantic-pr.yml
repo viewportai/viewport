@@ -1,0 +1,40 @@
+name: Semantic PR
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  semantic-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce PR title length
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          TITLE_LEN=${#PR_TITLE}
+          if [ "$TITLE_LEN" -gt 70 ]; then
+            echo "PR title is too long (${TITLE_LEN}/70): $PR_TITLE"
+            exit 1
+          fi
+
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          requireScope: false
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            chore
+            build
+            ci
+            revert

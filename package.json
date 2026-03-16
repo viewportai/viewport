@@ -1,0 +1,25 @@
+{
+  "name": "@viewportai/viewport-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "services/relay",
+    "integration"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present",
+    "format:check": "npm run format:check --workspaces --if-present",
+    "version:packages": "npx @changesets/cli version",
+    "release:packages": "npx @changesets/cli publish",
+    "daemon:check": "npm run check -w @viewportai/daemon",
+    "relay:check": "npm run check -w @viewportai/relay",
+    "integration:smoke": "npm run test:smoke -w @viewportai/integration",
+    "integration:e2e": "npm run test:e2e -w @viewportai/integration",
+    "relay:start": "bash ./scripts/start-relay.sh",
+    "relay:start:container": "bash ./scripts/start-relay-container.sh"
+  }
+}
