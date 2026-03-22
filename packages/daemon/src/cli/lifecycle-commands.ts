@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { configDir } from '../core/config.js';
+import os from 'node:os';
+import { configDir, ConfigManager } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { resolveDaemonEndpoint } from './daemon-client.js';
 import type { DaemonEndpoint } from './daemon-client.js';
@@ -32,9 +33,11 @@ import {
   resolvePackageVersion,
   shortError,
 } from './command-shared.js';
+import { inferRelayEndpointFromServer } from './remote-commands.js';
 import {
   createPairingClientIdentity,
   createPairingRedeemProof,
+  getOrCreateDaemonIdentity,
   getOrCreateTrustAnchor,
   issuePairingOffer,
   listPairingOffers,
@@ -305,88 +308,268 @@ export async function restart(): Promise<void> {
   await start();
 }
 
-export async function pair(): Promise<void> {
-  const asJson = isJsonMode();
-  const args = getArgs();
-  const pairCommandIndex = args[0] === 'daemon' && args[1] === 'pair' ? 1 : 0;
-  const pairSubcommand = args[pairCommandIndex + 1];
+// ---------------------------------------------------------------------------
+// Pairing code flow — new default for `vpd pair`
+// ---------------------------------------------------------------------------
 
-  if (pairSubcommand === 'list') {
-    const offers = await listPairingOffers();
-    if (asJson) {
-      printJson({ command: 'pair list', ok: true, offers });
-      return;
+const DEFAULT_PAIRING_SERVER = 'https://getviewport.dev';
+const PAIRING_POLL_INTERVAL_MS = 2_000;
+const PAIRING_POLL_MAX_ATTEMPTS = 150; // 5 minutes at 2s intervals
+
+function resolvePairingServerUrl(): string {
+  const fromFlag = getFlag('server');
+  if (fromFlag) return fromFlag;
+  if (process.env['VIEWPORT_SERVER']) return process.env['VIEWPORT_SERVER'];
+  return DEFAULT_PAIRING_SERVER;
+}
+
+function joinPairingUrl(base: string, pathname: string): string {
+  return `${base.replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
+}
+
+interface PairingPollApprovedData {
+  status: 'approved';
+  workspace_id: string;
+  workspace_name?: string;
+  relay_endpoint?: string;
+  token: string;
+  server_url?: string;
+}
+
+interface PairingPollPendingData {
+  status: 'pending';
+}
+
+interface PairingPollTerminalData {
+  status: 'denied' | 'expired';
+}
+
+type PairingPollData = PairingPollApprovedData | PairingPollPendingData | PairingPollTerminalData;
+
+async function storePairingCredentials(
+  data: PairingPollApprovedData,
+  serverUrl: string,
+): Promise<void> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const existing = manager.getDaemonConfig() ?? {};
+  const existingRelay = existing.relay ?? {};
+
+  let relayEndpoint = data.relay_endpoint ?? existingRelay.endpoint;
+  if (!relayEndpoint) {
+    relayEndpoint = inferRelayEndpointFromServer(data.server_url ?? serverUrl);
+  }
+
+  await manager.setDaemonConfig({
+    relay: {
+      ...existingRelay,
+      enabled: true,
+      endpoint: relayEndpoint,
+      serverUrl: data.server_url ?? serverUrl,
+      workspaceId: data.workspace_id,
+      enrollToken: data.token,
+      issueToken: existingRelay.issueToken,
+    },
+  });
+}
+
+async function pollForApproval(
+  code: string,
+  serverUrl: string,
+  asJson: boolean,
+): Promise<PairingPollApprovedData> {
+  const spinner = ['-', '\\', '|', '/'];
+  let attempt = 0;
+
+  while (attempt < PAIRING_POLL_MAX_ATTEMPTS) {
+    let res: Response;
+    try {
+      res = await fetch(joinPairingUrl(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/status`));
+    } catch (err) {
+      attempt++;
+      if (attempt >= PAIRING_POLL_MAX_ATTEMPTS) {
+        throw new Error(`Network error while polling for approval: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await new Promise((r) => setTimeout(r, PAIRING_POLL_INTERVAL_MS));
+      continue;
     }
-    if (offers.length === 0) {
-      console.log('No pairing offers found.');
-      return;
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Failed to poll pairing status (HTTP ${res.status}): ${body}`);
     }
-    console.log('Pairing offers\\n');
-    for (const offer of offers) {
-      const status = offer.active ? 'active' : offer.expired ? 'expired' : 'inactive';
-      console.log(`${offer.offerId} (${status})`);
-      console.log(`  listen:     ${offer.listen}`);
-      console.log(`  profile:    ${offer.profile}`);
-      console.log(`  trust:      ${offer.trustAnchor}`);
-      console.log(`  daemon:     ${offer.daemonDeviceId}`);
-      console.log(`  created:    ${new Date(offer.createdAt).toISOString()}`);
-      console.log(`  expires:    ${new Date(offer.expiresAt).toISOString()}`);
-      console.log('');
+
+    const data = (await res.json()) as PairingPollData;
+
+    if (data.status === 'approved') {
+      if (!asJson) {
+        // Clear spinner line
+        process.stdout.write('\r' + ' '.repeat(40) + '\r');
+      }
+      return data as PairingPollApprovedData;
     }
+
+    if (data.status === 'denied') {
+      if (!asJson) {
+        process.stdout.write('\r' + ' '.repeat(40) + '\r');
+      }
+      throw new Error('Pairing was denied by the workspace owner.');
+    }
+
+    if (data.status === 'expired') {
+      if (!asJson) {
+        process.stdout.write('\r' + ' '.repeat(40) + '\r');
+      }
+      throw new Error('Pairing code expired. Run `vpd pair` again to generate a new code.');
+    }
+
+    // Still pending
+    if (!asJson) {
+      process.stdout.write(`\r  ${spinner[attempt % spinner.length]} Waiting for approval...`);
+    }
+    attempt++;
+    await new Promise((r) => setTimeout(r, PAIRING_POLL_INTERVAL_MS));
+  }
+
+  throw new Error('Timed out waiting for pairing approval. Run `vpd pair` again.');
+}
+
+async function pairWithCode(code: string, serverUrl: string, asJson: boolean): Promise<void> {
+  const identity = await getOrCreateDaemonIdentity();
+  const name = os.hostname();
+
+  if (!asJson) {
+    console.log(`Claiming pairing code ${code}...`);
+  }
+
+  let claimRes: Response;
+  try {
+    claimRes = await fetch(joinPairingUrl(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/claim`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        public_key: identity.publicKey,
+        device_id: identity.deviceId,
+      }),
+    });
+  } catch (err) {
+    throw new Error(`Network error claiming pairing code: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!claimRes.ok) {
+    const body = (await claimRes.json().catch(() => null)) as Record<string, unknown> | null;
+    const message = typeof body?.message === 'string' ? body.message : `HTTP ${claimRes.status}`;
+    throw new Error(`Failed to claim pairing code: ${message}`);
+  }
+
+  if (!asJson) {
+    console.log('Code claimed. Waiting for approval...');
+    console.log('');
+  }
+
+  const approved = await pollForApproval(code, serverUrl, asJson);
+  await storePairingCredentials(approved, serverUrl);
+
+  if (asJson) {
+    printJson({
+      command: 'pair',
+      ok: true,
+      flow: 'code-claim',
+      code,
+      workspaceId: approved.workspace_id,
+      workspaceName: approved.workspace_name,
+    });
     return;
   }
 
-  if (pairSubcommand === 'revoke') {
-    const offerId = args[pairCommandIndex + 2];
-    if (!offerId || offerId.startsWith('--')) {
-      throw new Error('Usage: vpd pair revoke <offer-id> [--json]');
-    }
-    const revoked = await revokePairingOffer(offerId);
-    if (asJson) {
-      printJson({ command: 'pair revoke', ok: revoked, offerId });
-      return;
-    }
-    if (!revoked) {
-      throw new Error(`Pair offer not found: ${offerId}`);
-    }
-    console.log(`Revoked pair offer ${offerId}`);
+  console.log('Paired successfully!');
+  if (approved.workspace_name) {
+    console.log(`  Workspace: ${approved.workspace_name}`);
+  }
+  console.log('');
+  console.log('The daemon will now connect to the relay.');
+  console.log('Run `vpd restart` to apply changes.');
+}
+
+async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void> {
+  const identity = await getOrCreateDaemonIdentity();
+  const name = os.hostname();
+
+  let createRes: Response;
+  try {
+    createRes = await fetch(joinPairingUrl(serverUrl, '/api/pairing-codes'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        public_key: identity.publicKey,
+        device_id: identity.deviceId,
+      }),
+    });
+  } catch (err) {
+    throw new Error(`Network error creating pairing code: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!createRes.ok) {
+    const body = (await createRes.json().catch(() => null)) as Record<string, unknown> | null;
+    const message = typeof body?.message === 'string' ? body.message : `HTTP ${createRes.status}`;
+    throw new Error(`Failed to create pairing code: ${message}`);
+  }
+
+  const data = (await createRes.json()) as { code: string; expires_at?: string };
+  const code = data.code;
+
+  if (!asJson) {
+    console.log('');
+    console.log('  Enter this code in the Viewport web app:');
+    console.log('');
+    console.log(`    ${code}`);
+    console.log('');
+    console.log('  Or visit: https://app.getviewport.dev');
+    console.log('');
+  }
+
+  // Try to open browser (best effort, macOS/Linux/Windows)
+  try {
+    const { exec } = await import('node:child_process');
+    const platform = process.platform;
+    const openCmd =
+      platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+    exec(`${openCmd} https://app.getviewport.dev`);
+  } catch {
+    // Ignore — opening browser is best effort
+  }
+
+  const approved = await pollForApproval(code, serverUrl, asJson);
+  await storePairingCredentials(approved, serverUrl);
+
+  if (asJson) {
+    printJson({
+      command: 'pair',
+      ok: true,
+      flow: 'code-create',
+      code,
+      workspaceId: approved.workspace_id,
+      workspaceName: approved.workspace_name,
+    });
     return;
   }
 
-  if (pairSubcommand === 'rotate-token') {
-    const result = await rotateAuthToken();
-    if (asJson) {
-      printJson({
-        command: 'pair rotate-token',
-        ok: true,
-        previousTokenExisted: result.previousTokenExisted,
-        restarted: false,
-      });
-      return;
-    }
-    console.log('Rotated daemon auth token on disk.');
-    console.log('Restart the daemon for the new token to take effect.');
-    return;
+  console.log('Paired successfully!');
+  if (approved.workspace_name) {
+    console.log(`  Workspace: ${approved.workspace_name}`);
   }
+  console.log('');
+  console.log('The daemon will now connect to the relay.');
+  console.log('Run `vpd restart` to apply changes.');
+}
 
-  if (pairSubcommand === 'anchor') {
-    const anchor = await getOrCreateTrustAnchor();
-    if (asJson) {
-      printJson({
-        command: 'pair anchor',
-        ok: true,
-        trustAnchor: anchor.fingerprint,
-        trustAnchorId: anchor.id,
-        createdAt: anchor.createdAt,
-      });
-      return;
-    }
-    console.log(`Trust anchor: ${anchor.fingerprint}`);
-    console.log(`Anchor ID:    ${anchor.id}`);
-    console.log(`Created:      ${new Date(anchor.createdAt).toISOString()}`);
-    return;
-  }
+// ---------------------------------------------------------------------------
+// Legacy local pairing offer flow (vpd pair --legacy)
+// ---------------------------------------------------------------------------
 
+async function pairLegacy(asJson: boolean): Promise<void> {
   const state = await readDaemonRuntimeState();
   const health = await readDaemonHealth();
   const endpoint = await resolveDaemonEndpoint();
@@ -462,7 +645,6 @@ export async function pair(): Promise<void> {
     return;
   }
 
-  // Print a redeem payload example with client proof generation for operators.
   const clientIdentity = createPairingClientIdentity();
   const proof = createPairingRedeemProof({
     offerId: offer.offerId,
@@ -487,6 +669,117 @@ export async function pair(): Promise<void> {
       2,
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Main pair() entry point
+// ---------------------------------------------------------------------------
+
+export async function pair(): Promise<void> {
+  const asJson = isJsonMode();
+  const args = getArgs();
+  const pairCommandIndex = args[0] === 'daemon' && args[1] === 'pair' ? 1 : 0;
+  const pairSubcommand = args[pairCommandIndex + 1];
+
+  // Subcommands that work the same as before
+  if (pairSubcommand === 'list') {
+    const offers = await listPairingOffers();
+    if (asJson) {
+      printJson({ command: 'pair list', ok: true, offers });
+      return;
+    }
+    if (offers.length === 0) {
+      console.log('No pairing offers found.');
+      return;
+    }
+    console.log('Pairing offers\n');
+    for (const offer of offers) {
+      const offerStatus = offer.active ? 'active' : offer.expired ? 'expired' : 'inactive';
+      console.log(`${offer.offerId} (${offerStatus})`);
+      console.log(`  listen:     ${offer.listen}`);
+      console.log(`  profile:    ${offer.profile}`);
+      console.log(`  trust:      ${offer.trustAnchor}`);
+      console.log(`  daemon:     ${offer.daemonDeviceId}`);
+      console.log(`  created:    ${new Date(offer.createdAt).toISOString()}`);
+      console.log(`  expires:    ${new Date(offer.expiresAt).toISOString()}`);
+      console.log('');
+    }
+    return;
+  }
+
+  if (pairSubcommand === 'revoke') {
+    const offerId = args[pairCommandIndex + 2];
+    if (!offerId || offerId.startsWith('--')) {
+      throw new Error('Usage: vpd pair revoke <offer-id> [--json]');
+    }
+    const revoked = await revokePairingOffer(offerId);
+    if (asJson) {
+      printJson({ command: 'pair revoke', ok: revoked, offerId });
+      return;
+    }
+    if (!revoked) {
+      throw new Error(`Pair offer not found: ${offerId}`);
+    }
+    console.log(`Revoked pair offer ${offerId}`);
+    return;
+  }
+
+  if (pairSubcommand === 'rotate-token') {
+    const result = await rotateAuthToken();
+    if (asJson) {
+      printJson({
+        command: 'pair rotate-token',
+        ok: true,
+        previousTokenExisted: result.previousTokenExisted,
+        restarted: false,
+      });
+      return;
+    }
+    console.log('Rotated daemon auth token on disk.');
+    console.log('Restart the daemon for the new token to take effect.');
+    return;
+  }
+
+  if (pairSubcommand === 'anchor') {
+    const anchor = await getOrCreateTrustAnchor();
+    if (asJson) {
+      printJson({
+        command: 'pair anchor',
+        ok: true,
+        trustAnchor: anchor.fingerprint,
+        trustAnchorId: anchor.id,
+        createdAt: anchor.createdAt,
+      });
+      return;
+    }
+    console.log(`Trust anchor: ${anchor.fingerprint}`);
+    console.log(`Anchor ID:    ${anchor.id}`);
+    console.log(`Created:      ${new Date(anchor.createdAt).toISOString()}`);
+    return;
+  }
+
+  // Legacy local pairing offer flow
+  if (hasFlag('legacy')) {
+    await pairLegacy(asJson);
+    return;
+  }
+
+  // New pairing code flow (default)
+  const serverUrl = resolvePairingServerUrl();
+
+  // Determine if a pairing code was provided as a positional argument.
+  // A code is a short alphanumeric string (not a subcommand, not a flag).
+  const possibleCode = pairSubcommand;
+  const isCode =
+    possibleCode &&
+    !possibleCode.startsWith('--') &&
+    /^[A-Za-z0-9]{4,12}$/.test(possibleCode);
+
+  if (isCode) {
+    await pairWithCode(possibleCode, serverUrl, asJson);
+  } else {
+    await pairWithoutCode(serverUrl, asJson);
+  }
 }
 
 function runCommand(command: string, args: string[]): Promise<number> {
@@ -608,11 +901,13 @@ export function showHelp(): void {
     '  worktree squash <sid> [--target <branch>] [--message <text>] [--json|--format <fmt>]',
   );
   console.log('                               Worktree and git-step operator controls');
-  console.log('  pair [--ttl <seconds>] [--json]');
-  console.log('                               Create a short-lived pairing offer URL');
-  console.log('  pair list [--json]           List pairing offers');
+  console.log('  pair [<code>] [--server <url>] [--json]');
+  console.log('                               Pair with Viewport via pairing code');
+  console.log('  pair --legacy [--ttl <seconds>] [--json]');
+  console.log('                               Create a local pairing offer URL (legacy)');
+  console.log('  pair list [--json]           List local pairing offers');
   console.log('  pair revoke <offer-id> [--json]');
-  console.log('                               Revoke a pairing offer');
+  console.log('                               Revoke a local pairing offer');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');
   console.log('  pair rotate-token [--json]   Rotate auth token on disk (restart required)');
   console.log('  update [--json] [--yes]      Update daemon package, optionally restart');
