@@ -2,8 +2,10 @@
  * HTTP client helpers for talking to a running daemon instance.
  */
 
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { configDir } from '../core/config.js';
 import { getFlag, getDaemonPort } from './args.js';
@@ -48,6 +50,38 @@ function resolveClientHost(host: string): string {
   return host;
 }
 
+/**
+ * Detect whether the daemon is serving with TLS by checking for Herd certs,
+ * mirroring the auto-detection logic in startup.ts resolveTlsOptions().
+ */
+function getDaemonTlsInfo(): { enabled: boolean; host: string } {
+  const tlsEnv = (process.env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
+  const tlsHost = process.env['VIEWPORT_TLS_HOST'] ?? 'getviewport.test';
+
+  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
+    return { enabled: false, host: '127.0.0.1' };
+  }
+
+  const certDir = path.join(
+    os.homedir(),
+    'Library',
+    'Application Support',
+    'Herd',
+    'config',
+    'valet',
+    'Certificates',
+  );
+  const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+  const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+
+  if (tlsEnv === 'auto') {
+    const enabled = existsSync(certPath) && existsSync(keyPath);
+    return { enabled, host: enabled ? tlsHost : '127.0.0.1' };
+  }
+  return { enabled: true, host: tlsHost };
+}
+
+
 async function readAuthToken(): Promise<string | null> {
   if (cachedAuthToken !== undefined) return cachedAuthToken;
   try {
@@ -61,6 +95,10 @@ async function readAuthToken(): Promise<string | null> {
 }
 
 function resolveEndpointFromFlags(): DaemonEndpoint {
+  const tlsInfo = getDaemonTlsInfo();
+  const httpScheme = tlsInfo.enabled ? 'https' : 'http';
+  const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
+
   const listenFlag = getFlag('listen');
   if (listenFlag) {
     const parsed = parseListenTarget(listenFlag);
@@ -72,28 +110,32 @@ function resolveEndpointFromFlags(): DaemonEndpoint {
         wsUrl: `ws+unix://${parsed.path}:/ws`,
       };
     }
+    const host = tlsInfo.enabled ? tlsInfo.host : resolveClientHost(parsed.host);
     return {
       type: 'tcp',
-      host: resolveClientHost(parsed.host),
+      host,
       port: parsed.port,
-      baseUrl: `http://${resolveClientHost(parsed.host)}:${parsed.port}`,
-      wsUrl: `ws://${resolveClientHost(parsed.host)}:${parsed.port}/ws`,
+      baseUrl: `${httpScheme}://${host}:${parsed.port}`,
+      wsUrl: `${wsScheme}://${host}:${parsed.port}/ws`,
     };
   }
 
-  const host = getFlag('host') ?? '127.0.0.1';
+  const host = tlsInfo.enabled ? tlsInfo.host : resolveClientHost(getFlag('host') ?? '127.0.0.1');
   const port = getDaemonPort();
-  const resolvedHost = resolveClientHost(host);
   return {
     type: 'tcp',
-    host: resolvedHost,
+    host,
     port,
-    baseUrl: `http://${resolvedHost}:${port}`,
-    wsUrl: `ws://${resolvedHost}:${port}/ws`,
+    baseUrl: `${httpScheme}://${host}:${port}`,
+    wsUrl: `${wsScheme}://${host}:${port}/ws`,
   };
 }
 
 export async function resolveDaemonEndpoint(): Promise<DaemonEndpoint> {
+  const tlsInfo = getDaemonTlsInfo();
+  const httpScheme = tlsInfo.enabled ? 'https' : 'http';
+  const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
+
   const state = await readDaemonRuntimeState();
   if (state) {
     if (state.socketPath) {
@@ -104,13 +146,15 @@ export async function resolveDaemonEndpoint(): Promise<DaemonEndpoint> {
         wsUrl: `ws+unix://${state.socketPath}:/ws`,
       };
     }
-    const resolvedHost = resolveClientHost(state.host);
+    // When TLS is enabled, use the TLS hostname (e.g., getviewport.test)
+    // instead of the state's host (127.0.0.1) to match the certificate
+    const host = tlsInfo.enabled ? tlsInfo.host : resolveClientHost(state.host);
     return {
       type: 'tcp',
-      host: resolvedHost,
+      host,
       port: state.port,
-      baseUrl: `http://${resolvedHost}:${state.port}`,
-      wsUrl: `ws://${resolvedHost}:${state.port}/ws`,
+      baseUrl: `${httpScheme}://${host}:${state.port}`,
+      wsUrl: `${wsScheme}://${host}:${state.port}/ws`,
     };
   }
 

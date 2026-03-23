@@ -42,6 +42,7 @@ export interface DaemonRuntimeState {
   relayServerUrl?: string;
   relayWorkspaceId?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
+  tlsEnabled?: boolean;
 }
 
 function daemonStatePath(): string {

@@ -327,6 +327,22 @@ function joinPairingUrl(base: string, pathname: string): string {
   return `${base.replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
 }
 
+/**
+ * Derive the web-app URL from the API server URL.
+ * https://getviewport.test  -> https://app.getviewport.test
+ * https://getviewport.dev   -> https://app.getviewport.dev
+ */
+function deriveAppUrl(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl);
+    if (url.hostname.startsWith('app.')) return url.toString().replace(/\/$/, '');
+    url.hostname = `app.${url.hostname}`;
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return serverUrl;
+  }
+}
+
 interface PairingPollApprovedData {
   status: 'approved';
   workspace_id: string;
@@ -463,8 +479,11 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
     throw new Error(`Failed to claim pairing code: ${message}`);
   }
 
+  const appUrl = deriveAppUrl(serverUrl);
+
   if (!asJson) {
     console.log('Code claimed. Waiting for approval...');
+    console.log(`  Approve in your browser at: ${appUrl}`);
     console.log('');
   }
 
@@ -520,13 +539,16 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
   const data = (await createRes.json()) as { code: string; expires_at?: string };
   const code = data.code;
 
+  const appUrl = deriveAppUrl(serverUrl);
+  const pairUrl = `${appUrl}/pair?code=${encodeURIComponent(code)}`;
+
   if (!asJson) {
     console.log('');
     console.log('  Enter this code in the Viewport web app:');
     console.log('');
     console.log(`    ${code}`);
     console.log('');
-    console.log('  Or visit: https://app.getviewport.dev');
+    console.log(`  Or visit: ${pairUrl}`);
     console.log('');
   }
 
@@ -536,7 +558,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
     const platform = process.platform;
     const openCmd =
       platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
-    exec(`${openCmd} https://app.getviewport.dev`);
+    exec(`${openCmd} ${pairUrl}`);
   } catch {
     // Ignore — opening browser is best effort
   }
