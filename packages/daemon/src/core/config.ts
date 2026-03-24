@@ -145,6 +145,7 @@ export interface ViewportConfig {
       publicEndpoint?: string;
       serverUrl?: string;
       workspaceId?: string;
+      installId?: string;
       enrollToken?: string;
       issueToken?: string;
       tlsVerify?: 'auto' | '0' | '1';

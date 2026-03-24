@@ -347,6 +347,7 @@ interface PairingPollApprovedData {
   status: 'approved';
   workspace_id: string;
   workspace_name?: string;
+  install_id?: string;
   relay_endpoint?: string;
   token: string;
   server_url?: string;
@@ -383,10 +384,28 @@ async function storePairingCredentials(
       endpoint: relayEndpoint,
       serverUrl: data.server_url ?? serverUrl,
       workspaceId: data.workspace_id,
+      installId: data.install_id,
       enrollToken: data.token,
       issueToken: existingRelay.issueToken,
     },
   });
+}
+
+async function autoRestartDaemon(silent: boolean): Promise<void> {
+  if (!silent) {
+    console.log('Restarting daemon to connect to relay...');
+  }
+  try {
+    await stop({ exitOnNotRunning: false, silent: true });
+    await start({ silent: true });
+    if (!silent) {
+      console.log('Daemon restarted. Relay connection active.');
+    }
+  } catch {
+    if (!silent) {
+      console.log('Could not auto-restart. Run `vpd restart` to connect to the relay.');
+    }
+  }
 }
 
 async function pollForApproval(
@@ -499,6 +518,7 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
       workspaceId: approved.workspace_id,
       workspaceName: approved.workspace_name,
     });
+    await autoRestartDaemon(true);
     return;
   }
 
@@ -507,8 +527,7 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
     console.log(`  Workspace: ${approved.workspace_name}`);
   }
   console.log('');
-  console.log('The daemon will now connect to the relay.');
-  console.log('Run `vpd restart` to apply changes.');
+  await autoRestartDaemon(false);
 }
 
 async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void> {
@@ -575,6 +594,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
       workspaceId: approved.workspace_id,
       workspaceName: approved.workspace_name,
     });
+    await autoRestartDaemon(true);
     return;
   }
 
@@ -583,8 +603,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
     console.log(`  Workspace: ${approved.workspace_name}`);
   }
   console.log('');
-  console.log('The daemon will now connect to the relay.');
-  console.log('Run `vpd restart` to apply changes.');
+  await autoRestartDaemon(false);
 }
 
 // ---------------------------------------------------------------------------
