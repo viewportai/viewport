@@ -15,11 +15,6 @@
  *   vpd worktree ...          Worktree operator commands
  */
 
-import { ensureLocalTlsTrust } from './cli/local-tls.js';
-
-// Must run before any TLS connections are made in this process.
-ensureLocalTlsTrust();
-
 import { getCommand, getArgs } from './cli/args.js';
 import {
   install,
