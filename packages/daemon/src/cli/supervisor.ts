@@ -1,4 +1,4 @@
-import { openSync, closeSync } from 'node:fs';
+import { openSync, closeSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -111,18 +111,31 @@ function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfig {
   };
 }
 
+function ensureHerdCaCert(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env['NODE_EXTRA_CA_CERTS']) return env;
+  const herdCaPath = path.join(
+    os.homedir(),
+    'Library', 'Application Support', 'Herd', 'config', 'valet', 'CA',
+    'LaravelValetCASelfSigned.pem',
+  );
+  if (existsSync(herdCaPath)) {
+    return { ...env, NODE_EXTRA_CA_CERTS: herdCaPath };
+  }
+  return env;
+}
+
 function buildWorkerEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
-  return {
+  return ensureHerdCaCert({
     ...process.env,
     [WORKER_CONFIG_ENV]: encodeRuntimeConfig(config),
-  };
+  });
 }
 
 function buildSupervisorEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
-  return {
+  return ensureHerdCaCert({
     ...process.env,
     [SUPERVISOR_CONFIG_ENV]: encodeRuntimeConfig(config),
-  };
+  });
 }
 
 function toWorkerArgs(): string[] {
