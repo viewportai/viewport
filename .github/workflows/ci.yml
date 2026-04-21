@@ -59,7 +59,13 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
         working-directory: .
-      - run: npm run check
+      - run: npm audit --audit-level=high || true
+      - run: npm run check:file-size -w @viewportai/daemon
+      - run: npm run check:protocol-matrix -w @viewportai/daemon
+      - run: npm run typecheck -w @viewportai/daemon
+      - run: npm run lint -w @viewportai/daemon
+      - run: npm run format:check -w @viewportai/daemon
+      - run: npm run test:coverage -w @viewportai/daemon
 
   relay:
     name: Relay
@@ -78,12 +84,13 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
         working-directory: .
+      - run: npm audit --audit-level=high || true
       - run: npm run check
 
   integration:
     name: Integration
     needs: changes
-    if: needs.changes.outputs.integration == 'true' && github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.integration == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.fork == false)
     runs-on: ubuntu-latest
     defaults:
       run:

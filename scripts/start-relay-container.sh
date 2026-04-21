@@ -35,7 +35,7 @@ RELAY_BACKPLANE_MODE="${RELAY_BACKPLANE_MODE:-single}"
 RELAY_TLS="${RELAY_TLS:-0}"
 RELAY_TLS_HOST="${RELAY_TLS_HOST:-127.0.0.1}"
 RELAY_ENABLE_ADMIN_HTTP="${RELAY_ENABLE_ADMIN_HTTP:-1}"
-RELAY_ADMIN_TOKEN="${RELAY_ADMIN_TOKEN:-$($NODE_BIN -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
+RELAY_ADMIN_TOKEN="${RELAY_ADMIN_TOKEN:-$("$NODE_BIN" -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
 RELAY_ID="${RELAY_ID:-relay-local-container}"
 RELAY_REDIS_URL="${RELAY_REDIS_URL:-}"
 RELAY_REDIS_KEY_PREFIX="${RELAY_REDIS_KEY_PREFIX:-viewport:relay}"
@@ -77,10 +77,10 @@ fi
 RELAY_INTERNAL_KEY="${RELAY_INTERNAL_KEY:-}"
 RELAY_BUS_HMAC_KEY="${RELAY_BUS_HMAC_KEY:-}"
 if [[ "$RELAY_BACKPLANE_MODE" == "server" || "$RELAY_BACKPLANE_MODE" == "redis" ]]; then
-  RELAY_INTERNAL_KEY="${RELAY_INTERNAL_KEY:-$($NODE_BIN -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
+  RELAY_INTERNAL_KEY="${RELAY_INTERNAL_KEY:-$("$NODE_BIN" -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
 fi
 if [[ "$RELAY_BUS_ENABLED" == "1" ]]; then
-  RELAY_BUS_HMAC_KEY="${RELAY_BUS_HMAC_KEY:-$($NODE_BIN -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
+  RELAY_BUS_HMAC_KEY="${RELAY_BUS_HMAC_KEY:-$("$NODE_BIN" -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
 fi
 
 RELAY_TLS_CERT_PATH="${RELAY_TLS_CERT_PATH:-$HERD_CERT_DIR/${RELAY_TLS_HOST}.crt}"

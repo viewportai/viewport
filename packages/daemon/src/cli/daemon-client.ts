@@ -81,7 +81,6 @@ function getDaemonTlsInfo(): { enabled: boolean; host: string } {
   return { enabled: true, host: tlsHost };
 }
 
-
 async function readAuthToken(): Promise<string | null> {
   if (cachedAuthToken !== undefined) return cachedAuthToken;
   try {

@@ -115,7 +115,12 @@ function ensureHerdCaCert(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env['NODE_EXTRA_CA_CERTS']) return env;
   const herdCaPath = path.join(
     os.homedir(),
-    'Library', 'Application Support', 'Herd', 'config', 'valet', 'CA',
+    'Library',
+    'Application Support',
+    'Herd',
+    'config',
+    'valet',
+    'CA',
     'LaravelValetCASelfSigned.pem',
   );
   if (existsSync(herdCaPath)) {

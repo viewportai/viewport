@@ -419,11 +419,15 @@ async function pollForApproval(
   while (attempt < PAIRING_POLL_MAX_ATTEMPTS) {
     let res: Response;
     try {
-      res = await fetch(joinPairingUrl(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/status`));
+      res = await fetch(
+        joinPairingUrl(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/status`),
+      );
     } catch (err) {
       attempt++;
       if (attempt >= PAIRING_POLL_MAX_ATTEMPTS) {
-        throw new Error(`Network error while polling for approval: ${err instanceof Error ? err.message : String(err)}`);
+        throw new Error(
+          `Network error while polling for approval: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       await new Promise((r) => setTimeout(r, PAIRING_POLL_INTERVAL_MS));
       continue;
@@ -479,17 +483,22 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
 
   let claimRes: Response;
   try {
-    claimRes = await fetch(joinPairingUrl(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/claim`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        public_key: identity.publicKey,
-        device_id: identity.deviceId,
-      }),
-    });
+    claimRes = await fetch(
+      joinPairingUrl(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/claim`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          public_key: identity.publicKey,
+          device_id: identity.deviceId,
+        }),
+      },
+    );
   } catch (err) {
-    throw new Error(`Network error claiming pairing code: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Network error claiming pairing code: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (!claimRes.ok) {
@@ -546,7 +555,9 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
       }),
     });
   } catch (err) {
-    throw new Error(`Network error creating pairing code: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Network error creating pairing code: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (!createRes.ok) {
@@ -575,8 +586,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
   try {
     const { exec } = await import('node:child_process');
     const platform = process.platform;
-    const openCmd =
-      platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+    const openCmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
     exec(`${openCmd} ${pairUrl}`);
   } catch {
     // Ignore — opening browser is best effort
@@ -812,9 +822,7 @@ export async function pair(): Promise<void> {
   // A code is a short alphanumeric string (not a subcommand, not a flag).
   const possibleCode = pairSubcommand;
   const isCode =
-    possibleCode &&
-    !possibleCode.startsWith('--') &&
-    /^[A-Za-z0-9]{4,12}$/.test(possibleCode);
+    possibleCode && !possibleCode.startsWith('--') && /^[A-Za-z0-9]{4,12}$/.test(possibleCode);
 
   if (isCode) {
     await pairWithCode(possibleCode, serverUrl, asJson);
