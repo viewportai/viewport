@@ -141,6 +141,25 @@ describe('relay config', () => {
     expect(resolveServerTlsRejectUnauthorized('http://127.0.0.1:7780', 'auto')).toBe(true);
   });
 
+  it('requires explicit public server URLs outside loopback development', () => {
+    expect(() =>
+      loadConfig({
+        HOST: '0.0.0.0',
+      }),
+    ).toThrow(
+      'SERVER_URL and RELAY_PUBLIC_WS_BASE_URL must be set explicitly outside local loopback development',
+    );
+
+    const config = loadConfig({
+      HOST: '0.0.0.0',
+      SERVER_URL: 'https://api.example.com',
+      RELAY_PUBLIC_WS_BASE_URL: 'wss://relay.example.com/ws',
+    });
+
+    expect(config.serverUrl).toBe('https://api.example.com');
+    expect(config.publicWsBaseUrl).toBe('wss://relay.example.com/ws');
+  });
+
   it('requires RELAY_BUS_HMAC_KEY whenever bus is enabled', () => {
     expect(() =>
       loadConfig({

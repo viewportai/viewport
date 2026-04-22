@@ -129,6 +129,36 @@ function ensureHerdCaCert(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
+function resolveConfiguredTlsState(env: NodeJS.ProcessEnv = process.env): {
+  enabled: boolean;
+  host: string;
+} {
+  const tlsEnv = (env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
+  const tlsHost = env['VIEWPORT_TLS_HOST'] ?? 'getviewport.test';
+
+  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
+    return { enabled: false, host: tlsHost };
+  }
+
+  const certDir = path.join(
+    os.homedir(),
+    'Library',
+    'Application Support',
+    'Herd',
+    'config',
+    'valet',
+    'Certificates',
+  );
+  const certPath = env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+  const keyPath = env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+
+  if (tlsEnv === 'auto') {
+    return { enabled: existsSync(certPath) && existsSync(keyPath), host: tlsHost };
+  }
+
+  return { enabled: true, host: tlsHost };
+}
+
 function buildWorkerEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
   return ensureHerdCaCert({
     ...process.env,
@@ -223,6 +253,7 @@ export async function runSupervisorForeground(config: RuntimeLaunchConfig): Prom
 
 async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Promise<void> {
   const ownerInfo = readProcessInfo(process.pid);
+  const tls = resolveConfiguredTlsState();
   await writeDaemonRuntimeState({
     ownerPid: process.pid,
     workerPid,
@@ -247,6 +278,8 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     relayServerUrl: config.relayServerUrl,
     relayWorkspaceId: config.relayWorkspaceId,
     relayTlsVerify: config.relayTlsVerify,
+    tlsEnabled: tls.enabled,
+    tlsHost: tls.host,
   });
 }
 

@@ -197,6 +197,14 @@ function certFilesExist(certPath: string, keyPath: string): boolean {
   return fs.existsSync(certPath) && fs.existsSync(keyPath);
 }
 
+function usesViewportLocalDefaults(serverUrl: string, publicWsBaseUrl: string): boolean {
+  return serverUrl.includes('getviewport.test') || publicWsBaseUrl.includes('getviewport.test');
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
 function resolveTlsEnabled(mode: 'auto' | '0' | '1', certPath: string, keyPath: string): boolean {
   if (mode === '1') return true;
   if (mode === '0') return false;
@@ -313,6 +321,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     if (busEnabled && !busHmacKey) {
       throw new Error('RELAY_BUS_HMAC_KEY is required when RELAY_BACKPLANE_MODE=redis');
     }
+  }
+  if (usesViewportLocalDefaults(serverUrl, publicWsBaseUrl) && !isLoopbackHost(host)) {
+    throw new Error(
+      'SERVER_URL and RELAY_PUBLIC_WS_BASE_URL must be set explicitly outside local loopback development',
+    );
   }
   if (relayMode === 'prod') {
     if (!tlsEnabled) {

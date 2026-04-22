@@ -93,8 +93,23 @@ async function readAuthToken(): Promise<string | null> {
   return cachedAuthToken;
 }
 
+function resolveTlsPreferenceFromStateOrEnv(
+  state?: {
+    tlsEnabled?: boolean;
+    tlsHost?: string;
+  } | null,
+): { enabled: boolean; host: string } {
+  if (typeof state?.tlsEnabled === 'boolean') {
+    return {
+      enabled: state.tlsEnabled,
+      host: state.tlsHost?.trim() || process.env['VIEWPORT_TLS_HOST'] || 'getviewport.test',
+    };
+  }
+  return getDaemonTlsInfo();
+}
+
 function resolveEndpointFromFlags(): DaemonEndpoint {
-  const tlsInfo = getDaemonTlsInfo();
+  const tlsInfo = resolveTlsPreferenceFromStateOrEnv(null);
   const httpScheme = tlsInfo.enabled ? 'https' : 'http';
   const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
 
@@ -131,12 +146,11 @@ function resolveEndpointFromFlags(): DaemonEndpoint {
 }
 
 export async function resolveDaemonEndpoint(): Promise<DaemonEndpoint> {
-  const tlsInfo = getDaemonTlsInfo();
-  const httpScheme = tlsInfo.enabled ? 'https' : 'http';
-  const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
-
   const state = await readDaemonRuntimeState();
   if (state) {
+    const tlsInfo = resolveTlsPreferenceFromStateOrEnv(state);
+    const httpScheme = tlsInfo.enabled ? 'https' : 'http';
+    const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
     if (state.socketPath) {
       return {
         type: 'socket',

@@ -149,9 +149,10 @@ npm run verify:linux:ci
 
 This package publishes as `@viewportai/daemon`.
 
-1. Merge semantic commits to `main`.
-2. CI must pass.
-3. Release workflow computes version (`feat` => minor, `fix` => patch, `BREAKING CHANGE` => major), tags, and publishes to npm using `NPM_TOKEN`.
+1. Add a `.changeset/*.md` entry describing the release impact.
+2. Merge the changeset and code to `main`.
+3. CI opens or updates the Changesets release PR with the computed version bump.
+4. Merging the release PR publishes the package to npm with `NPM_TOKEN`.
 
 See [docs/releasing.md](./docs/releasing.md) for setup and operations.
 See [docs/testing.md](./docs/testing.md) and [docs/developer-workflows.md](./docs/developer-workflows.md) for local validation workflows.

@@ -18,15 +18,24 @@ Viewport lets developers and teams supervise, control, and automate AI coding ag
 ```bash
 npm install -g @viewportai/daemon
 vpd setup
-vpd start
+vpd service status
+vpd status
 ```
+
+`vpd setup` installs and starts the user-level boot service when you accept the recommended defaults. Run `vpd start` manually only if you skipped service install.
 
 ### Relay (self-hosted)
 
 ```bash
 docker build -t viewport-relay services/relay
-docker run --rm -p 7781:7781 -e HOST=0.0.0.0 viewport-relay
+docker run --rm -p 7781:7781 \
+  -e HOST=0.0.0.0 \
+  -e SERVER_URL=https://platform.example.com \
+  -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.example.com/ws \
+  viewport-relay
 ```
+
+`SERVER_URL` and `RELAY_PUBLIC_WS_BASE_URL` are required for any non-local deployment.
 
 ## Development
 

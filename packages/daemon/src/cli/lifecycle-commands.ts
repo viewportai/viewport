@@ -61,6 +61,7 @@ function endpointListenLabel(endpoint: DaemonEndpoint): string {
 
 export async function status(): Promise<void> {
   const asJson = isJsonMode();
+  const shouldCheckUpdates = hasFlag('check-updates');
   const endpoint = await resolveDaemonEndpoint();
   const url = endpointHealthUrl(endpoint);
   const state = await readDaemonRuntimeState();
@@ -92,10 +93,10 @@ export async function status(): Promise<void> {
   }
 
   const cliVersion = resolvePackageVersion();
-  let latestCliVersion = 'unknown';
-  let updateStatus = 'unknown';
+  let latestCliVersion = 'skipped';
+  let updateStatus = 'skipped (use --check-updates)';
   let note: string | undefined;
-  if (npmInvocation) {
+  if (npmInvocation && shouldCheckUpdates) {
     const latest = fetchLatestVersion({ npm: npmInvocation, packageName: resolvePackageName() });
     if (latest.version) {
       latestCliVersion = latest.version;
@@ -919,7 +920,8 @@ export function showHelp(): void {
   console.log('  add <path> [--json]          Register a directory');
   console.log('  remove <path> [--json]       Unregister a directory');
   console.log('  list [--json]                List directories + active sessions');
-  console.log('  status [--json]              Daemon health and runtime status');
+  console.log('  status [--json] [--check-updates]');
+  console.log('                               Daemon health and runtime status');
   console.log('  stop [--json] [--timeout <seconds>] [--force]');
   console.log('                               Stop daemon gracefully (with optional forced kill)');
   console.log('  restart                       Stop then start daemon');

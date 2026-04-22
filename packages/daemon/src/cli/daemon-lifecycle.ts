@@ -43,6 +43,7 @@ export interface DaemonRuntimeState {
   relayWorkspaceId?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
   tlsEnabled?: boolean;
+  tlsHost?: string;
 }
 
 function daemonStatePath(): string {
@@ -116,6 +117,8 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
         parsed.relayTlsVerify === '1'
           ? parsed.relayTlsVerify
           : undefined,
+      tlsEnabled: typeof parsed.tlsEnabled === 'boolean' ? parsed.tlsEnabled : undefined,
+      tlsHost: typeof parsed.tlsHost === 'string' ? parsed.tlsHost : undefined,
     };
   } catch {
     return null;
