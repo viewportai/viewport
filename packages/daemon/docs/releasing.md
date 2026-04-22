@@ -1,30 +1,24 @@
 # Releasing and npm Publish
 
-## Source of truth
+## Scope
 
-This repo uses Changesets, not semantic-release.
+This document is intentionally narrow: it describes release validation for `@viewportai/daemon`, not the repo's package-versioning policy.
 
-1. Package metadata lives in `packages/daemon/package.json`.
-2. Human-written release intent lives in `.changeset/*.md`.
-3. GitHub publishes through `.github/workflows/release-packages.yml`.
-4. npm auth is provided through the `NPM_TOKEN` repository secret.
+Feature PRs should not carry release metadata unless the goal of the PR is to cut a package release.
 
-## Standard flow
+Package metadata lives in `packages/daemon/package.json`. Publishing is performed through the repo's current release workflow on `main` with `NPM_TOKEN`.
 
-1. Make code changes for `@viewportai/daemon`.
-2. Add or update a changeset:
+## Release checklist
 
-```bash
-npx changeset
-```
+Before maintainers publish:
 
-3. Merge to `main` once CI is green.
-4. The release workflow opens or updates the release PR with the version bump.
-5. Merging that release PR publishes the package to npm and creates the tag.
+1. Merge the intended daemon changes to `main`.
+2. Confirm the repo's current release workflow is the one you intend to use.
+3. Confirm npm auth is configured through the repository secret.
 
 ## Validation
 
-Before merging a release PR:
+Before publish:
 
 ```bash
 npm run build -w @viewportai/daemon

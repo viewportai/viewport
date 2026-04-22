@@ -149,10 +149,9 @@ npm run verify:linux:ci
 
 This package publishes as `@viewportai/daemon`.
 
-1. Add a `.changeset/*.md` entry describing the release impact.
-2. Merge the changeset and code to `main`.
-3. CI opens or updates the Changesets release PR with the computed version bump.
-4. Merging the release PR publishes the package to npm with `NPM_TOKEN`.
+Package release mechanics are maintainer-owned. Feature PRs should stay focused on code, tests, and docs unless the PR is explicitly intended to cut a package release.
+
+When a release is intentionally being prepared, use the repo's current publish workflow from `main` and validate the built CLI before shipping.
 
 See [docs/releasing.md](./docs/releasing.md) for setup and operations.
 See [docs/testing.md](./docs/testing.md) and [docs/developer-workflows.md](./docs/developer-workflows.md) for local validation workflows.
