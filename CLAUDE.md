@@ -25,3 +25,10 @@ npm run relay:check
 npm run integration:smoke
 npm run integration:e2e
 ```
+
+## Change naming
+
+- Branch names use semantic prefixes with concise kebab-case descriptions: `feat/...`, `fix/...`, `refactor/...`, `docs/...`, `test/...`, `chore/...`.
+- PR titles use semantic commit format with an optional scope: `feat(runtime): ...`, `fix(daemon): ...`, `docs(repo): ...`.
+- Merge commits follow the same semantic format as PR titles.
+- Do not use roadmap labels or temporary agent labels in branches or PR titles.

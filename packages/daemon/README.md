@@ -144,6 +144,9 @@ npm run verify:linux:ci
 1. Semantic commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
 2. One logical change per commit.
 3. Changes to protocol or runtime behavior require matching tests.
+4. Branch names use semantic prefixes with concise kebab-case descriptions (`feat/...`, `fix/...`, `docs/...`).
+5. PR titles use semantic commit format with an optional scope (`feat(runtime): ...`, `fix(daemon): ...`).
+6. Do not use roadmap labels or temporary agent labels in branches or PR titles.
 
 ## Release
 

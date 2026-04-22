@@ -54,6 +54,12 @@ npm run daemon:check
 npm run relay:check
 ```
 
+## Contribution Naming
+
+- Branches: `feat/...`, `fix/...`, `refactor/...`, `docs/...`, `test/...`, `chore/...`
+- PR titles: semantic format with optional scope, for example `feat(runtime): ...`
+- Do not use roadmap labels or temporary agent labels in branch names or PR titles.
+
 ## Architecture
 
 Viewport has three runtime planes:
