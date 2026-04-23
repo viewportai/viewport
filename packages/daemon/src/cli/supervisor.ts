@@ -10,6 +10,7 @@ import {
   signalProcessGroupSafely,
   signalProcessSafely,
 } from './daemon-lifecycle.js';
+import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 import {
   SUPERVISOR_CONFIG_ENV,
   WORKER_CONFIG_ENV,
@@ -227,6 +228,24 @@ export async function runSupervisorForeground(config: RuntimeLaunchConfig): Prom
 async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Promise<void> {
   const ownerInfo = readProcessInfo(process.pid);
   const tls = resolveConfiguredTlsState();
+  const identity = resolveDaemonRuntimeIdentity({
+    daemonConfig: {
+      profile: config.profile,
+      server: {
+        url: config.serverUrl,
+        tlsVerify: config.serverTlsVerify,
+        caCertPath: config.serverCaCertPath,
+        tlsPins: config.serverTlsPins,
+      },
+      relay: {
+        enabled: config.relayEnabled,
+        endpoint: config.relayEndpoint,
+        serverUrl: config.relayServerUrl,
+        workspaceId: config.relayWorkspaceId,
+      },
+    },
+    daemonVersion: config.version,
+  });
   await writeDaemonRuntimeState({
     pid: workerPid ?? process.pid,
     ownerPid: process.pid,
@@ -254,6 +273,10 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     relayTlsVerify: config.relayTlsVerify,
     tlsEnabled: tls.enabled,
     tlsHost: tls.host,
+    runtimeKind: identity.runtimeKind,
+    daemonHome: identity.daemonHome,
+    daemonHomeScope: identity.daemonHomeScope,
+    serverUrl: identity.serverUrl,
   });
 }
 

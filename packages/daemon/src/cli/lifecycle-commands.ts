@@ -30,8 +30,6 @@ import {
   printJson,
   readDaemonHealth,
   requestLifecycle,
-  resolvePackageName,
-  resolvePackageVersion,
   shortError,
   waitForDaemonReady,
 } from './command-shared.js';
@@ -40,6 +38,18 @@ import { inferRelayEndpointFromServer } from './remote-commands.js';
 import { getOrCreateTrustAnchor, rotateAuthToken } from '../server/pairing-offers.js';
 import { loadOrCreateIdentity as loadOrCreateRelayIdentity } from '../relay/bridge-key-exchange.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
+import {
+  formatDaemonHomeLabel,
+  formatRuntimeKindLabel,
+  resolveDaemonRuntimeIdentity,
+  toInstallCapabilities,
+} from '../core/runtime-identity.js';
+import {
+  resolveCliEntrypointPath,
+  resolvePackageName,
+  resolvePackageRoot,
+  resolvePackageVersion,
+} from '../core/package-meta.js';
 
 function endpointHealthUrl(endpoint: DaemonEndpoint): string {
   if (endpoint.type === 'socket') {
@@ -88,7 +98,14 @@ export async function status(): Promise<void> {
     runtimeNpm = `unresolved (${shortError(err)})`;
   }
 
+  const manager = new ConfigManager();
+  await manager.load();
   const cliVersion = resolvePackageVersion();
+  const runtimeIdentity = resolveDaemonRuntimeIdentity({
+    daemonConfig: manager.getDaemonConfig(),
+    machineId: manager.getMachineId(),
+    daemonVersion: health?.machine?.daemonVersion ?? state?.version ?? cliVersion,
+  });
   let latestCliVersion = 'skipped';
   let updateStatus = 'skipped (use --check-updates)';
   let note: string | undefined;
@@ -123,7 +140,22 @@ export async function status(): Promise<void> {
       health?.socketPath ??
       (endpoint.type === 'socket' ? endpoint.socketPath : null),
     startedAt: state?.startedAt ?? health?.startedAt ?? null,
-    profile: state?.profile ?? null,
+    profile: health?.machine?.profile ?? state?.profile ?? runtimeIdentity.profile ?? null,
+    runtimeKind: health?.machine?.runtimeKind ?? state?.runtimeKind ?? runtimeIdentity.runtimeKind,
+    daemonHome: health?.machine?.daemonHome ?? state?.daemonHome ?? runtimeIdentity.daemonHome,
+    daemonHomeScope:
+      health?.machine?.daemonHomeScope ?? state?.daemonHomeScope ?? runtimeIdentity.daemonHomeScope,
+    serverUrl: health?.machine?.serverUrl ?? state?.serverUrl ?? runtimeIdentity.serverUrl ?? null,
+    relayEndpoint:
+      health?.machine?.relayEndpoint ??
+      state?.relayEndpoint ??
+      runtimeIdentity.relayEndpoint ??
+      null,
+    relayServerUrl:
+      health?.machine?.relayServerUrl ??
+      state?.relayServerUrl ??
+      runtimeIdentity.relayServerUrl ??
+      null,
     runtimeNode: `${resolvedNode.nodePath} (${resolvedNode.source})`,
     runtimeNpm,
     cliVersion,
@@ -139,7 +171,10 @@ export async function status(): Promise<void> {
   }
 
   console.log(`Status:      ${payload.status}`);
-  console.log(`Home:        ${payload.home}`);
+  console.log(
+    `Runtime:     ${formatRuntimeKindLabel(payload.runtimeKind)} (${payload.daemonHomeScope})`,
+  );
+  console.log(`Home:        ${formatDaemonHomeLabel(runtimeIdentity)}`);
   console.log(`Listen:      ${payload.listen}`);
   if (payload.socketPath) {
     console.log(`Socket:      ${payload.socketPath}`);
@@ -151,6 +186,9 @@ export async function status(): Promise<void> {
     `Started:     ${payload.startedAt ? new Date(payload.startedAt).toISOString() : '-'}`,
   );
   console.log(`Profile:     ${payload.profile ?? '-'}`);
+  console.log(`Server:      ${payload.serverUrl ?? '-'}`);
+  console.log(`Relay WS:    ${payload.relayEndpoint ?? '-'}`);
+  console.log(`Relay API:   ${payload.relayServerUrl ?? '-'}`);
   console.log(`Node:        ${payload.runtimeNode}`);
   console.log(`npm:         ${payload.runtimeNpm}`);
   console.log(`CLI:         ${payload.cliVersion}`);
@@ -164,6 +202,69 @@ export async function status(): Promise<void> {
   if (payload.note) {
     console.log(`Note:        ${payload.note}`);
   }
+}
+
+export async function doctor(): Promise<void> {
+  const asJson = isJsonMode();
+  const health = await readDaemonHealth();
+  const state = await readDaemonRuntimeState();
+  const manager = new ConfigManager();
+  await manager.load();
+  const cliVersion = resolvePackageVersion();
+  const identity = resolveDaemonRuntimeIdentity({
+    daemonConfig: manager.getDaemonConfig(),
+    machineId: manager.getMachineId(),
+    daemonVersion: health?.machine?.daemonVersion ?? state?.version ?? cliVersion,
+  });
+
+  const payload = {
+    status: health ? 'running' : state ? 'configured' : 'not_running',
+    machineId: identity.machineId ?? null,
+    daemonVersion: identity.daemonVersion,
+    runtimeKind: identity.runtimeKind,
+    daemonHome: identity.daemonHome,
+    daemonHomeScope: identity.daemonHomeScope,
+    daemonHomeSource: identity.daemonHomeSource,
+    packageRoot: resolvePackageRoot(),
+    cliEntrypoint: resolveCliEntrypointPath(),
+    profile: health?.machine?.profile ?? state?.profile ?? identity.profile ?? null,
+    serverUrl: health?.machine?.serverUrl ?? state?.serverUrl ?? identity.serverUrl ?? null,
+    relayEndpoint:
+      health?.machine?.relayEndpoint ?? state?.relayEndpoint ?? identity.relayEndpoint ?? null,
+    relayServerUrl:
+      health?.machine?.relayServerUrl ?? state?.relayServerUrl ?? identity.relayServerUrl ?? null,
+    relayWorkspaceId: identity.relayWorkspaceId ?? state?.relayWorkspaceId ?? null,
+    hostedDefaults: identity.hostedDefaults,
+    listen: state?.listen ?? health?.listen ?? null,
+    socketPath: state?.socketPath ?? health?.socketPath ?? null,
+    ownerPid: state?.ownerPid ?? null,
+    workerPid: state?.workerPid ?? health?.pid ?? null,
+    relayState: health?.relay?.state ?? null,
+  };
+
+  if (asJson) {
+    printJson(payload);
+    return;
+  }
+
+  console.log(`Status:       ${payload.status}`);
+  console.log(`Machine:      ${payload.machineId ?? '-'}`);
+  console.log(`Daemon:       ${payload.daemonVersion}`);
+  console.log(`Runtime:      ${formatRuntimeKindLabel(payload.runtimeKind)}`);
+  console.log(`Home:         ${formatDaemonHomeLabel(identity)}`);
+  console.log(`Package root: ${payload.packageRoot}`);
+  console.log(`CLI entry:    ${payload.cliEntrypoint}`);
+  console.log(`Profile:      ${payload.profile ?? '-'}`);
+  console.log(`Server:       ${payload.serverUrl ?? '-'}`);
+  console.log(`Relay WS:     ${payload.relayEndpoint ?? '-'}`);
+  console.log(`Relay API:    ${payload.relayServerUrl ?? '-'}`);
+  console.log(`Workspace:    ${payload.relayWorkspaceId ?? '-'}`);
+  console.log(`Hosted:       ${payload.hostedDefaults ? 'yes' : 'no'}`);
+  console.log(`Listen:       ${payload.listen ?? '-'}`);
+  console.log(`Socket:       ${payload.socketPath ?? '-'}`);
+  console.log(`Owner PID:    ${payload.ownerPid ?? '-'}`);
+  console.log(`Worker PID:   ${payload.workerPid ?? '-'}`);
+  console.log(`Relay state:  ${payload.relayState ?? '-'}`);
 }
 
 export async function stop(options?: {
@@ -427,6 +528,10 @@ async function storePairingCredentials(
   const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
 
   await manager.setDaemonConfig({
+    server: {
+      ...(existing.server ?? {}),
+      url: data.server_url ?? serverUrl,
+    },
     relay: {
       ...existingRelay,
       enabled: true,
@@ -629,6 +734,14 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
   const relayIdentity = await loadOrCreateRelayIdentity();
   const name = os.hostname();
   const server = await resolvePairingServerTransport(serverUrl);
+  const runtimeIdentity = resolveDaemonRuntimeIdentity({
+    daemonVersion: resolvePackageVersion(),
+  });
+  const installCapabilities = toInstallCapabilities({
+    ...runtimeIdentity,
+    serverUrl: server.url,
+    relayServerUrl: server.url,
+  });
 
   if (!asJson) {
     console.log(`Claiming pairing code ${code}...`);
@@ -645,6 +758,13 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
           name,
           public_key: relayIdentity.publicKey,
           device_id: relayIdentity.deviceId,
+          daemon_version: installCapabilities.runtime.daemonVersion,
+          runtime_kind: installCapabilities.runtime.runtimeKind,
+          daemon_home_scope: installCapabilities.runtime.daemonHomeScope,
+          profile: installCapabilities.runtime.profile,
+          server_url: installCapabilities.runtime.serverUrl,
+          relay_endpoint: installCapabilities.runtime.relayEndpoint,
+          relay_server_url: installCapabilities.runtime.relayServerUrl,
         }),
         tlsVerify: server.tlsVerify,
         caCertPath: server.caCertPath,
@@ -704,6 +824,14 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
   const relayIdentity = await loadOrCreateRelayIdentity();
   const name = os.hostname();
   const server = await resolvePairingServerTransport(serverUrl);
+  const runtimeIdentity = resolveDaemonRuntimeIdentity({
+    daemonVersion: resolvePackageVersion(),
+  });
+  const installCapabilities = toInstallCapabilities({
+    ...runtimeIdentity,
+    serverUrl: server.url,
+    relayServerUrl: server.url,
+  });
 
   let createRes: Response;
   try {
@@ -714,6 +842,13 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
         name,
         public_key: relayIdentity.publicKey,
         device_id: relayIdentity.deviceId,
+        daemon_version: installCapabilities.runtime.daemonVersion,
+        runtime_kind: installCapabilities.runtime.runtimeKind,
+        daemon_home_scope: installCapabilities.runtime.daemonHomeScope,
+        profile: installCapabilities.runtime.profile,
+        server_url: installCapabilities.runtime.serverUrl,
+        relay_endpoint: installCapabilities.runtime.relayEndpoint,
+        relay_server_url: installCapabilities.runtime.relayServerUrl,
       }),
       tlsVerify: server.tlsVerify,
       caCertPath: server.caCertPath,
@@ -921,13 +1056,16 @@ export function showHelp(): void {
   );
   console.log('                               Start the daemon (detached by default)');
   console.log(
-    '  daemon <subcommand>          Lifecycle ops (start, status, stop, restart, pair, update, service, setup)',
+    '  daemon <subcommand>          Lifecycle ops (start, doctor, status, stop, restart, pair, update, service, setup)',
   );
   console.log('  setup [--yes|--choose]       First-run guided setup (recommended or custom)');
   console.log('  install [--json]             Detect available agents and install hooks');
   console.log('  add <path> [--json]          Register a directory');
   console.log('  remove <path> [--json]       Unregister a directory');
   console.log('  list [--json]                List directories + active sessions');
+  console.log(
+    '  doctor [--json]              Show daemon identity, runtime mode, and active targets',
+  );
   console.log('  status [--json] [--check-updates]');
   console.log('                               Daemon health and runtime status');
   console.log('  stop [--json] [--timeout <seconds>] [--force]');

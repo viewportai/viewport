@@ -22,6 +22,7 @@ import { readCodexSessionMessagesRich } from '../discovery/codex.js';
 import { issuePairingOffer, redeemPairingOffer } from './pairing-offers.js';
 import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './ring-buffer.js';
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
+import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 
 const startTime = Date.now();
 
@@ -227,6 +228,11 @@ export function registerHttpRoutes(
     const memory = process.memoryUsage();
     const relayEnabled = options?.runtime?.relayEnabled ?? false;
     const relayStatus = options?.getRelayStatus?.() ?? null;
+    const machine = resolveDaemonRuntimeIdentity({
+      daemonConfig: daemon.configManager.getDaemonConfig(),
+      machineId: daemon.configManager.getMachineId(),
+      daemonVersion: runtime?.version ?? 'unknown',
+    });
     return {
       status: 'ok',
       uptime: Math.floor((Date.now() - (runtime?.startedAt ?? startTime)) / 1000),
@@ -241,6 +247,7 @@ export function registerHttpRoutes(
       directories: daemon.directoryManager.list().length,
       agents: daemon.getAvailableAgents().join(', ') || 'none',
       version: runtime?.version ?? '0.1.0',
+      machine,
       process: {
         node: process.version,
         platform: process.platform,

@@ -1,5 +1,6 @@
 import { getFlag, hasFlag } from './args.js';
 import { loadConfig } from '../core/config.js';
+import { resolvePackageVersion } from '../core/package-meta.js';
 import { buildSecurityProfile } from '../server/security.js';
 import type { DeploymentProfile } from '../server/security.js';
 import { parseListenTarget, type DaemonListenTarget } from './listen-target.js';
@@ -267,13 +268,31 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     host: listenTarget.type === 'tcp' ? listenTarget.host : '127.0.0.1',
     port: listenTarget.type === 'tcp' ? listenTarget.port : 0,
     socketPath: listenTarget.type === 'socket' ? listenTarget.path : undefined,
-    version: '0.3.0',
+    version: resolvePackageVersion(),
     profile: securityProfile.profile,
     allowedHostsRaw,
     allowedOriginsRaw,
     authEnabled: securityProfile.requireAuth,
     detached: resolveDetachedDefault(undefined),
     logPath,
+    serverUrl:
+      getFlag('server-url') ??
+      envValue('VPD_SERVER_URL', 'VIEWPORT_SERVER_URL') ??
+      daemonConfig?.server?.url ??
+      relayServerUrl,
+    serverTlsVerify:
+      parseRelayTlsVerify(getFlag('server-tls-verify')) ??
+      parseRelayTlsVerify(envValue('VPD_SERVER_TLS_VERIFY', 'VIEWPORT_SERVER_TLS_VERIFY')) ??
+      daemonConfig?.server?.tlsVerify ??
+      'auto',
+    serverCaCertPath:
+      getFlag('server-ca-cert') ??
+      envValue('VPD_SERVER_CA_CERT', 'VIEWPORT_SERVER_CA_CERT') ??
+      daemonConfig?.server?.caCertPath,
+    serverTlsPins:
+      parseCsvList(getFlag('server-tls-pins')) ??
+      parseCsvList(envValue('VPD_SERVER_TLS_PINS', 'VIEWPORT_SERVER_TLS_PINS')) ??
+      daemonConfig?.server?.tlsPins,
     relayEnabled,
     relayEndpoint,
     relayServerUrl,

@@ -44,6 +44,10 @@ export interface DaemonRuntimeState {
   relayTlsVerify?: 'auto' | '0' | '1';
   tlsEnabled?: boolean;
   tlsHost?: string;
+  runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
+  daemonHome?: string;
+  daemonHomeScope?: 'global' | 'isolated';
+  serverUrl?: string;
 }
 
 function daemonStatePath(): string {
@@ -120,6 +124,18 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
           : undefined,
       tlsEnabled: typeof parsed.tlsEnabled === 'boolean' ? parsed.tlsEnabled : undefined,
       tlsHost: typeof parsed.tlsHost === 'string' ? parsed.tlsHost : undefined,
+      runtimeKind:
+        parsed.runtimeKind === 'managed' ||
+        parsed.runtimeKind === 'local-dev' ||
+        parsed.runtimeKind === 'self-hosted'
+          ? parsed.runtimeKind
+          : undefined,
+      daemonHome: typeof parsed.daemonHome === 'string' ? parsed.daemonHome : undefined,
+      daemonHomeScope:
+        parsed.daemonHomeScope === 'global' || parsed.daemonHomeScope === 'isolated'
+          ? parsed.daemonHomeScope
+          : undefined,
+      serverUrl: typeof parsed.serverUrl === 'string' ? parsed.serverUrl : undefined,
     };
   } catch {
     return null;

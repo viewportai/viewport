@@ -1,5 +1,7 @@
 import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
+import { resolvePackageVersion } from '../core/package-meta.js';
+import { resolveDaemonRuntimeIdentity, toInstallCapabilities } from '../core/runtime-identity.js';
 
 function boolLike(value: string | undefined): boolean {
   if (!value) return false;
@@ -52,6 +54,19 @@ function usage(): never {
   throw new Error(
     'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1]',
   );
+}
+
+function resolveInstallMetadata(serverUrl: string, relayEndpoint: string, manager: ConfigManager) {
+  const identity = resolveDaemonRuntimeIdentity({
+    daemonConfig: manager.getDaemonConfig(),
+    daemonVersion: resolvePackageVersion(),
+  });
+  return toInstallCapabilities({
+    ...identity,
+    serverUrl,
+    relayEndpoint,
+    relayServerUrl: serverUrl,
+  });
 }
 
 export async function remote(): Promise<void> {
@@ -168,6 +183,10 @@ export async function remote(): Promise<void> {
     const nextInstallId = preserveIssuedInstall ? relayConfig.installId : undefined;
 
     await manager.setDaemonConfig({
+      server: {
+        ...(daemonConfig.server ?? {}),
+        url: serverUrl,
+      },
       relay: {
         ...relayConfig,
         enabled: enableNow,
@@ -194,6 +213,7 @@ export async function remote(): Promise<void> {
         tlsVerify: relayTlsVerify,
         caCertPath: relayCaCertPath,
       },
+      capabilities: resolveInstallMetadata(serverUrl, relayEndpoint, manager),
       next: 'Run `vpd restart` to apply relay runtime changes.',
     };
 

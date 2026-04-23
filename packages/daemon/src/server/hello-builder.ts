@@ -9,6 +9,8 @@
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRegistry } from '../core/agent-registry.js';
 import { logger } from '../core/logger.js';
+import { resolvePackageVersion } from '../core/package-meta.js';
+import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 
 const MAX_DISCOVERED_HELLO_SESSIONS = 1_000;
 const log = logger.child({ module: 'hello-builder' });
@@ -29,6 +31,13 @@ export interface SnapshotPayload {
   protocolVersion: 2;
   machine: {
     id: string;
+    daemonVersion: string;
+    runtimeKind: 'managed' | 'local-dev' | 'self-hosted';
+    daemonHomeScope: 'global' | 'isolated';
+    profile?: 'local' | 'lan' | 'relay';
+    serverUrl?: string;
+    relayEndpoint?: string;
+    relayServerUrl?: string;
   };
   directories: Array<{
     id: string;
@@ -113,10 +122,24 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
 
   // Include available models from agent SDKs (cached after first fetch)
   const models = registry ? registry.getCachedModels() : [];
+  const machine = resolveDaemonRuntimeIdentity({
+    daemonConfig: daemon.configManager.getDaemonConfig(),
+    machineId: daemon.configManager.getMachineId(),
+    daemonVersion: resolvePackageVersion(),
+  });
 
   return {
     protocolVersion: 2,
-    machine: { id: daemon.configManager.getMachineId() },
+    machine: {
+      id: machine.machineId ?? daemon.configManager.getMachineId(),
+      daemonVersion: machine.daemonVersion,
+      runtimeKind: machine.runtimeKind,
+      daemonHomeScope: machine.daemonHomeScope,
+      profile: machine.profile,
+      serverUrl: machine.serverUrl,
+      relayEndpoint: machine.relayEndpoint,
+      relayServerUrl: machine.relayServerUrl,
+    },
     directories,
     activeSessions,
     discoveredSessions,

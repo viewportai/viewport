@@ -367,7 +367,20 @@ describe('ws-command-handlers', () => {
       getActiveSessions: vi.fn().mockReturnValue([]),
       getDiscoveredSessions: vi.fn().mockReturnValue(new Map()),
       getAvailableAgents: vi.fn().mockReturnValue([]),
-      configManager: { getMachineId: vi.fn().mockReturnValue('machine-1') },
+      configManager: {
+        getMachineId: vi.fn().mockReturnValue('machine-1'),
+        getDaemonConfig: vi.fn().mockReturnValue({
+          profile: 'relay',
+          relay: {
+            serverUrl: 'https://getviewport.com',
+            endpoint: 'wss://relay.getviewport.com/ws',
+            workspaceId: 'workspace-1',
+          },
+          server: {
+            url: 'https://getviewport.com',
+          },
+        }),
+      },
     };
     const sendAck = vi.fn();
     const handlers = createWsCommandHandlers({
@@ -383,7 +396,11 @@ describe('ws-command-handlers', () => {
 
     expect(sent[0]).toMatchObject({
       type: 'sync-snapshot',
-      machine: { id: 'machine-1' },
+      machine: {
+        id: 'machine-1',
+        runtimeKind: 'managed',
+        daemonVersion: expect.any(String),
+      },
       directories: [],
       activeSessions: [],
       discoveredSessions: [],

@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { configDir } from '../core/config.js';
 import { getFlag, hasFlag } from './args.js';
 import { daemonFetch } from './daemon-client.js';
@@ -49,6 +48,20 @@ export interface HealthResponse {
     lastErrorMessage?: string;
     lastErrorAt?: number;
     circuitOpenUntil?: number;
+  };
+  machine?: {
+    id?: string;
+    daemonVersion?: string;
+    runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
+    daemonHome?: string;
+    daemonHomeScope?: 'global' | 'isolated';
+    daemonHomeSource?: 'default' | 'explicit';
+    profile?: 'local' | 'lan' | 'relay';
+    serverUrl?: string;
+    relayEndpoint?: string;
+    relayServerUrl?: string;
+    relayWorkspaceId?: string;
+    hostedDefaults?: boolean;
   };
 }
 
@@ -257,32 +270,6 @@ export function parseTimeoutMs(raw: string | undefined, fallbackMs: number): num
     throw new Error(`Invalid --timeout value: ${raw}`);
   }
   return Math.ceil(seconds * 1000);
-}
-
-export function resolvePackageName(): string {
-  try {
-    const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf-8');
-    const parsed = JSON.parse(raw) as { name?: unknown };
-    if (typeof parsed.name === 'string' && parsed.name.trim().length > 0) {
-      return parsed.name;
-    }
-  } catch {
-    // fall through
-  }
-  return '@viewportai/daemon';
-}
-
-export function resolvePackageVersion(): string {
-  try {
-    const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf-8');
-    const parsed = JSON.parse(raw) as { version?: unknown };
-    if (typeof parsed.version === 'string' && parsed.version.trim().length > 0) {
-      return parsed.version;
-    }
-  } catch {
-    // fall through
-  }
-  return 'unknown';
 }
 
 export async function readDaemonHealth(): Promise<HealthResponse | null> {

@@ -23,6 +23,7 @@ import {
   removeDirectory,
   list,
   status,
+  doctor,
   stop,
   restart,
   run,
@@ -42,7 +43,7 @@ import {
   setup,
   remote,
 } from './cli/commands.js';
-import { resolvePackageVersion } from './cli/command-shared.js';
+import { resolvePackageVersion } from './core/package-meta.js';
 import { hookNotify } from './cli/hook-command.js';
 import { start, runSupervisorCommand, runWorkerCommand } from './startup.js';
 
@@ -66,6 +67,7 @@ const commands: Record<string, () => Promise<void>> = {
   remove: removeDirectory,
   list,
   status,
+  doctor,
   stop,
   restart,
   run,
@@ -112,6 +114,7 @@ if (command === 'hook') {
     if (command === 'daemon') {
       const subcommand = getArgs()[1] ?? 'status';
       if (subcommand === 'start') handler = start;
+      if (subcommand === 'doctor') handler = doctor;
       if (subcommand === 'status') handler = status;
       if (subcommand === 'stop') handler = stop;
       if (subcommand === 'restart') handler = restart;
