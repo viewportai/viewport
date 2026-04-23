@@ -62,8 +62,16 @@ docker run --rm -p 7781:7781 \
 # Install dependencies
 npm ci
 
-# Run the daemon package in dev mode
+# Run the daemon in the foreground
 npm run daemon
+
+# Inspect daemon identity and runtime state
+npm run daemon:status
+npm run daemon:doctor
+
+# Stop or restart the daemon
+npm run daemon:stop
+npm run daemon:restart
 
 # Run relay in dev mode
 npm run relay
