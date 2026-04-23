@@ -2,7 +2,7 @@ import { openSync, closeSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { configDir } from '../core/config.js';
+import { configDir, resolveProjectConfig } from '../core/config.js';
 import {
   readProcessInfo,
   writeDaemonRuntimeState,
@@ -21,7 +21,6 @@ import {
 import { resolveDaemonSettingsFromSources } from './daemon-settings.js';
 
 const SUPERVISOR_STARTUP_GRACE_MS = 1_500;
-
 function resolveCliEntry(): string {
   const entry = process.argv[1];
   if (!entry) {
@@ -258,6 +257,7 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     },
     daemonVersion: config.version,
   });
+  const projectConfig = resolveProjectConfig(process.env);
   await writeDaemonRuntimeState({
     pid: workerPid ?? process.pid,
     ownerPid: process.pid,
@@ -292,6 +292,8 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     daemonHome: identity.daemonHome,
     daemonHomeScope: identity.daemonHomeScope,
     serverUrl: identity.serverUrl,
+    projectConfigDir: projectConfig.dir ?? undefined,
+    projectConfigSource: projectConfig.source ?? undefined,
   });
 }
 

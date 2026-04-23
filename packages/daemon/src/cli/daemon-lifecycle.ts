@@ -51,6 +51,8 @@ export interface DaemonRuntimeState {
   daemonHome?: string;
   daemonHomeScope?: 'global' | 'project-override';
   serverUrl?: string;
+  projectConfigDir?: string;
+  projectConfigSource?: 'explicit' | 'ancestor';
 }
 
 function daemonStatePath(): string {
@@ -142,6 +144,12 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
           ? parsed.daemonHomeScope
           : undefined,
       serverUrl: typeof parsed.serverUrl === 'string' ? parsed.serverUrl : undefined,
+      projectConfigDir:
+        typeof parsed.projectConfigDir === 'string' ? parsed.projectConfigDir : undefined,
+      projectConfigSource:
+        parsed.projectConfigSource === 'explicit' || parsed.projectConfigSource === 'ancestor'
+          ? parsed.projectConfigSource
+          : undefined,
     };
   } catch {
     return null;

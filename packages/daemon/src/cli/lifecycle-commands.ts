@@ -48,6 +48,7 @@ import {
   resolveCliEntrypointPath,
   resolvePackageName,
   resolvePackageRoot,
+  resolvePackageSourceInfo,
   resolvePackageVersion,
 } from '../core/package-meta.js';
 
@@ -101,6 +102,7 @@ export async function status(): Promise<void> {
   const manager = new ConfigManager();
   await manager.load();
   const cliVersion = resolvePackageVersion();
+  const cliSource = resolvePackageSourceInfo();
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonConfig: manager.getDaemonConfig(),
     machineId: manager.getMachineId(),
@@ -171,6 +173,15 @@ export async function status(): Promise<void> {
     configSource: configPaths.projectOverridePath
       ? `project override (${configPaths.projectOverridePath})`
       : `global (${configPaths.globalPath})`,
+    configReason: runtimeIdentity.projectConfigSource
+      ? runtimeIdentity.projectConfigSource === 'explicit'
+        ? 'explicit VIEWPORT_PROJECT_CONFIG_DIR override'
+        : 'nearest ancestor .viewport/config.json'
+      : 'global ~/.viewport/config.json',
+    cliSource:
+      cliSource.kind === 'linked-local-build'
+        ? `linked local build${cliSource.gitRef ? ` (${cliSource.gitRef})` : ''}`
+        : 'installed package',
   };
 
   if (asJson) {
@@ -209,9 +220,11 @@ export async function status(): Promise<void> {
   console.log(`Node:        ${payload.runtimeNode}`);
   console.log(`npm:         ${payload.runtimeNpm}`);
   console.log(`CLI:         ${payload.cliVersion}`);
+  console.log(`CLI source:  ${payload.cliSource}`);
   console.log(`Latest CLI:  ${payload.latestCliVersion}`);
   console.log(`Update:      ${payload.updateStatus}`);
   console.log(`Config:      ${payload.configSource}`);
+  console.log(`Reason:      ${payload.configReason}`);
   if (payload.health) {
     console.log(`Sessions:    ${payload.health.sessions}`);
     console.log(`Directories: ${payload.health.directories}`);
@@ -229,6 +242,7 @@ export async function doctor(): Promise<void> {
   const manager = new ConfigManager();
   await manager.load();
   const cliVersion = resolvePackageVersion();
+  const cliSource = resolvePackageSourceInfo();
   const identity = resolveDaemonRuntimeIdentity({
     daemonConfig: manager.getDaemonConfig(),
     machineId: manager.getMachineId(),
@@ -265,6 +279,16 @@ export async function doctor(): Promise<void> {
     configSource: configPaths.projectOverridePath
       ? `project override (${configPaths.projectOverridePath})`
       : `global (${configPaths.globalPath})`,
+    configReason: identity.projectConfigSource
+      ? identity.projectConfigSource === 'explicit'
+        ? 'explicit VIEWPORT_PROJECT_CONFIG_DIR override'
+        : 'nearest ancestor .viewport/config.json'
+      : 'global ~/.viewport/config.json',
+    cliVersion,
+    cliSource:
+      cliSource.kind === 'linked-local-build'
+        ? `linked local build${cliSource.gitRef ? ` (${cliSource.gitRef})` : ''}`
+        : 'installed package',
   };
 
   if (asJson) {
@@ -275,6 +299,8 @@ export async function doctor(): Promise<void> {
   console.log(`Status:       ${payload.status}`);
   console.log(`Machine:      ${payload.machineId ?? '-'}`);
   console.log(`Daemon:       ${payload.daemonVersion}`);
+  console.log(`CLI:          ${payload.cliVersion}`);
+  console.log(`CLI source:   ${payload.cliSource}`);
   console.log(`Runtime:      ${formatRuntimeKindLabel(payload.runtimeKind)}`);
   console.log(`Home:         ${formatDaemonHomeLabel(identity)}`);
   console.log(`Package root: ${payload.packageRoot}`);
@@ -291,6 +317,7 @@ export async function doctor(): Promise<void> {
   console.log(`Worker PID:   ${payload.workerPid ?? '-'}`);
   console.log(`Relay state:  ${payload.relayState ?? '-'}`);
   console.log(`Config:       ${payload.configSource}`);
+  console.log(`Reason:       ${payload.configReason}`);
   if (payload.relayReconnectAttempt) {
     console.log(`Relay tries:  ${payload.relayReconnectAttempt}`);
   }
@@ -618,6 +645,8 @@ function applyRuntimeTlsEnvironment(
     'VIEWPORT_TLS_CERT_DIR',
     'VIEWPORT_TLS_CERT',
     'VIEWPORT_TLS_KEY',
+    'VIEWPORT_PROJECT_CONFIG_DIR',
+    'VPD_PROJECT_CONFIG_DIR',
   ];
   const previous = new Map<string, string | undefined>();
   for (const key of keys) {
@@ -650,6 +679,11 @@ function applyRuntimeTlsEnvironment(
     setEnv('VIEWPORT_TLS_CERT_DIR', undefined);
     setEnv('VIEWPORT_TLS_CERT', undefined);
     setEnv('VIEWPORT_TLS_KEY', undefined);
+  }
+
+  if (runtimeState?.projectConfigDir) {
+    setEnv('VIEWPORT_PROJECT_CONFIG_DIR', runtimeState.projectConfigDir);
+    setEnv('VPD_PROJECT_CONFIG_DIR', runtimeState.projectConfigDir);
   }
 
   return () => {

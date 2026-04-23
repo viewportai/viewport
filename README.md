@@ -65,7 +65,7 @@ npm ci
 # Build and link this checkout as the active global vpd
 npm run daemon
 
-# Start the daemon in the foreground from this checkout
+# Start the linked global daemon in the foreground from this checkout
 npm run daemon:start
 
 # Inspect the daemon
@@ -103,12 +103,12 @@ Viewport uses one daemon model:
 
 - global state lives in `~/.viewport/`
 - optional project overrides live in the nearest `.viewport/config.json`
-- in the combined `viewportai/` workspace, that shared override is `../.viewport/config.json`
+- if you are inside the combined `viewportai/` checkout, the nearest override is the parent `../.viewport/config.json`
 
 That means:
 
 - `vpd ...` always talks to the globally linked or installed daemon
-- `npm run daemon:start` starts the daemon from this checkout against the same global home
+- `npm run daemon:start` runs `vpd start --foreground` against that same global home
 - a local `.viewport/config.json` only overrides selected targeting values such as server, relay, and listen settings
 - `npm run daemon:install:verify` exercises the packaged install path in an isolated prefix so we keep testing the real `curl | bash` story
 

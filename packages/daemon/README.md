@@ -160,6 +160,7 @@ Runtime config follows one simple rule:
 
 - global defaults live in `~/.viewport/config.json`
 - the nearest project `.viewport/config.json` can override selected daemon targets like server or relay
+- `vpd doctor` will tell you whether that override was chosen explicitly or simply because it was the nearest ancestor config
 - environment variables and CLI flags are temporary overrides, not the normal runtime model
 
 See [docs/releasing.md](./docs/releasing.md) for setup and operations.

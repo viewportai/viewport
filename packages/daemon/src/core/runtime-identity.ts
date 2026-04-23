@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { ViewportConfig } from './config.js';
-import { resolveProjectConfigDir, resolveViewportHome } from './config.js';
+import { resolveProjectConfig, resolveViewportHome } from './config.js';
 import type { DeploymentProfile } from '../server/security.js';
 
 export type DaemonRuntimeKind = 'managed' | 'local-dev' | 'self-hosted';
@@ -20,6 +20,8 @@ export interface DaemonRuntimeIdentity {
   relayServerUrl?: string;
   relayWorkspaceId?: string;
   hostedDefaults: boolean;
+  projectConfigPath?: string;
+  projectConfigSource?: 'explicit' | 'ancestor';
 }
 
 export interface InstallRuntimeCapabilities {
@@ -123,7 +125,8 @@ export function resolveDaemonRuntimeIdentity(
   const daemonHomeSource: DaemonHomeSource =
     envValue(env, 'VIEWPORT_HOME', 'VPD_HOME') !== undefined ? 'explicit' : 'default';
   const daemonHome = resolveViewportHome(env);
-  const projectConfigDir = resolveProjectConfigDir(env);
+  const projectConfig = resolveProjectConfig(env);
+  const projectConfigDir = projectConfig.dir;
   const serverUrl =
     daemonConfig?.server?.url ??
     daemonConfig?.relay?.serverUrl ??
@@ -156,6 +159,8 @@ export function resolveDaemonRuntimeIdentity(
     relayServerUrl,
     relayWorkspaceId: daemonConfig?.relay?.workspaceId,
     hostedDefaults,
+    projectConfigPath: projectConfigDir ? path.join(projectConfigDir, 'config.json') : undefined,
+    projectConfigSource: projectConfig.source ?? undefined,
   };
 }
 

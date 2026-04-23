@@ -209,16 +209,23 @@ export function configFilePath(): string {
   return path.join(configDir(), 'config.json');
 }
 
-export function resolveProjectConfigDir(env: NodeJS.ProcessEnv = process.env): string | null {
+export interface ProjectConfigResolution {
+  dir: string | null;
+  source: 'explicit' | 'ancestor' | null;
+}
+
+export function resolveProjectConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): ProjectConfigResolution {
   const explicit = env['VIEWPORT_PROJECT_CONFIG_DIR'] ?? env['VPD_PROJECT_CONFIG_DIR'];
   if (typeof explicit === 'string' && explicit.trim().length > 0) {
     const resolved = path.resolve(explicit.trim());
     try {
       if (fsSync.statSync(resolved).isDirectory()) {
-        return resolved;
+        return { dir: resolved, source: 'explicit' };
       }
     } catch {
-      return null;
+      return { dir: null, source: null };
     }
   }
 
@@ -227,7 +234,7 @@ export function resolveProjectConfigDir(env: NodeJS.ProcessEnv = process.env): s
     const candidate = path.join(current, '.viewport');
     try {
       if (fsSync.statSync(candidate).isDirectory()) {
-        return candidate;
+        return { dir: candidate, source: 'ancestor' };
       }
     } catch {
       // Ignore missing ancestor overrides.
@@ -235,10 +242,14 @@ export function resolveProjectConfigDir(env: NodeJS.ProcessEnv = process.env): s
 
     const parent = path.dirname(current);
     if (parent === current) {
-      return null;
+      return { dir: null, source: null };
     }
     current = parent;
   }
+}
+
+export function resolveProjectConfigDir(env: NodeJS.ProcessEnv = process.env): string | null {
+  return resolveProjectConfig(env).dir;
 }
 
 export function projectConfigFilePath(env: NodeJS.ProcessEnv = process.env): string | null {

@@ -117,3 +117,4 @@ That path keeps one daemon model:
 - global state in `~/.viewport/`
 - optional project override in `.viewport/config.json`
 - local repo builds activated via `npm run daemon`
+- `vpd doctor` shows the active config path and whether it came from an explicit override or the nearest ancestor `.viewport/config.json`
