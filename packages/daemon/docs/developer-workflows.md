@@ -58,7 +58,7 @@ That makes tarball install a stronger release-confidence check than `npm link`, 
 npm run verify:repo
 ```
 
-2. Environment verification (isolated runtime):
+2. Environment verification (temporary runtime config):
 
 ```bash
 npm run verify:env
@@ -70,7 +70,7 @@ npm run verify:env
 npm run verify:env:service
 ```
 
-4. Package/install verification from isolated npm prefix:
+4. Package/install verification from a temporary npm prefix:
 
 ```bash
 npm run verify:install
@@ -105,3 +105,19 @@ Use only these shell entrypoints:
 4. `scripts/test-env.sh`
 5. `scripts/install-verify.sh`
 6. `scripts/verify.sh`
+
+## Linked-build workflow
+
+Start the daemon from the repo against your existing global daemon home:
+
+```bash
+npm run daemon:start
+npm run daemon:doctor
+```
+
+That path keeps one daemon model:
+
+- global state in `~/.viewport/`
+- optional project override in `.viewport/config.json`
+- local repo builds activated via `npm run daemon`
+- `vpd doctor` shows the active config path and whether it came from an explicit override or the nearest ancestor `.viewport/config.json`

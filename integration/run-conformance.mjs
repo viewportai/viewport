@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DAEMON_DIR = path.join(ROOT, 'daemon');
+const DAEMON_DIR = path.join(ROOT, 'packages', 'daemon');
 const VECTORS_PATH = path.join(DAEMON_DIR, 'docs', 'relay-noise-v3-conformance-vectors.json');
 
 function fromBase64Url(input) {

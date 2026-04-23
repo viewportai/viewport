@@ -34,6 +34,8 @@ Local development link mode:
 ./scripts/install-dev.sh --link --yes --no-service --no-prereqs --no-hooks
 ```
 
+Link mode is for active daemon development when you want the repo checkout to become the global `vpd` binary. For release-confidence validation, prefer the tarball path through `npm run verify:install`.
+
 Local uninstall/reinstall:
 
 ```bash
@@ -123,13 +125,13 @@ npm run check
 # manual verification test (no service or package installs)
 VIEWPORT_HOME="$(mktemp -d)" vpd setup --yes --no-service --no-prereqs --no-hooks
 
-# full local environment verification (isolated home + dedicated listen target)
+# full local environment verification (temporary config dir + dedicated listen target)
 npm run verify:env
 
 # include OS service checks (launchd/systemd)
 npm run verify:env:service
 
-# package/install verification from local tarball in isolated prefix
+# package/install verification from local tarball in a temporary npm prefix
 npm run verify:install
 
 # one-command verification gate
@@ -144,14 +146,24 @@ npm run verify:linux:ci
 1. Semantic commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
 2. One logical change per commit.
 3. Changes to protocol or runtime behavior require matching tests.
+4. Branch names use semantic prefixes with concise kebab-case descriptions (`feat/...`, `fix/...`, `docs/...`).
+5. PR titles use semantic commit format with an optional scope (`feat(runtime): ...`, `fix(daemon): ...`).
+6. Do not use roadmap labels or temporary agent labels in branches or PR titles.
 
 ## Release
 
 This package publishes as `@viewportai/daemon`.
 
-1. Merge semantic commits to `main`.
-2. CI must pass.
-3. Release workflow computes version (`feat` => minor, `fix` => patch, `BREAKING CHANGE` => major), tags, and publishes to npm using `NPM_TOKEN`.
+Package release mechanics are maintainer-owned. Feature PRs should stay focused on code, tests, and docs unless the PR is explicitly intended to cut a package release.
+
+When a release is intentionally being prepared, use the repo's current publish workflow from `main` and validate the built CLI before shipping.
+
+Runtime config follows one simple rule:
+
+- global defaults live in `~/.viewport/config.json`
+- the nearest project `.viewport/config.json` can override selected daemon targets like server or relay
+- `vpd doctor` will tell you whether that override was chosen explicitly or simply because it was the nearest ancestor config
+- environment variables and CLI flags are temporary overrides, not the normal runtime model
 
 See [docs/releasing.md](./docs/releasing.md) for setup and operations.
 See [docs/testing.md](./docs/testing.md) and [docs/developer-workflows.md](./docs/developer-workflows.md) for local validation workflows.

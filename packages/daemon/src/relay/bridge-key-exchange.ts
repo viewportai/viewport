@@ -1,14 +1,9 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { configDir } from '../core/config.js';
 import { fromBase64Url, toBase64Url } from './bridge-crypto.js';
+import { type DaemonRelayIdentity } from './bridge-identity-store.js';
 
-export interface DaemonRelayIdentity {
-  publicKey: string;
-  privateKey: string;
-  algorithm: 'p256';
-}
+export type { DaemonRelayIdentity } from './bridge-identity-store.js';
+export { loadOrCreateIdentity } from './bridge-identity-store.js';
 
 export type RelayHandshakeProfile = 'noise-ik' | 'noise-ikpsk2';
 
@@ -46,58 +41,6 @@ export interface DerivedRelaySession {
 const SESSION_INFO_PREFIX = 'viewport-relay-session-v2';
 const TRANSCRIPT_PREFIX = 'viewport-relay-transcript-v2';
 const INIT_INFO_PREFIX = 'viewport-relay-kex-init-v1';
-
-function safeWorkspaceId(workspaceId: string): string {
-  return workspaceId.replace(/[^a-zA-Z0-9_.-]/g, '_');
-}
-
-function identityFilePath(workspaceId: string): string {
-  return path.join(configDir(), `relay-daemon-identity-${safeWorkspaceId(workspaceId)}.json`);
-}
-
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const dir = path.dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
-  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
-  await fs.rename(tmp, filePath);
-}
-
-export async function loadOrCreateIdentity(workspaceId: string): Promise<DaemonRelayIdentity> {
-  const filePath = identityFilePath(workspaceId);
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<DaemonRelayIdentity>;
-    if (
-      parsed.algorithm === 'p256' &&
-      typeof parsed.publicKey === 'string' &&
-      typeof parsed.privateKey === 'string'
-    ) {
-      const priv = fromBase64Url(parsed.privateKey);
-      const pub = fromBase64Url(parsed.publicKey);
-      if (priv.length === 32 && pub.length === 65 && pub[0] === 0x04) {
-        return {
-          algorithm: 'p256',
-          publicKey: parsed.publicKey,
-          privateKey: parsed.privateKey,
-        };
-      }
-    }
-  } catch {
-    // create below
-  }
-
-  const ecdh = crypto.createECDH('prime256v1');
-  const publicKey = ecdh.generateKeys();
-  const privateKey = ecdh.getPrivateKey();
-  const identity: DaemonRelayIdentity = {
-    algorithm: 'p256',
-    publicKey: toBase64Url(publicKey),
-    privateKey: toBase64Url(privateKey),
-  };
-  await writeJsonAtomic(filePath, identity);
-  return identity;
-}
 
 function toSessionInfo(profile: RelayHandshakeProfile, sessionId: string, epoch: number): Buffer {
   return Buffer.from(`${SESSION_INFO_PREFIX}|${profile}|${sessionId}|${epoch}`, 'utf8');

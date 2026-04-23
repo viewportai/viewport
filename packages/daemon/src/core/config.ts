@@ -7,6 +7,7 @@
  * Config file: ~/.viewport/config.json
  */
 
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -73,6 +74,33 @@ export function deepMerge<T>(...sources: Array<Partial<T> | undefined>): T {
   return result as T;
 }
 
+function mergeWithDeletes<T>(base: T, update: Partial<T> | undefined): T {
+  if (update === undefined) {
+    return base;
+  }
+
+  const initial = isPlainObject(base) ? { ...base } : {};
+  const result = initial as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(update as Record<string, unknown>)) {
+    if (isUnsafeMergeKey(key)) continue;
+    if (value === undefined) {
+      delete result[key];
+      continue;
+    }
+
+    const existing = result[key];
+    if (isPlainObject(existing) && isPlainObject(value)) {
+      result[key] = mergeWithDeletes(existing, value);
+      continue;
+    }
+
+    result[key] = value;
+  }
+
+  return result as T;
+}
+
 function toRuntimeConfigForDaemonValidation(
   daemonConfig: NonNullable<ViewportConfig['daemon']>,
 ): RuntimeLaunchConfig {
@@ -85,11 +113,14 @@ function toRuntimeConfigForDaemonValidation(
     profile: daemonConfig.profile ?? 'local',
     authEnabled: daemonConfig.authEnabled ?? true,
     detached: false,
+    serverUrl: daemonConfig.server?.url,
+    serverTlsVerify: daemonConfig.server?.tlsVerify ?? 'auto',
+    serverCaCertPath: daemonConfig.server?.caCertPath,
+    serverTlsPins: daemonConfig.server?.tlsPins,
     relayEnabled: relay.enabled ?? false,
     relayEndpoint: relay.endpoint,
     relayServerUrl: relay.serverUrl,
     relayWorkspaceId: relay.workspaceId,
-    relayEnrollToken: relay.enrollToken,
     relayIssueToken: relay.issueToken,
     relayTlsVerify: relay.tlsVerify ?? 'auto',
     relayCaCertPath: relay.caCertPath,
@@ -125,10 +156,6 @@ export interface ViewportConfig {
   defaults?: Partial<SessionConfig>;
   /** Per-directory config overrides. Keyed by directory ID. */
   directories?: Record<string, { path: string; config?: Partial<SessionConfig> }>;
-  /** Relay URL for remote access. */
-  relayUrl?: string;
-  /** Machine token for relay auth. */
-  relayToken?: string;
   /** Machine ID. */
   machineId?: string;
   /** Daemon runtime defaults (listen/profile/security/lifecycle options). */
@@ -139,13 +166,19 @@ export interface ViewportConfig {
     allowedOrigins?: string[] | true;
     authEnabled?: boolean;
     logFile?: string;
+    server?: {
+      url?: string;
+      appUrl?: string;
+      tlsVerify?: 'auto' | '0' | '1';
+      caCertPath?: string;
+      tlsPins?: string[];
+    };
     relay?: {
       enabled?: boolean;
       endpoint?: string;
-      publicEndpoint?: string;
       serverUrl?: string;
       workspaceId?: string;
-      enrollToken?: string;
+      installId?: string;
       issueToken?: string;
       tlsVerify?: 'auto' | '0' | '1';
       caCertPath?: string;
@@ -177,26 +210,98 @@ export function configFilePath(): string {
   return path.join(configDir(), 'config.json');
 }
 
+export interface ProjectConfigResolution {
+  dir: string | null;
+  source: 'explicit' | 'ancestor' | null;
+}
+
+export function resolveProjectConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): ProjectConfigResolution {
+  const explicit = env['VIEWPORT_PROJECT_CONFIG_DIR'] ?? env['VPD_PROJECT_CONFIG_DIR'];
+  if (typeof explicit === 'string' && explicit.trim().length > 0) {
+    const resolved = path.resolve(explicit.trim());
+    try {
+      if (fsSync.statSync(resolved).isDirectory()) {
+        return { dir: resolved, source: 'explicit' };
+      }
+    } catch {
+      return { dir: null, source: null };
+    }
+  }
+
+  let current = process.cwd();
+  while (true) {
+    const candidate = path.join(current, '.viewport');
+    try {
+      if (fsSync.statSync(candidate).isDirectory()) {
+        return { dir: candidate, source: 'ancestor' };
+      }
+    } catch {
+      // Ignore missing ancestor overrides.
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return { dir: null, source: null };
+    }
+    current = parent;
+  }
+}
+
+export function resolveProjectConfigDir(env: NodeJS.ProcessEnv = process.env): string | null {
+  return resolveProjectConfig(env).dir;
+}
+
+export function projectConfigFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const dir = resolveProjectConfigDir(env);
+  return dir ? path.join(dir, 'config.json') : null;
+}
+
+function migrateViewportConfig(raw: unknown): { config: unknown; migrated: boolean } {
+  if (!isPlainObject(raw)) {
+    return { config: raw, migrated: false };
+  }
+
+  let migrated = false;
+  const daemon = raw['daemon'];
+  if (isPlainObject(daemon)) {
+    const relay = daemon['relay'];
+    if (isPlainObject(relay) && 'enrollToken' in relay) {
+      delete relay['enrollToken'];
+      migrated = true;
+    }
+  }
+
+  return { config: raw, migrated };
+}
+
 /** Load the config file, returning empty config if it doesn't exist. */
-export async function loadConfig(): Promise<ViewportConfig> {
+async function loadConfigFromPath(filePath: string): Promise<ViewportConfig> {
   try {
-    const raw = await fs.readFile(configFilePath(), 'utf-8');
+    const raw = await fs.readFile(filePath, 'utf-8');
     let parsedRaw: unknown;
     try {
       parsedRaw = JSON.parse(raw);
     } catch (err) {
       throw new Error(
-        `Invalid viewport config JSON at ${configFilePath()}: ${err instanceof Error ? err.message : String(err)}`,
+        `Invalid viewport config JSON at ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
 
-    const parsed = ViewportConfigSchema.safeParse(parsedRaw);
+    const migrated = migrateViewportConfig(parsedRaw);
+    const parsed = ViewportConfigSchema.safeParse(migrated.config);
     if (!parsed.success) {
       const detail = parsed.error.issues
         .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
         .join('; ');
-      throw new Error(`Invalid viewport config schema at ${configFilePath()}: ${detail}`);
+      throw new Error(`Invalid viewport config schema at ${filePath}: ${detail}`);
     }
+
+    if (migrated.migrated) {
+      await saveConfigToPath(filePath, parsed.data as ViewportConfig);
+    }
+
     return parsed.data as ViewportConfig;
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
@@ -209,11 +314,31 @@ export async function loadConfig(): Promise<ViewportConfig> {
   }
 }
 
+/** Load only the global config file, returning empty config if it doesn't exist. */
+export async function loadGlobalConfig(): Promise<ViewportConfig> {
+  return loadConfigFromPath(configFilePath());
+}
+
+/** Load the effective daemon config (global plus optional project override). */
+export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<ViewportConfig> {
+  const globalConfig = await loadGlobalConfig();
+  const overridePath = projectConfigFilePath(env);
+  if (!overridePath) {
+    return globalConfig;
+  }
+  const projectOverride = await loadConfigFromPath(overridePath);
+  return deepMerge(globalConfig, projectOverride);
+}
+
 /** Save the config file, creating the directory if needed. */
 export async function saveConfig(config: ViewportConfig): Promise<void> {
-  const dir = configDir();
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(configFilePath(), JSON.stringify(config, null, 2) + '\n', {
+  await saveConfigToPath(configFilePath(), config);
+}
+
+async function saveConfigToPath(filePath: string, config: ViewportConfig): Promise<void> {
+  const targetDir = path.dirname(filePath);
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(config, null, 2) + '\n', {
     encoding: 'utf-8',
     mode: 0o600,
   });
@@ -252,12 +377,20 @@ export function resolveConfig(
 
 export class ConfigManager {
   private config: ViewportConfig = {};
+  private globalConfig: ViewportConfig = {};
+  private projectOverrideConfig: ViewportConfig | null = null;
+  private projectOverridePath: string | null = null;
   private loaded = false;
   private agentRegistry: AgentRegistry | null = null;
 
   /** Load config from disk. Safe to call multiple times. */
   async load(): Promise<void> {
-    this.config = await loadConfig();
+    this.globalConfig = await loadGlobalConfig();
+    this.projectOverridePath = projectConfigFilePath();
+    this.projectOverrideConfig = this.projectOverridePath
+      ? await loadConfigFromPath(this.projectOverridePath)
+      : null;
+    this.config = deepMerge(this.globalConfig, this.projectOverrideConfig ?? {});
     this.loaded = true;
   }
 
@@ -270,6 +403,14 @@ export class ConfigManager {
   getConfig(): ViewportConfig {
     this.ensureLoaded();
     return this.config;
+  }
+
+  getConfigPaths(): { globalPath: string; projectOverridePath: string | null } {
+    this.ensureLoaded();
+    return {
+      globalPath: configFilePath(),
+      projectOverridePath: this.projectOverridePath,
+    };
   }
 
   /** Resolve a full SessionConfig for a directory, with agent-specific defaults. */
@@ -315,12 +456,6 @@ export class ConfigManager {
     };
   }
 
-  /** Get the relay URL (if configured). */
-  getRelayUrl(): string | undefined {
-    this.ensureLoaded();
-    return this.config.relayUrl;
-  }
-
   /** Get the machine ID. */
   getMachineId(): string {
     this.ensureLoaded();
@@ -336,13 +471,19 @@ export class ConfigManager {
         allowedOrigins?: string[] | true;
         authEnabled?: boolean;
         logFile?: string;
+        server?: {
+          url?: string;
+          appUrl?: string;
+          tlsVerify?: 'auto' | '0' | '1';
+          caCertPath?: string;
+          tlsPins?: string[];
+        };
         relay?: {
           enabled?: boolean;
           endpoint?: string;
-          publicEndpoint?: string;
           serverUrl?: string;
           workspaceId?: string;
-          enrollToken?: string;
+          installId?: string;
           issueToken?: string;
           tlsVerify?: 'auto' | '0' | '1';
           caCertPath?: string;
@@ -361,13 +502,29 @@ export class ConfigManager {
   /** Merge daemon runtime settings into config. */
   async setDaemonConfig(daemonConfig: NonNullable<ViewportConfig['daemon']>): Promise<void> {
     this.ensureLoaded();
-    const merged = deepMerge<NonNullable<ViewportConfig['daemon']>>(
-      this.config.daemon ?? {},
-      daemonConfig,
-    );
+    const base =
+      this.projectOverridePath && this.projectOverrideConfig
+        ? (this.projectOverrideConfig.daemon ?? {})
+        : (this.globalConfig.daemon ?? {});
+    const merged = mergeWithDeletes<NonNullable<ViewportConfig['daemon']>>(base, daemonConfig);
     validateRelayRuntimeSecurity(toRuntimeConfigForDaemonValidation(merged));
-    this.config.daemon = merged;
-    await saveConfig(this.config);
+
+    if (this.projectOverridePath) {
+      const nextProjectConfig = {
+        ...(this.projectOverrideConfig ?? {}),
+        daemon: merged,
+      };
+      this.projectOverrideConfig = nextProjectConfig;
+      await saveConfigToPath(this.projectOverridePath, nextProjectConfig);
+    } else {
+      this.globalConfig = {
+        ...this.globalConfig,
+        daemon: merged,
+      };
+      await saveConfig(this.globalConfig);
+    }
+
+    this.config = deepMerge(this.globalConfig, this.projectOverrideConfig ?? {});
   }
 
   /** Update global defaults. */

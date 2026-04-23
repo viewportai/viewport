@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { configDir } from '../core/config.js';
 import { getFlag, hasFlag } from './args.js';
 import { daemonFetch } from './daemon-client.js';
@@ -40,6 +39,29 @@ export interface HealthResponse {
     memoryRss?: number;
     memoryHeapUsed?: number;
     memoryHeapTotal?: number;
+  };
+  relay?: {
+    enabled: boolean;
+    state?: 'stopped' | 'connecting' | 'connected' | 'waiting_retry' | 'circuit_open';
+    reconnectAttempt?: number;
+    lastErrorCode?: string;
+    lastErrorMessage?: string;
+    lastErrorAt?: number;
+    circuitOpenUntil?: number;
+  };
+  machine?: {
+    id?: string;
+    daemonVersion?: string;
+    runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
+    daemonHome?: string;
+    daemonHomeScope?: 'global' | 'project-override';
+    daemonHomeSource?: 'default' | 'explicit';
+    profile?: 'local' | 'lan' | 'relay';
+    serverUrl?: string;
+    relayEndpoint?: string;
+    relayServerUrl?: string;
+    relayWorkspaceId?: string;
+    hostedDefaults?: boolean;
   };
 }
 
@@ -250,36 +272,47 @@ export function parseTimeoutMs(raw: string | undefined, fallbackMs: number): num
   return Math.ceil(seconds * 1000);
 }
 
-export function resolvePackageName(): string {
-  try {
-    const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf-8');
-    const parsed = JSON.parse(raw) as { name?: unknown };
-    if (typeof parsed.name === 'string' && parsed.name.trim().length > 0) {
-      return parsed.name;
-    }
-  } catch {
-    // fall through
-  }
-  return '@viewportai/daemon';
-}
-
-export function resolvePackageVersion(): string {
-  try {
-    const raw = readFileSync(new URL('../../package.json', import.meta.url), 'utf-8');
-    const parsed = JSON.parse(raw) as { version?: unknown };
-    if (typeof parsed.version === 'string' && parsed.version.trim().length > 0) {
-      return parsed.version;
-    }
-  } catch {
-    // fall through
-  }
-  return 'unknown';
-}
-
 export async function readDaemonHealth(): Promise<HealthResponse | null> {
   const res = await daemonFetch('/health');
   if (!res || !res.ok) return null;
   return (await res.json()) as HealthResponse;
+}
+
+export async function waitForDaemonReady(options?: {
+  timeoutMs?: number;
+  intervalMs?: number;
+  requireRelayConnected?: boolean;
+}): Promise<HealthResponse> {
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const intervalMs = options?.intervalMs ?? 250;
+  const requireRelayConnected = options?.requireRelayConnected ?? false;
+  const deadline = Date.now() + timeoutMs;
+  let lastHealth: HealthResponse | null = null;
+
+  while (Date.now() < deadline) {
+    const health = await readDaemonHealth();
+    if (health) {
+      lastHealth = health;
+      if (!requireRelayConnected) {
+        return health;
+      }
+
+      if (health.relay?.enabled && health.relay.state === 'connected') {
+        return health;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  if (requireRelayConnected) {
+    const relayState = lastHealth?.relay?.state ?? 'unavailable';
+    throw new Error(
+      `Timed out waiting for daemon relay reconnect (last relay state: ${relayState})`,
+    );
+  }
+
+  throw new Error('Timed out waiting for daemon health');
 }
 
 export async function requestLifecycle(action: 'shutdown' | 'restart'): Promise<boolean> {

@@ -2,6 +2,7 @@
  * HTTP client helpers for talking to a running daemon instance.
  */
 
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -9,6 +10,7 @@ import { configDir } from '../core/config.js';
 import { getFlag, getDaemonPort } from './args.js';
 import { readDaemonRuntimeState } from './daemon-lifecycle.js';
 import { parseListenTarget } from './listen-target.js';
+import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 
 export interface DaemonDirectoryInfo {
   id: string;
@@ -48,6 +50,29 @@ function resolveClientHost(host: string): string {
   return host;
 }
 
+/**
+ * Detect whether the daemon is serving with TLS by checking the configured
+ * local cert directory, mirroring the auto-detection logic in startup.ts.
+ */
+function getDaemonTlsInfo(): { enabled: boolean; host: string } {
+  const tlsEnv = (process.env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
+  const tlsHost = process.env['VIEWPORT_TLS_HOST'] ?? 'localhost';
+
+  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
+    return { enabled: false, host: '127.0.0.1' };
+  }
+
+  const certDir = process.env['VIEWPORT_TLS_CERT_DIR'] ?? path.join(configDir(), 'certs');
+  const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+  const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+
+  if (tlsEnv === 'auto') {
+    const enabled = existsSync(certPath) && existsSync(keyPath);
+    return { enabled, host: enabled ? tlsHost : '127.0.0.1' };
+  }
+  return { enabled: true, host: tlsHost };
+}
+
 async function readAuthToken(): Promise<string | null> {
   if (cachedAuthToken !== undefined) return cachedAuthToken;
   try {
@@ -60,7 +85,26 @@ async function readAuthToken(): Promise<string | null> {
   return cachedAuthToken;
 }
 
+function resolveTlsPreferenceFromStateOrEnv(
+  state?: {
+    tlsEnabled?: boolean;
+    tlsHost?: string;
+  } | null,
+): { enabled: boolean; host: string } {
+  if (typeof state?.tlsEnabled === 'boolean') {
+    return {
+      enabled: state.tlsEnabled,
+      host: state.tlsHost?.trim() || process.env['VIEWPORT_TLS_HOST'] || 'localhost',
+    };
+  }
+  return getDaemonTlsInfo();
+}
+
 function resolveEndpointFromFlags(): DaemonEndpoint {
+  const tlsInfo = resolveTlsPreferenceFromStateOrEnv(null);
+  const httpScheme = tlsInfo.enabled ? 'https' : 'http';
+  const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
+
   const listenFlag = getFlag('listen');
   if (listenFlag) {
     const parsed = parseListenTarget(listenFlag);
@@ -72,30 +116,57 @@ function resolveEndpointFromFlags(): DaemonEndpoint {
         wsUrl: `ws+unix://${parsed.path}:/ws`,
       };
     }
+    const host = tlsInfo.enabled ? tlsInfo.host : resolveClientHost(parsed.host);
     return {
       type: 'tcp',
-      host: resolveClientHost(parsed.host),
+      host,
       port: parsed.port,
-      baseUrl: `http://${resolveClientHost(parsed.host)}:${parsed.port}`,
-      wsUrl: `ws://${resolveClientHost(parsed.host)}:${parsed.port}/ws`,
+      baseUrl: `${httpScheme}://${host}:${parsed.port}`,
+      wsUrl: `${wsScheme}://${host}:${parsed.port}/ws`,
     };
   }
 
-  const host = getFlag('host') ?? '127.0.0.1';
+  const host = tlsInfo.enabled ? tlsInfo.host : resolveClientHost(getFlag('host') ?? '127.0.0.1');
   const port = getDaemonPort();
-  const resolvedHost = resolveClientHost(host);
   return {
     type: 'tcp',
-    host: resolvedHost,
+    host,
     port,
-    baseUrl: `http://${resolvedHost}:${port}`,
-    wsUrl: `ws://${resolvedHost}:${port}/ws`,
+    baseUrl: `${httpScheme}://${host}:${port}`,
+    wsUrl: `${wsScheme}://${host}:${port}/ws`,
+  };
+}
+
+function resolveDaemonTransportOptions(endpoint: DaemonEndpoint): {
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+} {
+  if (endpoint.type !== 'tcp' || !endpoint.baseUrl.startsWith('https://')) {
+    return {};
+  }
+
+  return {
+    tlsVerify:
+      parseTlsVerifyMode(process.env['VPD_DAEMON_TLS_VERIFY']) ??
+      parseTlsVerifyMode(process.env['VIEWPORT_DAEMON_TLS_VERIFY']) ??
+      'auto',
+    caCertPath:
+      process.env['VPD_DAEMON_CA_CERT'] ??
+      process.env['VIEWPORT_DAEMON_CA_CERT'] ??
+      process.env['VIEWPORT_TLS_CERT'],
+    tlsPins:
+      parseCsvList(process.env['VPD_DAEMON_TLS_PINS']) ??
+      parseCsvList(process.env['VIEWPORT_DAEMON_TLS_PINS']),
   };
 }
 
 export async function resolveDaemonEndpoint(): Promise<DaemonEndpoint> {
   const state = await readDaemonRuntimeState();
   if (state) {
+    const tlsInfo = resolveTlsPreferenceFromStateOrEnv(state);
+    const httpScheme = tlsInfo.enabled ? 'https' : 'http';
+    const wsScheme = tlsInfo.enabled ? 'wss' : 'ws';
     if (state.socketPath) {
       return {
         type: 'socket',
@@ -104,13 +175,15 @@ export async function resolveDaemonEndpoint(): Promise<DaemonEndpoint> {
         wsUrl: `ws+unix://${state.socketPath}:/ws`,
       };
     }
-    const resolvedHost = resolveClientHost(state.host);
+    // When TLS is enabled, prefer the configured TLS hostname instead of the
+    // bound listen host so local certs can terminate correctly.
+    const host = tlsInfo.enabled ? tlsInfo.host : resolveClientHost(state.host);
     return {
       type: 'tcp',
-      host: resolvedHost,
+      host,
       port: state.port,
-      baseUrl: `http://${resolvedHost}:${state.port}`,
-      wsUrl: `ws://${resolvedHost}:${state.port}/ws`,
+      baseUrl: `${httpScheme}://${host}:${state.port}`,
+      wsUrl: `${wsScheme}://${host}:${state.port}/ws`,
     };
   }
 
@@ -199,10 +272,10 @@ export async function daemonFetch(
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    return await fetch(`${endpoint.baseUrl}${urlPath}`, {
+    return await transportFetch(`${endpoint.baseUrl}${urlPath}`, {
       ...options,
       headers,
-      signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
+      ...resolveDaemonTransportOptions(endpoint),
     });
   } catch {
     return null;

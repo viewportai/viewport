@@ -5,6 +5,7 @@ export type RelayRole = 'workspace-daemon' | 'client';
 export interface AdmissionClaims {
   clientId?: string;
   userId?: string;
+  installId?: string;
   role?: RelayRole;
   workspaceId?: string;
   scope?: 'runtime' | 'pairing';

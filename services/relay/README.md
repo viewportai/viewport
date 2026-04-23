@@ -25,12 +25,13 @@ Mode defaults:
 - `single`: single relay, no redirect, no cross-relay bus
 - `server`: multi-relay using server internal APIs for presence + bus
 - `redis`: multi-relay using Redis for presence + bus
+- `RELAY_MODE` defaults to `dev` only for loopback/local endpoints; any non-local deployment defaults to `prod` hardening unless you explicitly override it
 
 Canonical local helper (from monorepo root):
 
 ```bash
-bash ./scripts/start-relay.sh
-RELAY_BACKPLANE_MODE=redis RELAY_REDIS_URL=redis://127.0.0.1:6379 bash ./scripts/start-relay.sh
+npm run relay
+RELAY_BACKPLANE_MODE=redis RELAY_REDIS_URL=redis://127.0.0.1:6379 npm run relay
 ```
 
 ## Deployment
@@ -42,10 +43,16 @@ docker build -t viewport-relay .
 docker run --rm -p 7781:7781 \
   -e HOST=0.0.0.0 \
   -e PORT=7781 \
+  -e RELAY_MODE=prod \
   -e RELAY_BACKPLANE_MODE=single \
-  -e SERVER_URL=https://api.getviewport.example \
+  -e SERVER_URL=https://getviewport.com \
   -e RELAY_ADMIN_TOKEN=change-me \
-  -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.getviewport.example/ws \
+  -e RELAY_INTERNAL_KEY=change-me-change-me-change-me \
+  -e RELAY_SERVER_MTLS=1 \
+  -e RELAY_SERVER_TLS_VERIFY=1 \
+  -e RELAY_SERVER_CLIENT_CERT_PATH=/run/secrets/relay-client.crt \
+  -e RELAY_SERVER_CLIENT_KEY_PATH=/run/secrets/relay-client.key \
+  -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.getviewport.com/ws \
   viewport-relay
 ```
 
@@ -55,13 +62,18 @@ Redis-backed staging example:
 docker run --rm -p 7781:7781 \
   -e HOST=0.0.0.0 \
   -e PORT=7781 \
+  -e RELAY_MODE=prod \
   -e RELAY_BACKPLANE_MODE=redis \
-  -e SERVER_URL=https://api.getviewport.example \
+  -e SERVER_URL=https://getviewport.com \
   -e RELAY_ADMIN_TOKEN=change-me \
   -e RELAY_INTERNAL_KEY=change-me \
+  -e RELAY_SERVER_MTLS=1 \
+  -e RELAY_SERVER_TLS_VERIFY=1 \
+  -e RELAY_SERVER_CLIENT_CERT_PATH=/run/secrets/relay-client.crt \
+  -e RELAY_SERVER_CLIENT_KEY_PATH=/run/secrets/relay-client.key \
   -e RELAY_BUS_HMAC_KEY=change-me \
   -e RELAY_REDIS_URL=redis://redis.internal:6379 \
-  -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.getviewport.example/ws \
+  -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.getviewport.com/ws \
   viewport-relay
 ```
 

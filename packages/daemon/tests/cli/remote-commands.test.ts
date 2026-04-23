@@ -3,13 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-function jsonResponse(payload: unknown, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 describe('remote CLI commands', () => {
   const originalArgv = process.argv.slice();
   const originalViewportHome = process.env['VIEWPORT_HOME'];
@@ -36,34 +29,22 @@ describe('remote CLI commands', () => {
   it('infers relay endpoint scheme from server URL', async () => {
     const { inferRelayEndpointFromServer } = await import('../../src/cli/remote-commands.js');
 
+    expect(inferRelayEndpointFromServer('https://getviewport.com')).toBe(
+      'wss://relay.getviewport.com/ws',
+    );
+    expect(inferRelayEndpointFromServer('https://app.getviewport.com')).toBe(
+      'wss://relay.getviewport.com/ws',
+    );
     expect(inferRelayEndpointFromServer('https://getviewport.test')).toBe(
+      'wss://getviewport.test:7781/ws',
+    );
+    expect(inferRelayEndpointFromServer('https://app.getviewport.test')).toBe(
       'wss://getviewport.test:7781/ws',
     );
     expect(inferRelayEndpointFromServer('http://127.0.0.1:7780')).toBe('ws://127.0.0.1:7781/ws');
   });
 
-  it('login auto-enrolls workspace and writes daemon relay config', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    fetchMock
-      // discoverRelayEndpoint
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ok: true,
-          state: { wsBaseUrl: 'wss://relay.getviewport.test:7781/ws' },
-        }),
-      )
-      // resetWorkspaceEnrollToken (workspace missing)
-      .mockResolvedValueOnce(jsonResponse({ ok: false, error: 'workspace not found' }, 404))
-      // enrollWorkspace
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ok: true,
-          workspaceId: 'workspace_demo',
-          workspaceEnrollToken: 'workspace-token-enrolled',
-        }),
-      );
-    global.fetch = fetchMock;
-
+  it('login writes daemon relay config from an explicit issue token', async () => {
     process.argv = [
       'node',
       'vpd',
@@ -71,11 +52,11 @@ describe('remote CLI commands', () => {
       'login',
       '--json',
       '--server',
-      'https://getviewport.test',
+      'https://getviewport.com',
       '--workspace',
       'workspace_demo',
-      '--user',
-      'user_demo',
+      '--token',
+      'install-issue-token',
       '--enable',
     ];
 
@@ -87,37 +68,36 @@ describe('remote CLI commands', () => {
     const output = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
     const payload = JSON.parse(output) as {
       ok: boolean;
-      tokenSource: string;
-      relay: { endpoint: string; enrollToken: string; enabled: boolean };
+      relay: { endpoint: string; issueToken: string; enabled: boolean };
     };
     expect(payload.ok).toBe(true);
-    expect(payload.tokenSource).toBe('enroll');
-    expect(payload.relay.endpoint).toBe('wss://relay.getviewport.test:7781/ws');
-    expect(payload.relay.enrollToken).toContain('...');
+    expect(payload.relay.endpoint).toBe('wss://relay.getviewport.com/ws');
+    expect(payload.relay.issueToken).toContain('...');
 
     const manager = new ConfigManager();
     await manager.load();
     const daemonConfig = manager.getDaemonConfig();
     expect(daemonConfig?.relay?.enabled).toBe(true);
-    expect(daemonConfig?.relay?.serverUrl).toBe('https://getviewport.test');
+    expect(daemonConfig?.relay?.serverUrl).toBe('https://getviewport.com');
     expect(daemonConfig?.relay?.workspaceId).toBe('workspace_demo');
-    expect(daemonConfig?.relay?.enrollToken).toBe('workspace-token-enrolled');
+    expect(daemonConfig?.relay?.issueToken).toBe('install-issue-token');
   });
 
-  it('login uses reset token flow when workspace already exists', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    fetchMock
-      // discoverRelayEndpoint fails -> fallback infer
-      .mockResolvedValueOnce(jsonResponse({ ok: false }, 500))
-      // resetWorkspaceEnrollToken success
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ok: true,
-          workspaceId: 'workspace_demo',
-          workspaceEnrollToken: 'workspace-token-rotated',
-        }),
-      );
-    global.fetch = fetchMock;
+  it('login clears stale issued-install credentials when switching workspaces', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://relay.getviewport.com/ws',
+        serverUrl: 'https://getviewport.com',
+        workspaceId: 'workspace_old',
+        installId: 'install_old',
+        issueToken: 'install-issue-old',
+        tlsVerify: 'auto',
+      },
+    });
 
     process.argv = [
       'node',
@@ -126,31 +106,25 @@ describe('remote CLI commands', () => {
       'login',
       '--json',
       '--server',
-      'https://getviewport.test',
+      'https://getviewport.com',
       '--workspace',
-      'workspace_demo',
+      'workspace_new',
+      '--token',
+      'install-issue-new',
     ];
 
     const { remote } = await import('../../src/cli/remote-commands.js');
-    const { ConfigManager } = await import('../../src/core/config.js');
-
     await remote();
 
-    const output = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
-    const payload = JSON.parse(output) as {
-      tokenSource: string;
-      relay: { endpoint: string; enabled: boolean };
-    };
-    expect(payload.tokenSource).toBe('reset');
-    expect(payload.relay.endpoint).toBe('wss://getviewport.test:7781/ws');
-
-    const manager = new ConfigManager();
-    await manager.load();
-    expect(manager.getDaemonConfig()?.relay?.enrollToken).toBe('workspace-token-rotated');
-    expect(manager.getDaemonConfig()?.relay?.enabled).toBe(true);
+    const refreshed = new ConfigManager();
+    await refreshed.load();
+    const relay = refreshed.getDaemonConfig()?.relay;
+    expect(relay?.workspaceId).toBe('workspace_new');
+    expect(relay?.installId).toBeUndefined();
+    expect(relay?.issueToken).toBe('install-issue-new');
   });
 
-  it('status redacts enroll token in JSON output', async () => {
+  it('status redacts issue token in JSON output', async () => {
     const { ConfigManager } = await import('../../src/core/config.js');
     const manager = new ConfigManager();
     await manager.load();
@@ -158,9 +132,9 @@ describe('remote CLI commands', () => {
       relay: {
         enabled: true,
         endpoint: 'wss://relay.test/ws',
-        serverUrl: 'https://getviewport.test',
+        serverUrl: 'https://getviewport.com',
         workspaceId: 'workspace_demo',
-        enrollToken: 'super-secret-enroll-token',
+        issueToken: 'super-secret-issue-token',
         tlsVerify: 'auto',
       },
     });
@@ -171,30 +145,51 @@ describe('remote CLI commands', () => {
     await remote();
 
     const output = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
-    const payload = JSON.parse(output) as { relay: { enrollToken: string } };
-    expect(payload.relay.enrollToken).toBe('supe...oken');
+    const payload = JSON.parse(output) as { relay: { issueToken: string } };
+    expect(payload.relay.issueToken).toBe('supe...oken');
   });
 
-  it('throws actionable error when workspace missing and no user/token provided', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ ok: false }, 500))
-      .mockResolvedValueOnce(jsonResponse({ ok: false, error: 'workspace not found' }, 404));
-    global.fetch = fetchMock;
-
+  it('throws actionable error when issue token is missing', async () => {
     process.argv = [
       'node',
       'vpd',
       'remote',
       'login',
       '--server',
-      'https://getviewport.test',
+      'https://getviewport.com',
       '--workspace',
       'workspace_missing',
     ];
 
     const { remote } = await import('../../src/cli/remote-commands.js');
 
-    await expect(remote()).rejects.toThrow('Workspace not found and no --user provided');
+    await expect(remote()).rejects.toThrow('Missing relay issue token');
+  });
+
+  it('logout clears persisted relay credentials', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://relay.getviewport.com/ws',
+        serverUrl: 'https://getviewport.com',
+        workspaceId: 'workspace_demo',
+        issueToken: 'install-issue-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    process.argv = ['node', 'vpd', 'remote', 'logout', '--json'];
+
+    const { remote } = await import('../../src/cli/remote-commands.js');
+    await remote();
+
+    const refreshed = new ConfigManager();
+    await refreshed.load();
+    const relay = refreshed.getDaemonConfig()?.relay;
+    expect(relay?.enabled).toBe(false);
+    expect(relay?.issueToken).toBeUndefined();
   });
 });

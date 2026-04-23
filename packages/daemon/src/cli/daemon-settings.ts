@@ -1,5 +1,6 @@
 import { getFlag, hasFlag } from './args.js';
 import { loadConfig } from '../core/config.js';
+import { resolveDisplayVersion } from '../core/package-meta.js';
 import { buildSecurityProfile } from '../server/security.js';
 import type { DeploymentProfile } from '../server/security.js';
 import { parseListenTarget, type DaemonListenTarget } from './listen-target.js';
@@ -217,10 +218,6 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     getFlag('relay-workspace') ??
     envValue('VPD_RELAY_WORKSPACE', 'VIEWPORT_RELAY_WORKSPACE') ??
     daemonConfig?.relay?.workspaceId;
-  const relayEnrollToken =
-    getFlag('relay-enroll-token') ??
-    envValue('VPD_RELAY_ENROLL_TOKEN', 'VIEWPORT_RELAY_ENROLL_TOKEN') ??
-    daemonConfig?.relay?.enrollToken;
   const relayIssueToken =
     getFlag('relay-issue-token') ??
     envValue('VPD_RELAY_ISSUE_TOKEN', 'VIEWPORT_RELAY_ISSUE_TOKEN') ??
@@ -271,18 +268,35 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     host: listenTarget.type === 'tcp' ? listenTarget.host : '127.0.0.1',
     port: listenTarget.type === 'tcp' ? listenTarget.port : 0,
     socketPath: listenTarget.type === 'socket' ? listenTarget.path : undefined,
-    version: '0.3.0',
+    version: resolveDisplayVersion(),
     profile: securityProfile.profile,
     allowedHostsRaw,
     allowedOriginsRaw,
     authEnabled: securityProfile.requireAuth,
     detached: resolveDetachedDefault(undefined),
     logPath,
+    serverUrl:
+      getFlag('server-url') ??
+      envValue('VPD_SERVER_URL', 'VIEWPORT_SERVER_URL') ??
+      daemonConfig?.server?.url ??
+      relayServerUrl,
+    serverTlsVerify:
+      parseRelayTlsVerify(getFlag('server-tls-verify')) ??
+      parseRelayTlsVerify(envValue('VPD_SERVER_TLS_VERIFY', 'VIEWPORT_SERVER_TLS_VERIFY')) ??
+      daemonConfig?.server?.tlsVerify ??
+      'auto',
+    serverCaCertPath:
+      getFlag('server-ca-cert') ??
+      envValue('VPD_SERVER_CA_CERT', 'VIEWPORT_SERVER_CA_CERT') ??
+      daemonConfig?.server?.caCertPath,
+    serverTlsPins:
+      parseCsvList(getFlag('server-tls-pins')) ??
+      parseCsvList(envValue('VPD_SERVER_TLS_PINS', 'VIEWPORT_SERVER_TLS_PINS')) ??
+      daemonConfig?.server?.tlsPins,
     relayEnabled,
     relayEndpoint,
     relayServerUrl,
     relayWorkspaceId,
-    relayEnrollToken,
     relayIssueToken,
     relayTlsVerify,
     relayCaCertPath,

@@ -163,6 +163,7 @@ describe('relay admission', () => {
             claims: {
               role: 'workspace-daemon',
               workspaceId: 'workspace_demo',
+              installId: 'install_demo',
               e2eeProfile: 'noise-ik',
               daemonIssueGeneration: 2,
             },
@@ -197,6 +198,7 @@ describe('relay admission', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result.claims?.installId).toBe('install_demo');
     expect(result.claims?.daemonIssueGeneration).toBe(2);
   });
 

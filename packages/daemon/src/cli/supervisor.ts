@@ -1,8 +1,8 @@
-import { openSync, closeSync } from 'node:fs';
+import { openSync, closeSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { configDir } from '../core/config.js';
+import { configDir, resolveProjectConfig } from '../core/config.js';
 import {
   readProcessInfo,
   writeDaemonRuntimeState,
@@ -10,6 +10,7 @@ import {
   signalProcessGroupSafely,
   signalProcessSafely,
 } from './daemon-lifecycle.js';
+import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 import {
   SUPERVISOR_CONFIG_ENV,
   WORKER_CONFIG_ENV,
@@ -17,9 +18,9 @@ import {
   WORKER_EXIT_SHUTDOWN,
   type RuntimeLaunchConfig,
 } from './supervisor-protocol.js';
+import { resolveDaemonSettingsFromSources } from './daemon-settings.js';
 
 const SUPERVISOR_STARTUP_GRACE_MS = 1_500;
-
 function resolveCliEntry(): string {
   const entry = process.argv[1];
   if (!entry) {
@@ -73,8 +74,6 @@ function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfig {
     relayServerUrl: typeof parsed.relayServerUrl === 'string' ? parsed.relayServerUrl : undefined,
     relayWorkspaceId:
       typeof parsed.relayWorkspaceId === 'string' ? parsed.relayWorkspaceId : undefined,
-    relayEnrollToken:
-      typeof parsed.relayEnrollToken === 'string' ? parsed.relayEnrollToken : undefined,
     relayIssueToken:
       typeof parsed.relayIssueToken === 'string' ? parsed.relayIssueToken : undefined,
     relayTlsVerify:
@@ -111,18 +110,52 @@ function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfig {
   };
 }
 
+function resolveConfiguredTlsState(env: NodeJS.ProcessEnv = process.env): {
+  enabled: boolean;
+  host: string;
+  certDir?: string;
+  certPath?: string;
+  keyPath?: string;
+} {
+  const tlsEnv = (env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
+  const tlsHost = env['VIEWPORT_TLS_HOST'] ?? 'localhost';
+
+  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
+    return { enabled: false, host: tlsHost };
+  }
+
+  const certDir = env['VIEWPORT_TLS_CERT_DIR'] ?? path.join(configDir(), 'certs');
+  const certPath = env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+  const keyPath = env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+
+  if (tlsEnv === 'auto') {
+    const enabled = existsSync(certPath) && existsSync(keyPath);
+    return {
+      enabled,
+      host: tlsHost,
+      certDir: enabled ? certDir : undefined,
+      certPath: enabled ? certPath : undefined,
+      keyPath: enabled ? keyPath : undefined,
+    };
+  }
+
+  return { enabled: true, host: tlsHost, certDir, certPath, keyPath };
+}
+
 function buildWorkerEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    [WORKER_CONFIG_ENV]: encodeRuntimeConfig(config),
-  };
+  const env = { ...process.env };
+  delete env[SUPERVISOR_CONFIG_ENV];
+  delete env[WORKER_CONFIG_ENV];
+  env[WORKER_CONFIG_ENV] = encodeRuntimeConfig(config);
+  return env;
 }
 
 function buildSupervisorEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    [SUPERVISOR_CONFIG_ENV]: encodeRuntimeConfig(config),
-  };
+  const env = { ...process.env };
+  delete env[SUPERVISOR_CONFIG_ENV];
+  delete env[WORKER_CONFIG_ENV];
+  env[SUPERVISOR_CONFIG_ENV] = encodeRuntimeConfig(config);
+  return env;
 }
 
 function toWorkerArgs(): string[] {
@@ -205,7 +238,28 @@ export async function runSupervisorForeground(config: RuntimeLaunchConfig): Prom
 
 async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Promise<void> {
   const ownerInfo = readProcessInfo(process.pid);
+  const tls = resolveConfiguredTlsState();
+  const identity = resolveDaemonRuntimeIdentity({
+    daemonConfig: {
+      profile: config.profile,
+      server: {
+        url: config.serverUrl,
+        tlsVerify: config.serverTlsVerify,
+        caCertPath: config.serverCaCertPath,
+        tlsPins: config.serverTlsPins,
+      },
+      relay: {
+        enabled: config.relayEnabled,
+        endpoint: config.relayEndpoint,
+        serverUrl: config.relayServerUrl,
+        workspaceId: config.relayWorkspaceId,
+      },
+    },
+    daemonVersion: config.version,
+  });
+  const projectConfig = resolveProjectConfig(process.env);
   await writeDaemonRuntimeState({
+    pid: workerPid ?? process.pid,
     ownerPid: process.pid,
     workerPid,
     port: config.port,
@@ -229,6 +283,17 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     relayServerUrl: config.relayServerUrl,
     relayWorkspaceId: config.relayWorkspaceId,
     relayTlsVerify: config.relayTlsVerify,
+    tlsEnabled: tls.enabled,
+    tlsHost: tls.host,
+    tlsCertDir: tls.certDir,
+    tlsCertPath: tls.certPath,
+    tlsKeyPath: tls.keyPath,
+    runtimeKind: identity.runtimeKind,
+    daemonHome: identity.daemonHome,
+    daemonHomeScope: identity.daemonHomeScope,
+    serverUrl: identity.serverUrl,
+    projectConfigDir: projectConfig.dir ?? undefined,
+    projectConfigSource: projectConfig.source ?? undefined,
   });
 }
 
@@ -240,10 +305,36 @@ function launchWorker(config: RuntimeLaunchConfig): ChildProcess {
 }
 
 export async function runSupervisorFromEnv(): Promise<number> {
-  const config = decodeRuntimeConfig(process.env[SUPERVISOR_CONFIG_ENV]);
+  let config = decodeRuntimeConfig(process.env[SUPERVISOR_CONFIG_ENV]);
   let stopping = false;
   let restarting = false;
   let worker: ChildProcess | null = null;
+
+  const reloadConfig = async (): Promise<void> => {
+    try {
+      const resolved = await resolveDaemonSettingsFromSources();
+      config = {
+        ...config,
+        ...resolved.launch,
+        listen: config.listen,
+        host: config.host,
+        port: config.port,
+        socketPath: config.socketPath,
+        profile: config.profile,
+        authEnabled: config.authEnabled,
+        allowedHostsRaw: config.allowedHostsRaw,
+        allowedOriginsRaw: config.allowedOriginsRaw,
+        detached: config.detached,
+        logPath: config.logPath ?? resolved.launch.logPath,
+      };
+    } catch (error) {
+      console.warn(
+        `[supervisor] failed to reload daemon config after restart request: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
 
   const requestWorkerStop = (signal: NodeJS.Signals): void => {
     stopping = true;
@@ -281,10 +372,15 @@ export async function runSupervisorFromEnv(): Promise<number> {
       }
 
       const delay = restarting ? 250 : 1_000;
-      restarting = false;
       setTimeout(() => {
         if (stopping) return;
-        spawnWorker();
+        void (async () => {
+          if (restarting) {
+            await reloadConfig();
+          }
+          restarting = false;
+          spawnWorker();
+        })();
       }, delay);
     });
   };

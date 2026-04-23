@@ -1,11 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  ensureServiceWorkingDirectory,
   renderLaunchdPlist,
   renderSystemdUnit,
+  resolveServiceWorkingDirectory,
   resolveServiceSubcommand,
 } from '../../src/cli/service-commands.js';
 
 describe('service commands', () => {
+  let tempHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-service-home-'));
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = tempHome;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) {
+      delete process.env['HOME'];
+    } else {
+      process.env['HOME'] = originalHome;
+    }
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
   const spec = {
     nodePath: '/usr/local/bin/node',
     daemonEntryPath: '/opt/viewport/daemon/dist/index.js',
@@ -43,5 +66,15 @@ describe('service commands', () => {
   it('parses nested daemon service subcommands', () => {
     expect(resolveServiceSubcommand(['daemon', 'service', 'install'])).toBe('install');
     expect(resolveServiceSubcommand(['daemon', 'service', 'status'])).toBe('status');
+  });
+
+  it('uses the daemon home as the service working directory', () => {
+    expect(resolveServiceWorkingDirectory()).toContain('.viewport');
+  });
+
+  it('creates the service working directory before install', async () => {
+    const cwd = await ensureServiceWorkingDirectory();
+    const stat = await fs.stat(cwd);
+    expect(stat.isDirectory()).toBe(true);
   });
 });

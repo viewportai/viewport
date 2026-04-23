@@ -1136,6 +1136,54 @@ describe('relay routing', () => {
     expect((daemonStale as unknown as FakeWs).readyState).toBe(3);
   });
 
+  it('does not leak ip connection counts when a duplicate daemon is rejected', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client'>();
+    const adjustments: number[] = [];
+
+    const daemonA = new FakeWs() as unknown as WebSocket;
+    const daemonB = new FakeWs() as unknown as WebSocket;
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: (_ip: string, delta: number) => {
+        adjustments.push(delta);
+      },
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
+      e2eeProfile: 'noise-ik',
+      workspaceId: 'workspace_demo',
+    });
+    registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', '127.0.0.2', {
+      e2eeProfile: 'noise-ik',
+      workspaceId: 'workspace_demo',
+    });
+
+    expect(adjustments).toEqual([1]);
+  });
+
   it('evicts oldest session owners when session owner map hits configured max', () => {
     const config = loadConfig({
       RELAY_TLS: '0',

@@ -20,7 +20,7 @@ describe('daemon settings resolution', () => {
     delete process.env['VPD_RELAY_ENDPOINT'];
     delete process.env['VPD_RELAY_SERVER'];
     delete process.env['VPD_RELAY_WORKSPACE'];
-    delete process.env['VPD_RELAY_ENROLL_TOKEN'];
+    delete process.env['VPD_RELAY_ISSUE_TOKEN'];
     delete process.env['VPD_RELAY_TLS_VERIFY'];
     delete process.env['VPD_RELAY_CA_CERT'];
     delete process.env['VPD_RELAY_TOKEN_JWKS_URL'];
@@ -38,7 +38,7 @@ describe('daemon settings resolution', () => {
     delete process.env['VPD_RELAY_ENDPOINT'];
     delete process.env['VPD_RELAY_SERVER'];
     delete process.env['VPD_RELAY_WORKSPACE'];
-    delete process.env['VPD_RELAY_ENROLL_TOKEN'];
+    delete process.env['VPD_RELAY_ISSUE_TOKEN'];
     delete process.env['VPD_RELAY_TLS_VERIFY'];
     delete process.env['VPD_RELAY_CA_CERT'];
     delete process.env['VPD_RELAY_TOKEN_JWKS_URL'];
@@ -147,7 +147,7 @@ describe('daemon settings resolution', () => {
             endpoint: 'wss://config-relay.test:7781/ws',
             serverUrl: 'https://config-server.test',
             workspaceId: 'config-workspace',
-            enrollToken: 'config-token',
+            issueToken: 'config-token',
             tlsVerify: '1',
             caCertPath: '/config/ca.pem',
           },
@@ -160,7 +160,7 @@ describe('daemon settings resolution', () => {
     process.env['VPD_RELAY_ENDPOINT'] = 'wss://env-relay.test:7781/ws';
     process.env['VPD_RELAY_SERVER'] = 'https://env-server.test';
     process.env['VPD_RELAY_WORKSPACE'] = 'env-workspace';
-    process.env['VPD_RELAY_ENROLL_TOKEN'] = 'env-token';
+    process.env['VPD_RELAY_ISSUE_TOKEN'] = 'env-token';
     process.env['VPD_RELAY_TLS_VERIFY'] = '0';
     process.env['VPD_RELAY_CA_CERT'] = '/env/ca.pem';
 
@@ -175,7 +175,7 @@ describe('daemon settings resolution', () => {
       'https://cli-server.test',
       '--relay-workspace',
       'cli-workspace',
-      '--relay-enroll-token',
+      '--relay-issue-token',
       'cli-token',
       '--relay-tls-verify',
       'auto',
@@ -190,7 +190,7 @@ describe('daemon settings resolution', () => {
     expect(resolved.launch.relayEndpoint).toBe('wss://cli-relay.test:7781/ws');
     expect(resolved.launch.relayServerUrl).toBe('https://cli-server.test');
     expect(resolved.launch.relayWorkspaceId).toBe('cli-workspace');
-    expect(resolved.launch.relayEnrollToken).toBe('cli-token');
+    expect(resolved.launch.relayIssueToken).toBe('cli-token');
     expect(resolved.launch.relayTlsVerify).toBe('auto');
     expect(resolved.launch.relayCaCertPath).toBe('/cli/ca.pem');
     expect(resolved.launch.relayTokenJwksUrl).toBe(

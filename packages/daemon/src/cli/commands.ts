@@ -10,7 +10,7 @@
 
 export { install } from './install-command.js';
 export { addDirectory, removeDirectory, list } from './directory-commands.js';
-export { status, stop, restart, pair, update, showHelp } from './lifecycle-commands.js';
+export { status, doctor, stop, restart, pair, update, showHelp } from './lifecycle-commands.js';
 export {
   runSession as run,
   sendPromptCommand as send,

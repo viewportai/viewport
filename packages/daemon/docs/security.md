@@ -12,7 +12,7 @@
 - `relay`
   - Requires explicit host allowlist.
   - Auth required.
-  - Relay transport and key exchange are next-phase work.
+  - Intended for managed or self-hosted relay-backed runtime access.
 
 ## Current controls
 
@@ -30,9 +30,6 @@
 
 - `vpd pair` creates short-lived offers (default 10 minutes, max 60 minutes).
 - Offer URL contains `offerId`, one-time proof, trust-anchor fingerprint, and connection metadata, not the auth token.
-- Offers are persisted and can be listed/revoked:
-  - `vpd pair list`
-  - `vpd pair revoke <offer-id>`
 - Daemon trust anchor can be inspected:
   - `vpd pair anchor`
 - Offer redemption is one-time:
@@ -40,10 +37,10 @@
   - Local loopback profile can bypass bearer auth for redeem; LAN/relay profiles cannot.
 - Pairing events are written to `~/.viewport/pairing-audit.jsonl`.
 
-## Relay-phase extensions
+## Remaining hardening work
 
-The next phase should add:
+The current foundation still needs dedicated security review in these areas:
 
-- Explicit device identity binding.
-- Revocation propagation across relay sessions.
-- Short-lived capability tokens scoped by command/permission class.
+- explicit device identity lifecycle
+- revocation propagation across relay sessions
+- short-lived capability-token scoping by command or permission class

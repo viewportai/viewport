@@ -6,6 +6,7 @@ import {
   decodeAutoRegisterEntry,
   localDaemonBridgeTlsOptions,
   localDaemonWsUrl,
+  missingRelayRuntimeConfig,
 } from '../src/startup.js';
 import type { RuntimeLaunchConfig } from '../src/cli/supervisor-protocol.js';
 
@@ -56,7 +57,7 @@ describe('startup auto-register decode', () => {
     await fs.writeFile(keyPath, 'key');
 
     process.env['VIEWPORT_TLS'] = '1';
-    process.env['VIEWPORT_TLS_HOST'] = 'getviewport.test';
+    process.env['VIEWPORT_TLS_HOST'] = 'localhost';
     process.env['VIEWPORT_TLS_CERT'] = certPath;
     process.env['VIEWPORT_TLS_KEY'] = keyPath;
 
@@ -64,5 +65,32 @@ describe('startup auto-register decode', () => {
     expect(localDaemonBridgeTlsOptions()).toEqual({
       daemonTlsVerify: '0',
     });
+  });
+
+  it('accepts issue-token-only relay runtime config', () => {
+    expect(
+      missingRelayRuntimeConfig(
+        baseConfig({
+          relayEnabled: true,
+          relayEndpoint: 'ws://127.0.0.1:20781/ws',
+          relayServerUrl: 'http://127.0.0.1:24780',
+          relayWorkspaceId: 'workspace_demo',
+          relayIssueToken: 'install-issue-token',
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('requires an issue token for relay runtime config', () => {
+    expect(
+      missingRelayRuntimeConfig(
+        baseConfig({
+          relayEnabled: true,
+          relayEndpoint: 'ws://127.0.0.1:20781/ws',
+          relayServerUrl: 'http://127.0.0.1:24780',
+          relayWorkspaceId: 'workspace_demo',
+        }),
+      ),
+    ).toContain('relay issue token');
   });
 });

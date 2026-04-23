@@ -49,13 +49,13 @@ npm run check
 Local environment verification:
 
 ```bash
-# isolated daemon lifecycle verification (temp VIEWPORT_HOME + dedicated listen target)
+# daemon lifecycle verification with temporary config + dedicated listen target
 npm run verify:env
 
 # includes launchd/systemd install + active status checks
 npm run verify:env:service
 
-# validates local tarball install + binary lifecycle in isolated npm prefix
+# validates local tarball install + binary lifecycle in a temporary npm prefix
 npm run verify:install
 ```
 
@@ -84,7 +84,7 @@ npm run verify:linux:ci
 
 This validates:
 1. Tarball install verification (`verify:install`)
-2. Dev install + isolated daemon lifecycle verification (`verify:env`)
+2. Dev install + temporary-config daemon lifecycle verification (`verify:env`)
 3. systemd user-service verification when available on runner (`verify:env:service`)
 
 ## What fullstack e2e proves

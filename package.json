@@ -7,19 +7,17 @@
     "integration"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "check": "npm run check --workspaces --if-present",
-    "format:check": "npm run format:check --workspaces --if-present",
-    "version:packages": "npx @changesets/cli version",
-    "release:packages": "npx @changesets/cli publish",
+    "daemon": "npm run build -w @viewportai/daemon && npm link -w @viewportai/daemon",
+    "daemon:start": "vpd start --foreground",
+    "daemon:status": "vpd status",
+    "daemon:doctor": "vpd doctor",
+    "daemon:stop": "vpd stop",
+    "daemon:restart": "vpd restart",
+    "relay": "bash ./scripts/dev-relay.sh",
+    "daemon:test": "npm run test:unit -w @viewportai/daemon",
+    "daemon:install:verify": "npm run verify:install -w @viewportai/daemon",
+    "relay:test": "npm run test -w @viewportai/relay",
     "daemon:check": "npm run check -w @viewportai/daemon",
-    "relay:check": "npm run check -w @viewportai/relay",
-    "integration:smoke": "npm run test:smoke -w @viewportai/integration",
-    "integration:e2e": "npm run test:e2e -w @viewportai/integration",
-    "relay:start": "bash ./scripts/start-relay.sh",
-    "relay:start:container": "bash ./scripts/start-relay-container.sh"
+    "relay:check": "npm run check -w @viewportai/relay"
   }
 }

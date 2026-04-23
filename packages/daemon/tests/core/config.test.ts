@@ -184,15 +184,23 @@ describe('BUILT_IN_DEFAULTS', () => {
 describe('Config I/O', () => {
   let tmpDir: string;
   let originalHome: string;
+  let originalProjectConfigDir: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-config-test-'));
     originalHome = process.env['HOME'] ?? '';
+    originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
     process.env['HOME'] = tmpDir;
+    delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
   });
 
   afterEach(async () => {
     process.env['HOME'] = originalHome;
+    if (originalProjectConfigDir === undefined) {
+      delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    } else {
+      process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+    }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -215,10 +223,44 @@ describe('Config I/O', () => {
   });
 
   it('loadConfig reads back what saveConfig wrote', async () => {
-    await saveConfig({ machineId: 'roundtrip', relayUrl: 'wss://relay.test.com' });
+    await saveConfig({ machineId: 'roundtrip' });
     const config = await loadConfig();
     expect(config.machineId).toBe('roundtrip');
-    expect(config.relayUrl).toBe('wss://relay.test.com');
+  });
+
+  it('loadConfig merges a project override on top of the global config', async () => {
+    await saveConfig({
+      daemon: {
+        server: { url: 'https://getviewport.com' },
+        relay: {
+          enabled: true,
+          serverUrl: 'https://app.getviewport.com',
+          endpoint: 'wss://relay.getviewport.com/ws',
+        },
+      },
+    });
+
+    const projectConfigDir = path.join(tmpDir, 'repo', '.viewport');
+    await fs.mkdir(projectConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(projectConfigDir, 'config.json'),
+      JSON.stringify({
+        daemon: {
+          server: { url: 'https://getviewport.test' },
+          relay: {
+            serverUrl: 'https://getviewport.test',
+            endpoint: 'wss://getviewport.test:7781/ws',
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = projectConfigDir;
+    const config = await loadConfig();
+    expect(config.daemon?.server?.url).toBe('https://getviewport.test');
+    expect(config.daemon?.relay?.serverUrl).toBe('https://getviewport.test');
+    expect(config.daemon?.relay?.endpoint).toBe('wss://getviewport.test:7781/ws');
   });
 
   it('loadConfig throws on malformed JSON with actionable error', async () => {
@@ -244,20 +286,61 @@ describe('Config I/O', () => {
 
     await expect(loadConfig()).rejects.toThrow('Invalid viewport config schema');
   });
+
+  it('migrates deprecated daemon relay keys and persists the sanitized config', async () => {
+    const dir = path.join(tmpDir, '.viewport');
+    await fs.mkdir(dir, { recursive: true });
+    const configPath = path.join(dir, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        daemon: {
+          relay: {
+            enabled: true,
+            endpoint: 'ws://127.0.0.1:7781/ws',
+            serverUrl: 'http://127.0.0.1:8787',
+            workspaceId: 'workspace_demo',
+            installId: 'install_demo',
+            issueToken: 'install-issue-token',
+            enrollToken: 'workspace-enroll-token',
+            tlsVerify: '0',
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const config = await loadConfig();
+    expect(config.daemon?.relay?.issueToken).toBe('install-issue-token');
+    expect((config.daemon?.relay as Record<string, unknown>)['enrollToken']).toBeUndefined();
+
+    const rewritten = JSON.parse(await fs.readFile(configPath, 'utf-8')) as {
+      daemon?: { relay?: Record<string, unknown> };
+    };
+    expect(rewritten.daemon?.relay?.['enrollToken']).toBeUndefined();
+  });
 });
 
 describe('ConfigManager', () => {
   let tmpDir: string;
   let originalHome: string;
+  let originalProjectConfigDir: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-cfgmgr-test-'));
     originalHome = process.env['HOME'] ?? '';
+    originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
     process.env['HOME'] = tmpDir;
+    delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
   });
 
   afterEach(async () => {
     process.env['HOME'] = originalHome;
+    if (originalProjectConfigDir === undefined) {
+      delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    } else {
+      process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+    }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -349,19 +432,6 @@ describe('ConfigManager', () => {
     expect(mgr.getMachineId()).toBe('custom-machine');
   });
 
-  it('returns relay URL when configured', async () => {
-    await saveConfig({ relayUrl: 'wss://relay.test.com' });
-    const mgr = new ConfigManager();
-    await mgr.load();
-    expect(mgr.getRelayUrl()).toBe('wss://relay.test.com');
-  });
-
-  it('returns undefined relay URL when not configured', async () => {
-    const mgr = new ConfigManager();
-    await mgr.load();
-    expect(mgr.getRelayUrl()).toBeUndefined();
-  });
-
   it('sets global defaults', async () => {
     const mgr = new ConfigManager();
     await mgr.load();
@@ -407,5 +477,39 @@ describe('ConfigManager', () => {
         },
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('clears persisted optional relay credentials when set to undefined', async () => {
+    const mgr = new ConfigManager();
+    await mgr.load();
+
+    await mgr.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://relay.getviewport.com/ws',
+        serverUrl: 'https://app.getviewport.com',
+        workspaceId: 'workspace_demo',
+        installId: 'install_demo',
+        issueToken: 'install-issue-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    await mgr.setDaemonConfig({
+      relay: {
+        workspaceId: 'workspace_new',
+        installId: 'install_new',
+        issueToken: 'install-issue-token-new',
+      },
+    });
+
+    const relay = mgr.getDaemonConfig()?.relay;
+    expect(relay?.workspaceId).toBe('workspace_new');
+    expect(relay?.installId).toBe('install_new');
+    expect(relay?.issueToken).toBe('install-issue-token-new');
+
+    const reloaded = new ConfigManager();
+    await reloaded.load();
+    expect(reloaded.getDaemonConfig()?.relay?.issueToken).toBe('install-issue-token-new');
   });
 });

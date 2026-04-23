@@ -5,10 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELAY_DIR="$ROOT/services/relay"
 IMAGE_TAG="${RELAY_IMAGE_TAG:-viewport-relay:local}"
 CONTAINER_NAME="${RELAY_CONTAINER_NAME:-viewport-relay-local}"
-HERD_CERT_DIR="${HERD_CERT_DIR:-$HOME/Library/Application Support/Herd/config/valet/Certificates}"
+RELAY_TLS_CERT_DIR="${RELAY_TLS_CERT_DIR:-$HOME/.viewport/relay-certs}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-viewport-dev}"
 REDIS_IMAGE_TAG="${REDIS_IMAGE_TAG:-docker.io/library/redis:7-alpine}"
 REDIS_CONTAINER_NAME="${REDIS_CONTAINER_NAME:-viewport-redis-local}"
+declare -a CONTAINER_RUNNER=()
 
 resolve_node() {
   if [[ -n "${NODE_BIN:-}" && -x "${NODE_BIN}" ]]; then
@@ -29,13 +30,49 @@ resolve_node() {
 
 NODE_BIN="$(resolve_node)"
 
-SERVER_URL="${SERVER_URL:-http://host.lima.internal:24780}"
+resolve_container_runner() {
+  if [[ -n "${CONTAINER_BIN:-}" ]]; then
+    CONTAINER_RUNNER=("$CONTAINER_BIN")
+    return
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    CONTAINER_RUNNER=("docker")
+    return
+  fi
+  if command -v podman >/dev/null 2>&1; then
+    CONTAINER_RUNNER=("podman")
+    return
+  fi
+  if command -v nerdctl >/dev/null 2>&1; then
+    CONTAINER_RUNNER=("nerdctl")
+    return
+  fi
+  if command -v colima >/dev/null 2>&1; then
+    if ! colima status >/dev/null 2>&1; then
+      colima start --runtime containerd >/dev/null
+    fi
+    if colima nerdctl version >/dev/null 2>&1; then
+      CONTAINER_RUNNER=("colima" "nerdctl" "--")
+      return
+    fi
+  fi
+  echo "[start-relay-container] unable to resolve a container runner (docker, podman, nerdctl, or colima nerdctl)" >&2
+  exit 1
+}
+
+container_run() {
+  "${CONTAINER_RUNNER[@]}" "$@"
+}
+
+resolve_container_runner
+
+SERVER_URL="${SERVER_URL:-}"
 RELAY_PORT="${RELAY_PORT:-7781}"
 RELAY_BACKPLANE_MODE="${RELAY_BACKPLANE_MODE:-single}"
 RELAY_TLS="${RELAY_TLS:-0}"
 RELAY_TLS_HOST="${RELAY_TLS_HOST:-127.0.0.1}"
 RELAY_ENABLE_ADMIN_HTTP="${RELAY_ENABLE_ADMIN_HTTP:-1}"
-RELAY_ADMIN_TOKEN="${RELAY_ADMIN_TOKEN:-$($NODE_BIN -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
+RELAY_ADMIN_TOKEN="${RELAY_ADMIN_TOKEN:-$("$NODE_BIN" -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
 RELAY_ID="${RELAY_ID:-relay-local-container}"
 RELAY_REDIS_URL="${RELAY_REDIS_URL:-}"
 RELAY_REDIS_KEY_PREFIX="${RELAY_REDIS_KEY_PREFIX:-viewport:relay}"
@@ -77,39 +114,37 @@ fi
 RELAY_INTERNAL_KEY="${RELAY_INTERNAL_KEY:-}"
 RELAY_BUS_HMAC_KEY="${RELAY_BUS_HMAC_KEY:-}"
 if [[ "$RELAY_BACKPLANE_MODE" == "server" || "$RELAY_BACKPLANE_MODE" == "redis" ]]; then
-  RELAY_INTERNAL_KEY="${RELAY_INTERNAL_KEY:-$($NODE_BIN -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
+  RELAY_INTERNAL_KEY="${RELAY_INTERNAL_KEY:-$("$NODE_BIN" -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
 fi
 if [[ "$RELAY_BUS_ENABLED" == "1" ]]; then
-  RELAY_BUS_HMAC_KEY="${RELAY_BUS_HMAC_KEY:-$($NODE_BIN -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
+  RELAY_BUS_HMAC_KEY="${RELAY_BUS_HMAC_KEY:-$("$NODE_BIN" -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")}"
 fi
 
-RELAY_TLS_CERT_PATH="${RELAY_TLS_CERT_PATH:-$HERD_CERT_DIR/${RELAY_TLS_HOST}.crt}"
-RELAY_TLS_KEY_PATH="${RELAY_TLS_KEY_PATH:-$HERD_CERT_DIR/${RELAY_TLS_HOST}.key}"
+RELAY_TLS_CERT_PATH="${RELAY_TLS_CERT_PATH:-$RELAY_TLS_CERT_DIR/${RELAY_TLS_HOST}.crt}"
+RELAY_TLS_KEY_PATH="${RELAY_TLS_KEY_PATH:-$RELAY_TLS_CERT_DIR/${RELAY_TLS_HOST}.key}"
 
-if ! command -v colima >/dev/null 2>&1; then
-  echo "[start-relay-container] colima is required" >&2
+if [[ -z "$SERVER_URL" ]]; then
+  echo "[start-relay-container] SERVER_URL is required" >&2
   exit 1
 fi
-if ! colima status >/dev/null 2>&1; then
-  colima start --runtime containerd >/dev/null
-fi
-if [[ "$REBUILD" == "1" ]] || ! colima nerdctl -- image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-  colima nerdctl -- build -t "$IMAGE_TAG" "$RELAY_DIR" >/dev/null
+
+if [[ "$REBUILD" == "1" ]] || ! container_run image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+  container_run build -t "$IMAGE_TAG" "$RELAY_DIR" >/dev/null
 fi
 
 if [[ "$RELAY_BACKPLANE_MODE" == "redis" ]]; then
-  if ! colima nerdctl -- network inspect "$CONTAINER_NETWORK" >/dev/null 2>&1; then
-    colima nerdctl -- network create "$CONTAINER_NETWORK" >/dev/null
+  if ! container_run network inspect "$CONTAINER_NETWORK" >/dev/null 2>&1; then
+    container_run network create "$CONTAINER_NETWORK" >/dev/null
   fi
   if [[ -z "$RELAY_REDIS_URL" ]]; then
     AUTO_REDIS=1
     RELAY_REDIS_URL="redis://${REDIS_CONTAINER_NAME}:6379"
-    colima nerdctl -- rm -f "$REDIS_CONTAINER_NAME" >/dev/null 2>&1 || true
-    colima nerdctl -- run -d --name "$REDIS_CONTAINER_NAME" --network "$CONTAINER_NETWORK" "$REDIS_IMAGE_TAG" redis-server --save '' --appendonly no >/dev/null
+    container_run rm -f "$REDIS_CONTAINER_NAME" >/dev/null 2>&1 || true
+    container_run run -d --name "$REDIS_CONTAINER_NAME" --network "$CONTAINER_NETWORK" "$REDIS_IMAGE_TAG" redis-server --save '' --appendonly no >/dev/null
   fi
 fi
 
-colima nerdctl -- rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+container_run rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 RELAY_PUBLIC_WS_BASE_URL="${RELAY_PUBLIC_WS_BASE_URL:-$([[ "$RELAY_TLS" == "1" ]] && echo "wss" || echo "ws")://$RELAY_TLS_HOST:$RELAY_PORT/ws}"
 RUN_ARGS=(
   --add-host host.docker.internal:host-gateway
@@ -148,16 +183,16 @@ fi
 
 cleanup() {
   if [[ "$AUTO_REDIS" == "1" ]]; then
-    colima nerdctl -- rm -f "$REDIS_CONTAINER_NAME" >/dev/null 2>&1 || true
+    container_run rm -f "$REDIS_CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT INT TERM
 
 if [[ "$VERBOSE" == "1" ]]; then
-  colima nerdctl -- run --rm --name "$CONTAINER_NAME" "${RUN_ARGS[@]}" "$IMAGE_TAG" 2>&1 | if [[ -n "$LOG_FILE" ]]; then tee -a "$LOG_FILE"; else cat; fi
+  container_run run --rm --name "$CONTAINER_NAME" "${RUN_ARGS[@]}" "$IMAGE_TAG" 2>&1 | if [[ -n "$LOG_FILE" ]]; then tee -a "$LOG_FILE"; else cat; fi
 else
   if [[ -n "$LOG_FILE" ]]; then
-    exec colima nerdctl -- run --rm --name "$CONTAINER_NAME" "${RUN_ARGS[@]}" "$IMAGE_TAG" >>"$LOG_FILE" 2>&1
+    exec "${CONTAINER_RUNNER[@]}" run --rm --name "$CONTAINER_NAME" "${RUN_ARGS[@]}" "$IMAGE_TAG" >>"$LOG_FILE" 2>&1
   fi
-  exec colima nerdctl -- run --rm --name "$CONTAINER_NAME" "${RUN_ARGS[@]}" "$IMAGE_TAG"
+  exec "${CONTAINER_RUNNER[@]}" run --rm --name "$CONTAINER_NAME" "${RUN_ARGS[@]}" "$IMAGE_TAG"
 fi

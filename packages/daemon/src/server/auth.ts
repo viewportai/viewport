@@ -1,8 +1,9 @@
 /**
  * Authentication module for the Viewport daemon.
  *
- * Local mode: random token saved to ~/.viewport/auth-token
- * Relay mode (future): API key validated against relay server
+ * Local mode stores an auth token in the daemon config directory.
+ * Relay-backed access still terminates at the local daemon; runtime admission
+ * to the relay is handled separately by control-plane-issued credentials.
  */
 
 import crypto from 'node:crypto';
@@ -77,7 +78,8 @@ export function extractTokenFromRequest(input: {
   const fromHeader = extractBearerToken(input.authorization);
   if (fromHeader) return fromHeader;
 
-  // URL query token fallback exists for browser WebSocket compatibility
+  // Browser WebSocket upgrades do not always carry Authorization headers cleanly.
+  // Keep query-token fallback as the narrow transport escape hatch, not the primary path.
   // (Authorization headers are not always available on WS upgrades in browser clients).
   // Tradeoff: URL tokens can appear in logs/history; prefer Authorization headers whenever possible.
   if (input.allowQueryToken === false) return null;

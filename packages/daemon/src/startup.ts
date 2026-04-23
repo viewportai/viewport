@@ -11,7 +11,6 @@ import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import { logger } from './core/output.js';
@@ -52,7 +51,7 @@ import { maybeOfferAgentPrerequisites } from './startup-prereqs.js';
 import { setupSessionPersistence } from './startup-session-persistence.js';
 import { validateRelayRuntimeSecurity } from './startup-relay-security.js';
 import { DaemonRelayBridge } from './relay/daemon-relay-bridge.js';
-import { configDir } from './core/config.js';
+import { configDir, configFilePath, projectConfigFilePath } from './core/config.js';
 
 export { decodeAutoRegisterEntry };
 
@@ -98,37 +97,110 @@ export function localDaemonBridgeTlsOptions(): {
   };
 }
 
+export function missingRelayRuntimeConfig(config: RuntimeLaunchConfig): string[] {
+  const missing: string[] = [];
+  if (!config.relayEndpoint) missing.push('relay endpoint');
+  if (!config.relayServerUrl) missing.push('relay server URL');
+  if (!config.relayWorkspaceId) missing.push('relay workspace ID');
+  if (!config.relayIssueToken) {
+    missing.push('relay issue token');
+  }
+  if (!localDaemonWsUrl(config)) {
+    missing.push(
+      'tcp listen target (relay runtime currently requires tcp listen, not unix socket)',
+    );
+  }
+  return missing;
+}
+
+function loadTlsCandidatesFromConfig(): string[] {
+  const candidates: string[] = [];
+  const files = [projectConfigFilePath(), configFilePath()].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
+        daemon?: { server?: { url?: string }; relay?: { endpoint?: string } };
+      };
+      const urls = [parsed.daemon?.server?.url, parsed.daemon?.relay?.endpoint];
+      for (const value of urls) {
+        if (typeof value !== 'string' || value.length === 0) continue;
+        try {
+          const host = new URL(value).hostname;
+          if (!host) continue;
+          candidates.push(host);
+          if (!host.startsWith('app.')) {
+            candidates.push(`app.${host}`);
+          }
+        } catch {
+          // Ignore malformed config URLs.
+        }
+      }
+    } catch {
+      // Ignore unreadable config files here; the config layer will surface schema errors separately.
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
 function resolveTlsOptions(): { cert: Buffer; key: Buffer; tlsHost: string } | null {
   const tlsEnv = (process.env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
   if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') return null;
 
-  const tlsHost = process.env['VIEWPORT_TLS_HOST'] ?? 'getviewport.test';
-  const certDir = path.join(
-    os.homedir(),
-    'Library',
-    'Application Support',
-    'Herd',
-    'config',
-    'valet',
-    'Certificates',
-  );
-  const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
-  const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+  const explicitTlsHost = process.env['VIEWPORT_TLS_HOST'];
+  const explicitCertDir = process.env['VIEWPORT_TLS_CERT_DIR'];
+  const globalCertDir = path.join(configDir(), 'certs');
+  const projectConfigPath = projectConfigFilePath();
+  const projectCertDir = projectConfigPath
+    ? path.join(path.dirname(projectConfigPath), 'certs')
+    : null;
 
-  if (tlsEnv === 'auto' && (!existsSync(certPath) || !existsSync(keyPath))) return null;
+  const candidateHosts = explicitTlsHost
+    ? [explicitTlsHost]
+    : ['localhost', ...loadTlsCandidatesFromConfig()];
+
+  const candidateCertDirs = explicitCertDir
+    ? [explicitCertDir]
+    : [projectCertDir, globalCertDir].filter((value): value is string => !!value);
+
+  for (const tlsHost of candidateHosts) {
+    for (const certDir of candidateCertDirs) {
+      const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+      const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+      if (!existsSync(certPath) || !existsSync(keyPath)) {
+        continue;
+      }
+
+      return {
+        cert: readFileSync(certPath),
+        key: readFileSync(keyPath),
+        tlsHost,
+      };
+    }
+  }
+
   if (tlsEnv === '1' || tlsEnv === 'true' || tlsEnv === 'on') {
+    const tlsHost = explicitTlsHost ?? 'localhost';
+    const certDir = explicitCertDir ?? globalCertDir;
+    const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+    const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
     if (!existsSync(certPath) || !existsSync(keyPath)) {
       throw new Error(
         `VIEWPORT_TLS enabled but certs not found (cert=${certPath}, key=${keyPath})`,
       );
     }
+    return {
+      cert: readFileSync(certPath),
+      key: readFileSync(keyPath),
+      tlsHost,
+    };
   }
 
-  return {
-    cert: readFileSync(certPath),
-    key: readFileSync(keyPath),
-    tlsHost,
-  };
+  return null;
 }
 
 function parsePositiveIntEnv(name: string): number | undefined {
@@ -148,8 +220,15 @@ export async function start(options?: { silent?: boolean; json?: boolean }): Pro
   const silent = options?.silent ?? false;
   const asJson = options?.json ?? hasFlag('json');
   const resolved = await resolveDaemonSettingsFromSources();
-  const config = resolved.launch;
+  await startWithLaunchConfig(resolved.launch, { silent, json: asJson });
+}
 
+export async function startWithLaunchConfig(
+  config: RuntimeLaunchConfig,
+  options?: { silent?: boolean; json?: boolean },
+): Promise<void> {
+  const silent = options?.silent ?? false;
+  const asJson = options?.json ?? hasFlag('json');
   await maybeOfferAgentPrerequisites({ silent, asJson });
 
   const existingRuntime = await readDaemonRuntimeState();
@@ -261,8 +340,8 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
 
   const tls = resolveTlsOptions();
 
-  // When TLS is enabled, automatically allow the TLS hostname + its subdomains
-  // so that app.getviewport.test can reach wss://getviewport.test:7070
+  // When TLS is enabled, automatically allow the configured TLS hostname and subdomains
+  // so browser clients can reach the local daemon over WSS.
   const tlsHostAllowance = tls ? `,${tls.tlsHost},.${tls.tlsHost}` : '';
   const securityProfile = buildSecurityProfile({
     profile: config.profile,
@@ -278,9 +357,9 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
     const localAuth = new LocalAuthProvider();
     await localAuth.initialize();
     auth = localAuth;
-    logger.log(`Auth:    token-based (see ~/.viewport/auth-token)`);
+    logger.log(`Daemon HTTP auth: token-based (local API guarded by auth-token)`);
   } else {
-    logger.log(`Auth:    disabled (local mode)`);
+    logger.log(`Daemon HTTP auth: local profile (token auth not required on loopback)`);
   }
 
   // Hook system — enables remote supervision of terminal-started sessions
@@ -357,6 +436,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       socketPath: config.socketPath,
       startedAt: runtimeStartedAt,
       version,
+      relayEnabled: config.relayEnabled,
     },
     onLifecycleShutdown: async () => {
       if (!shutdownPromise) {
@@ -370,6 +450,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       }
       await shutdownPromise;
     },
+    getRelayStatus: () => relayBridge?.getStatus() ?? null,
   });
   registerWsServer(app, daemon, registry, { hookRouter, supervision, auth, securityProfile });
 
@@ -409,17 +490,8 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
     }
 
     validateRelayRuntimeSecurity(config);
-    const missing: string[] = [];
-    if (!config.relayEndpoint) missing.push('relay endpoint');
-    if (!config.relayServerUrl) missing.push('relay server URL');
-    if (!config.relayWorkspaceId) missing.push('relay workspace ID');
-    if (!config.relayEnrollToken) missing.push('relay enroll token');
+    const missing = missingRelayRuntimeConfig(config);
     const daemonWsUrl = localDaemonWsUrl(config);
-    if (!daemonWsUrl) {
-      missing.push(
-        'tcp listen target (relay runtime currently requires tcp listen, not unix socket)',
-      );
-    }
 
     if (missing.length > 0) {
       logger.warn(`[relay] disabled due to incomplete config: ${missing.join(', ')}`);
@@ -432,7 +504,6 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
         relayEndpoint: config.relayEndpoint!,
         relayServerUrl: config.relayServerUrl!,
         workspaceId: config.relayWorkspaceId!,
-        enrollToken: config.relayEnrollToken!,
         issueToken: config.relayIssueToken,
         daemonWsUrl: daemonWsUrl!,
         daemonAuthToken: daemonToken ?? undefined,
