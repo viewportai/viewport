@@ -30,8 +30,8 @@ Mode defaults:
 Canonical local helper (from monorepo root):
 
 ```bash
-bash ./scripts/start-relay.sh
-RELAY_BACKPLANE_MODE=redis RELAY_REDIS_URL=redis://127.0.0.1:6379 bash ./scripts/start-relay.sh
+npm run relay
+RELAY_BACKPLANE_MODE=redis RELAY_REDIS_URL=redis://127.0.0.1:6379 npm run relay
 ```
 
 ## Deployment

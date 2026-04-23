@@ -13,13 +13,16 @@
     "test": "npm run test --workspaces --if-present",
     "check": "npm run check --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present",
+    "daemon": "npm run dev -w @viewportai/daemon",
+    "relay": "npm run dev -w @viewportai/relay",
+    "daemon:test": "npm run test:unit -w @viewportai/daemon",
+    "relay:test": "npm run test -w @viewportai/relay",
     "version:packages": "npx @changesets/cli version",
     "release:packages": "npx @changesets/cli publish",
     "daemon:check": "npm run check -w @viewportai/daemon",
     "relay:check": "npm run check -w @viewportai/relay",
-    "integration:operator": "npm run test:operator -w @viewportai/integration",
-    "integration:e2e": "npm run test:e2e -w @viewportai/integration",
-    "relay:start": "bash ./scripts/start-relay.sh",
-    "relay:start:container": "bash ./scripts/start-relay-container.sh"
+    "ops:integration:operator": "npm run test:operator -w @viewportai/integration",
+    "ops:integration:e2e": "npm run test:e2e -w @viewportai/integration",
+    "ops:relay:container": "bash ./scripts/start-relay-container.sh"
   }
 }

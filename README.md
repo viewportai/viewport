@@ -62,15 +62,24 @@ docker run --rm -p 7781:7781 \
 # Install dependencies
 npm ci
 
-# Run daemon in dev mode
-npm run dev -w @viewportai/daemon
+# Run the daemon package in dev mode
+npm run daemon
 
 # Run relay in dev mode
-npm run dev -w @viewportai/relay
+npm run relay
 
-# Run quality gates
+# Test and check each component
+npm run daemon:test
+npm run relay:test
 npm run daemon:check
 npm run relay:check
+```
+
+Full integration flows are operator-only surfaces:
+
+```bash
+npm run ops:integration:operator
+npm run ops:integration:e2e
 ```
 
 ## Contribution Naming
