@@ -761,12 +761,6 @@ export function registerConnection(
   pruneStalePairingRequests(state);
   pruneStaleKeyExchangeRequests(state);
   pruneStaleSessionOwners(state);
-  wsIp.set(ws, ip);
-  wsWorkspace.set(ws, workspaceId);
-  wsRole.set(ws, role);
-  adjustIpConnectionCount(ip, 1);
-  setupHeartbeat(ws);
-  metrics.increment('relay_ws_connections_opened_total');
 
   if (role === 'workspace-daemon') {
     const daemonExpectedProfile = claims?.e2eeProfile;
@@ -803,6 +797,12 @@ export function registerConnection(
       closeWithReason(ws, 4008, 'daemon already connected');
       return;
     }
+    wsIp.set(ws, ip);
+    wsWorkspace.set(ws, workspaceId);
+    wsRole.set(ws, role);
+    adjustIpConnectionCount(ip, 1);
+    setupHeartbeat(ws);
+    metrics.increment('relay_ws_connections_opened_total');
     state.daemon = ws;
     if (daemonIssueGeneration !== null) {
       state.daemonIssueGeneration = daemonIssueGeneration;
@@ -905,6 +905,12 @@ export function registerConnection(
   const clientScope: 'runtime' | 'pairing' =
     clientScopeClaim === 'pairing' ? 'pairing' : 'runtime';
   const clientExpectedProfile = claims?.e2eeProfile;
+  wsIp.set(ws, ip);
+  wsWorkspace.set(ws, workspaceId);
+  wsRole.set(ws, role);
+  adjustIpConnectionCount(ip, 1);
+  setupHeartbeat(ws);
+  metrics.increment('relay_ws_connections_opened_total');
   state.clients.set(ws, {
     clientId,
     connectedAt: Date.now(),

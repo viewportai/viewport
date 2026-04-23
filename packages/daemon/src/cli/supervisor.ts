@@ -114,6 +114,9 @@ function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfig {
 function resolveConfiguredTlsState(env: NodeJS.ProcessEnv = process.env): {
   enabled: boolean;
   host: string;
+  certDir?: string;
+  certPath?: string;
+  keyPath?: string;
 } {
   const tlsEnv = (env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
   const tlsHost = env['VIEWPORT_TLS_HOST'] ?? 'localhost';
@@ -127,24 +130,33 @@ function resolveConfiguredTlsState(env: NodeJS.ProcessEnv = process.env): {
   const keyPath = env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
 
   if (tlsEnv === 'auto') {
-    return { enabled: existsSync(certPath) && existsSync(keyPath), host: tlsHost };
+    const enabled = existsSync(certPath) && existsSync(keyPath);
+    return {
+      enabled,
+      host: tlsHost,
+      certDir: enabled ? certDir : undefined,
+      certPath: enabled ? certPath : undefined,
+      keyPath: enabled ? keyPath : undefined,
+    };
   }
 
-  return { enabled: true, host: tlsHost };
+  return { enabled: true, host: tlsHost, certDir, certPath, keyPath };
 }
 
 function buildWorkerEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    [WORKER_CONFIG_ENV]: encodeRuntimeConfig(config),
-  };
+  const env = { ...process.env };
+  delete env[SUPERVISOR_CONFIG_ENV];
+  delete env[WORKER_CONFIG_ENV];
+  env[WORKER_CONFIG_ENV] = encodeRuntimeConfig(config);
+  return env;
 }
 
 function buildSupervisorEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    [SUPERVISOR_CONFIG_ENV]: encodeRuntimeConfig(config),
-  };
+  const env = { ...process.env };
+  delete env[SUPERVISOR_CONFIG_ENV];
+  delete env[WORKER_CONFIG_ENV];
+  env[SUPERVISOR_CONFIG_ENV] = encodeRuntimeConfig(config);
+  return env;
 }
 
 function toWorkerArgs(): string[] {
@@ -273,6 +285,9 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     relayTlsVerify: config.relayTlsVerify,
     tlsEnabled: tls.enabled,
     tlsHost: tls.host,
+    tlsCertDir: tls.certDir,
+    tlsCertPath: tls.certPath,
+    tlsKeyPath: tls.keyPath,
     runtimeKind: identity.runtimeKind,
     daemonHome: identity.daemonHome,
     daemonHomeScope: identity.daemonHomeScope,

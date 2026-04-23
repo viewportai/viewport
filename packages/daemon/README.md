@@ -123,13 +123,13 @@ npm run check
 # manual verification test (no service or package installs)
 VIEWPORT_HOME="$(mktemp -d)" vpd setup --yes --no-service --no-prereqs --no-hooks
 
-# full local environment verification (isolated home + dedicated listen target)
+# full local environment verification (temporary config dir + dedicated listen target)
 npm run verify:env
 
 # include OS service checks (launchd/systemd)
 npm run verify:env:service
 
-# package/install verification from local tarball in isolated prefix
+# package/install verification from local tarball in a temporary npm prefix
 npm run verify:install
 
 # one-command verification gate
@@ -155,6 +155,12 @@ This package publishes as `@viewportai/daemon`.
 Package release mechanics are maintainer-owned. Feature PRs should stay focused on code, tests, and docs unless the PR is explicitly intended to cut a package release.
 
 When a release is intentionally being prepared, use the repo's current publish workflow from `main` and validate the built CLI before shipping.
+
+Runtime config follows one simple rule:
+
+- global defaults live in `~/.viewport/config.json`
+- the nearest project `.viewport/config.json` can override selected daemon targets like server or relay
+- environment variables and CLI flags are temporary overrides, not the normal runtime model
 
 See [docs/releasing.md](./docs/releasing.md) for setup and operations.
 See [docs/testing.md](./docs/testing.md) and [docs/developer-workflows.md](./docs/developer-workflows.md) for local validation workflows.

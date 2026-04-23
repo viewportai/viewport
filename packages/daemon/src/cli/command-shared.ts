@@ -54,7 +54,7 @@ export interface HealthResponse {
     daemonVersion?: string;
     runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
     daemonHome?: string;
-    daemonHomeScope?: 'global' | 'isolated';
+    daemonHomeScope?: 'global' | 'project-override';
     daemonHomeSource?: 'default' | 'explicit';
     profile?: 'local' | 'lan' | 'relay';
     serverUrl?: string;

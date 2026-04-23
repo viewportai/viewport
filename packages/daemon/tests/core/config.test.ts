@@ -184,15 +184,23 @@ describe('BUILT_IN_DEFAULTS', () => {
 describe('Config I/O', () => {
   let tmpDir: string;
   let originalHome: string;
+  let originalProjectConfigDir: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-config-test-'));
     originalHome = process.env['HOME'] ?? '';
+    originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
     process.env['HOME'] = tmpDir;
+    delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
   });
 
   afterEach(async () => {
     process.env['HOME'] = originalHome;
+    if (originalProjectConfigDir === undefined) {
+      delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    } else {
+      process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+    }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -218,6 +226,41 @@ describe('Config I/O', () => {
     await saveConfig({ machineId: 'roundtrip' });
     const config = await loadConfig();
     expect(config.machineId).toBe('roundtrip');
+  });
+
+  it('loadConfig merges a project override on top of the global config', async () => {
+    await saveConfig({
+      daemon: {
+        server: { url: 'https://getviewport.com' },
+        relay: {
+          enabled: true,
+          serverUrl: 'https://app.getviewport.com',
+          endpoint: 'wss://relay.getviewport.com/ws',
+        },
+      },
+    });
+
+    const projectConfigDir = path.join(tmpDir, 'repo', '.viewport');
+    await fs.mkdir(projectConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(projectConfigDir, 'config.json'),
+      JSON.stringify({
+        daemon: {
+          server: { url: 'https://getviewport.test' },
+          relay: {
+            serverUrl: 'https://getviewport.test',
+            endpoint: 'wss://getviewport.test:7781/ws',
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = projectConfigDir;
+    const config = await loadConfig();
+    expect(config.daemon?.server?.url).toBe('https://getviewport.test');
+    expect(config.daemon?.relay?.serverUrl).toBe('https://getviewport.test');
+    expect(config.daemon?.relay?.endpoint).toBe('wss://getviewport.test:7781/ws');
   });
 
   it('loadConfig throws on malformed JSON with actionable error', async () => {
@@ -281,15 +324,23 @@ describe('Config I/O', () => {
 describe('ConfigManager', () => {
   let tmpDir: string;
   let originalHome: string;
+  let originalProjectConfigDir: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-cfgmgr-test-'));
     originalHome = process.env['HOME'] ?? '';
+    originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
     process.env['HOME'] = tmpDir;
+    delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
   });
 
   afterEach(async () => {
     process.env['HOME'] = originalHome;
+    if (originalProjectConfigDir === undefined) {
+      delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    } else {
+      process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+    }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 

@@ -46,6 +46,7 @@ import {
 import { resolvePackageVersion } from './core/package-meta.js';
 import { hookNotify } from './cli/hook-command.js';
 import { start, runSupervisorCommand, runWorkerCommand } from './startup.js';
+import { SUPERVISOR_CONFIG_ENV, WORKER_CONFIG_ENV } from './cli/supervisor-protocol.js';
 
 const rawArgs = getArgs();
 const globalFlag = resolveGlobalFlag(rawArgs);
@@ -87,6 +88,11 @@ const commands: Record<string, () => Promise<void>> = {
 };
 
 const command = getCommand();
+
+if (command !== '__supervisor' && command !== '__worker') {
+  delete process.env[SUPERVISOR_CONFIG_ENV];
+  delete process.env[WORKER_CONFIG_ENV];
+}
 
 // Sub-command: vpd hook notify --event <EventName>
 if (command === 'hook') {

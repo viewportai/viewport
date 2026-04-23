@@ -44,9 +44,12 @@ export interface DaemonRuntimeState {
   relayTlsVerify?: 'auto' | '0' | '1';
   tlsEnabled?: boolean;
   tlsHost?: string;
+  tlsCertDir?: string;
+  tlsCertPath?: string;
+  tlsKeyPath?: string;
   runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
   daemonHome?: string;
-  daemonHomeScope?: 'global' | 'isolated';
+  daemonHomeScope?: 'global' | 'project-override';
   serverUrl?: string;
 }
 
@@ -124,6 +127,9 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
           : undefined,
       tlsEnabled: typeof parsed.tlsEnabled === 'boolean' ? parsed.tlsEnabled : undefined,
       tlsHost: typeof parsed.tlsHost === 'string' ? parsed.tlsHost : undefined,
+      tlsCertDir: typeof parsed.tlsCertDir === 'string' ? parsed.tlsCertDir : undefined,
+      tlsCertPath: typeof parsed.tlsCertPath === 'string' ? parsed.tlsCertPath : undefined,
+      tlsKeyPath: typeof parsed.tlsKeyPath === 'string' ? parsed.tlsKeyPath : undefined,
       runtimeKind:
         parsed.runtimeKind === 'managed' ||
         parsed.runtimeKind === 'local-dev' ||
@@ -132,7 +138,7 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
           : undefined,
       daemonHome: typeof parsed.daemonHome === 'string' ? parsed.daemonHome : undefined,
       daemonHomeScope:
-        parsed.daemonHomeScope === 'global' || parsed.daemonHomeScope === 'isolated'
+        parsed.daemonHomeScope === 'global' || parsed.daemonHomeScope === 'project-override'
           ? parsed.daemonHomeScope
           : undefined,
       serverUrl: typeof parsed.serverUrl === 'string' ? parsed.serverUrl : undefined,

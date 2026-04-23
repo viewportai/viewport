@@ -292,9 +292,9 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
     const localAuth = new LocalAuthProvider();
     await localAuth.initialize();
     auth = localAuth;
-    logger.log(`Auth:    token-based (see ~/.viewport/auth-token)`);
+    logger.log(`Daemon HTTP auth: token-based (local API guarded by auth-token)`);
   } else {
-    logger.log(`Auth:    disabled (local mode)`);
+    logger.log(`Daemon HTTP auth: local profile (token auth not required on loopback)`);
   }
 
   // Hook system — enables remote supervision of terminal-started sessions

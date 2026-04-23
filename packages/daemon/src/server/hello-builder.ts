@@ -33,7 +33,7 @@ export interface SnapshotPayload {
     id: string;
     daemonVersion: string;
     runtimeKind: 'managed' | 'local-dev' | 'self-hosted';
-    daemonHomeScope: 'global' | 'isolated';
+    daemonHomeScope: 'global' | 'project-override';
     profile?: 'local' | 'lan' | 'relay';
     serverUrl?: string;
     relayEndpoint?: string;

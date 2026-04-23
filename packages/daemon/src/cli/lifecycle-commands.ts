@@ -106,6 +106,7 @@ export async function status(): Promise<void> {
     machineId: manager.getMachineId(),
     daemonVersion: health?.machine?.daemonVersion ?? state?.version ?? cliVersion,
   });
+  const configPaths = manager.getConfigPaths();
   let latestCliVersion = 'skipped';
   let updateStatus = 'skipped (use --check-updates)';
   let note: string | undefined;
@@ -162,7 +163,14 @@ export async function status(): Promise<void> {
     latestCliVersion,
     updateStatus,
     health,
+    relayState: health?.relay?.state ?? null,
+    relayReconnectAttempt: health?.relay?.reconnectAttempt ?? null,
+    relayLastErrorCode: health?.relay?.lastErrorCode ?? null,
+    relayLastErrorMessage: health?.relay?.lastErrorMessage ?? null,
     note,
+    configSource: configPaths.projectOverridePath
+      ? `project override (${configPaths.projectOverridePath})`
+      : `global (${configPaths.globalPath})`,
   };
 
   if (asJson) {
@@ -189,11 +197,21 @@ export async function status(): Promise<void> {
   console.log(`Server:      ${payload.serverUrl ?? '-'}`);
   console.log(`Relay WS:    ${payload.relayEndpoint ?? '-'}`);
   console.log(`Relay API:   ${payload.relayServerUrl ?? '-'}`);
+  console.log(`Relay state: ${payload.relayState ?? '-'}`);
+  if (payload.relayReconnectAttempt) {
+    console.log(`Relay tries: ${payload.relayReconnectAttempt}`);
+  }
+  if (payload.relayLastErrorCode || payload.relayLastErrorMessage) {
+    console.log(
+      `Relay last:  ${payload.relayLastErrorCode ?? 'UNKNOWN'}${payload.relayLastErrorMessage ? ` — ${payload.relayLastErrorMessage}` : ''}`,
+    );
+  }
   console.log(`Node:        ${payload.runtimeNode}`);
   console.log(`npm:         ${payload.runtimeNpm}`);
   console.log(`CLI:         ${payload.cliVersion}`);
   console.log(`Latest CLI:  ${payload.latestCliVersion}`);
   console.log(`Update:      ${payload.updateStatus}`);
+  console.log(`Config:      ${payload.configSource}`);
   if (payload.health) {
     console.log(`Sessions:    ${payload.health.sessions}`);
     console.log(`Directories: ${payload.health.directories}`);
@@ -216,6 +234,7 @@ export async function doctor(): Promise<void> {
     machineId: manager.getMachineId(),
     daemonVersion: health?.machine?.daemonVersion ?? state?.version ?? cliVersion,
   });
+  const configPaths = manager.getConfigPaths();
 
   const payload = {
     status: health ? 'running' : state ? 'configured' : 'not_running',
@@ -240,6 +259,12 @@ export async function doctor(): Promise<void> {
     ownerPid: state?.ownerPid ?? null,
     workerPid: state?.workerPid ?? health?.pid ?? null,
     relayState: health?.relay?.state ?? null,
+    relayReconnectAttempt: health?.relay?.reconnectAttempt ?? null,
+    relayLastErrorCode: health?.relay?.lastErrorCode ?? null,
+    relayLastErrorMessage: health?.relay?.lastErrorMessage ?? null,
+    configSource: configPaths.projectOverridePath
+      ? `project override (${configPaths.projectOverridePath})`
+      : `global (${configPaths.globalPath})`,
   };
 
   if (asJson) {
@@ -265,6 +290,15 @@ export async function doctor(): Promise<void> {
   console.log(`Owner PID:    ${payload.ownerPid ?? '-'}`);
   console.log(`Worker PID:   ${payload.workerPid ?? '-'}`);
   console.log(`Relay state:  ${payload.relayState ?? '-'}`);
+  console.log(`Config:       ${payload.configSource}`);
+  if (payload.relayReconnectAttempt) {
+    console.log(`Relay tries:  ${payload.relayReconnectAttempt}`);
+  }
+  if (payload.relayLastErrorCode || payload.relayLastErrorMessage) {
+    console.log(
+      `Relay last:   ${payload.relayLastErrorCode ?? 'UNKNOWN'}${payload.relayLastErrorMessage ? ` — ${payload.relayLastErrorMessage}` : ''}`,
+    );
+  }
 }
 
 export async function stop(options?: {
@@ -578,7 +612,13 @@ function applyRuntimeOverrides(
 function applyRuntimeTlsEnvironment(
   runtimeState: Awaited<ReturnType<typeof readDaemonRuntimeState>>,
 ): () => void {
-  const keys = ['VIEWPORT_TLS', 'VIEWPORT_TLS_HOST', 'VIEWPORT_TLS_CERT', 'VIEWPORT_TLS_KEY'];
+  const keys = [
+    'VIEWPORT_TLS',
+    'VIEWPORT_TLS_HOST',
+    'VIEWPORT_TLS_CERT_DIR',
+    'VIEWPORT_TLS_CERT',
+    'VIEWPORT_TLS_KEY',
+  ];
   const previous = new Map<string, string | undefined>();
   for (const key of keys) {
     previous.set(key, process.env[key]);
@@ -595,11 +635,19 @@ function applyRuntimeTlsEnvironment(
   if (runtimeState?.tlsEnabled) {
     setEnv('VIEWPORT_TLS', '1');
     setEnv('VIEWPORT_TLS_HOST', runtimeState.tlsHost?.trim() || 'localhost');
-    setEnv('VIEWPORT_TLS_CERT', undefined);
-    setEnv('VIEWPORT_TLS_KEY', undefined);
+    const certDir = runtimeState.tlsCertDir?.trim() || undefined;
+    setEnv('VIEWPORT_TLS_CERT_DIR', certDir);
+    if (certDir) {
+      setEnv('VIEWPORT_TLS_CERT', undefined);
+      setEnv('VIEWPORT_TLS_KEY', undefined);
+    } else {
+      setEnv('VIEWPORT_TLS_CERT', runtimeState.tlsCertPath?.trim() || undefined);
+      setEnv('VIEWPORT_TLS_KEY', runtimeState.tlsKeyPath?.trim() || undefined);
+    }
   } else if (runtimeState?.tlsEnabled === false) {
     setEnv('VIEWPORT_TLS', '0');
     setEnv('VIEWPORT_TLS_HOST', undefined);
+    setEnv('VIEWPORT_TLS_CERT_DIR', undefined);
     setEnv('VIEWPORT_TLS_CERT', undefined);
     setEnv('VIEWPORT_TLS_KEY', undefined);
   }
@@ -626,7 +674,7 @@ async function hardRestartFromRuntimeState(runtimeState: DaemonRuntimeState | nu
   const restoreEnv = applyRuntimeTlsEnvironment(runtimeState);
   try {
     await startWithLaunchConfig(launch, { silent: true });
-    await waitForDaemonReady({ requireRelayConnected: !!launch.relayEnabled, timeoutMs: 45_000 });
+    await waitForDaemonReady({ requireRelayConnected: false, timeoutMs: 45_000 });
   } finally {
     restoreEnv();
   }
@@ -639,20 +687,33 @@ async function restartDaemon(): Promise<void> {
 
 async function autoRestartDaemon(silent: boolean): Promise<void> {
   if (!silent) {
-    console.log('Restarting daemon to connect to relay...');
+    console.log('Restarting daemon...');
   }
   try {
     await restartDaemon();
     if (!silent) {
-      console.log('Daemon restarted. Relay connection active.');
+      console.log('Daemon restarted.');
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (!silent) {
-      console.log(`Could not confirm relay reconnect automatically: ${message}`);
-      console.log('Run `vpd restart` and check `vpd status` if the daemon is still reconnecting.');
+      console.log(`Could not restart the daemon automatically: ${message}`);
+      console.log('Run `vpd restart` and check `vpd status` if the daemon is still restarting.');
     }
     throw new Error(message);
+  }
+
+  try {
+    await waitForDaemonReady({ requireRelayConnected: true, timeoutMs: 10_000 });
+    if (!silent) {
+      console.log('Relay connection active.');
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!silent) {
+      console.log(`Relay is still reconnecting: ${message}`);
+      console.log('Check `vpd status` if it does not connect shortly.');
+    }
   }
 }
 

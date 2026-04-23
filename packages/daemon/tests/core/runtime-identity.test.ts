@@ -19,7 +19,9 @@ describe('runtime identity', () => {
           url: 'https://getviewport.com',
         },
       } as any,
-      env: {},
+      env: {
+        VIEWPORT_PROJECT_CONFIG_DIR: '/tmp/viewport-no-project-override',
+      },
       machineId: 'machine-1',
     });
 
@@ -33,13 +35,14 @@ describe('runtime identity', () => {
       daemonVersion: '1.2.3',
       env: {
         VIEWPORT_HOME: '/tmp/viewport-dev',
+        VIEWPORT_PROJECT_CONFIG_DIR: '/tmp/viewport-no-project-override',
         VIEWPORT_SERVER_URL: 'https://getviewport.test',
         VIEWPORT_RELAY_ENDPOINT: 'wss://getviewport.test:7781/ws',
       },
     });
 
     expect(identity.runtimeKind).toBe('local-dev');
-    expect(identity.daemonHomeScope).toBe('isolated');
+    expect(identity.daemonHomeScope).toBe('global');
     expect(identity.hostedDefaults).toBe(false);
   });
 
@@ -47,6 +50,7 @@ describe('runtime identity', () => {
     const identity = resolveDaemonRuntimeIdentity({
       daemonVersion: '1.2.3',
       env: {
+        VIEWPORT_PROJECT_CONFIG_DIR: '/tmp/viewport-no-project-override',
         VIEWPORT_SERVER_URL: 'https://viewport.internal.example.com',
         VIEWPORT_RELAY_ENDPOINT: 'wss://relay.internal.example.com/ws',
       },

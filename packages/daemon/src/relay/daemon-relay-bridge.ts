@@ -40,7 +40,7 @@ import {
   redeemPairingOffer,
   resolveRelayPairingSecret,
 } from '../server/pairing-offers.js';
-import { loadConfig, saveConfig } from '../core/config.js';
+import { ConfigManager } from '../core/config.js';
 import { logger as out } from '../core/output.js';
 import { transportFetch } from '../cli/network.js';
 
@@ -491,11 +491,17 @@ export class DaemonRelayBridge {
     const normalized = issueToken.trim();
     if (normalized.length === 0) return;
     try {
-      const config = await loadConfig();
-      config.daemon = config.daemon ?? {};
-      config.daemon.relay = config.daemon.relay ?? {};
-      config.daemon.relay.issueToken = normalized;
-      await saveConfig(config);
+      const manager = new ConfigManager();
+      await manager.load();
+      const daemonConfig = manager.getDaemonConfig() ?? {};
+      const relayConfig = daemonConfig.relay ?? {};
+      await manager.setDaemonConfig({
+        ...daemonConfig,
+        relay: {
+          ...relayConfig,
+          issueToken: normalized,
+        },
+      });
     } catch (error) {
       out.warn(
         `[relay] failed to persist daemon issue token: ${error instanceof Error ? error.message : String(error)}`,

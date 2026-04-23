@@ -62,22 +62,29 @@ docker run --rm -p 7781:7781 \
 # Install dependencies
 npm ci
 
-# Run the daemon in the foreground
+# Build and link this checkout as the active global vpd
 npm run daemon
 
-# Inspect daemon identity and runtime state
+# Start the daemon in the foreground from this checkout
+npm run daemon:start
+
+# Inspect the daemon
 npm run daemon:status
 npm run daemon:doctor
 
-# Stop or restart the daemon
+# Stop or restart the repo-local dev daemon
 npm run daemon:stop
 npm run daemon:restart
 
-# Run relay in dev mode
+# Run relay in local dev mode
 npm run relay
+
+# Run the raw relay package entrypoint only
+npm run relay:raw
 
 # Test and check each component
 npm run daemon:test
+npm run daemon:install:verify
 npm run relay:test
 npm run daemon:check
 npm run relay:check
@@ -86,9 +93,28 @@ npm run relay:check
 Full integration flows are operator-only surfaces:
 
 ```bash
-npm run ops:integration:operator
-npm run ops:integration:e2e
+npm run integration:operator
+npm run integration:e2e
 ```
+
+`npm run daemon` prepares this checkout as the active global daemon build by running `npm link` for `@viewportai/daemon`. After that, normal `vpd ...` usage points at the daemon code from this repo until you relink or reinstall a different build.
+
+Viewport uses one daemon model:
+
+- global state lives in `~/.viewport/`
+- optional project overrides live in the nearest `.viewport/config.json`
+- in the combined `viewportai/` workspace, that shared override is `../.viewport/config.json`
+
+That means:
+
+- `vpd ...` always talks to the globally linked or installed daemon
+- `npm run daemon:start` starts the daemon from this checkout against the same global home
+- a local `.viewport/config.json` only overrides selected targeting values such as server, relay, and listen settings
+- `npm run daemon:install:verify` exercises the packaged install path in an isolated prefix so we keep testing the real `curl | bash` story
+
+For local-domain development, keep the runtime override in `.viewport/config.json` and stage certificates into `~/.viewport/certs` or `.viewport/certs`. The repo wrapper will promote project certs into the global daemon home when needed so restart keeps working.
+
+`npm run relay` starts only the relay. If pairing stalls on relay reconnect, run `npm run daemon:status` and look for the `Relay state` and `Relay last` lines before digging into raw logs.
 
 ## Contribution Naming
 

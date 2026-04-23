@@ -1,10 +1,10 @@
 import path from 'node:path';
 import type { ViewportConfig } from './config.js';
-import { resolveViewportHome } from './config.js';
+import { resolveProjectConfigDir, resolveViewportHome } from './config.js';
 import type { DeploymentProfile } from '../server/security.js';
 
 export type DaemonRuntimeKind = 'managed' | 'local-dev' | 'self-hosted';
-export type DaemonHomeScope = 'global' | 'isolated';
+export type DaemonHomeScope = 'global' | 'project-override';
 export type DaemonHomeSource = 'default' | 'explicit';
 
 export interface DaemonRuntimeIdentity {
@@ -123,6 +123,7 @@ export function resolveDaemonRuntimeIdentity(
   const daemonHomeSource: DaemonHomeSource =
     envValue(env, 'VIEWPORT_HOME', 'VPD_HOME') !== undefined ? 'explicit' : 'default';
   const daemonHome = resolveViewportHome(env);
+  const projectConfigDir = resolveProjectConfigDir(env);
   const serverUrl =
     daemonConfig?.server?.url ??
     daemonConfig?.relay?.serverUrl ??
@@ -147,7 +148,7 @@ export function resolveDaemonRuntimeIdentity(
     daemonVersion: input.daemonVersion,
     runtimeKind,
     daemonHome,
-    daemonHomeScope: daemonHomeSource === 'explicit' ? 'isolated' : 'global',
+    daemonHomeScope: projectConfigDir ? 'project-override' : 'global',
     daemonHomeSource,
     profile: daemonConfig?.profile,
     serverUrl,
@@ -187,9 +188,7 @@ export function formatRuntimeKindLabel(kind: DaemonRuntimeKind): string {
 
 export function formatDaemonHomeLabel(identity: DaemonRuntimeIdentity): string {
   const relativeHome = path.relative(process.cwd(), identity.daemonHome);
-  const homeLabel =
-    relativeHome && !relativeHome.startsWith('..') && !path.isAbsolute(relativeHome)
-      ? relativeHome
-      : identity.daemonHome;
-  return `${identity.daemonHomeScope} (${homeLabel})`;
+  return relativeHome && !relativeHome.startsWith('..') && !path.isAbsolute(relativeHome)
+    ? relativeHome
+    : identity.daemonHome;
 }
