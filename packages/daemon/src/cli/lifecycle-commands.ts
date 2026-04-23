@@ -469,21 +469,27 @@ export async function restart(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PAIRING_SERVER = 'https://getviewport.com';
+const DEFAULT_PAIRING_APP = 'https://app.getviewport.com';
 const PAIRING_POLL_INTERVAL_MS = 2_000;
 const PAIRING_POLL_MAX_ATTEMPTS = 150; // 5 minutes at 2s intervals
 
-function resolvePairingServerUrl(): string {
-  const fromFlag = getFlag('server');
-  if (fromFlag) return fromFlag;
-  if (process.env['VIEWPORT_SERVER']) return process.env['VIEWPORT_SERVER'];
-  return DEFAULT_PAIRING_SERVER;
-}
-
 interface PairingServerTransportConfig {
   url: string;
+  appUrl: string;
   tlsVerify: 'auto' | '0' | '1';
   caCertPath?: string;
   tlsPins?: string[];
+}
+
+function envValue(env: NodeJS.ProcessEnv, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const raw = env[key];
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (trimmed !== '') return trimmed;
+    }
+  }
+  return undefined;
 }
 
 async function resolvePairingServerTransport(
@@ -493,14 +499,22 @@ async function resolvePairingServerTransport(
   await manager.load();
   const daemonConfig = manager.getDaemonConfig();
   const serverConfig = daemonConfig?.server;
+  const resolvedUrl =
+    explicitUrl ??
+    getFlag('server') ??
+    envValue(process.env, 'VPD_SERVER_URL', 'VIEWPORT_SERVER_URL', 'VIEWPORT_SERVER') ??
+    serverConfig?.url ??
+    DEFAULT_PAIRING_SERVER;
 
   return {
-    url:
-      explicitUrl ??
-      getFlag('server') ??
-      process.env['VIEWPORT_SERVER'] ??
-      serverConfig?.url ??
-      DEFAULT_PAIRING_SERVER,
+    url: resolvedUrl,
+    appUrl: resolvePairingAppUrl({
+      serverUrl: resolvedUrl,
+      explicitAppUrl:
+        getFlag('app-url') ??
+        envValue(process.env, 'VPD_APP_URL', 'VIEWPORT_APP_URL') ??
+        serverConfig?.appUrl,
+    }),
     tlsVerify:
       parseTlsVerifyMode(getFlag('server-tls-verify')) ??
       parseTlsVerifyMode(process.env['VPD_SERVER_TLS_VERIFY']) ??
@@ -524,20 +538,51 @@ function joinPairingUrl(base: string, pathname: string): string {
   return `${base.replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
 }
 
-/**
- * Derive the web-app URL from the API server URL.
- * https://getviewport.test  -> https://app.getviewport.test
- * https://getviewport.com   -> https://app.getviewport.com
- */
-function deriveAppUrl(serverUrl: string): string {
+function resolvePairingAppUrl(input: { serverUrl: string; explicitAppUrl?: string }): string {
+  if (input.explicitAppUrl) {
+    return input.explicitAppUrl.replace(/\/$/, '');
+  }
+
+  if (input.serverUrl === DEFAULT_PAIRING_SERVER) {
+    return DEFAULT_PAIRING_APP;
+  }
+
   try {
-    const url = new URL(serverUrl);
-    if (url.hostname.startsWith('app.')) return url.toString().replace(/\/$/, '');
-    url.hostname = `app.${url.hostname}`;
+    const url = new URL(input.serverUrl);
+    if (url.hostname === 'getviewport.test') {
+      url.hostname = 'app.getviewport.test';
+      return url.toString().replace(/\/$/, '');
+    }
+    if (url.hostname === 'getviewport.dev') {
+      url.hostname = 'app.getviewport.dev';
+      return url.toString().replace(/\/$/, '');
+    }
     return url.toString().replace(/\/$/, '');
   } catch {
-    return serverUrl;
+    return input.serverUrl;
   }
+}
+
+function openPairingUrl(url: string): void {
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    const child = spawn('open', [url], { detached: true, stdio: 'ignore' });
+    child.unref();
+    return;
+  }
+
+  if (platform === 'win32') {
+    const child = spawn('cmd', ['/c', 'start', '', url], {
+      detached: true,
+      stdio: 'ignore',
+      windowsVerbatimArguments: true,
+    });
+    child.unref();
+    return;
+  }
+
+  const child = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+  child.unref();
 }
 
 interface PairingPollApprovedData {
@@ -825,10 +870,14 @@ async function pollForApproval(
   throw new Error('Timed out waiting for pairing approval. Run `vpd pair` again.');
 }
 
-async function pairWithCode(code: string, serverUrl: string, asJson: boolean): Promise<void> {
+async function pairWithCode(
+  code: string,
+  explicitServerUrl: string | undefined,
+  asJson: boolean,
+): Promise<void> {
   const relayIdentity = await loadOrCreateRelayIdentity();
   const name = os.hostname();
-  const server = await resolvePairingServerTransport(serverUrl);
+  const server = await resolvePairingServerTransport(explicitServerUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonVersion: resolveDisplayVersion(),
   });
@@ -878,7 +927,7 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
     throw new Error(`Failed to claim pairing code: ${message}`);
   }
 
-  const appUrl = deriveAppUrl(server.url);
+  const appUrl = server.appUrl;
   const claimData = (await claimRes.json()) as PairingClaimData;
 
   if (typeof claimData.status_token !== 'string' || claimData.status_token.trim() === '') {
@@ -915,10 +964,13 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
   console.log('');
 }
 
-async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void> {
+async function pairWithoutCode(
+  explicitServerUrl: string | undefined,
+  asJson: boolean,
+): Promise<void> {
   const relayIdentity = await loadOrCreateRelayIdentity();
   const name = os.hostname();
-  const server = await resolvePairingServerTransport(serverUrl);
+  const server = await resolvePairingServerTransport(explicitServerUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonVersion: resolveDisplayVersion(),
   });
@@ -968,7 +1020,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
     throw new Error('Pairing code response missing status token.');
   }
 
-  const appUrl = deriveAppUrl(server.url);
+  const appUrl = server.appUrl;
   const pairUrl = `${appUrl}/pair?code=${encodeURIComponent(code)}`;
 
   if (!asJson) {
@@ -983,10 +1035,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
 
   // Try to open browser (best effort, macOS/Linux/Windows)
   try {
-    const { exec } = await import('node:child_process');
-    const platform = process.platform;
-    const openCmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
-    exec(`${openCmd} ${pairUrl}`);
+    openPairingUrl(pairUrl);
   } catch {
     // Ignore — opening browser is best effort
   }
@@ -1056,8 +1105,6 @@ export async function pair(): Promise<void> {
   }
 
   // New pairing code flow (default)
-  const serverUrl = resolvePairingServerUrl();
-
   // Determine if a pairing code was provided as a positional argument.
   // A code is a short alphanumeric string (not a subcommand, not a flag).
   const possibleCode = pairSubcommand;
@@ -1065,9 +1112,9 @@ export async function pair(): Promise<void> {
     possibleCode && !possibleCode.startsWith('--') && /^[A-Za-z0-9]{4,12}$/.test(possibleCode);
 
   if (isCode) {
-    await pairWithCode(possibleCode, serverUrl, asJson);
+    await pairWithCode(possibleCode, undefined, asJson);
   } else {
-    await pairWithoutCode(serverUrl, asJson);
+    await pairWithoutCode(undefined, asJson);
   }
 }
 

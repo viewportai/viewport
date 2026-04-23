@@ -33,7 +33,7 @@ Session config resolution is separate:
     "relay": {
       "enabled": false,
       "endpoint": "wss://relay.getviewport.com/ws",
-      "serverUrl": "https://app.getviewport.com",
+      "serverUrl": "https://getviewport.com",
       "workspaceId": "workspace_demo",
       "issueToken": "install_daemon_issue_...",
       "tlsVerify": "auto",
@@ -50,6 +50,19 @@ Session config resolution is separate:
 }
 ```
 
+Optional pairing-browser override:
+
+```json
+{
+  "daemon": {
+    "server": {
+      "url": "https://getviewport.com",
+      "appUrl": "https://app.getviewport.com"
+    }
+  }
+}
+```
+
 ## Environment variables
 
 - `VIEWPORT_LISTEN`
@@ -58,6 +71,8 @@ Session config resolution is separate:
 - `VIEWPORT_ALLOWED_ORIGINS`
 - `VIEWPORT_AUTH`
 - `VIEWPORT_LOG_FILE`
+- `VIEWPORT_SERVER_URL` / `VPD_SERVER_URL`
+- `VIEWPORT_APP_URL` / `VPD_APP_URL`
 - `VIEWPORT_RELAY_ENABLED`
 - `VIEWPORT_RELAY_ENDPOINT`
 - `VIEWPORT_RELAY_SERVER`

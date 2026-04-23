@@ -168,6 +168,7 @@ export interface ViewportConfig {
     logFile?: string;
     server?: {
       url?: string;
+      appUrl?: string;
       tlsVerify?: 'auto' | '0' | '1';
       caCertPath?: string;
       tlsPins?: string[];
@@ -472,6 +473,7 @@ export class ConfigManager {
         logFile?: string;
         server?: {
           url?: string;
+          appUrl?: string;
           tlsVerify?: 'auto' | '0' | '1';
           caCertPath?: string;
           tlsPins?: string[];

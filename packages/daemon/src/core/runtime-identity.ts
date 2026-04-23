@@ -91,7 +91,6 @@ function isHostedHost(host: string | undefined): boolean {
 
 function resolveRuntimeKind(input: {
   explicitKind?: string;
-  daemonHomeSource: DaemonHomeSource;
   serverUrl?: string;
   relayEndpoint?: string;
   relayServerUrl?: string;
@@ -106,7 +105,7 @@ function resolveRuntimeKind(input: {
   }
 
   const hosts = [input.serverUrl, input.relayEndpoint, input.relayServerUrl].map(parseHost);
-  if (input.daemonHomeSource === 'explicit' || hosts.some((host) => isLocalHost(host))) {
+  if (hosts.some((host) => isLocalHost(host))) {
     return 'local-dev';
   }
 
@@ -137,7 +136,6 @@ export function resolveDaemonRuntimeIdentity(
     daemonConfig?.relay?.serverUrl ?? envValue(env, 'VIEWPORT_RELAY_SERVER', 'VPD_RELAY_SERVER');
   const runtimeKind = resolveRuntimeKind({
     explicitKind: envValue(env, 'VIEWPORT_RUNTIME_KIND', 'VPD_RUNTIME_KIND'),
-    daemonHomeSource,
     serverUrl,
     relayEndpoint,
     relayServerUrl,

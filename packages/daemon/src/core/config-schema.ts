@@ -58,6 +58,7 @@ export const ViewportConfigSchema = z
         server: z
           .object({
             url: z.string().optional(),
+            appUrl: z.string().optional(),
             tlsVerify: z.enum(['auto', '0', '1']).optional(),
             caCertPath: z.string().optional(),
             tlsPins: z.array(z.string()).optional(),
