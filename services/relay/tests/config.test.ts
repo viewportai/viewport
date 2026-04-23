@@ -11,7 +11,7 @@ describe('relay config', () => {
     expect(config.backplaneMode).toBe('single');
     expect(config.host).toBe('127.0.0.1');
     expect(config.port).toBe(7781);
-    expect(config.serverUrl).toBe('https://app.getviewport.com');
+    expect(config.serverUrl).toBe('https://getviewport.com');
     expect(config.publicWsBaseUrl).toBe('wss://relay.getviewport.com/ws');
     expect(config.maxFrameBytes).toBe(1_048_576);
     expect(config.maxTotalConnections).toBeGreaterThan(0);

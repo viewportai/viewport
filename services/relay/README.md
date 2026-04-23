@@ -45,7 +45,7 @@ docker run --rm -p 7781:7781 \
   -e PORT=7781 \
   -e RELAY_MODE=prod \
   -e RELAY_BACKPLANE_MODE=single \
-  -e SERVER_URL=https://app.getviewport.com \
+  -e SERVER_URL=https://getviewport.com \
   -e RELAY_ADMIN_TOKEN=change-me \
   -e RELAY_INTERNAL_KEY=change-me-change-me-change-me \
   -e RELAY_SERVER_MTLS=1 \
@@ -64,7 +64,7 @@ docker run --rm -p 7781:7781 \
   -e PORT=7781 \
   -e RELAY_MODE=prod \
   -e RELAY_BACKPLANE_MODE=redis \
-  -e SERVER_URL=https://app.getviewport.com \
+  -e SERVER_URL=https://getviewport.com \
   -e RELAY_ADMIN_TOKEN=change-me \
   -e RELAY_INTERNAL_KEY=change-me \
   -e RELAY_SERVER_MTLS=1 \

@@ -36,7 +36,7 @@ vpd status
 To attach the daemon to the managed control plane after you approve pairing in the app:
 
 ```bash
-vpd remote login --server https://app.getviewport.com --workspace <workspace-id> --token <issue-token> --enable
+vpd remote login --server https://getviewport.com --workspace <workspace-id> --token <issue-token> --enable
 vpd restart
 ```
 

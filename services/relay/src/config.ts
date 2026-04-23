@@ -246,7 +246,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   const parsedEnv = EnvSchema.parse(env);
   const host = parsedEnv.HOST?.trim() || '127.0.0.1';
   const port = parsePositiveInt(parsedEnv.PORT, 7781);
-  const serverUrl = parsedEnv.SERVER_URL?.trim() || 'https://app.getviewport.com';
+  const serverUrl = parsedEnv.SERVER_URL?.trim() || 'https://getviewport.com';
 
   const tlsHost = parsedEnv.RELAY_TLS_HOST?.trim() || 'relay.getviewport.com';
   const certDir =
