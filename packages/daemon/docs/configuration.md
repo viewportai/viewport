@@ -63,6 +63,11 @@ Optional pairing-browser override:
 }
 ```
 
+Use `appUrl` only when the browser pairing app is intentionally hosted at a different origin than the API server. For the managed topology:
+
+- API server: `https://getviewport.com`
+- browser app: `https://app.getviewport.com`
+
 ## Environment variables
 
 - `VIEWPORT_LISTEN`
@@ -109,6 +114,11 @@ Optional pairing-browser override:
 - `--relay-token-signing-keys-json`
 - `--relay-token-clock-skew-sec`
 - `--no-relay`
+
+Pairing-only flags:
+
+- `--server`
+- `--app-url`
 
 ## Relay bootstrap
 

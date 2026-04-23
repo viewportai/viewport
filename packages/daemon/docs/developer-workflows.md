@@ -105,7 +105,10 @@ Use only these shell entrypoints:
 4. `scripts/test-env.sh`
 5. `scripts/install-verify.sh`
 6. `scripts/verify.sh`
-3. Start the daemon from the repo against your existing global daemon home:
+
+## Linked-build workflow
+
+Start the daemon from the repo against your existing global daemon home:
 
 ```bash
 npm run daemon:start

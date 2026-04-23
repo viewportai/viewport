@@ -42,6 +42,11 @@ vpd restart
 
 The daemon defaults to the managed relay and control-plane topology unless you explicitly override the server or relay endpoint for local or self-hosted use.
 
+Use `vpd pair --app-url <url>` only when the browser pairing app is hosted at a different origin than the API server. The managed defaults are:
+
+- API server: `https://getviewport.com`
+- browser app: `https://app.getviewport.com`
+
 ### Relay (self-hosted)
 
 ```bash
@@ -70,7 +75,6 @@ npm run relay
 npm run daemon:test
 npm run daemon:install:verify
 npm run daemon:check
-npm run relay
 npm run relay:test
 npm run relay:check
 ```
@@ -81,7 +85,6 @@ Viewport uses one daemon model:
 
 - global state lives in `~/.viewport/`
 - optional project overrides live in the nearest `.viewport/config.json`
-- if you are inside the combined `viewportai/` checkout, the nearest override is the parent `../.viewport/config.json`
 
 That means:
 

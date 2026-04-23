@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { configDir, ConfigManager } from '../core/config.js';
+import type { ViewportConfig } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { resolveDaemonEndpoint } from './daemon-client.js';
 import type { DaemonEndpoint } from './daemon-client.js';
@@ -479,6 +480,7 @@ interface PairingServerTransportConfig {
   tlsVerify: 'auto' | '0' | '1';
   caCertPath?: string;
   tlsPins?: string[];
+  daemonConfig?: ViewportConfig['daemon'];
 }
 
 function envValue(env: NodeJS.ProcessEnv, ...keys: string[]): string | undefined {
@@ -531,6 +533,7 @@ async function resolvePairingServerTransport(
       parseCsvList(process.env['VPD_SERVER_TLS_PINS']) ??
       parseCsvList(process.env['VIEWPORT_SERVER_TLS_PINS']) ??
       serverConfig?.tlsPins,
+    daemonConfig,
   };
 }
 
@@ -880,6 +883,7 @@ async function pairWithCode(
   const server = await resolvePairingServerTransport(explicitServerUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonVersion: resolveDisplayVersion(),
+    daemonConfig: server.daemonConfig,
   });
   const installCapabilities = toInstallCapabilities({
     ...runtimeIdentity,
@@ -973,6 +977,7 @@ async function pairWithoutCode(
   const server = await resolvePairingServerTransport(explicitServerUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonVersion: resolveDisplayVersion(),
+    daemonConfig: server.daemonConfig,
   });
   const installCapabilities = toInstallCapabilities({
     ...runtimeIdentity,
@@ -1240,7 +1245,7 @@ export function showHelp(): void {
     '  worktree squash <sid> [--target <branch>] [--message <text>] [--json|--format <fmt>]',
   );
   console.log('                               Worktree and git-step operator controls');
-  console.log('  pair [<code>] [--server <url>] [--json]');
+  console.log('  pair [<code>] [--server <url>] [--app-url <url>] [--json]');
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');
   console.log('  pair rotate-token [--json]   Rotate auth token on disk (restart required)');

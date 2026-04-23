@@ -34,6 +34,8 @@ Local development link mode:
 ./scripts/install-dev.sh --link --yes --no-service --no-prereqs --no-hooks
 ```
 
+Link mode is for active daemon development when you want the repo checkout to become the global `vpd` binary. For release-confidence validation, prefer the tarball path through `npm run verify:install`.
+
 Local uninstall/reinstall:
 
 ```bash
