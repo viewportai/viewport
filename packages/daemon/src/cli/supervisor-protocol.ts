@@ -16,11 +16,14 @@ export interface RuntimeLaunchConfig {
   authEnabled: boolean;
   detached: boolean;
   logPath?: string;
+  serverUrl?: string;
+  serverTlsVerify?: 'auto' | '0' | '1';
+  serverCaCertPath?: string;
+  serverTlsPins?: string[];
   relayEnabled?: boolean;
   relayEndpoint?: string;
   relayServerUrl?: string;
   relayWorkspaceId?: string;
-  relayEnrollToken?: string;
   relayIssueToken?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
   relayCaCertPath?: string;

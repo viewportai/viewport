@@ -26,6 +26,7 @@ const AdmissionClaimsSchema = z
   .object({
     clientId: z.string().min(1).max(128).optional(),
     userId: z.string().min(1).max(128).optional(),
+    installId: z.string().min(1).max(128).optional(),
     role: z.enum(['workspace-daemon', 'client']).optional(),
     workspaceId: z.string().min(1).max(128).optional(),
     scope: z.enum(['runtime', 'pairing']).optional(),
@@ -133,7 +134,7 @@ export async function validateAdmission(
   config: RelayConfig,
   payload: { token: string; role: RelayRole; workspaceId: string },
 ): Promise<AdmissionResult> {
-  const validateUrl = new URL('/api/internal/relay/validate', config.serverUrl);
+  const validateUrl = new URL('/api/runtime/internal/relay/validate', config.serverUrl);
   const rejectUnauthorized = resolveServerTlsRejectUnauthorized(
     validateUrl.toString(),
     config.serverTlsVerify,

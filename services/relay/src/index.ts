@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
+import packageJson from '../package.json' with { type: 'json' };
 import { WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { validateAdmission } from './admission.js';
@@ -19,6 +20,20 @@ import {
   TokenBucketRateLimiter,
 } from './security.js';
 import type { RelayRole } from './types.js';
+
+const cliArgs = new Set(process.argv.slice(2));
+if (cliArgs.has('--help') || cliArgs.has('-h')) {
+  console.log('Viewport relay');
+  console.log('');
+  console.log('Environment-driven WebSocket relay for remote daemon access.');
+  console.log('');
+  console.log('Key variables: HOST, PORT, SERVER_URL, RELAY_PUBLIC_WS_BASE_URL, RELAY_MODE');
+  process.exit(0);
+}
+if (cliArgs.has('--version') || cliArgs.has('-v')) {
+  console.log(packageJson.version);
+  process.exit(0);
+}
 
 const config = loadConfig();
 const logger = new RelayLogger(config.maxLogs);

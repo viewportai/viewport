@@ -16,6 +16,7 @@
  */
 
 import { getCommand, getArgs } from './cli/args.js';
+import { resolveGlobalFlag } from './cli/global-flags.js';
 import {
   install,
   addDirectory,
@@ -41,8 +42,22 @@ import {
   setup,
   remote,
 } from './cli/commands.js';
+import { resolvePackageVersion } from './cli/command-shared.js';
 import { hookNotify } from './cli/hook-command.js';
 import { start, runSupervisorCommand, runWorkerCommand } from './startup.js';
+
+const rawArgs = getArgs();
+const globalFlag = resolveGlobalFlag(rawArgs);
+
+if (globalFlag === 'help') {
+  showHelp();
+  process.exit(0);
+}
+
+if (globalFlag === 'version') {
+  console.log(resolvePackageVersion());
+  process.exit(0);
+}
 
 const commands: Record<string, () => Promise<void>> = {
   start,

@@ -4,6 +4,15 @@ Self-hostable orchestration and control plane for coding agents.
 
 Viewport lets developers and teams supervise, control, and automate AI coding agents running across laptops, devboxes, and remote machines — from a browser or phone.
 
+## System docs
+
+The docs app in the sibling `../docs` repo is the canonical explanation of:
+
+- hosted URL roles
+- local versus managed versus self-hosted runtime shapes
+- pairing and relay admission
+- full-stack local development from the platform repo
+
 ## Packages
 
 | Package | Description | Status |
@@ -18,15 +27,34 @@ Viewport lets developers and teams supervise, control, and automate AI coding ag
 ```bash
 npm install -g @viewportai/daemon
 vpd setup
-vpd start
+vpd service status
+vpd status
 ```
+
+`vpd setup` installs and starts the user-level boot service when you accept the recommended defaults. Run `vpd start` manually only if you skipped service install.
+
+To attach the daemon to the managed control plane after you approve pairing in the app:
+
+```bash
+vpd remote login --server https://app.getviewport.com --workspace <workspace-id> --token <issue-token> --enable
+vpd restart
+```
+
+The daemon defaults to the managed relay and control-plane topology unless you explicitly override the server or relay endpoint for local or self-hosted use.
 
 ### Relay (self-hosted)
 
 ```bash
 docker build -t viewport-relay services/relay
-docker run --rm -p 7781:7781 -e HOST=0.0.0.0 viewport-relay
+docker run --rm -p 7781:7781 \
+  -e HOST=0.0.0.0 \
+  -e RELAY_MODE=prod \
+  -e SERVER_URL=https://platform.example.com \
+  -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.example.com/ws \
+  viewport-relay
 ```
+
+`SERVER_URL` and `RELAY_PUBLIC_WS_BASE_URL` are required for any non-local deployment.
 
 ## Development
 
@@ -44,6 +72,12 @@ npm run dev -w @viewportai/relay
 npm run daemon:check
 npm run relay:check
 ```
+
+## Contribution Naming
+
+- Branches: `feat/...`, `fix/...`, `refactor/...`, `docs/...`, `test/...`, `chore/...`
+- PR titles: semantic format with optional scope, for example `feat(runtime): ...`
+- Do not use roadmap labels or temporary agent labels in branch names or PR titles.
 
 ## Architecture
 

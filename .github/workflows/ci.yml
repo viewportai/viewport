@@ -59,7 +59,28 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
         working-directory: .
-      - run: npm run check
+      - run: npm audit --audit-level=high || true
+      - run: npm run check:file-size -w @viewportai/daemon
+      - run: npm run check:protocol-matrix -w @viewportai/daemon
+      - run: npm run typecheck -w @viewportai/daemon
+      - run: npm run lint -w @viewportai/daemon
+      - run: npm run format:check -w @viewportai/daemon
+      - run: npm run test:coverage -w @viewportai/daemon
+
+  daemon-runtime:
+    name: Daemon install verify
+    needs: changes
+    if: needs.changes.outputs.daemon == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run verify:linux:ci -w @viewportai/daemon
 
   relay:
     name: Relay
@@ -78,29 +99,48 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
         working-directory: .
+      - run: npm run build -w @viewportai/relay
+      - run: npm audit --audit-level=high || true
       - run: npm run check
 
-  integration:
-    name: Integration
+  integration-platform:
+    name: Integration (private platform smoke)
     needs: changes
-    if: needs.changes.outputs.integration == 'true' && github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.integration == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.fork == false)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: integration
+    env:
+      PLATFORM_REPO_READ_TOKEN: ${{ secrets.PLATFORM_REPO_READ_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      - name: Detect private platform token
+        id: platform-token
+        shell: bash
+        run: |
+          if [[ -n "${PLATFORM_REPO_READ_TOKEN:-}" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Skip private platform smoke
+        if: steps.platform-token.outputs.available != 'true'
+        run: echo "PLATFORM_REPO_READ_TOKEN is not configured; skipping private cross-repo smoke."
       - uses: actions/checkout@v4
+        if: steps.platform-token.outputs.available == 'true'
         with:
           repository: viewportai/platform
-          token: ${{ secrets.PLATFORM_REPO_READ_TOKEN }}
+          token: ${{ env.PLATFORM_REPO_READ_TOKEN }}
           path: platform
       - uses: shivammathur/setup-php@v2
+        if: steps.platform-token.outputs.available == 'true'
         with:
           php-version: '8.4'
           tools: composer:v2
           coverage: none
       - uses: actions/setup-node@v4
+        if: steps.platform-token.outputs.available == 'true'
         with:
           node-version: 22
           cache: npm
@@ -108,15 +148,22 @@ jobs:
             package-lock.json
             platform/apps/api/package-lock.json
       - run: npm ci
+        if: steps.platform-token.outputs.available == 'true'
         working-directory: .
       - run: composer install --no-interaction --prefer-dist --optimize-autoloader
+        if: steps.platform-token.outputs.available == 'true'
         working-directory: platform/apps/api
       - run: cp .env.example .env
+        if: steps.platform-token.outputs.available == 'true'
         working-directory: platform/apps/api
       - run: touch database/database.sqlite
+        if: steps.platform-token.outputs.available == 'true'
         working-directory: platform/apps/api
       - run: php artisan key:generate --force
+        if: steps.platform-token.outputs.available == 'true'
         working-directory: platform/apps/api
       - run: php artisan migrate --force
+        if: steps.platform-token.outputs.available == 'true'
         working-directory: platform/apps/api
       - run: PLATFORM_ROOT="$GITHUB_WORKSPACE/platform" npm run test:smoke
+        if: steps.platform-token.outputs.available == 'true'

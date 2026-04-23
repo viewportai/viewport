@@ -217,10 +217,6 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     getFlag('relay-workspace') ??
     envValue('VPD_RELAY_WORKSPACE', 'VIEWPORT_RELAY_WORKSPACE') ??
     daemonConfig?.relay?.workspaceId;
-  const relayEnrollToken =
-    getFlag('relay-enroll-token') ??
-    envValue('VPD_RELAY_ENROLL_TOKEN', 'VIEWPORT_RELAY_ENROLL_TOKEN') ??
-    daemonConfig?.relay?.enrollToken;
   const relayIssueToken =
     getFlag('relay-issue-token') ??
     envValue('VPD_RELAY_ISSUE_TOKEN', 'VIEWPORT_RELAY_ISSUE_TOKEN') ??
@@ -282,7 +278,6 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     relayEndpoint,
     relayServerUrl,
     relayWorkspaceId,
-    relayEnrollToken,
     relayIssueToken,
     relayTlsVerify,
     relayCaCertPath,

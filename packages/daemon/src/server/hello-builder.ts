@@ -1,9 +1,9 @@
 /**
  * Bootstrap snapshot builder — constructs the current daemon state snapshot.
  *
- * `hello` is kept for compatibility with older direct clients. `sync-snapshot`
- * is the authoritative fresh bootstrap returned to clients that explicitly
- * request sync after transport setup or relay key exchange.
+ * `hello` is the initial bootstrap emitted on connect.
+ * `sync-snapshot` is the explicit resync payload used after transport setup
+ * changes such as reconnect or relay key exchange.
  */
 
 import type { Daemon } from '../core/daemon.js';

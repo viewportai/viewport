@@ -1,65 +1,33 @@
 # Releasing and npm Publish
 
-## Current source of truth
+## Scope
 
-1. npm package name: `@viewportai/daemon` (`package.json` `name`).
-2. Version source: semantic-release from commit history on `main`.
-3. Publish trigger: `.github/workflows/release.yml` after `CI` succeeds on a push to `main`.
-4. npm auth: granular `NPM_TOKEN` secret in GitHub Actions.
+This document is intentionally narrow: it describes release validation for `@viewportai/daemon`, not the repo's package-versioning policy.
 
-## Version rules
+Feature PRs should not carry release metadata unless the goal of the PR is to cut a package release.
 
-1. `feat:` => `minor` (for example `0.4.0` -> `0.5.0`).
-2. `fix:` => `patch` (for example `0.4.1` -> `0.4.2`).
-3. `perf:` / `refactor:` / `revert:` => `patch`.
-4. `BREAKING CHANGE:` footer or `!` in type/scope => `major`.
-5. `docs:`, `test:`, `chore:` alone => no release.
+Package metadata lives in `packages/daemon/package.json`. Publishing is performed through the repo's current release workflow on `main` with `NPM_TOKEN`.
 
-## One-time setup for production publish
+## Release checklist
 
-1. Create npm organization scope `@viewportai` (or verify ownership if it already exists).
-2. Ensure repository package name remains `@viewportai/daemon`.
-3. Create a granular npm token with publish rights to `@viewportai/daemon`.
-4. Add GitHub Actions secret `NPM_TOKEN` in repo settings.
-5. Ensure branch protection on `main` requires the `CI` workflow to pass before merge.
-6. Ensure branch protection on `main` requires the `Semantic PR` workflow to pass before merge.
-7. Use squash-merge so the semantic PR title becomes the release-driving commit on `main`.
-8. Ensure npm package access is public (already configured via `publishConfig.access=public`).
-9. For this repository, enforce a pre-1.0 stream with a one-time baseline tag on the bootstrap `main` commit: `git tag v0.0.0 && git push origin v0.0.0`.
-10. Keep `package.json` publish metadata canonical for provenance:
-   - `repository.url` must be exactly `https://github.com/viewportai/viewport.git`
-   - `bin.vpd` must be exactly `bin/vpd.js`
+Before maintainers publish:
 
-## Release flow
+1. Merge the intended daemon changes to `main`.
+2. Confirm the repo's current release workflow is the one you intend to use.
+3. Confirm npm auth is configured through the repository secret.
 
-1. Open PR with semantic commits.
-2. Merge to `main` after CI green.
-3. `release.yml` runs semantic-release:
-   - calculates next version,
-   - updates `CHANGELOG.md`, `package.json`, and `package-lock.json`,
-   - creates git tag,
-   - creates GitHub release,
-   - publishes package to npm.
-4. Validate via:
-   - GitHub release/tag exists (`vX.Y.Z`),
-   - npm package version appears in registry,
-   - `vpd --version` from fresh global install matches.
+## Validation
 
-## Local dry run
-
-Use this before rollout changes to release config:
+Before publish:
 
 ```bash
-npx -y \
-  -p semantic-release \
-  -p @semantic-release/changelog \
-  -p @semantic-release/commit-analyzer \
-  -p conventional-changelog-conventionalcommits \
-  -p @semantic-release/git \
-  -p @semantic-release/github \
-  -p @semantic-release/npm \
-  -p @semantic-release/release-notes-generator \
-  semantic-release --dry-run
+npm run build -w @viewportai/daemon
+npm run test -w @viewportai/daemon
+node packages/daemon/dist/index.js --version
 ```
 
-This does not publish; it only reports what version would be released.
+After publish:
+
+1. Confirm the new version exists on npm.
+2. Confirm the git tag exists.
+3. Confirm a fresh global install reports the same `vpd --version`.

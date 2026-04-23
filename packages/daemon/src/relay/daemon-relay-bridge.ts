@@ -42,6 +42,7 @@ import {
 } from '../server/pairing-offers.js';
 import { loadConfig, saveConfig } from '../core/config.js';
 import { logger as out } from '../core/output.js';
+import { transportFetch } from '../cli/network.js';
 
 interface RelayTokenResponse {
   ok: boolean;
@@ -89,7 +90,6 @@ export interface DaemonRelayBridgeOptions {
   relayEndpoint: string;
   relayServerUrl: string;
   workspaceId: string;
-  enrollToken: string;
   issueToken?: string;
   daemonWsUrl: string;
   daemonAuthToken?: string;
@@ -414,33 +414,35 @@ export class DaemonRelayBridge {
 
   private async ensureKeyMaterial(): Promise<void> {
     if (!this.daemonIdentity) {
-      this.daemonIdentity = await loadOrCreateIdentity(this.options.workspaceId);
+      this.daemonIdentity = await loadOrCreateIdentity();
     }
   }
 
-  private async registerDaemonPublicKey(): Promise<void> {
-    if (!this.daemonIdentity) {
+  private async registerDaemonPublicKeyWithIdentity(identity: DaemonRelayIdentity): Promise<void> {
+    if (!identity) {
       throw new BridgeError('DAEMON_KEY_REGISTER_FAILED', 'daemon identity unavailable');
     }
 
     const url =
       `${this.options.relayServerUrl.replace(/\/+$/, '')}` +
-      `/api/poc/workspaces/${encodeURIComponent(this.options.workspaceId)}/daemon-key`;
+      `/api/runtime/workspaces/${encodeURIComponent(this.options.workspaceId)}/daemon-key`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
 
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await transportFetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          credential: this.options.enrollToken,
-          issueCredential: this.daemonIssueToken ?? undefined,
-          daemonPublicKey: this.daemonIdentity.publicKey,
+          credential: this.daemonIssueToken ?? undefined,
+          daemonPublicKey: identity.publicKey,
         }),
         signal: controller.signal,
+        tlsVerify: this.options.relayTlsVerify ?? 'auto',
+        caCertPath: this.options.relayCaCertPath,
+        tlsPins: this.options.relayTlsPins,
       });
     } catch (error) {
       clearTimeout(timeout);
@@ -476,6 +478,13 @@ export class DaemonRelayBridge {
     }
     this.daemonIssueToken = parsed.daemonIssueToken;
     await this.persistIssueToken(parsed.daemonIssueToken);
+  }
+
+  private async registerDaemonPublicKey(): Promise<void> {
+    if (!this.daemonIdentity) {
+      throw new BridgeError('DAEMON_KEY_REGISTER_FAILED', 'daemon identity unavailable');
+    }
+    await this.registerDaemonPublicKeyWithIdentity(this.daemonIdentity);
   }
 
   private async persistIssueToken(issueToken: string): Promise<void> {
@@ -1209,7 +1218,7 @@ export class DaemonRelayBridge {
     relayToken: string;
     profile: RelayHandshakeProfile;
   }> {
-    const url = `${this.options.relayServerUrl.replace(/\/+$/, '')}/api/poc/relay-token`;
+    const url = `${this.options.relayServerUrl.replace(/\/+$/, '')}/api/runtime/relay-token`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
     let res: Response;
@@ -1217,7 +1226,7 @@ export class DaemonRelayBridge {
       throw new BridgeError('TOKEN_ISSUE_FAILED', 'missing daemon issue token');
     }
     try {
-      res = await fetch(url, {
+      res = await transportFetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -1226,6 +1235,9 @@ export class DaemonRelayBridge {
           credential: this.daemonIssueToken,
         }),
         signal: controller.signal,
+        tlsVerify: this.options.relayTlsVerify ?? 'auto',
+        caCertPath: this.options.relayCaCertPath,
+        tlsPins: this.options.relayTlsPins,
       });
     } catch (error) {
       clearTimeout(timeout);
@@ -1245,7 +1257,7 @@ export class DaemonRelayBridge {
     let verificationKeys = await this.resolveRelayTokenVerificationKeys(false);
     try {
       tokenClaims = verifyRelayTokenClaims(parsed.relayToken, {
-        issuer: this.options.relayTokenIssuer ?? 'viewport-server-poc',
+        issuer: this.options.relayTokenIssuer ?? 'viewport-server',
         audience: this.options.relayTokenAudience ?? 'viewport-relay',
         signingKeys: verificationKeys,
         clockSkewSec: this.options.relayTokenClockSkewSec ?? 30,
@@ -1259,7 +1271,7 @@ export class DaemonRelayBridge {
       ) {
         verificationKeys = await this.resolveRelayTokenVerificationKeys(true);
         tokenClaims = verifyRelayTokenClaims(parsed.relayToken, {
-          issuer: this.options.relayTokenIssuer ?? 'viewport-server-poc',
+          issuer: this.options.relayTokenIssuer ?? 'viewport-server',
           audience: this.options.relayTokenAudience ?? 'viewport-relay',
           signingKeys: verificationKeys,
           clockSkewSec: this.options.relayTokenClockSkewSec ?? 30,
@@ -1295,10 +1307,13 @@ export class DaemonRelayBridge {
 
     let res: Response;
     try {
-      res = await fetch(this.relayTokenJwksUrl, {
+      res = await transportFetch(this.relayTokenJwksUrl, {
         method: 'GET',
         headers: { accept: 'application/json' },
         signal: controller.signal,
+        tlsVerify: this.options.relayTlsVerify ?? 'auto',
+        caCertPath: this.options.relayCaCertPath,
+        tlsPins: this.options.relayTlsPins,
       });
     } catch (error) {
       clearTimeout(timeout);

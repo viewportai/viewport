@@ -87,7 +87,6 @@ interface PairingPeerBindingRecord {
   relayPairingSecretCiphertext?: string;
   relayPairingSecretIv?: string;
   relayPairingSecretTag?: string;
-  relayPairingSecret?: string;
   firstPairedAt: number;
   lastPairedAt: number;
   lastOfferId: string;
@@ -481,7 +480,6 @@ async function upsertPeerBinding(input: {
     existing.relayPairingSecretCiphertext = encryptedSecret.ciphertext;
     existing.relayPairingSecretIv = encryptedSecret.iv;
     existing.relayPairingSecretTag = encryptedSecret.tag;
-    delete existing.relayPairingSecret;
     existing.lastPairedAt = now;
     existing.lastOfferId = input.offerId;
     existing.trustAnchor = input.trustAnchor;
@@ -613,33 +611,6 @@ async function decryptRelayPairingSecret(
   }
 }
 
-async function migrateLegacyPeerBindingSecret(peerId: string, legacySecret: string): Promise<void> {
-  await withStoreMutationLock(async () => {
-    const store = await readPeerBindings();
-    const binding = store.peers.find((peer) => peer.peerId === peerId);
-    if (!binding) return;
-    if (
-      typeof binding.relayPairingSecretCiphertext === 'string' &&
-      typeof binding.relayPairingSecretIv === 'string' &&
-      typeof binding.relayPairingSecretTag === 'string'
-    ) {
-      return;
-    }
-    if (
-      typeof binding.relayPairingSecret !== 'string' ||
-      binding.relayPairingSecret !== legacySecret
-    ) {
-      return;
-    }
-    const encryptedSecret = await encryptRelayPairingSecret(legacySecret);
-    binding.relayPairingSecretCiphertext = encryptedSecret.ciphertext;
-    binding.relayPairingSecretIv = encryptedSecret.iv;
-    binding.relayPairingSecretTag = encryptedSecret.tag;
-    delete binding.relayPairingSecret;
-    await writePeerBindings(store);
-  });
-}
-
 export async function resolveRelayPairingSecret(peerId: string): Promise<Buffer | null> {
   if (!peerId || peerId.trim().length === 0) return null;
   const store = await readPeerBindings();
@@ -666,17 +637,6 @@ export async function resolveRelayPairingSecret(peerId: string): Promise<Buffer 
       'Resolved relay pairing secret',
     );
     return decrypted;
-  }
-
-  if (typeof binding.relayPairingSecret === 'string') {
-    try {
-      const decoded = Buffer.from(binding.relayPairingSecret, 'base64url');
-      if (decoded.length !== 32) return null;
-      await migrateLegacyPeerBindingSecret(binding.peerId, binding.relayPairingSecret);
-      return decoded;
-    } catch {
-      return null;
-    }
   }
 
   return null;

@@ -18,11 +18,28 @@ function print(value: unknown): void {
 export function inferRelayEndpointFromServer(serverUrl: string): string {
   const parsed = new URL(serverUrl);
   const scheme = parsed.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${parsed.hostname}:7781/ws`;
-}
+  let relayHost = parsed.hostname;
+  const isLocalHost =
+    relayHost === '127.0.0.1' ||
+    relayHost === 'localhost' ||
+    relayHost === '::1' ||
+    relayHost.endsWith('.test');
 
-function joinUrl(base: string, pathname: string): string {
-  return `${base.replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
+  if (relayHost.startsWith('app.')) {
+    const appBaseHost = relayHost.slice(4);
+    relayHost = appBaseHost.endsWith('.test') ? appBaseHost : `relay.${appBaseHost}`;
+  } else if (relayHost === 'getviewport.com' || relayHost === 'getviewport.dev') {
+    relayHost = `relay.${relayHost}`;
+  }
+  if (relayHost === 'relay.getviewport.com') {
+    return `${scheme}://${relayHost}/ws`;
+  }
+  if (relayHost === 'relay.getviewport.dev' || isLocalHost || relayHost.endsWith('.test')) {
+    return `${scheme}://${relayHost}:7781/ws`;
+  }
+  throw new Error(
+    `Cannot infer relay endpoint from ${serverUrl}. Pass --relay-endpoint for self-hosted or custom deployments.`,
+  );
 }
 
 function redact(token: string | undefined): string | undefined {
@@ -33,80 +50,7 @@ function redact(token: string | undefined): string | undefined {
 
 function usage(): never {
   throw new Error(
-    'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <enroll-token>] [--user <id>] [--workspace-name <name>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1]',
-  );
-}
-
-async function parseJson(res: Response): Promise<Record<string, unknown> | null> {
-  return (await res.json().catch(() => null)) as Record<string, unknown> | null;
-}
-
-async function discoverRelayEndpoint(serverUrl: string): Promise<string | null> {
-  const res = await fetch(joinUrl(serverUrl, '/api/poc/relay/state'));
-  if (!res.ok) return null;
-  const json = await parseJson(res);
-  if (!json || json.ok !== true) return null;
-
-  const state = json.state as Record<string, unknown> | undefined;
-  const wsBaseUrl = typeof state?.wsBaseUrl === 'string' ? state.wsBaseUrl : null;
-  return wsBaseUrl && wsBaseUrl.length > 0 ? wsBaseUrl : null;
-}
-
-async function resetWorkspaceEnrollToken(
-  serverUrl: string,
-  workspaceId: string,
-): Promise<{ ok: true; token: string } | { ok: false; workspaceMissing: boolean; reason: string }> {
-  const res = await fetch(
-    joinUrl(serverUrl, `/api/poc/workspaces/${encodeURIComponent(workspaceId)}/reset-enroll-token`),
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    },
-  );
-  const json = await parseJson(res);
-
-  if (res.ok && json?.ok === true && typeof json.workspaceEnrollToken === 'string') {
-    return { ok: true, token: json.workspaceEnrollToken };
-  }
-
-  const reason = typeof json?.error === 'string' ? json.error : 'reset enroll token failed';
-  const workspaceMissing = reason === 'workspace not found' || res.status === 404;
-  return { ok: false, workspaceMissing, reason };
-}
-
-async function enrollWorkspace(
-  serverUrl: string,
-  workspaceId: string,
-  userId: string,
-  workspaceName?: string,
-): Promise<{ token: string; created: boolean }> {
-  const res = await fetch(joinUrl(serverUrl, '/api/poc/workspaces/enroll'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userId,
-      workspaceId,
-      workspaceName: workspaceName || workspaceId,
-    }),
-  });
-  const json = await parseJson(res);
-
-  if (res.ok && json?.ok === true && typeof json.workspaceEnrollToken === 'string') {
-    return { token: json.workspaceEnrollToken, created: true };
-  }
-
-  if (res.status === 409) {
-    const reset = await resetWorkspaceEnrollToken(serverUrl, workspaceId);
-    if (reset.ok) {
-      return { token: reset.token, created: false };
-    }
-    throw new Error(`Failed to reset workspace enroll token: ${reset.reason}`);
-  }
-
-  throw new Error(
-    `Failed to enroll workspace: ${
-      typeof json?.error === 'string' ? json.error : `HTTP ${res.status}`
-    }`,
+    'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1]',
   );
 }
 
@@ -130,7 +74,7 @@ export async function remote(): Promise<void> {
         endpoint: relayConfig.endpoint,
         serverUrl: relayConfig.serverUrl,
         workspaceId: relayConfig.workspaceId,
-        enrollToken: redact(relayConfig.enrollToken),
+        installId: relayConfig.installId,
         issueToken: redact(relayConfig.issueToken),
         tlsVerify: relayConfig.tlsVerify ?? 'auto',
         caCertPath: relayConfig.caCertPath,
@@ -145,7 +89,7 @@ export async function remote(): Promise<void> {
     console.log(`Relay endpoint:       ${payload.relay.endpoint ?? '-'}`);
     console.log(`Relay server:         ${payload.relay.serverUrl ?? '-'}`);
     console.log(`Workspace:            ${payload.relay.workspaceId ?? '-'}`);
-    console.log(`Enroll token:         ${payload.relay.enrollToken ?? '-'}`);
+    console.log(`Install:              ${payload.relay.installId ?? '-'}`);
     console.log(`Issue token:          ${payload.relay.issueToken ?? '-'}`);
     console.log(`TLS verify:           ${payload.relay.tlsVerify}`);
     console.log(`CA cert path:         ${payload.relay.caCertPath ?? '-'}`);
@@ -175,7 +119,7 @@ export async function remote(): Promise<void> {
       relay: {
         ...relayConfig,
         enabled: false,
-        enrollToken: undefined,
+        installId: undefined,
         issueToken: undefined,
       },
     });
@@ -192,39 +136,26 @@ export async function remote(): Promise<void> {
   if (subcommand === 'login') {
     const serverUrl = getFlag('server') ?? relayConfig.serverUrl;
     const workspaceId = getFlag('workspace') ?? relayConfig.workspaceId;
-    const userId = getFlag('user');
-    const workspaceName = getFlag('workspace-name');
-    let enrollToken = getFlag('token') ?? relayConfig.enrollToken;
+    const preserveIssuedInstall = relayConfig.workspaceId === workspaceId;
+    const issueToken =
+      getFlag('token') ??
+      getFlag('issue-token') ??
+      (preserveIssuedInstall && relayConfig.serverUrl === serverUrl
+        ? relayConfig.issueToken
+        : undefined);
 
     if (!serverUrl || !workspaceId) {
       usage();
     }
+    if (!issueToken) {
+      throw new Error(
+        'Missing relay issue token. Pass --token <issue-token> or --issue-token <issue-token>.',
+      );
+    }
 
     let relayEndpoint = getFlag('relay-endpoint') ?? relayConfig.endpoint;
     if (!relayEndpoint) {
-      relayEndpoint =
-        (await discoverRelayEndpoint(serverUrl).catch(() => null)) ??
-        inferRelayEndpointFromServer(serverUrl);
-    }
-
-    let tokenSource: 'flag_or_config' | 'reset' | 'enroll' = 'flag_or_config';
-    if (!enrollToken) {
-      const reset = await resetWorkspaceEnrollToken(serverUrl, workspaceId);
-      if (reset.ok) {
-        enrollToken = reset.token;
-        tokenSource = 'reset';
-      } else if (reset.workspaceMissing) {
-        if (!userId) {
-          throw new Error(
-            'Workspace not found and no --user provided. Pass --user to auto-enroll workspace, or pass --token explicitly.',
-          );
-        }
-        const enrolled = await enrollWorkspace(serverUrl, workspaceId, userId, workspaceName);
-        enrollToken = enrolled.token;
-        tokenSource = 'enroll';
-      } else {
-        throw new Error(`Failed to obtain enroll token: ${reset.reason}`);
-      }
+      relayEndpoint = inferRelayEndpointFromServer(serverUrl);
     }
 
     const relayTlsVerify = (getFlag('relay-tls-verify') ?? relayConfig.tlsVerify ?? 'auto') as
@@ -233,6 +164,8 @@ export async function remote(): Promise<void> {
       | '1';
     const relayCaCertPath = getFlag('relay-ca-cert') ?? relayConfig.caCertPath;
     const enableNow = hasFlag('enable') || !boolLike(getFlag('no-enable'));
+    const nextIssueToken = preserveIssuedInstall ? relayConfig.issueToken : undefined;
+    const nextInstallId = preserveIssuedInstall ? relayConfig.installId : undefined;
 
     await manager.setDaemonConfig({
       relay: {
@@ -241,8 +174,8 @@ export async function remote(): Promise<void> {
         endpoint: relayEndpoint,
         serverUrl,
         workspaceId,
-        enrollToken,
-        issueToken: relayConfig.issueToken,
+        installId: nextInstallId,
+        issueToken: issueToken.trim() || nextIssueToken,
         tlsVerify: relayTlsVerify,
         caCertPath: relayCaCertPath,
       },
@@ -256,12 +189,11 @@ export async function remote(): Promise<void> {
         endpoint: relayEndpoint,
         serverUrl,
         workspaceId,
-        enrollToken: redact(enrollToken),
-        issueToken: redact(relayConfig.issueToken),
+        installId: nextInstallId,
+        issueToken: redact(issueToken.trim() || nextIssueToken),
         tlsVerify: relayTlsVerify,
         caCertPath: relayCaCertPath,
       },
-      tokenSource,
       next: 'Run `vpd restart` to apply relay runtime changes.',
     };
 
@@ -274,7 +206,7 @@ export async function remote(): Promise<void> {
     console.log(`- endpoint:  ${relayEndpoint}`);
     console.log(`- server:    ${serverUrl}`);
     console.log(`- workspace: ${workspaceId}`);
-    console.log(`- token:     ${tokenSource}`);
+    console.log(`- token:     provided`);
     console.log(`- enabled:   ${enableNow ? 'yes' : 'no'}`);
     console.log('Run `vpd restart` to apply relay runtime changes.');
     return;

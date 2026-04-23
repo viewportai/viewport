@@ -18,7 +18,7 @@ export interface DaemonProcessInfo {
 }
 
 export interface DaemonRuntimeState {
-  pid?: number;
+  pid: number;
   ownerPid: number;
   workerPid?: number;
   port: number;
@@ -42,6 +42,8 @@ export interface DaemonRuntimeState {
   relayServerUrl?: string;
   relayWorkspaceId?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
+  tlsEnabled?: boolean;
+  tlsHost?: string;
 }
 
 function daemonStatePath(): string {
@@ -51,15 +53,9 @@ function daemonStatePath(): string {
 export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | null> {
   try {
     const raw = await fs.readFile(daemonStatePath(), 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<DaemonRuntimeState> & { pid?: unknown };
-
-    const legacyOwnerPid =
-      typeof parsed.ownerPid === 'number'
-        ? parsed.ownerPid
-        : typeof parsed.pid === 'number'
-          ? parsed.pid
-          : null;
-    if (legacyOwnerPid === null) return null;
+    const parsed = JSON.parse(raw) as Partial<DaemonRuntimeState>;
+    const ownerPid = typeof parsed.ownerPid === 'number' ? parsed.ownerPid : parsed.pid;
+    if (typeof ownerPid !== 'number') return null;
 
     if (
       typeof parsed.port !== 'number' ||
@@ -79,9 +75,16 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
           ? `unix://${socketPath}`
           : `${parsed.host}:${parsed.port}`;
 
+    const pid =
+      typeof parsed.pid === 'number'
+        ? parsed.pid
+        : typeof parsed.workerPid === 'number'
+          ? parsed.workerPid
+          : ownerPid;
+
     return {
-      pid: legacyOwnerPid,
-      ownerPid: legacyOwnerPid,
+      pid,
+      ownerPid,
       workerPid: typeof parsed.workerPid === 'number' ? parsed.workerPid : undefined,
       port: parsed.port,
       host: parsed.host,
@@ -115,6 +118,8 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
         parsed.relayTlsVerify === '1'
           ? parsed.relayTlsVerify
           : undefined,
+      tlsEnabled: typeof parsed.tlsEnabled === 'boolean' ? parsed.tlsEnabled : undefined,
+      tlsHost: typeof parsed.tlsHost === 'string' ? parsed.tlsHost : undefined,
     };
   } catch {
     return null;
@@ -123,19 +128,20 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
 
 export async function writeDaemonRuntimeState(state: DaemonRuntimeState): Promise<void> {
   await fs.mkdir(configDir(), { recursive: true });
-  const ownerPid =
-    typeof state.ownerPid === 'number'
-      ? state.ownerPid
-      : typeof state.pid === 'number'
-        ? state.pid
-        : null;
-  if (ownerPid === null) {
-    throw new Error('Daemon runtime state requires ownerPid (or legacy pid)');
+  const ownerPid = typeof state.ownerPid === 'number' ? state.ownerPid : state.pid;
+  if (typeof ownerPid !== 'number') {
+    throw new Error('Daemon runtime state requires ownerPid');
   }
+  const pid =
+    typeof state.pid === 'number'
+      ? state.pid
+      : typeof state.workerPid === 'number'
+        ? state.workerPid
+        : ownerPid;
   const normalized: DaemonRuntimeState = {
     ...state,
+    pid,
     ownerPid,
-    pid: ownerPid,
     listen:
       typeof state.listen === 'string'
         ? state.listen

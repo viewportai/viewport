@@ -21,6 +21,7 @@ import { encodeProjectDir, readSessionMessagesRich } from '../discovery/jsonl-re
 import { readCodexSessionMessagesRich } from '../discovery/codex.js';
 import { issuePairingOffer, redeemPairingOffer } from './pairing-offers.js';
 import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './ring-buffer.js';
+import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
 
 const startTime = Date.now();
 
@@ -90,6 +91,7 @@ export interface DaemonRuntimeInfo {
   socketPath?: string;
   startedAt: number;
   version: string;
+  relayEnabled?: boolean;
 }
 
 export interface HttpServerOptions {
@@ -99,6 +101,7 @@ export interface HttpServerOptions {
   securityProfile?: SecurityProfile;
   onLifecycleShutdown?: () => Promise<void>;
   onLifecycleRestart?: () => Promise<void>;
+  getRelayStatus?: () => DaemonRelayBridgeStatus | null;
 }
 
 function isHookAuthBypassAllowed(securityProfile?: SecurityProfile): boolean {
@@ -179,6 +182,9 @@ export function registerHttpRoutes(
     const isLifecycleUrl = url === '/api/lifecycle/shutdown' || url === '/api/lifecycle/restart';
 
     if (isLifecycleUrl) {
+      if (!mustRequireAuth) {
+        return;
+      }
       if (!auth) {
         return reply.status(401).send({ error: 'Unauthorized' });
       }
@@ -219,6 +225,8 @@ export function registerHttpRoutes(
 
   app.get('/health', async () => {
     const memory = process.memoryUsage();
+    const relayEnabled = options?.runtime?.relayEnabled ?? false;
+    const relayStatus = options?.getRelayStatus?.() ?? null;
     return {
       status: 'ok',
       uptime: Math.floor((Date.now() - (runtime?.startedAt ?? startTime)) / 1000),
@@ -241,6 +249,18 @@ export function registerHttpRoutes(
         memoryHeapUsed: memory.heapUsed,
         memoryHeapTotal: memory.heapTotal,
       },
+      relay:
+        relayEnabled || relayStatus
+          ? {
+              enabled: relayEnabled || !!relayStatus,
+              state: relayStatus?.state ?? (relayEnabled ? 'connecting' : 'stopped'),
+              reconnectAttempt: relayStatus?.reconnectAttempt ?? 0,
+              lastErrorCode: relayStatus?.lastErrorCode,
+              lastErrorMessage: relayStatus?.lastErrorMessage,
+              lastErrorAt: relayStatus?.lastErrorAt,
+              circuitOpenUntil: relayStatus?.circuitOpenUntil,
+            }
+          : undefined,
     };
   });
 

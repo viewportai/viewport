@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { configDir } from '../core/config.js';
+import os from 'node:os';
+import { configDir, ConfigManager } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { resolveDaemonEndpoint } from './daemon-client.js';
 import type { DaemonEndpoint } from './daemon-client.js';
@@ -12,6 +13,7 @@ import {
   readProcessInfo,
   isOwnershipMatch,
   isPidRunning,
+  type DaemonRuntimeState,
 } from './daemon-lifecycle.js';
 import {
   compareSemver,
@@ -21,7 +23,7 @@ import {
   resolvePreferredNodePath,
   type NpmInvocation,
 } from './runtime-toolchain.js';
-import { start } from '../startup.js';
+import { startWithLaunchConfig } from '../startup.js';
 import {
   isJsonMode,
   parseTimeoutMs,
@@ -31,16 +33,13 @@ import {
   resolvePackageName,
   resolvePackageVersion,
   shortError,
+  waitForDaemonReady,
 } from './command-shared.js';
-import {
-  createPairingClientIdentity,
-  createPairingRedeemProof,
-  getOrCreateTrustAnchor,
-  issuePairingOffer,
-  listPairingOffers,
-  revokePairingOffer,
-  rotateAuthToken,
-} from '../server/pairing-offers.js';
+import { resolveDaemonSettingsFromSources } from './daemon-settings.js';
+import { inferRelayEndpointFromServer } from './remote-commands.js';
+import { getOrCreateTrustAnchor, rotateAuthToken } from '../server/pairing-offers.js';
+import { loadOrCreateIdentity as loadOrCreateRelayIdentity } from '../relay/bridge-key-exchange.js';
+import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 
 function endpointHealthUrl(endpoint: DaemonEndpoint): string {
   if (endpoint.type === 'socket') {
@@ -58,6 +57,7 @@ function endpointListenLabel(endpoint: DaemonEndpoint): string {
 
 export async function status(): Promise<void> {
   const asJson = isJsonMode();
+  const shouldCheckUpdates = hasFlag('check-updates');
   const endpoint = await resolveDaemonEndpoint();
   const url = endpointHealthUrl(endpoint);
   const state = await readDaemonRuntimeState();
@@ -89,10 +89,10 @@ export async function status(): Promise<void> {
   }
 
   const cliVersion = resolvePackageVersion();
-  let latestCliVersion = 'unknown';
-  let updateStatus = 'unknown';
+  let latestCliVersion = 'skipped';
+  let updateStatus = 'skipped (use --check-updates)';
   let note: string | undefined;
-  if (npmInvocation) {
+  if (npmInvocation && shouldCheckUpdates) {
     const latest = fetchLatestVersion({ npm: npmInvocation, packageName: resolvePackageName() });
     if (latest.version) {
       latestCliVersion = latest.version;
@@ -294,15 +294,495 @@ export async function stop(options?: {
 
 export async function restart(): Promise<void> {
   const asJson = isJsonMode();
+  await restartDaemon();
   if (asJson) {
-    await stop({ exitOnNotRunning: false, silent: true });
-    await start({ silent: true });
     printJson({ command: 'restart', ok: true });
     return;
   }
+  console.log('Daemon restarted.');
+}
 
-  await stop({ exitOnNotRunning: false });
-  await start();
+// ---------------------------------------------------------------------------
+// Pairing code flow — new default for `vpd pair`
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PAIRING_SERVER = 'https://getviewport.com';
+const PAIRING_POLL_INTERVAL_MS = 2_000;
+const PAIRING_POLL_MAX_ATTEMPTS = 150; // 5 minutes at 2s intervals
+
+function resolvePairingServerUrl(): string {
+  const fromFlag = getFlag('server');
+  if (fromFlag) return fromFlag;
+  if (process.env['VIEWPORT_SERVER']) return process.env['VIEWPORT_SERVER'];
+  return DEFAULT_PAIRING_SERVER;
+}
+
+interface PairingServerTransportConfig {
+  url: string;
+  tlsVerify: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+}
+
+async function resolvePairingServerTransport(
+  explicitUrl?: string,
+): Promise<PairingServerTransportConfig> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const daemonConfig = manager.getDaemonConfig();
+  const serverConfig = daemonConfig?.server;
+
+  return {
+    url:
+      explicitUrl ??
+      getFlag('server') ??
+      process.env['VIEWPORT_SERVER'] ??
+      serverConfig?.url ??
+      DEFAULT_PAIRING_SERVER,
+    tlsVerify:
+      parseTlsVerifyMode(getFlag('server-tls-verify')) ??
+      parseTlsVerifyMode(process.env['VPD_SERVER_TLS_VERIFY']) ??
+      parseTlsVerifyMode(process.env['VIEWPORT_SERVER_TLS_VERIFY']) ??
+      serverConfig?.tlsVerify ??
+      'auto',
+    caCertPath:
+      getFlag('server-ca-cert') ??
+      process.env['VPD_SERVER_CA_CERT'] ??
+      process.env['VIEWPORT_SERVER_CA_CERT'] ??
+      serverConfig?.caCertPath,
+    tlsPins:
+      parseCsvList(getFlag('server-tls-pins')) ??
+      parseCsvList(process.env['VPD_SERVER_TLS_PINS']) ??
+      parseCsvList(process.env['VIEWPORT_SERVER_TLS_PINS']) ??
+      serverConfig?.tlsPins,
+  };
+}
+
+function joinPairingUrl(base: string, pathname: string): string {
+  return `${base.replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
+}
+
+/**
+ * Derive the web-app URL from the API server URL.
+ * https://getviewport.test  -> https://app.getviewport.test
+ * https://getviewport.com   -> https://app.getviewport.com
+ */
+function deriveAppUrl(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl);
+    if (url.hostname.startsWith('app.')) return url.toString().replace(/\/$/, '');
+    url.hostname = `app.${url.hostname}`;
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return serverUrl;
+  }
+}
+
+interface PairingPollApprovedData {
+  status: 'approved';
+  workspace_id: string;
+  workspace_name?: string;
+  install_id?: string;
+  relay_endpoint?: string;
+  token: string;
+  server_url?: string;
+}
+
+interface PairingPollPendingData {
+  status: 'pending';
+}
+
+interface PairingPollTerminalData {
+  status: 'denied' | 'expired';
+}
+
+type PairingPollData = PairingPollApprovedData | PairingPollPendingData | PairingPollTerminalData;
+
+interface PairingClaimData {
+  status: 'claimed';
+  workspace_name?: string;
+  status_token: string;
+}
+
+interface PairingCreateData {
+  code: string;
+  expires_at?: string;
+  status_token: string;
+}
+
+async function storePairingCredentials(
+  data: PairingPollApprovedData,
+  serverUrl: string,
+): Promise<void> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const existing = manager.getDaemonConfig() ?? {};
+  const existingRelay = existing.relay ?? {};
+
+  let relayEndpoint = data.relay_endpoint ?? existingRelay.endpoint;
+  if (!relayEndpoint) {
+    relayEndpoint = inferRelayEndpointFromServer(data.server_url ?? serverUrl);
+  }
+
+  const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
+
+  await manager.setDaemonConfig({
+    relay: {
+      ...existingRelay,
+      enabled: true,
+      endpoint: relayEndpoint,
+      serverUrl: data.server_url ?? serverUrl,
+      workspaceId: data.workspace_id,
+      installId: data.install_id,
+      issueToken: nextIssueToken,
+    },
+  });
+}
+
+function applyRuntimeOverrides(
+  launch: Awaited<ReturnType<typeof resolveDaemonSettingsFromSources>>['launch'],
+  runtimeState: Awaited<ReturnType<typeof readDaemonRuntimeState>>,
+): Awaited<ReturnType<typeof resolveDaemonSettingsFromSources>>['launch'] {
+  if (!runtimeState) {
+    return launch;
+  }
+
+  return {
+    ...launch,
+    listen:
+      runtimeState.listen ??
+      (runtimeState.socketPath
+        ? `unix://${runtimeState.socketPath}`
+        : `${runtimeState.host}:${runtimeState.port}`),
+    host: runtimeState.host,
+    port: runtimeState.socketPath ? 0 : runtimeState.port,
+    socketPath: runtimeState.socketPath,
+    profile: runtimeState.profile ?? launch.profile,
+    allowedHostsRaw: runtimeState.allowedHostsRaw ?? launch.allowedHostsRaw,
+    allowedOriginsRaw: runtimeState.allowedOriginsRaw ?? launch.allowedOriginsRaw,
+    authEnabled: runtimeState.authEnabled ?? launch.authEnabled,
+    logPath: runtimeState.logPath ?? launch.logPath,
+    relayEnabled: launch.relayEnabled,
+    relayEndpoint: launch.relayEndpoint ?? runtimeState.relayEndpoint,
+    relayServerUrl: launch.relayServerUrl ?? runtimeState.relayServerUrl,
+    relayWorkspaceId: launch.relayWorkspaceId ?? runtimeState.relayWorkspaceId,
+    relayTlsVerify: launch.relayTlsVerify ?? runtimeState.relayTlsVerify,
+  };
+}
+
+function applyRuntimeTlsEnvironment(
+  runtimeState: Awaited<ReturnType<typeof readDaemonRuntimeState>>,
+): () => void {
+  const keys = ['VIEWPORT_TLS', 'VIEWPORT_TLS_HOST', 'VIEWPORT_TLS_CERT', 'VIEWPORT_TLS_KEY'];
+  const previous = new Map<string, string | undefined>();
+  for (const key of keys) {
+    previous.set(key, process.env[key]);
+  }
+
+  const setEnv = (key: string, value: string | undefined) => {
+    if (value === undefined || value === '') {
+      delete process.env[key];
+      return;
+    }
+    process.env[key] = value;
+  };
+
+  if (runtimeState?.tlsEnabled) {
+    setEnv('VIEWPORT_TLS', '1');
+    setEnv('VIEWPORT_TLS_HOST', runtimeState.tlsHost?.trim() || 'localhost');
+    setEnv('VIEWPORT_TLS_CERT', undefined);
+    setEnv('VIEWPORT_TLS_KEY', undefined);
+  } else if (runtimeState?.tlsEnabled === false) {
+    setEnv('VIEWPORT_TLS', '0');
+    setEnv('VIEWPORT_TLS_HOST', undefined);
+    setEnv('VIEWPORT_TLS_CERT', undefined);
+    setEnv('VIEWPORT_TLS_KEY', undefined);
+  }
+
+  return () => {
+    for (const [key, value] of previous.entries()) {
+      setEnv(key, value);
+    }
+  };
+}
+
+async function hardRestartFromRuntimeState(runtimeState: DaemonRuntimeState | null): Promise<void> {
+  if (runtimeState?.ownerPid) {
+    await stopPid(runtimeState.ownerPid, {
+      timeoutMs: 1_500,
+      force: true,
+      useProcessGroup: true,
+    });
+    await clearDaemonRuntimeState();
+  }
+
+  const resolved = await resolveDaemonSettingsFromSources();
+  const launch = applyRuntimeOverrides(resolved.launch, runtimeState);
+  const restoreEnv = applyRuntimeTlsEnvironment(runtimeState);
+  try {
+    await startWithLaunchConfig(launch, { silent: true });
+    await waitForDaemonReady({ requireRelayConnected: !!launch.relayEnabled, timeoutMs: 45_000 });
+  } finally {
+    restoreEnv();
+  }
+}
+
+async function restartDaemon(): Promise<void> {
+  const runtimeState = await readDaemonRuntimeState();
+  await hardRestartFromRuntimeState(runtimeState);
+}
+
+async function autoRestartDaemon(silent: boolean): Promise<void> {
+  if (!silent) {
+    console.log('Restarting daemon to connect to relay...');
+  }
+  try {
+    await restartDaemon();
+    if (!silent) {
+      console.log('Daemon restarted. Relay connection active.');
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!silent) {
+      console.log(`Could not confirm relay reconnect automatically: ${message}`);
+      console.log('Run `vpd restart` and check `vpd status` if the daemon is still reconnecting.');
+    }
+    throw new Error(message);
+  }
+}
+
+async function pollForApproval(
+  code: string,
+  server: PairingServerTransportConfig,
+  statusToken: string,
+  asJson: boolean,
+): Promise<PairingPollApprovedData> {
+  const spinner = ['-', '\\', '|', '/'];
+  let attempt = 0;
+
+  while (attempt < PAIRING_POLL_MAX_ATTEMPTS) {
+    let res: Response;
+    try {
+      res = await transportFetch(
+        joinPairingUrl(server.url, `/api/pairing-codes/${encodeURIComponent(code)}/status`),
+        {
+          headers: {
+            'X-Viewport-Pairing-Token': statusToken,
+          },
+          tlsVerify: server.tlsVerify,
+          caCertPath: server.caCertPath,
+          tlsPins: server.tlsPins,
+        },
+      );
+    } catch (err) {
+      attempt++;
+      if (attempt >= PAIRING_POLL_MAX_ATTEMPTS) {
+        throw new Error(
+          `Network error while polling for approval: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, PAIRING_POLL_INTERVAL_MS));
+      continue;
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Failed to poll pairing status (HTTP ${res.status}): ${body}`);
+    }
+
+    const data = (await res.json()) as PairingPollData;
+
+    if (data.status === 'approved') {
+      if (!asJson) {
+        // Clear spinner line
+        process.stdout.write('\r' + ' '.repeat(40) + '\r');
+      }
+      return data as PairingPollApprovedData;
+    }
+
+    if (data.status === 'denied') {
+      if (!asJson) {
+        process.stdout.write('\r' + ' '.repeat(40) + '\r');
+      }
+      throw new Error('Pairing was denied by the workspace owner.');
+    }
+
+    if (data.status === 'expired') {
+      if (!asJson) {
+        process.stdout.write('\r' + ' '.repeat(40) + '\r');
+      }
+      throw new Error('Pairing code expired. Run `vpd pair` again to generate a new code.');
+    }
+
+    // Still pending
+    if (!asJson) {
+      process.stdout.write(`\r  ${spinner[attempt % spinner.length]} Waiting for approval...`);
+    }
+    attempt++;
+    await new Promise((r) => setTimeout(r, PAIRING_POLL_INTERVAL_MS));
+  }
+
+  throw new Error('Timed out waiting for pairing approval. Run `vpd pair` again.');
+}
+
+async function pairWithCode(code: string, serverUrl: string, asJson: boolean): Promise<void> {
+  const relayIdentity = await loadOrCreateRelayIdentity();
+  const name = os.hostname();
+  const server = await resolvePairingServerTransport(serverUrl);
+
+  if (!asJson) {
+    console.log(`Claiming pairing code ${code}...`);
+  }
+
+  let claimRes: Response;
+  try {
+    claimRes = await transportFetch(
+      joinPairingUrl(server.url, `/api/pairing-codes/${encodeURIComponent(code)}/claim`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          public_key: relayIdentity.publicKey,
+          device_id: relayIdentity.deviceId,
+        }),
+        tlsVerify: server.tlsVerify,
+        caCertPath: server.caCertPath,
+        tlsPins: server.tlsPins,
+      },
+    );
+  } catch (err) {
+    throw new Error(
+      `Network error claiming pairing code: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (!claimRes.ok) {
+    const body = (await claimRes.json().catch(() => null)) as Record<string, unknown> | null;
+    const message = typeof body?.message === 'string' ? body.message : `HTTP ${claimRes.status}`;
+    throw new Error(`Failed to claim pairing code: ${message}`);
+  }
+
+  const appUrl = deriveAppUrl(server.url);
+  const claimData = (await claimRes.json()) as PairingClaimData;
+
+  if (typeof claimData.status_token !== 'string' || claimData.status_token.trim() === '') {
+    throw new Error('Pairing claim did not return a status token.');
+  }
+
+  if (!asJson) {
+    console.log('Code claimed. Waiting for approval...');
+    console.log(`  Approve in your browser at: ${appUrl}`);
+    console.log('');
+  }
+
+  const approved = await pollForApproval(code, server, claimData.status_token, asJson);
+  await storePairingCredentials(approved, server.url);
+  await autoRestartDaemon(asJson);
+
+  if (asJson) {
+    printJson({
+      command: 'pair',
+      ok: true,
+      flow: 'code-claim',
+      code,
+      workspaceId: approved.workspace_id,
+      workspaceName: approved.workspace_name,
+      restarted: true,
+    });
+    return;
+  }
+
+  console.log('Paired successfully!');
+  if (approved.workspace_name) {
+    console.log(`  Workspace: ${approved.workspace_name}`);
+  }
+  console.log('');
+}
+
+async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void> {
+  const relayIdentity = await loadOrCreateRelayIdentity();
+  const name = os.hostname();
+  const server = await resolvePairingServerTransport(serverUrl);
+
+  let createRes: Response;
+  try {
+    createRes = await transportFetch(joinPairingUrl(server.url, '/api/pairing-codes'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        public_key: relayIdentity.publicKey,
+        device_id: relayIdentity.deviceId,
+      }),
+      tlsVerify: server.tlsVerify,
+      caCertPath: server.caCertPath,
+      tlsPins: server.tlsPins,
+    });
+  } catch (err) {
+    throw new Error(
+      `Network error creating pairing code: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (!createRes.ok) {
+    const body = (await createRes.json().catch(() => null)) as Record<string, unknown> | null;
+    const message = typeof body?.message === 'string' ? body.message : `HTTP ${createRes.status}`;
+    throw new Error(`Failed to create pairing code: ${message}`);
+  }
+
+  const data = (await createRes.json()) as PairingCreateData;
+  const code = data.code;
+  const statusToken = typeof data.status_token === 'string' ? data.status_token.trim() : '';
+  if (statusToken === '') {
+    throw new Error('Pairing code response missing status token.');
+  }
+
+  const appUrl = deriveAppUrl(server.url);
+  const pairUrl = `${appUrl}/pair?code=${encodeURIComponent(code)}`;
+
+  if (!asJson) {
+    console.log('');
+    console.log('  Enter this code in the Viewport web app:');
+    console.log('');
+    console.log(`    ${code}`);
+    console.log('');
+    console.log(`  Or visit: ${pairUrl}`);
+    console.log('');
+  }
+
+  // Try to open browser (best effort, macOS/Linux/Windows)
+  try {
+    const { exec } = await import('node:child_process');
+    const platform = process.platform;
+    const openCmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+    exec(`${openCmd} ${pairUrl}`);
+  } catch {
+    // Ignore — opening browser is best effort
+  }
+
+  const approved = await pollForApproval(code, server, statusToken, asJson);
+  await storePairingCredentials(approved, server.url);
+  await autoRestartDaemon(asJson);
+
+  if (asJson) {
+    printJson({
+      command: 'pair',
+      ok: true,
+      flow: 'code-create',
+      code,
+      workspaceId: approved.workspace_id,
+      workspaceName: approved.workspace_name,
+      restarted: true,
+    });
+    return;
+  }
+
+  console.log('Paired successfully!');
+  if (approved.workspace_name) {
+    console.log(`  Workspace: ${approved.workspace_name}`);
+  }
+  console.log('');
 }
 
 export async function pair(): Promise<void> {
@@ -310,48 +790,6 @@ export async function pair(): Promise<void> {
   const args = getArgs();
   const pairCommandIndex = args[0] === 'daemon' && args[1] === 'pair' ? 1 : 0;
   const pairSubcommand = args[pairCommandIndex + 1];
-
-  if (pairSubcommand === 'list') {
-    const offers = await listPairingOffers();
-    if (asJson) {
-      printJson({ command: 'pair list', ok: true, offers });
-      return;
-    }
-    if (offers.length === 0) {
-      console.log('No pairing offers found.');
-      return;
-    }
-    console.log('Pairing offers\\n');
-    for (const offer of offers) {
-      const status = offer.active ? 'active' : offer.expired ? 'expired' : 'inactive';
-      console.log(`${offer.offerId} (${status})`);
-      console.log(`  listen:     ${offer.listen}`);
-      console.log(`  profile:    ${offer.profile}`);
-      console.log(`  trust:      ${offer.trustAnchor}`);
-      console.log(`  daemon:     ${offer.daemonDeviceId}`);
-      console.log(`  created:    ${new Date(offer.createdAt).toISOString()}`);
-      console.log(`  expires:    ${new Date(offer.expiresAt).toISOString()}`);
-      console.log('');
-    }
-    return;
-  }
-
-  if (pairSubcommand === 'revoke') {
-    const offerId = args[pairCommandIndex + 2];
-    if (!offerId || offerId.startsWith('--')) {
-      throw new Error('Usage: vpd pair revoke <offer-id> [--json]');
-    }
-    const revoked = await revokePairingOffer(offerId);
-    if (asJson) {
-      printJson({ command: 'pair revoke', ok: revoked, offerId });
-      return;
-    }
-    if (!revoked) {
-      throw new Error(`Pair offer not found: ${offerId}`);
-    }
-    console.log(`Revoked pair offer ${offerId}`);
-    return;
-  }
 
   if (pairSubcommand === 'rotate-token') {
     const result = await rotateAuthToken();
@@ -387,106 +825,20 @@ export async function pair(): Promise<void> {
     return;
   }
 
-  const state = await readDaemonRuntimeState();
-  const health = await readDaemonHealth();
-  const endpoint = await resolveDaemonEndpoint();
+  // New pairing code flow (default)
+  const serverUrl = resolvePairingServerUrl();
 
-  if (!state && !health) {
-    if (asJson) {
-      printJson({ command: 'pair', ok: false, error: 'Daemon is not running' });
-      return;
-    }
-    console.error('Daemon is not running. Start it first with `vpd start`.');
-    process.exit(1);
+  // Determine if a pairing code was provided as a positional argument.
+  // A code is a short alphanumeric string (not a subcommand, not a flag).
+  const possibleCode = pairSubcommand;
+  const isCode =
+    possibleCode && !possibleCode.startsWith('--') && /^[A-Za-z0-9]{4,12}$/.test(possibleCode);
+
+  if (isCode) {
+    await pairWithCode(possibleCode, serverUrl, asJson);
+  } else {
+    await pairWithoutCode(serverUrl, asJson);
   }
-
-  const defaultHost = endpoint.type === 'tcp' ? endpoint.host : '127.0.0.1';
-  const defaultPort = endpoint.type === 'tcp' ? endpoint.port : 0;
-  const ttlRaw = getFlag('ttl');
-  const ttlSeconds = ttlRaw ? Number(ttlRaw) : 600;
-  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
-    throw new Error(`Invalid --ttl value: ${ttlRaw}`);
-  }
-  const issued = await issuePairingOffer({
-    ttlSeconds,
-    connection: {
-      host: state?.host ?? health?.host ?? defaultHost,
-      port: state?.port ?? health?.port ?? defaultPort,
-      listen: state?.listen ?? health?.listen ?? endpointListenLabel(endpoint),
-      socketPath:
-        state?.socketPath ??
-        health?.socketPath ??
-        (endpoint.type === 'socket' ? endpoint.socketPath : undefined),
-      profile: state?.profile ?? 'local',
-    },
-  });
-  const offer = {
-    offerId: issued.offerId,
-    redeemSecret: issued.redeemSecret,
-    trustAnchor: issued.trustAnchor,
-    daemonDeviceId: issued.daemonDeviceId,
-    daemonPublicKey: issued.daemonPublicKey,
-    host: state?.host ?? health?.host ?? defaultHost,
-    port: state?.port ?? health?.port ?? defaultPort,
-    listen: state?.listen ?? health?.listen ?? endpointListenLabel(endpoint),
-    socketPath:
-      state?.socketPath ??
-      health?.socketPath ??
-      (endpoint.type === 'socket' ? endpoint.socketPath : undefined),
-    profile: state?.profile ?? 'local',
-    createdAt: issued.createdAt,
-    expiresAt: issued.expiresAt,
-  };
-
-  const encoded = Buffer.from(
-    JSON.stringify({
-      offerId: offer.offerId,
-      proof: offer.redeemSecret,
-      trustAnchor: offer.trustAnchor,
-      daemonDeviceId: offer.daemonDeviceId,
-      daemonPublicKey: offer.daemonPublicKey,
-      host: offer.host,
-      port: offer.port,
-      listen: offer.listen,
-      socketPath: offer.socketPath,
-      profile: offer.profile,
-      createdAt: offer.createdAt,
-      expiresAt: offer.expiresAt,
-    }),
-    'utf-8',
-  ).toString('base64url');
-  const url = `viewport://pair#offer=${encoded}`;
-
-  if (asJson) {
-    printJson({ command: 'pair', ok: true, offer, url });
-    return;
-  }
-
-  // Print a redeem payload example with client proof generation for operators.
-  const clientIdentity = createPairingClientIdentity();
-  const proof = createPairingRedeemProof({
-    offerId: offer.offerId,
-    redeemSecret: offer.redeemSecret,
-    trustAnchor: offer.trustAnchor,
-    clientIdentity,
-  });
-
-  console.log('\nPairing offer:\n');
-  console.log(url);
-  console.log('\nRedeem payload preview (example):\n');
-  console.log(
-    JSON.stringify(
-      {
-        offerId: offer.offerId,
-        proof: offer.redeemSecret,
-        trustAnchor: offer.trustAnchor,
-        clientPublicKey: proof.clientPublicKey,
-        clientProof: proof.clientProof,
-      },
-      null,
-      2,
-    ),
-  );
 }
 
 function runCommand(command: string, args: string[]): Promise<number> {
@@ -537,8 +889,7 @@ export async function update(): Promise<void> {
 
   const shouldRestart = hasFlag('yes') || hasFlag('restart');
   if (shouldRestart) {
-    await stop({ exitOnNotRunning: false });
-    await start();
+    await restartDaemon();
   }
 
   if (asJson) {
@@ -577,7 +928,8 @@ export function showHelp(): void {
   console.log('  add <path> [--json]          Register a directory');
   console.log('  remove <path> [--json]       Unregister a directory');
   console.log('  list [--json]                List directories + active sessions');
-  console.log('  status [--json]              Daemon health and runtime status');
+  console.log('  status [--json] [--check-updates]');
+  console.log('                               Daemon health and runtime status');
   console.log('  stop [--json] [--timeout <seconds>] [--force]');
   console.log('                               Stop daemon gracefully (with optional forced kill)');
   console.log('  restart                       Stop then start daemon');
@@ -608,18 +960,15 @@ export function showHelp(): void {
     '  worktree squash <sid> [--target <branch>] [--message <text>] [--json|--format <fmt>]',
   );
   console.log('                               Worktree and git-step operator controls');
-  console.log('  pair [--ttl <seconds>] [--json]');
-  console.log('                               Create a short-lived pairing offer URL');
-  console.log('  pair list [--json]           List pairing offers');
-  console.log('  pair revoke <offer-id> [--json]');
-  console.log('                               Revoke a pairing offer');
+  console.log('  pair [<code>] [--server <url>] [--json]');
+  console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');
   console.log('  pair rotate-token [--json]   Rotate auth token on disk (restart required)');
   console.log('  update [--json] [--yes]      Update daemon package, optionally restart');
   console.log('  service <install|uninstall|status> [--json]');
   console.log('                               Manage OS user service (launchd/systemd)');
   console.log(
-    '  remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <enroll-token>] [--user <id>]',
+    '  remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>]',
   );
   console.log('                               Configure daemon-native relay transport');
   console.log('  help                         Show this help message');

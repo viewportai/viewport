@@ -15,7 +15,7 @@ function baseLaunch(overrides: Partial<RuntimeLaunchConfig> = {}): RuntimeLaunch
     relayEndpoint: 'wss://relay.example.com/ws',
     relayServerUrl: 'https://api.example.com',
     relayWorkspaceId: 'workspace_demo',
-    relayEnrollToken: 'enroll-token',
+    relayIssueToken: 'issue-token',
     relayTlsVerify: '1',
     relayTlsPins: ['AA:BB:CC'],
     relayTokenSigningKeys: {

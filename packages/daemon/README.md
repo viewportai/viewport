@@ -144,14 +144,17 @@ npm run verify:linux:ci
 1. Semantic commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
 2. One logical change per commit.
 3. Changes to protocol or runtime behavior require matching tests.
+4. Branch names use semantic prefixes with concise kebab-case descriptions (`feat/...`, `fix/...`, `docs/...`).
+5. PR titles use semantic commit format with an optional scope (`feat(runtime): ...`, `fix(daemon): ...`).
+6. Do not use roadmap labels or temporary agent labels in branches or PR titles.
 
 ## Release
 
 This package publishes as `@viewportai/daemon`.
 
-1. Merge semantic commits to `main`.
-2. CI must pass.
-3. Release workflow computes version (`feat` => minor, `fix` => patch, `BREAKING CHANGE` => major), tags, and publishes to npm using `NPM_TOKEN`.
+Package release mechanics are maintainer-owned. Feature PRs should stay focused on code, tests, and docs unless the PR is explicitly intended to cut a package release.
+
+When a release is intentionally being prepared, use the repo's current publish workflow from `main` and validate the built CLI before shipping.
 
 See [docs/releasing.md](./docs/releasing.md) for setup and operations.
 See [docs/testing.md](./docs/testing.md) and [docs/developer-workflows.md](./docs/developer-workflows.md) for local validation workflows.

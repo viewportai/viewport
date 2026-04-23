@@ -81,7 +81,7 @@ export class RelayPresenceClient {
   async upsert(workspaceId: string, daemonConnected: boolean): Promise<void> {
     if (!this.enabled) return;
 
-    const endpoint = new URL('/api/internal/relay/presence/upsert', this.config.serverUrl);
+    const endpoint = new URL('/api/runtime/internal/relay/presence/upsert', this.config.serverUrl);
     try {
       const res = await postInternalJson<Record<string, unknown>, PresenceUpsertResponse>(
         endpoint,
@@ -125,7 +125,7 @@ export class RelayPresenceClient {
       return cached;
     }
 
-    const endpoint = new URL('/api/internal/relay/presence/resolve', this.config.serverUrl);
+    const endpoint = new URL('/api/runtime/internal/relay/presence/resolve', this.config.serverUrl);
     try {
       const res = await postInternalJson<Record<string, unknown>, PresenceResolveResponse>(
         endpoint,

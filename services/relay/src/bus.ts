@@ -84,7 +84,7 @@ export class RelayBusClient {
     targetRelayId: string | null,
   ): Promise<boolean> {
     if (!this.enabled) return false;
-    const endpoint = new URL('/api/internal/relay/bus/publish', this.config.serverUrl);
+    const endpoint = new URL('/api/runtime/internal/relay/bus/publish', this.config.serverUrl);
     const signed: BusSignatureFields = {
       workspaceId,
       sourceRelayId: this.config.relayId,
@@ -138,7 +138,7 @@ export class RelayBusClient {
 
   async pull(): Promise<RelayBusFrame[]> {
     if (!this.enabled) return [];
-    const endpoint = new URL('/api/internal/relay/bus/pull', this.config.serverUrl);
+    const endpoint = new URL('/api/runtime/internal/relay/bus/pull', this.config.serverUrl);
     try {
       const res = await postInternalJson<Record<string, unknown>, BusPullResponse>(
         endpoint,

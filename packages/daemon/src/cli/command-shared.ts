@@ -41,6 +41,15 @@ export interface HealthResponse {
     memoryHeapUsed?: number;
     memoryHeapTotal?: number;
   };
+  relay?: {
+    enabled: boolean;
+    state?: 'stopped' | 'connecting' | 'connected' | 'waiting_retry' | 'circuit_open';
+    reconnectAttempt?: number;
+    lastErrorCode?: string;
+    lastErrorMessage?: string;
+    lastErrorAt?: number;
+    circuitOpenUntil?: number;
+  };
 }
 
 export function shortError(err: unknown): string {
@@ -280,6 +289,43 @@ export async function readDaemonHealth(): Promise<HealthResponse | null> {
   const res = await daemonFetch('/health');
   if (!res || !res.ok) return null;
   return (await res.json()) as HealthResponse;
+}
+
+export async function waitForDaemonReady(options?: {
+  timeoutMs?: number;
+  intervalMs?: number;
+  requireRelayConnected?: boolean;
+}): Promise<HealthResponse> {
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const intervalMs = options?.intervalMs ?? 250;
+  const requireRelayConnected = options?.requireRelayConnected ?? false;
+  const deadline = Date.now() + timeoutMs;
+  let lastHealth: HealthResponse | null = null;
+
+  while (Date.now() < deadline) {
+    const health = await readDaemonHealth();
+    if (health) {
+      lastHealth = health;
+      if (!requireRelayConnected) {
+        return health;
+      }
+
+      if (health.relay?.enabled && health.relay.state === 'connected') {
+        return health;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  if (requireRelayConnected) {
+    const relayState = lastHealth?.relay?.state ?? 'unavailable';
+    throw new Error(
+      `Timed out waiting for daemon relay reconnect (last relay state: ${relayState})`,
+    );
+  }
+
+  throw new Error('Timed out waiting for daemon health');
 }
 
 export async function requestLifecycle(action: 'shutdown' | 'restart'): Promise<boolean> {

@@ -73,6 +73,33 @@ export function deepMerge<T>(...sources: Array<Partial<T> | undefined>): T {
   return result as T;
 }
 
+function mergeWithDeletes<T>(base: T, update: Partial<T> | undefined): T {
+  if (update === undefined) {
+    return base;
+  }
+
+  const initial = isPlainObject(base) ? { ...base } : {};
+  const result = initial as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(update as Record<string, unknown>)) {
+    if (isUnsafeMergeKey(key)) continue;
+    if (value === undefined) {
+      delete result[key];
+      continue;
+    }
+
+    const existing = result[key];
+    if (isPlainObject(existing) && isPlainObject(value)) {
+      result[key] = mergeWithDeletes(existing, value);
+      continue;
+    }
+
+    result[key] = value;
+  }
+
+  return result as T;
+}
+
 function toRuntimeConfigForDaemonValidation(
   daemonConfig: NonNullable<ViewportConfig['daemon']>,
 ): RuntimeLaunchConfig {
@@ -85,11 +112,14 @@ function toRuntimeConfigForDaemonValidation(
     profile: daemonConfig.profile ?? 'local',
     authEnabled: daemonConfig.authEnabled ?? true,
     detached: false,
+    serverUrl: daemonConfig.server?.url,
+    serverTlsVerify: daemonConfig.server?.tlsVerify ?? 'auto',
+    serverCaCertPath: daemonConfig.server?.caCertPath,
+    serverTlsPins: daemonConfig.server?.tlsPins,
     relayEnabled: relay.enabled ?? false,
     relayEndpoint: relay.endpoint,
     relayServerUrl: relay.serverUrl,
     relayWorkspaceId: relay.workspaceId,
-    relayEnrollToken: relay.enrollToken,
     relayIssueToken: relay.issueToken,
     relayTlsVerify: relay.tlsVerify ?? 'auto',
     relayCaCertPath: relay.caCertPath,
@@ -125,10 +155,6 @@ export interface ViewportConfig {
   defaults?: Partial<SessionConfig>;
   /** Per-directory config overrides. Keyed by directory ID. */
   directories?: Record<string, { path: string; config?: Partial<SessionConfig> }>;
-  /** Relay URL for remote access. */
-  relayUrl?: string;
-  /** Machine token for relay auth. */
-  relayToken?: string;
   /** Machine ID. */
   machineId?: string;
   /** Daemon runtime defaults (listen/profile/security/lifecycle options). */
@@ -139,13 +165,18 @@ export interface ViewportConfig {
     allowedOrigins?: string[] | true;
     authEnabled?: boolean;
     logFile?: string;
+    server?: {
+      url?: string;
+      tlsVerify?: 'auto' | '0' | '1';
+      caCertPath?: string;
+      tlsPins?: string[];
+    };
     relay?: {
       enabled?: boolean;
       endpoint?: string;
-      publicEndpoint?: string;
       serverUrl?: string;
       workspaceId?: string;
-      enrollToken?: string;
+      installId?: string;
       issueToken?: string;
       tlsVerify?: 'auto' | '0' | '1';
       caCertPath?: string;
@@ -177,6 +208,24 @@ export function configFilePath(): string {
   return path.join(configDir(), 'config.json');
 }
 
+function migrateViewportConfig(raw: unknown): { config: unknown; migrated: boolean } {
+  if (!isPlainObject(raw)) {
+    return { config: raw, migrated: false };
+  }
+
+  let migrated = false;
+  const daemon = raw['daemon'];
+  if (isPlainObject(daemon)) {
+    const relay = daemon['relay'];
+    if (isPlainObject(relay) && 'enrollToken' in relay) {
+      delete relay['enrollToken'];
+      migrated = true;
+    }
+  }
+
+  return { config: raw, migrated };
+}
+
 /** Load the config file, returning empty config if it doesn't exist. */
 export async function loadConfig(): Promise<ViewportConfig> {
   try {
@@ -190,13 +239,19 @@ export async function loadConfig(): Promise<ViewportConfig> {
       );
     }
 
-    const parsed = ViewportConfigSchema.safeParse(parsedRaw);
+    const migrated = migrateViewportConfig(parsedRaw);
+    const parsed = ViewportConfigSchema.safeParse(migrated.config);
     if (!parsed.success) {
       const detail = parsed.error.issues
         .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
         .join('; ');
       throw new Error(`Invalid viewport config schema at ${configFilePath()}: ${detail}`);
     }
+
+    if (migrated.migrated) {
+      await saveConfig(parsed.data as ViewportConfig);
+    }
+
     return parsed.data as ViewportConfig;
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
@@ -315,12 +370,6 @@ export class ConfigManager {
     };
   }
 
-  /** Get the relay URL (if configured). */
-  getRelayUrl(): string | undefined {
-    this.ensureLoaded();
-    return this.config.relayUrl;
-  }
-
   /** Get the machine ID. */
   getMachineId(): string {
     this.ensureLoaded();
@@ -336,13 +385,18 @@ export class ConfigManager {
         allowedOrigins?: string[] | true;
         authEnabled?: boolean;
         logFile?: string;
+        server?: {
+          url?: string;
+          tlsVerify?: 'auto' | '0' | '1';
+          caCertPath?: string;
+          tlsPins?: string[];
+        };
         relay?: {
           enabled?: boolean;
           endpoint?: string;
-          publicEndpoint?: string;
           serverUrl?: string;
           workspaceId?: string;
-          enrollToken?: string;
+          installId?: string;
           issueToken?: string;
           tlsVerify?: 'auto' | '0' | '1';
           caCertPath?: string;
@@ -361,7 +415,7 @@ export class ConfigManager {
   /** Merge daemon runtime settings into config. */
   async setDaemonConfig(daemonConfig: NonNullable<ViewportConfig['daemon']>): Promise<void> {
     this.ensureLoaded();
-    const merged = deepMerge<NonNullable<ViewportConfig['daemon']>>(
+    const merged = mergeWithDeletes<NonNullable<ViewportConfig['daemon']>>(
       this.config.daemon ?? {},
       daemonConfig,
     );

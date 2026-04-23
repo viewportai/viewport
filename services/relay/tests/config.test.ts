@@ -11,6 +11,8 @@ describe('relay config', () => {
     expect(config.backplaneMode).toBe('single');
     expect(config.host).toBe('127.0.0.1');
     expect(config.port).toBe(7781);
+    expect(config.serverUrl).toBe('https://app.getviewport.com');
+    expect(config.publicWsBaseUrl).toBe('wss://relay.getviewport.com/ws');
     expect(config.maxFrameBytes).toBe(1_048_576);
     expect(config.maxTotalConnections).toBeGreaterThan(0);
     expect(config.admissionTimeoutMs).toBe(2_000);
@@ -139,6 +141,62 @@ describe('relay config', () => {
     expect(resolveServerTlsRejectUnauthorized('https://getviewport.test', 'auto')).toBe(false);
     expect(resolveServerTlsRejectUnauthorized('https://api.example.com', 'auto')).toBe(true);
     expect(resolveServerTlsRejectUnauthorized('http://127.0.0.1:7780', 'auto')).toBe(true);
+  });
+
+  it('requires explicit public server URLs outside loopback development', () => {
+    expect(() =>
+      loadConfig({
+        HOST: '0.0.0.0',
+        SERVER_URL: 'http://127.0.0.1:24780',
+      }),
+    ).toThrow(
+      'SERVER_URL and RELAY_PUBLIC_WS_BASE_URL must be set explicitly outside local loopback development',
+    );
+
+    expect(() =>
+      loadConfig({
+        HOST: '0.0.0.0',
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      loadConfig({
+        HOST: '0.0.0.0',
+        SERVER_URL: 'https://api.example.com',
+        RELAY_PUBLIC_WS_BASE_URL: 'wss://relay.example.com/ws',
+      }),
+    ).toThrow('RELAY_TLS must be enabled when RELAY_MODE=prod');
+
+  });
+
+  it('defaults external topology URLs to prod hardening', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'relay-config-external-'));
+    const relayCertPath = path.join(tmp, 'relay.crt');
+    const relayKeyPath = path.join(tmp, 'relay.key');
+    const serverCertPath = path.join(tmp, 'server.crt');
+    const serverKeyPath = path.join(tmp, 'server.key');
+    await fs.writeFile(relayCertPath, 'relay-cert');
+    await fs.writeFile(relayKeyPath, 'relay-key');
+    await fs.writeFile(serverCertPath, 'server-cert');
+    await fs.writeFile(serverKeyPath, 'server-key');
+
+    const config = loadConfig({
+      HOST: '0.0.0.0',
+      SERVER_URL: 'https://api.example.com',
+      RELAY_PUBLIC_WS_BASE_URL: 'wss://relay.example.com/ws',
+      RELAY_TLS: '1',
+      RELAY_TLS_CERT_PATH: relayCertPath,
+      RELAY_TLS_KEY_PATH: relayKeyPath,
+      RELAY_INTERNAL_KEY: 'relay-internal-key-1234567890',
+      RELAY_SERVER_MTLS: '1',
+      RELAY_SERVER_CLIENT_CERT_PATH: serverCertPath,
+      RELAY_SERVER_CLIENT_KEY_PATH: serverKeyPath,
+      RELAY_SERVER_TLS_VERIFY: '1',
+    });
+
+    expect(config.serverUrl).toBe('https://api.example.com');
+    expect(config.publicWsBaseUrl).toBe('wss://relay.example.com/ws');
+    expect(config.relayMode).toBe('prod');
   });
 
   it('requires RELAY_BUS_HMAC_KEY whenever bus is enabled', () => {

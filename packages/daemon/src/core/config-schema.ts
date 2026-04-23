@@ -46,8 +46,6 @@ export const ViewportConfigSchema = z
           .strict(),
       )
       .optional(),
-    relayUrl: z.string().optional(),
-    relayToken: z.string().optional(),
     machineId: z.string().optional(),
     daemon: z
       .object({
@@ -57,14 +55,22 @@ export const ViewportConfigSchema = z
         allowedOrigins: z.union([z.array(z.string()), z.literal(true)]).optional(),
         authEnabled: z.boolean().optional(),
         logFile: z.string().optional(),
+        server: z
+          .object({
+            url: z.string().optional(),
+            tlsVerify: z.enum(['auto', '0', '1']).optional(),
+            caCertPath: z.string().optional(),
+            tlsPins: z.array(z.string()).optional(),
+          })
+          .strict()
+          .optional(),
         relay: z
           .object({
             enabled: z.boolean().optional(),
             endpoint: z.string().optional(),
-            publicEndpoint: z.string().optional(),
             serverUrl: z.string().optional(),
             workspaceId: z.string().optional(),
-            enrollToken: z.string().optional(),
+            installId: z.string().optional(),
             issueToken: z.string().optional(),
             tlsVerify: z.enum(['auto', '0', '1']).optional(),
             caCertPath: z.string().optional(),

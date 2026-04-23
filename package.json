@@ -17,7 +17,7 @@
     "release:packages": "npx @changesets/cli publish",
     "daemon:check": "npm run check -w @viewportai/daemon",
     "relay:check": "npm run check -w @viewportai/relay",
-    "integration:smoke": "npm run test:smoke -w @viewportai/integration",
+    "integration:operator": "npm run test:operator -w @viewportai/integration",
     "integration:e2e": "npm run test:e2e -w @viewportai/integration",
     "relay:start": "bash ./scripts/start-relay.sh",
     "relay:start:container": "bash ./scripts/start-relay-container.sh"

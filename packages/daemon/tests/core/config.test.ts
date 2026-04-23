@@ -215,10 +215,9 @@ describe('Config I/O', () => {
   });
 
   it('loadConfig reads back what saveConfig wrote', async () => {
-    await saveConfig({ machineId: 'roundtrip', relayUrl: 'wss://relay.test.com' });
+    await saveConfig({ machineId: 'roundtrip' });
     const config = await loadConfig();
     expect(config.machineId).toBe('roundtrip');
-    expect(config.relayUrl).toBe('wss://relay.test.com');
   });
 
   it('loadConfig throws on malformed JSON with actionable error', async () => {
@@ -243,6 +242,39 @@ describe('Config I/O', () => {
     );
 
     await expect(loadConfig()).rejects.toThrow('Invalid viewport config schema');
+  });
+
+  it('migrates deprecated daemon relay keys and persists the sanitized config', async () => {
+    const dir = path.join(tmpDir, '.viewport');
+    await fs.mkdir(dir, { recursive: true });
+    const configPath = path.join(dir, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        daemon: {
+          relay: {
+            enabled: true,
+            endpoint: 'ws://127.0.0.1:7781/ws',
+            serverUrl: 'http://127.0.0.1:8787',
+            workspaceId: 'workspace_demo',
+            installId: 'install_demo',
+            issueToken: 'install-issue-token',
+            enrollToken: 'workspace-enroll-token',
+            tlsVerify: '0',
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const config = await loadConfig();
+    expect(config.daemon?.relay?.issueToken).toBe('install-issue-token');
+    expect((config.daemon?.relay as Record<string, unknown>)['enrollToken']).toBeUndefined();
+
+    const rewritten = JSON.parse(await fs.readFile(configPath, 'utf-8')) as {
+      daemon?: { relay?: Record<string, unknown> };
+    };
+    expect(rewritten.daemon?.relay?.['enrollToken']).toBeUndefined();
   });
 });
 
@@ -349,19 +381,6 @@ describe('ConfigManager', () => {
     expect(mgr.getMachineId()).toBe('custom-machine');
   });
 
-  it('returns relay URL when configured', async () => {
-    await saveConfig({ relayUrl: 'wss://relay.test.com' });
-    const mgr = new ConfigManager();
-    await mgr.load();
-    expect(mgr.getRelayUrl()).toBe('wss://relay.test.com');
-  });
-
-  it('returns undefined relay URL when not configured', async () => {
-    const mgr = new ConfigManager();
-    await mgr.load();
-    expect(mgr.getRelayUrl()).toBeUndefined();
-  });
-
   it('sets global defaults', async () => {
     const mgr = new ConfigManager();
     await mgr.load();
@@ -407,5 +426,39 @@ describe('ConfigManager', () => {
         },
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('clears persisted optional relay credentials when set to undefined', async () => {
+    const mgr = new ConfigManager();
+    await mgr.load();
+
+    await mgr.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://relay.getviewport.com/ws',
+        serverUrl: 'https://app.getviewport.com',
+        workspaceId: 'workspace_demo',
+        installId: 'install_demo',
+        issueToken: 'install-issue-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    await mgr.setDaemonConfig({
+      relay: {
+        workspaceId: 'workspace_new',
+        installId: 'install_new',
+        issueToken: 'install-issue-token-new',
+      },
+    });
+
+    const relay = mgr.getDaemonConfig()?.relay;
+    expect(relay?.workspaceId).toBe('workspace_new');
+    expect(relay?.installId).toBe('install_new');
+    expect(relay?.issueToken).toBe('install-issue-token-new');
+
+    const reloaded = new ConfigManager();
+    await reloaded.load();
+    expect(reloaded.getDaemonConfig()?.relay?.issueToken).toBe('install-issue-token-new');
   });
 });

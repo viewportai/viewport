@@ -16,6 +16,7 @@ const EnvSchema = z.object({
   MAX_LOGS: z.string().optional(),
   RELAY_TLS: z.string().optional(),
   RELAY_TLS_HOST: z.string().optional(),
+  RELAY_TLS_CERT_DIR: z.string().optional(),
   RELAY_TLS_CERT_PATH: z.string().optional(),
   RELAY_TLS_KEY_PATH: z.string().optional(),
   RELAY_ADMIN_TOKEN: z.string().optional(),
@@ -197,6 +198,28 @@ function certFilesExist(certPath: string, keyPath: string): boolean {
   return fs.existsSync(certPath) && fs.existsSync(keyPath);
 }
 
+function hostnameLooksLocal(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized.endsWith('.test')
+  );
+}
+
+function urlLooksLocal(raw: string): boolean {
+  try {
+    return hostnameLooksLocal(new URL(raw).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
 function resolveTlsEnabled(mode: 'auto' | '0' | '1', certPath: string, keyPath: string): boolean {
   if (mode === '1') return true;
   if (mode === '0') return false;
@@ -221,22 +244,14 @@ export function resolveServerTlsRejectUnauthorized(
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   const parsedEnv = EnvSchema.parse(env);
-  const relayMode = parsedEnv.RELAY_MODE ?? 'dev';
-
   const host = parsedEnv.HOST?.trim() || '127.0.0.1';
   const port = parsePositiveInt(parsedEnv.PORT, 7781);
-  const serverUrl = parsedEnv.SERVER_URL?.trim() || 'https://getviewport.test';
+  const serverUrl = parsedEnv.SERVER_URL?.trim() || 'https://app.getviewport.com';
 
-  const tlsHost = parsedEnv.RELAY_TLS_HOST?.trim() || 'getviewport.test';
-  const certDir = path.join(
-    os.homedir(),
-    'Library',
-    'Application Support',
-    'Herd',
-    'config',
-    'valet',
-    'Certificates',
-  );
+  const tlsHost = parsedEnv.RELAY_TLS_HOST?.trim() || 'relay.getviewport.com';
+  const certDir =
+    parsedEnv.RELAY_TLS_CERT_DIR?.trim() ||
+    path.join(os.homedir(), '.viewport', 'relay-certs');
   const tlsCertPath = parsedEnv.RELAY_TLS_CERT_PATH || path.join(certDir, `${tlsHost}.crt`);
   const tlsKeyPath = parsedEnv.RELAY_TLS_KEY_PATH || path.join(certDir, `${tlsHost}.key`);
   const tlsMode = TlsModeSchema.parse((parsedEnv.RELAY_TLS ?? 'auto').toLowerCase());
@@ -248,8 +263,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   }
 
   const protocol = tlsEnabled ? 'wss' : 'ws';
-  const publicWsBaseUrl =
-    parsedEnv.RELAY_PUBLIC_WS_BASE_URL?.trim() || `${protocol}://${tlsHost}:${port}/ws`;
+  const defaultPublicWsBaseUrl =
+    tlsHost === 'relay.getviewport.com' && port === 7781
+      ? 'wss://relay.getviewport.com/ws'
+      : `${protocol}://${tlsHost}:${port}/ws`;
+  const publicWsBaseUrl = parsedEnv.RELAY_PUBLIC_WS_BASE_URL?.trim() || defaultPublicWsBaseUrl;
+  const hasExplicitTopologyUrls = Boolean(
+    parsedEnv.SERVER_URL?.trim() || parsedEnv.RELAY_PUBLIC_WS_BASE_URL?.trim(),
+  );
+  const relayMode =
+    parsedEnv.RELAY_MODE ??
+    (!hasExplicitTopologyUrls ||
+    isLoopbackHost(host) ||
+    urlLooksLocal(serverUrl) ||
+    urlLooksLocal(publicWsBaseUrl)
+      ? 'dev'
+      : 'prod');
   const relayId =
     parsedEnv.RELAY_ID?.trim() ||
     `${host}:${port}:${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -313,6 +342,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     if (busEnabled && !busHmacKey) {
       throw new Error('RELAY_BUS_HMAC_KEY is required when RELAY_BACKPLANE_MODE=redis');
     }
+  }
+  if ((urlLooksLocal(serverUrl) || urlLooksLocal(publicWsBaseUrl)) && !isLoopbackHost(host)) {
+    throw new Error(
+      'SERVER_URL and RELAY_PUBLIC_WS_BASE_URL must be set explicitly outside local loopback development',
+    );
   }
   if (relayMode === 'prod') {
     if (!tlsEnabled) {

@@ -1,4 +1,4 @@
-import { openSync, closeSync } from 'node:fs';
+import { openSync, closeSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -17,6 +17,7 @@ import {
   WORKER_EXIT_SHUTDOWN,
   type RuntimeLaunchConfig,
 } from './supervisor-protocol.js';
+import { resolveDaemonSettingsFromSources } from './daemon-settings.js';
 
 const SUPERVISOR_STARTUP_GRACE_MS = 1_500;
 
@@ -73,8 +74,6 @@ function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfig {
     relayServerUrl: typeof parsed.relayServerUrl === 'string' ? parsed.relayServerUrl : undefined,
     relayWorkspaceId:
       typeof parsed.relayWorkspaceId === 'string' ? parsed.relayWorkspaceId : undefined,
-    relayEnrollToken:
-      typeof parsed.relayEnrollToken === 'string' ? parsed.relayEnrollToken : undefined,
     relayIssueToken:
       typeof parsed.relayIssueToken === 'string' ? parsed.relayIssueToken : undefined,
     relayTlsVerify:
@@ -109,6 +108,28 @@ function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfig {
         ? parsed.relayTokenClockSkewSec
         : undefined,
   };
+}
+
+function resolveConfiguredTlsState(env: NodeJS.ProcessEnv = process.env): {
+  enabled: boolean;
+  host: string;
+} {
+  const tlsEnv = (env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
+  const tlsHost = env['VIEWPORT_TLS_HOST'] ?? 'localhost';
+
+  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
+    return { enabled: false, host: tlsHost };
+  }
+
+  const certDir = env['VIEWPORT_TLS_CERT_DIR'] ?? path.join(configDir(), 'certs');
+  const certPath = env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
+  const keyPath = env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
+
+  if (tlsEnv === 'auto') {
+    return { enabled: existsSync(certPath) && existsSync(keyPath), host: tlsHost };
+  }
+
+  return { enabled: true, host: tlsHost };
 }
 
 function buildWorkerEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
@@ -205,7 +226,9 @@ export async function runSupervisorForeground(config: RuntimeLaunchConfig): Prom
 
 async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Promise<void> {
   const ownerInfo = readProcessInfo(process.pid);
+  const tls = resolveConfiguredTlsState();
   await writeDaemonRuntimeState({
+    pid: workerPid ?? process.pid,
     ownerPid: process.pid,
     workerPid,
     port: config.port,
@@ -229,6 +252,8 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     relayServerUrl: config.relayServerUrl,
     relayWorkspaceId: config.relayWorkspaceId,
     relayTlsVerify: config.relayTlsVerify,
+    tlsEnabled: tls.enabled,
+    tlsHost: tls.host,
   });
 }
 
@@ -240,10 +265,36 @@ function launchWorker(config: RuntimeLaunchConfig): ChildProcess {
 }
 
 export async function runSupervisorFromEnv(): Promise<number> {
-  const config = decodeRuntimeConfig(process.env[SUPERVISOR_CONFIG_ENV]);
+  let config = decodeRuntimeConfig(process.env[SUPERVISOR_CONFIG_ENV]);
   let stopping = false;
   let restarting = false;
   let worker: ChildProcess | null = null;
+
+  const reloadConfig = async (): Promise<void> => {
+    try {
+      const resolved = await resolveDaemonSettingsFromSources();
+      config = {
+        ...config,
+        ...resolved.launch,
+        listen: config.listen,
+        host: config.host,
+        port: config.port,
+        socketPath: config.socketPath,
+        profile: config.profile,
+        authEnabled: config.authEnabled,
+        allowedHostsRaw: config.allowedHostsRaw,
+        allowedOriginsRaw: config.allowedOriginsRaw,
+        detached: config.detached,
+        logPath: config.logPath ?? resolved.launch.logPath,
+      };
+    } catch (error) {
+      console.warn(
+        `[supervisor] failed to reload daemon config after restart request: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
 
   const requestWorkerStop = (signal: NodeJS.Signals): void => {
     stopping = true;
@@ -281,10 +332,15 @@ export async function runSupervisorFromEnv(): Promise<number> {
       }
 
       const delay = restarting ? 250 : 1_000;
-      restarting = false;
       setTimeout(() => {
         if (stopping) return;
-        spawnWorker();
+        void (async () => {
+          if (restarting) {
+            await reloadConfig();
+          }
+          restarting = false;
+          spawnWorker();
+        })();
       }, delay);
     });
   };

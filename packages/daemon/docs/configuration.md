@@ -6,7 +6,7 @@ Daemon runtime settings resolve in this order (later wins):
 
 1. Built-in defaults
 2. `~/.viewport/config.json` (`daemon.*`)
-3. Environment variables (`VPD_*` / `VIEWPORT_*`)
+3. Environment variables (`VIEWPORT_*`)
 4. CLI flags
 
 Session config resolution is separate:
@@ -32,14 +32,14 @@ Session config resolution is separate:
     "logFile": "~/.viewport/daemon.log",
     "relay": {
       "enabled": false,
-      "endpoint": "wss://relay.example.test/ws",
-      "serverUrl": "https://api.example.test",
+      "endpoint": "wss://relay.getviewport.com/ws",
+      "serverUrl": "https://app.getviewport.com",
       "workspaceId": "workspace_demo",
-      "enrollToken": "workspace_enroll_...",
+      "issueToken": "install_daemon_issue_...",
       "tlsVerify": "auto",
       "caCertPath": "/path/to/relay-ca.pem",
       "tlsPins": ["ab12cd34..."],
-      "tokenIssuer": "viewport-server-poc",
+      "tokenIssuer": "getviewport-runtime",
       "tokenAudience": "viewport-relay",
       "signingKeys": {
         "v1": "replace-me"
@@ -52,24 +52,24 @@ Session config resolution is separate:
 
 ## Environment variables
 
-- `VPD_LISTEN` / `VIEWPORT_LISTEN`
-- `VPD_PROFILE` / `VIEWPORT_PROFILE`
-- `VPD_ALLOWED_HOSTS` / `VIEWPORT_ALLOWED_HOSTS`
-- `VPD_ALLOWED_ORIGINS` / `VIEWPORT_ALLOWED_ORIGINS`
-- `VPD_AUTH` / `VIEWPORT_AUTH`
-- `VPD_LOG_FILE` / `VIEWPORT_LOG_FILE`
-- `VPD_RELAY_ENABLED` / `VIEWPORT_RELAY_ENABLED`
-- `VPD_RELAY_ENDPOINT` / `VIEWPORT_RELAY_ENDPOINT`
-- `VPD_RELAY_SERVER` / `VIEWPORT_RELAY_SERVER`
-- `VPD_RELAY_WORKSPACE` / `VIEWPORT_RELAY_WORKSPACE`
-- `VPD_RELAY_ENROLL_TOKEN` / `VIEWPORT_RELAY_ENROLL_TOKEN`
-- `VPD_RELAY_TLS_VERIFY` / `VIEWPORT_RELAY_TLS_VERIFY` (`auto|0|1`)
-- `VPD_RELAY_CA_CERT` / `VIEWPORT_RELAY_CA_CERT`
-- `VPD_RELAY_TLS_PINS` / `VIEWPORT_RELAY_TLS_PINS` (comma-separated SHA-256 cert fingerprints)
-- `VPD_RELAY_TOKEN_ISSUER` / `VIEWPORT_RELAY_TOKEN_ISSUER`
-- `VPD_RELAY_TOKEN_AUDIENCE` / `VIEWPORT_RELAY_TOKEN_AUDIENCE`
-- `VPD_RELAY_TOKEN_SIGNING_KEYS_JSON` / `VIEWPORT_RELAY_TOKEN_SIGNING_KEYS_JSON`
-- `VPD_RELAY_TOKEN_CLOCK_SKEW_SEC` / `VIEWPORT_RELAY_TOKEN_CLOCK_SKEW_SEC`
+- `VIEWPORT_LISTEN`
+- `VIEWPORT_PROFILE`
+- `VIEWPORT_ALLOWED_HOSTS`
+- `VIEWPORT_ALLOWED_ORIGINS`
+- `VIEWPORT_AUTH`
+- `VIEWPORT_LOG_FILE`
+- `VIEWPORT_RELAY_ENABLED`
+- `VIEWPORT_RELAY_ENDPOINT`
+- `VIEWPORT_RELAY_SERVER`
+- `VIEWPORT_RELAY_WORKSPACE`
+- `VIEWPORT_RELAY_ISSUE_TOKEN`
+- `VIEWPORT_RELAY_TLS_VERIFY` (`auto|0|1`)
+- `VIEWPORT_RELAY_CA_CERT`
+- `VIEWPORT_RELAY_TLS_PINS` (comma-separated SHA-256 cert fingerprints)
+- `VIEWPORT_RELAY_TOKEN_ISSUER`
+- `VIEWPORT_RELAY_TOKEN_AUDIENCE`
+- `VIEWPORT_RELAY_TOKEN_SIGNING_KEYS_JSON`
+- `VIEWPORT_RELAY_TOKEN_CLOCK_SKEW_SEC`
 - `VIEWPORT_HTTP_LOG_LEVEL`
 - `VIEWPORT_MAX_WS_CLIENTS`
 
@@ -85,7 +85,7 @@ Session config resolution is separate:
 - `--relay-endpoint`
 - `--relay-server`
 - `--relay-workspace`
-- `--relay-enroll-token`
+- `--relay-issue-token`
 - `--relay-tls-verify`
 - `--relay-ca-cert`
 - `--relay-tls-pins`
@@ -100,10 +100,10 @@ Session config resolution is separate:
 - Configure relay credentials:
 
 ```bash
-vpd remote login --server https://getviewport.test --workspace workspace_demo --token <enroll-token> --enable
+vpd remote login --server https://app.getviewport.com --workspace workspace_demo --token <issue-token> --enable
 ```
 
-- If `--token` is omitted, the command can auto-rotate (or auto-enroll with `--user`) by calling the server API.
+- `--token` should be the daemon issue token the control plane returns after pairing approval.
 - Apply updates with:
 
 ```bash
