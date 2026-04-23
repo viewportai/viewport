@@ -8,6 +8,7 @@ import { RelayMetrics } from '../src/metrics.js';
 import { ConnectionRegistry } from '../src/registry.js';
 import { registerConnection, routeBusFrame } from '../src/relay-routing.js';
 import { FixedWindowRateLimiter, TokenBucketRateLimiter } from '../src/security.js';
+import type { AdmissionClaims } from '../src/types.js';
 
 class FakeWs extends EventEmitter {
   readyState = 1;
@@ -48,6 +49,15 @@ function createTestBackplane(overrides: Partial<TestBackplane> = {}): TestBackpl
     publishClientToDaemon: vi.fn().mockResolvedValue(false),
     publishDaemonToClients: vi.fn().mockResolvedValue(false),
     pullFrames: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  };
+}
+
+function daemonClaims(overrides: Partial<AdmissionClaims> = {}): AdmissionClaims {
+  return {
+    installId: 'install_demo',
+    e2eeProfile: 'noise-ik',
+    workspaceId: 'workspace_demo',
     ...overrides,
   };
 }
@@ -351,7 +361,7 @@ describe('relay routing', () => {
       'workspace-daemon',
       'workspace_demo',
       '127.0.0.1',
-      { e2eeProfile: 'noise-ik', workspaceId: 'workspace_demo' },
+      daemonClaims(),
     );
 
     const strongerProfileResponse = JSON.stringify({
@@ -609,8 +619,7 @@ describe('relay routing', () => {
     };
 
     registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
+      ...daemonClaims(),
     });
 
     const frame = JSON.stringify({
@@ -806,7 +815,7 @@ describe('relay routing', () => {
       'workspace-daemon',
       'workspace_demo',
       '127.0.0.1',
-      { e2eeProfile: 'noise-ikpsk2', workspaceId: 'workspace_demo' },
+      daemonClaims({ e2eeProfile: 'noise-ikpsk2' }),
     );
     registerConnection(
       context,
@@ -891,7 +900,7 @@ describe('relay routing', () => {
       'workspace-daemon',
       'workspace_demo',
       '127.0.0.1',
-      { e2eeProfile: 'noise-ikpsk2', workspaceId: 'workspace_demo' },
+      daemonClaims({ e2eeProfile: 'noise-ikpsk2' }),
     );
     registerConnection(
       context,
@@ -976,10 +985,7 @@ describe('relay routing', () => {
         (ws as unknown as FakeWs).close(code, reason),
     };
 
-    registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-    });
+    registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', '127.0.0.1', daemonClaims());
     registerConnection(context, clientWsA, 'client', 'workspace_demo', '127.0.0.1', {
       clientId: 'client_a',
       scope: 'runtime',
@@ -1033,6 +1039,140 @@ describe('relay routing', () => {
     expect((clientWsB as unknown as FakeWs).sent).not.toContain(envelope);
   });
 
+  it('routes bus client frames to the targeted daemon install only', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client'>();
+
+    const daemonA = new FakeWs() as unknown as WebSocket;
+    const daemonB = new FakeWs() as unknown as WebSocket;
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    registerConnection(
+      context,
+      daemonA,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.1',
+      daemonClaims({ installId: 'install_a' }),
+    );
+    registerConnection(
+      context,
+      daemonB,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.2',
+      daemonClaims({ installId: 'install_b' }),
+    );
+
+    const pairingRequest = JSON.stringify({
+      type: 'relay_pairing_offer_request',
+      requestId: 'pair-targeted',
+      clientChannelPublicKey:
+        'BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      ttlSeconds: 600,
+    });
+
+    routeBusFrame(context, {
+      id: 1,
+      workspaceId: 'workspace_demo',
+      sourceRelayId: 'relay-b',
+      targetRelayId: 'relay-a',
+      installId: 'install_b',
+      direction: 'client_to_daemon',
+      payload: pairingRequest,
+    });
+
+    expect((daemonA as unknown as FakeWs).sent).not.toContain(pairingRequest);
+    expect((daemonB as unknown as FakeWs).sent).toContain(pairingRequest);
+  });
+
+  it('does not fall back to another daemon when a targeted install is unavailable', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client'>();
+
+    const daemonA = new FakeWs() as unknown as WebSocket;
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    registerConnection(
+      context,
+      daemonA,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.1',
+      daemonClaims({ installId: 'install_a' }),
+    );
+
+    const pairingRequest = JSON.stringify({
+      type: 'relay_pairing_offer_request',
+      requestId: 'pair-missing-target',
+      clientChannelPublicKey:
+        'BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      ttlSeconds: 600,
+    });
+
+    routeBusFrame(context, {
+      id: 1,
+      workspaceId: 'workspace_demo',
+      sourceRelayId: 'relay-b',
+      targetRelayId: 'relay-a',
+      installId: 'install_b',
+      direction: 'client_to_daemon',
+      payload: pairingRequest,
+    });
+
+    expect((daemonA as unknown as FakeWs).sent).not.toContain(pairingRequest);
+  });
+
   it('rejects a second daemon connection while one is already active', () => {
     const config = loadConfig({
       RELAY_TLS: '0',
@@ -1069,18 +1209,68 @@ describe('relay routing', () => {
       },
     };
 
-    registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-    });
-    registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', '127.0.0.2', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-    });
+    registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', '127.0.0.1', daemonClaims());
+    registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', '127.0.0.2', daemonClaims());
 
     expect(closed).toContainEqual({ code: 4008, reason: 'daemon already connected' });
     expect((daemonA as unknown as FakeWs).readyState).toBe(1);
     expect((daemonB as unknown as FakeWs).readyState).toBe(3);
+  });
+
+  it('keeps workspace presence online while another daemon remains connected', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client'>();
+
+    const daemonA = new FakeWs() as unknown as WebSocket;
+    const daemonB = new FakeWs() as unknown as WebSocket;
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    registerConnection(
+      context,
+      daemonA,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.1',
+      daemonClaims({ installId: 'install_a' }),
+    );
+    registerConnection(
+      context,
+      daemonB,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.2',
+      daemonClaims({ installId: 'install_b' }),
+    );
+
+    (daemonA as unknown as FakeWs).close(1000, 'done');
+
+    expect(registry.getOrCreate('workspace_demo').daemons.has('install_b')).toBe(true);
+    expect(backplane.upsertPresence).toHaveBeenLastCalledWith('workspace_demo', true);
   });
 
   it('rejects daemon connections with stale daemon issue generation claims', () => {
@@ -1119,17 +1309,23 @@ describe('relay routing', () => {
       },
     };
 
-    registerConnection(context, daemonCurrent, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-      daemonIssueGeneration: 3,
-    });
+    registerConnection(
+      context,
+      daemonCurrent,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.1',
+      daemonClaims({ daemonIssueGeneration: 3 }),
+    );
 
-    registerConnection(context, daemonStale, 'workspace-daemon', 'workspace_demo', '127.0.0.2', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-      daemonIssueGeneration: 2,
-    });
+    registerConnection(
+      context,
+      daemonStale,
+      'workspace-daemon',
+      'workspace_demo',
+      '127.0.0.2',
+      daemonClaims({ daemonIssueGeneration: 2 }),
+    );
 
     expect(closed).toContainEqual({ code: 4008, reason: 'stale daemon generation' });
     expect((daemonCurrent as unknown as FakeWs).readyState).toBe(1);
@@ -1172,14 +1368,8 @@ describe('relay routing', () => {
         (ws as unknown as FakeWs).close(code, reason),
     };
 
-    registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-    });
-    registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', '127.0.0.2', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-    });
+    registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', '127.0.0.1', daemonClaims());
+    registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', '127.0.0.2', daemonClaims());
 
     expect(adjustments).toEqual([1]);
   });
@@ -1219,10 +1409,7 @@ describe('relay routing', () => {
         (ws as unknown as FakeWs).close(code, reason),
     };
 
-    registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', '127.0.0.1', {
-      e2eeProfile: 'noise-ik',
-      workspaceId: 'workspace_demo',
-    });
+    registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', '127.0.0.1', daemonClaims());
     registerConnection(context, clientWsA, 'client', 'workspace_demo', '127.0.0.1', {
       clientId: 'client_a',
       scope: 'runtime',

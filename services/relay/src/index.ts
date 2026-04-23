@@ -146,7 +146,13 @@ function buildStatePayload(): Record<string, unknown> {
     clientRedirectEnabled: config.clientRedirectEnabled,
     workspaces: registry.workspaceEntries().map(([workspaceId, state]) => ({
       workspaceId,
-      daemonConnected: !!(state.daemon && state.daemon.readyState === WebSocket.OPEN),
+      daemonConnected: [...state.daemons.values()].some(
+        (daemon) => daemon.ws.readyState === WebSocket.OPEN,
+      ),
+      daemonCount: [...state.daemons.values()].filter(
+        (daemon) => daemon.ws.readyState === WebSocket.OPEN,
+      ).length,
+      daemonInstallIds: [...state.daemons.keys()],
       clientCount: [...state.clients.keys()].filter((ws) => ws.readyState === WebSocket.OPEN).length,
       clientIds: config.stateIncludeClientIds
         ? [...state.clients.values()].map((item) => item.clientId)
@@ -440,7 +446,7 @@ const cleanupInterval = setInterval(() => {
 const presenceSyncInterval = setInterval(async () => {
   if (!config.presenceSyncEnabled) return;
   for (const [workspaceId, state] of registry.workspaceEntries()) {
-    if (state.daemon && state.daemon.readyState === WebSocket.OPEN) {
+    if ([...state.daemons.values()].some((daemon) => daemon.ws.readyState === WebSocket.OPEN)) {
       await backplane.upsertPresence(workspaceId, true);
     }
   }

@@ -34,11 +34,17 @@ export interface AdmissionResult {
 export interface ClientConnectionMeta {
   clientId: string;
   connectedAt: number;
+  installId?: string;
+}
+
+export interface DaemonConnectionMeta {
+  installId: string;
+  ws: WebSocket;
+  issueGeneration: number | null;
 }
 
 export interface WorkspaceState {
-  daemon: WebSocket | null;
-  daemonIssueGeneration: number | null;
+  daemons: Map<string, DaemonConnectionMeta>;
   clients: Map<WebSocket, ClientConnectionMeta>;
   keyExchangeRequests: Map<
     string,
@@ -79,5 +85,6 @@ export interface RelayStatusPayload {
   code: string;
   message: string;
   workspaceId: string;
+  installId?: string;
   relayWsBaseUrl?: string;
 }

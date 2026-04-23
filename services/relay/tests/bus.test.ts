@@ -22,6 +22,7 @@ describe('relay bus client', () => {
     workspaceId: string;
     sourceRelayId: string;
     targetRelayId: string | null;
+    installId?: string | null;
     direction: 'client_to_daemon' | 'daemon_to_clients';
     payload: string;
     issuedAtMs: number;
@@ -31,6 +32,7 @@ describe('relay bus client', () => {
       input.workspaceId,
       input.sourceRelayId,
       input.targetRelayId ?? '',
+      input.installId ?? '',
       input.direction,
       String(input.issuedAtMs),
       input.payload,

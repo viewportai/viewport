@@ -11,6 +11,7 @@ interface RedisBusEnvelope {
   workspaceId: string;
   sourceRelayId: string;
   targetRelayId: string | null;
+  installId?: string | null;
   direction: RelayBusFrame['direction'];
   payload: string;
   issuedAtMs?: number;
@@ -42,6 +43,9 @@ function isRedisBusEnvelope(value: unknown): value is RedisBusEnvelope {
     typeof candidate['sourceRelayId'] === 'string' &&
     typeof candidate['payload'] === 'string' &&
     (candidate['targetRelayId'] === null || typeof candidate['targetRelayId'] === 'string') &&
+    (typeof candidate['installId'] === 'undefined' ||
+      candidate['installId'] === null ||
+      typeof candidate['installId'] === 'string') &&
     (candidate['direction'] === 'client_to_daemon' ||
       candidate['direction'] === 'daemon_to_clients') &&
     (typeof candidate['issuedAtMs'] === 'undefined' || typeof candidate['issuedAtMs'] === 'number') &&
@@ -238,8 +242,9 @@ export class RedisRelayBackplane implements RelayBackplane {
     workspaceId: string,
     payload: string,
     targetRelayId: string,
+    installId?: string | null,
   ): Promise<boolean> {
-    return await this.publish(workspaceId, 'client_to_daemon', payload, targetRelayId);
+    return await this.publish(workspaceId, 'client_to_daemon', payload, targetRelayId, installId);
   }
 
   async publishDaemonToClients(
@@ -264,6 +269,7 @@ export class RedisRelayBackplane implements RelayBackplane {
     direction: RelayBusFrame['direction'],
     payload: string,
     targetRelayId: string,
+    installId?: string | null,
   ): Promise<boolean> {
     try {
       const client = await this.ensureCommandClient();
@@ -271,6 +277,7 @@ export class RedisRelayBackplane implements RelayBackplane {
         workspaceId,
         sourceRelayId: this.config.relayId,
         targetRelayId,
+        installId,
         direction,
         payload,
         issuedAtMs: Date.now(),
@@ -391,6 +398,7 @@ export class RedisRelayBackplane implements RelayBackplane {
               workspaceId: parsed.workspaceId,
               sourceRelayId: parsed.sourceRelayId,
               targetRelayId: parsed.targetRelayId,
+              installId: parsed.installId ?? null,
               direction: parsed.direction,
               payload: parsed.payload,
               issuedAtMs: parsed.issuedAtMs,
@@ -427,6 +435,7 @@ export class RedisRelayBackplane implements RelayBackplane {
           workspaceId: parsed.workspaceId,
           sourceRelayId: parsed.sourceRelayId,
           targetRelayId: parsed.targetRelayId,
+          installId: parsed.installId ?? null,
           direction: parsed.direction,
           payload: parsed.payload,
           issuedAtMs: parsed.issuedAtMs,

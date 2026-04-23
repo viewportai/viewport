@@ -20,8 +20,11 @@ describe('connection registry', () => {
   it('does not prune active workspace', () => {
     const registry = new ConnectionRegistry();
     const state = registry.getOrCreate('workspace-a');
-    // Fake active daemon reference.
-    state.daemon = {} as never;
+    state.daemons.set('install-a', {
+      installId: 'install-a',
+      ws: {} as never,
+      issueGeneration: null,
+    });
     state.lastActivityAt = Date.now() - 100_000;
     const removed = registry.pruneEmpty(1_000);
     expect(removed).toEqual([]);

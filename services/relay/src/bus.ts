@@ -14,6 +14,7 @@ interface BusPullFrame {
   workspaceId?: string;
   sourceRelayId?: string;
   targetRelayId?: string | null;
+  installId?: string | null;
   direction?: string;
   payload?: string;
   issuedAtMs?: number;
@@ -30,6 +31,7 @@ export interface RelayBusFrame {
   workspaceId: string;
   sourceRelayId: string;
   targetRelayId: string | null;
+  installId?: string | null;
   direction: 'client_to_daemon' | 'daemon_to_clients';
   payload: string;
   issuedAtMs?: number;
@@ -65,8 +67,9 @@ export class RelayBusClient {
     workspaceId: string,
     payload: string,
     targetRelayId: string,
+    installId?: string | null,
   ): Promise<boolean> {
-    return await this.publish(workspaceId, 'client_to_daemon', payload, targetRelayId);
+    return await this.publish(workspaceId, 'client_to_daemon', payload, targetRelayId, installId);
   }
 
   async publishDaemonToClients(
@@ -82,6 +85,7 @@ export class RelayBusClient {
     direction: PublishDirection,
     payload: string,
     targetRelayId: string | null,
+    installId?: string | null,
   ): Promise<boolean> {
     if (!this.enabled) return false;
     const endpoint = new URL('/api/runtime/internal/relay/bus/publish', this.config.serverUrl);
@@ -89,6 +93,7 @@ export class RelayBusClient {
       workspaceId,
       sourceRelayId: this.config.relayId,
       targetRelayId,
+      installId,
       direction,
       payload,
       issuedAtMs: Date.now(),
@@ -100,6 +105,7 @@ export class RelayBusClient {
           workspaceId,
           sourceRelayId: this.config.relayId,
           targetRelayId,
+          installId,
           direction,
           payload,
           issuedAtMs: this.busHmacKey ? signed.issuedAtMs : undefined,
@@ -239,6 +245,8 @@ export class RelayBusClient {
               sourceRelayId: candidate.sourceRelayId,
               targetRelayId:
                 typeof candidate.targetRelayId === 'string' ? candidate.targetRelayId : null,
+              installId:
+                typeof candidate.installId === 'string' ? candidate.installId : null,
               direction: candidate.direction,
               payload: candidate.payload,
               issuedAtMs: candidate.issuedAtMs,
@@ -275,6 +283,7 @@ export class RelayBusClient {
           workspaceId: candidate.workspaceId,
           sourceRelayId: candidate.sourceRelayId,
           targetRelayId: typeof candidate.targetRelayId === 'string' ? candidate.targetRelayId : null,
+          installId: typeof candidate.installId === 'string' ? candidate.installId : null,
           direction: candidate.direction,
           payload: candidate.payload,
           issuedAtMs: typeof candidate.issuedAtMs === 'number' ? candidate.issuedAtMs : undefined,

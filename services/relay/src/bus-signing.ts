@@ -4,6 +4,7 @@ export interface BusSignatureFields {
   workspaceId: string;
   sourceRelayId: string;
   targetRelayId: string | null;
+  installId?: string | null;
   direction: 'client_to_daemon' | 'daemon_to_clients';
   payload: string;
   issuedAtMs: number;
@@ -14,6 +15,7 @@ export function busSignatureBase(fields: BusSignatureFields): string {
     fields.workspaceId,
     fields.sourceRelayId,
     fields.targetRelayId ?? '',
+    fields.installId ?? '',
     fields.direction,
     String(fields.issuedAtMs),
     fields.payload,

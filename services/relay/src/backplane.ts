@@ -21,6 +21,7 @@ export interface RelayBackplane {
     workspaceId: string,
     payload: string,
     targetRelayId: string,
+    installId?: string | null,
   ): Promise<boolean>;
   publishDaemonToClients(
     workspaceId: string,
@@ -83,8 +84,9 @@ class ServerRelayBackplane implements RelayBackplane {
     workspaceId: string,
     payload: string,
     targetRelayId: string,
+    installId?: string | null,
   ): Promise<boolean> {
-    return await this.bus.publishClientToDaemon(workspaceId, payload, targetRelayId);
+    return await this.bus.publishClientToDaemon(workspaceId, payload, targetRelayId, installId);
   }
 
   async publishDaemonToClients(

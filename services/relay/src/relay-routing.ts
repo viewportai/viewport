@@ -279,11 +279,31 @@ export function relayRedirectPayload(workspaceId: string, relayWsBaseUrl: string
   };
 }
 
+function resolveDaemonSocket(
+  state: ReturnType<ConnectionRegistry['getOrCreate']>,
+  installId?: string,
+): WebSocket | null {
+  if (typeof installId === 'string' && installId.trim() !== '') {
+    const targeted = state.daemons.get(installId);
+    if (targeted?.ws.readyState === WebSocket.OPEN) {
+      return targeted.ws;
+    }
+    return null;
+  }
+  for (const daemon of state.daemons.values()) {
+    if (daemon.ws.readyState === WebSocket.OPEN) {
+      return daemon.ws;
+    }
+  }
+  return null;
+}
+
 async function routeClientMessageWithoutLocalDaemon(
   context: RelayRoutingContext,
   ws: WebSocket,
   workspaceId: string,
   clientId: string,
+  installId: string | undefined,
   payload: string,
 ): Promise<void> {
   const { config, safeSend, metrics, logger } = context;
@@ -297,6 +317,7 @@ async function routeClientMessageWithoutLocalDaemon(
       workspaceId,
       payload,
       preferred.relayId,
+      installId ?? null,
     );
     if (published) {
       metrics.increment('relay_client_messages_routed_bus_total');
@@ -310,8 +331,16 @@ async function routeClientMessageWithoutLocalDaemon(
   }
 
   metrics.increment('relay_client_messages_dropped_total');
-  safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId)));
-  logger.warn('client_message_dropped', { workspaceId, clientId, reason: 'daemon_unavailable' });
+  safeSend(ws, JSON.stringify({
+    ...relayStatusPayload(workspaceId),
+    installId,
+  }));
+  logger.warn('client_message_dropped', {
+    workspaceId,
+    clientId,
+    installId,
+    reason: 'daemon_unavailable',
+  });
 }
 
 function pruneStalePairingRequests(state: ReturnType<ConnectionRegistry['getOrCreate']>): void {
@@ -614,8 +643,9 @@ export function routeBusFrame(context: RelayRoutingContext, frame: RelayBusFrame
         );
       }
     }
-    if (state.daemon && state.daemon.readyState === WebSocket.OPEN) {
-      safeSend(state.daemon, frame.payload);
+    const daemon = resolveDaemonSocket(state, frame.installId ?? undefined);
+    if (daemon) {
+      safeSend(daemon, frame.payload);
       metrics.increment('relay_bus_frames_to_daemon_total');
       return;
     }
@@ -763,6 +793,17 @@ export function registerConnection(
   pruneStaleSessionOwners(state);
 
   if (role === 'workspace-daemon') {
+    const installId = typeof claims?.installId === 'string' ? claims.installId.trim() : '';
+    if (installId === '') {
+      metrics.increment('relay_ws_connections_rejected_total');
+      logger.warn('daemon_connection_rejected', {
+        workspaceId,
+        ip,
+        reason: 'missing_install_claim',
+      });
+      closeWithReason(ws, 4008, 'missing install claim');
+      return;
+    }
     const daemonExpectedProfile = claims?.e2eeProfile;
     const daemonFrameLimiter = resolveDaemonFrameLimiter(context);
     const daemonIssueGeneration =
@@ -773,8 +814,8 @@ export function registerConnection(
         : null;
     if (
       daemonIssueGeneration !== null &&
-      typeof state.daemonIssueGeneration === 'number' &&
-      daemonIssueGeneration < state.daemonIssueGeneration
+      typeof state.daemons.get(installId)?.issueGeneration === 'number' &&
+      daemonIssueGeneration < (state.daemons.get(installId)?.issueGeneration ?? 0)
     ) {
       metrics.increment('relay_ws_connections_rejected_total');
       logger.warn('daemon_connection_rejected', {
@@ -782,15 +823,17 @@ export function registerConnection(
         ip,
         reason: 'stale_daemon_issue_generation',
         claimGeneration: daemonIssueGeneration,
-        latestGeneration: state.daemonIssueGeneration,
+        latestGeneration: state.daemons.get(installId)?.issueGeneration,
       });
       closeWithReason(ws, 4008, 'stale daemon generation');
       return;
     }
-    if (state.daemon && state.daemon.readyState === WebSocket.OPEN) {
+    const existingDaemon = state.daemons.get(installId);
+    if (existingDaemon?.ws.readyState === WebSocket.OPEN) {
       metrics.increment('relay_ws_connections_rejected_total');
       logger.warn('daemon_connection_rejected', {
         workspaceId,
+        installId,
         ip,
         reason: 'daemon_already_connected',
       });
@@ -803,14 +846,15 @@ export function registerConnection(
     adjustIpConnectionCount(ip, 1);
     setupHeartbeat(ws);
     metrics.increment('relay_ws_connections_opened_total');
-    state.daemon = ws;
-    if (daemonIssueGeneration !== null) {
-      state.daemonIssueGeneration = daemonIssueGeneration;
-    }
+    state.daemons.set(installId, {
+      installId,
+      ws,
+      issueGeneration: daemonIssueGeneration,
+    });
     state.keyExchangeRequests.clear();
     state.sessionOwners.clear();
     void context.backplane.upsertPresence(workspaceId, true);
-    logger.info('daemon_connected', { workspaceId, ip });
+    logger.info('daemon_connected', { workspaceId, installId, ip });
     updateGauges();
 
     ws.on('message', (raw) => {
@@ -883,17 +927,21 @@ export function registerConnection(
     });
 
     ws.on('close', () => {
-      registry.clearDaemon(workspaceId, ws);
-      void context.backplane.upsertPresence(workspaceId, false);
+      registry.clearDaemon(workspaceId, installId, ws);
+      const remainingDaemonConnected = [...registry.getOrCreate(workspaceId).daemons.values()].some(
+        (daemon) => daemon.ws.readyState === WebSocket.OPEN,
+      );
+      void context.backplane.upsertPresence(workspaceId, remainingDaemonConnected);
       adjustIpConnectionCount(ip, -1);
       metrics.increment('relay_ws_connections_closed_total');
-      logger.info('daemon_disconnected', { workspaceId, ip });
+      logger.info('daemon_disconnected', { workspaceId, installId, ip });
       updateGauges();
     });
 
     ws.on('error', (error) => {
       logger.warn('daemon_ws_error', {
         workspaceId,
+        installId,
         ip,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -914,8 +962,14 @@ export function registerConnection(
   state.clients.set(ws, {
     clientId,
     connectedAt: Date.now(),
+    installId: typeof claims?.installId === 'string' ? claims.installId : undefined,
   });
-  logger.info('client_connected', { workspaceId, clientId, ip });
+  logger.info('client_connected', {
+    workspaceId,
+    clientId,
+    installId: typeof claims?.installId === 'string' ? claims.installId : undefined,
+    ip,
+  });
   updateGauges();
   const resolvedControlLimiters = resolveControlFrameLimiters(context);
   const kexRateLimiter = kexFrameLimiter ?? resolvedControlLimiters.kex;
@@ -1049,13 +1103,25 @@ export function registerConnection(
         );
       }
     }
-    if (!state.daemon || state.daemon.readyState !== WebSocket.OPEN) {
-      void routeClientMessageWithoutLocalDaemon(context, ws, workspaceId, clientId, text);
+    const targetInstallId =
+      state.clients.get(ws)?.installId && state.clients.get(ws)?.installId?.trim() !== ''
+        ? state.clients.get(ws)?.installId
+        : undefined;
+    const daemon = resolveDaemonSocket(state, targetInstallId);
+    if (!daemon) {
+      void routeClientMessageWithoutLocalDaemon(
+        context,
+        ws,
+        workspaceId,
+        clientId,
+        targetInstallId,
+        text,
+      );
       return;
     }
     metrics.increment('relay_frames_client_to_daemon_total');
     metrics.increment('relay_bytes_client_to_daemon_total', size);
-    safeSend(state.daemon, text);
+    safeSend(daemon, text);
   });
 
   ws.on('close', () => {

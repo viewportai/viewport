@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import type { ClientConnectionMeta, WorkspaceState } from './types.js';
+import type { ClientConnectionMeta, DaemonConnectionMeta, WorkspaceState } from './types.js';
 
 export class ConnectionRegistry {
   private readonly workspaces = new Map<string, WorkspaceState>();
@@ -8,8 +8,7 @@ export class ConnectionRegistry {
     let state = this.workspaces.get(workspaceId);
     if (!state) {
       state = {
-        daemon: null,
-        daemonIssueGeneration: null,
+        daemons: new Map<string, DaemonConnectionMeta>(),
         clients: new Map<WebSocket, ClientConnectionMeta>(),
         keyExchangeRequests: new Map(),
         sessionOwners: new Map(),
@@ -34,7 +33,7 @@ export class ConnectionRegistry {
   totalConnectionCount(): number {
     let count = 0;
     for (const [, state] of this.workspaces.entries()) {
-      if (state.daemon) count += 1;
+      count += state.daemons.size;
       count += state.clients.size;
     }
     return count;
@@ -44,7 +43,7 @@ export class ConnectionRegistry {
     const now = Date.now();
     const removed: string[] = [];
     for (const [workspaceId, state] of this.workspaces.entries()) {
-      if (state.daemon || state.clients.size > 0) continue;
+      if (state.daemons.size > 0 || state.clients.size > 0) continue;
       if (now - state.lastActivityAt < ttlMs) continue;
       this.workspaces.delete(workspaceId);
       removed.push(workspaceId);
@@ -74,15 +73,13 @@ export class ConnectionRegistry {
     state.lastActivityAt = Date.now();
   }
 
-  clearDaemon(workspaceId: string, ws: WebSocket): void {
+  clearDaemon(workspaceId: string, installId: string, ws: WebSocket): void {
     const state = this.workspaces.get(workspaceId);
     if (!state) return;
-    if (state.daemon === ws) {
-      state.daemon = null;
+    const daemon = state.daemons.get(installId);
+    if (daemon?.ws === ws) {
+      state.daemons.delete(installId);
     }
-    state.keyExchangeRequests.clear();
-    state.sessionOwners.clear();
-    state.pairingRequests.clear();
     state.lastActivityAt = Date.now();
   }
 }

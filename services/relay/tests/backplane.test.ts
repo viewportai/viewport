@@ -118,6 +118,7 @@ describe('relay backplane', () => {
       'workspace_demo',
       'payload',
       'relay-b',
+      undefined,
     );
     expect(busInstance.publishDaemonToClients).toHaveBeenCalledWith(
       'workspace_demo',
