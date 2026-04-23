@@ -30,7 +30,9 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:daemon": "tsx watch src/index.ts start --foreground",
     "build": "tsc",
+    "start:foreground": "npm run build && node dist/index.js start --foreground",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "bash ./scripts/test.sh",
