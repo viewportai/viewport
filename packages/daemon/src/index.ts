@@ -43,7 +43,7 @@ import {
   setup,
   remote,
 } from './cli/commands.js';
-import { resolvePackageVersion } from './core/package-meta.js';
+import { resolveDisplayVersion } from './core/package-meta.js';
 import { hookNotify } from './cli/hook-command.js';
 import { start, runSupervisorCommand, runWorkerCommand } from './startup.js';
 import { SUPERVISOR_CONFIG_ENV, WORKER_CONFIG_ENV } from './cli/supervisor-protocol.js';
@@ -57,7 +57,7 @@ if (globalFlag === 'help') {
 }
 
 if (globalFlag === 'version') {
-  console.log(resolvePackageVersion());
+  console.log(resolveDisplayVersion());
   process.exit(0);
 }
 

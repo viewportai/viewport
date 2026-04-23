@@ -1,6 +1,6 @@
 import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
-import { resolvePackageVersion } from '../core/package-meta.js';
+import { resolveDisplayVersion } from '../core/package-meta.js';
 import { resolveDaemonRuntimeIdentity, toInstallCapabilities } from '../core/runtime-identity.js';
 
 function boolLike(value: string | undefined): boolean {
@@ -59,7 +59,7 @@ function usage(): never {
 function resolveInstallMetadata(serverUrl: string, relayEndpoint: string, manager: ConfigManager) {
   const identity = resolveDaemonRuntimeIdentity({
     daemonConfig: manager.getDaemonConfig(),
-    daemonVersion: resolvePackageVersion(),
+    daemonVersion: resolveDisplayVersion(),
   });
   return toInstallCapabilities({
     ...identity,

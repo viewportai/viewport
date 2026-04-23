@@ -9,7 +9,7 @@
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRegistry } from '../core/agent-registry.js';
 import { logger } from '../core/logger.js';
-import { resolvePackageVersion } from '../core/package-meta.js';
+import { resolveDisplayVersion } from '../core/package-meta.js';
 import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 
 const MAX_DISCOVERED_HELLO_SESSIONS = 1_000;
@@ -125,7 +125,7 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
   const machine = resolveDaemonRuntimeIdentity({
     daemonConfig: daemon.configManager.getDaemonConfig(),
     machineId: daemon.configManager.getMachineId(),
-    daemonVersion: resolvePackageVersion(),
+    daemonVersion: resolveDisplayVersion(),
   });
 
   return {

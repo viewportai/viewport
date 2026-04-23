@@ -45,6 +45,17 @@ export function resolvePackageVersion(): string {
   return 'unknown';
 }
 
+export function resolveDisplayVersion(): string {
+  const baseVersion = resolvePackageVersion();
+  const source = resolvePackageSourceInfo();
+  if (source.kind !== 'linked-local-build') {
+    return baseVersion;
+  }
+
+  const suffix = source.gitRef ? `+${source.gitRef}` : '';
+  return `${baseVersion}-dev${suffix}`;
+}
+
 function findGitRoot(start: string): string | null {
   let current = start;
   while (true) {

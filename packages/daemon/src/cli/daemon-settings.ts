@@ -1,6 +1,6 @@
 import { getFlag, hasFlag } from './args.js';
 import { loadConfig } from '../core/config.js';
-import { resolvePackageVersion } from '../core/package-meta.js';
+import { resolveDisplayVersion } from '../core/package-meta.js';
 import { buildSecurityProfile } from '../server/security.js';
 import type { DeploymentProfile } from '../server/security.js';
 import { parseListenTarget, type DaemonListenTarget } from './listen-target.js';
@@ -268,7 +268,7 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     host: listenTarget.type === 'tcp' ? listenTarget.host : '127.0.0.1',
     port: listenTarget.type === 'tcp' ? listenTarget.port : 0,
     socketPath: listenTarget.type === 'socket' ? listenTarget.path : undefined,
-    version: resolvePackageVersion(),
+    version: resolveDisplayVersion(),
     profile: securityProfile.profile,
     allowedHostsRaw,
     allowedOriginsRaw,

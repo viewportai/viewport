@@ -46,10 +46,10 @@ import {
 } from '../core/runtime-identity.js';
 import {
   resolveCliEntrypointPath,
+  resolveDisplayVersion,
   resolvePackageName,
   resolvePackageRoot,
   resolvePackageSourceInfo,
-  resolvePackageVersion,
 } from '../core/package-meta.js';
 
 function endpointHealthUrl(endpoint: DaemonEndpoint): string {
@@ -101,7 +101,7 @@ export async function status(): Promise<void> {
 
   const manager = new ConfigManager();
   await manager.load();
-  const cliVersion = resolvePackageVersion();
+  const cliVersion = resolveDisplayVersion();
   const cliSource = resolvePackageSourceInfo();
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonConfig: manager.getDaemonConfig(),
@@ -241,7 +241,7 @@ export async function doctor(): Promise<void> {
   const state = await readDaemonRuntimeState();
   const manager = new ConfigManager();
   await manager.load();
-  const cliVersion = resolvePackageVersion();
+  const cliVersion = resolveDisplayVersion();
   const cliSource = resolvePackageSourceInfo();
   const identity = resolveDaemonRuntimeIdentity({
     daemonConfig: manager.getDaemonConfig(),
@@ -830,7 +830,7 @@ async function pairWithCode(code: string, serverUrl: string, asJson: boolean): P
   const name = os.hostname();
   const server = await resolvePairingServerTransport(serverUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
-    daemonVersion: resolvePackageVersion(),
+    daemonVersion: resolveDisplayVersion(),
   });
   const installCapabilities = toInstallCapabilities({
     ...runtimeIdentity,
@@ -920,7 +920,7 @@ async function pairWithoutCode(serverUrl: string, asJson: boolean): Promise<void
   const name = os.hostname();
   const server = await resolvePairingServerTransport(serverUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
-    daemonVersion: resolvePackageVersion(),
+    daemonVersion: resolveDisplayVersion(),
   });
   const installCapabilities = toInstallCapabilities({
     ...runtimeIdentity,
