@@ -593,6 +593,8 @@ interface PairingPollApprovedData {
   workspace_id: string;
   workspace_name?: string;
   install_id?: string;
+  project_machine_binding_id?: string;
+  machine_id?: string;
   relay_endpoint?: string;
   token: string;
   server_url?: string;
@@ -648,6 +650,8 @@ async function storePairingCredentials(
       serverUrl: data.server_url ?? serverUrl,
       workspaceId: data.workspace_id,
       installId: data.install_id,
+      projectMachineBindingId: data.project_machine_binding_id,
+      machineId: data.machine_id,
       issueToken: nextIssueToken,
     },
   });
@@ -680,6 +684,9 @@ function applyRuntimeOverrides(
     relayEndpoint: launch.relayEndpoint ?? runtimeState.relayEndpoint,
     relayServerUrl: launch.relayServerUrl ?? runtimeState.relayServerUrl,
     relayWorkspaceId: launch.relayWorkspaceId ?? runtimeState.relayWorkspaceId,
+    relayProjectMachineBindingId:
+      launch.relayProjectMachineBindingId ?? runtimeState.relayProjectMachineBindingId,
+    relayMachineId: launch.relayMachineId ?? runtimeState.relayMachineId,
     relayTlsVerify: launch.relayTlsVerify ?? runtimeState.relayTlsVerify,
   };
 }

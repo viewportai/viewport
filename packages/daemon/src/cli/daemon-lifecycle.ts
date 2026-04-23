@@ -3,57 +3,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import { configDir } from '../core/config.js';
-import type { DeploymentProfile } from '../server/security.js';
+export type { DaemonProcessInfo, DaemonRuntimeState } from './daemon-runtime-state.js';
+import type { DaemonProcessInfo, DaemonRuntimeState } from './daemon-runtime-state.js';
 
 const DAEMON_STATE_FILE = 'daemon-state.json';
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
 const STOP_POLL_INTERVAL_MS = 150;
 const FORCE_KILL_TIMEOUT_MS = 4_000;
-
-export interface DaemonProcessInfo {
-  pid: number;
-  uid?: number;
-  startedAt?: string;
-  command?: string;
-}
-
-export interface DaemonRuntimeState {
-  pid: number;
-  ownerPid: number;
-  workerPid?: number;
-  port: number;
-  host: string;
-  listen?: string;
-  socketPath?: string;
-  startedAt: number;
-  version: string;
-  mode: 'supervisor' | 'worker';
-  ownerUid?: number;
-  ownerHostname?: string;
-  ownerStartedAt?: string;
-  ownerCommand?: string;
-  logPath?: string;
-  profile?: DeploymentProfile;
-  authEnabled?: boolean;
-  allowedHostsRaw?: string;
-  allowedOriginsRaw?: string;
-  relayEnabled?: boolean;
-  relayEndpoint?: string;
-  relayServerUrl?: string;
-  relayWorkspaceId?: string;
-  relayTlsVerify?: 'auto' | '0' | '1';
-  tlsEnabled?: boolean;
-  tlsHost?: string;
-  tlsCertDir?: string;
-  tlsCertPath?: string;
-  tlsKeyPath?: string;
-  runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
-  daemonHome?: string;
-  daemonHomeScope?: 'global' | 'project-override';
-  serverUrl?: string;
-  projectConfigDir?: string;
-  projectConfigSource?: 'explicit' | 'ancestor';
-}
 
 function daemonStatePath(): string {
   return path.join(configDir(), DAEMON_STATE_FILE);
@@ -121,6 +77,11 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
       relayServerUrl: typeof parsed.relayServerUrl === 'string' ? parsed.relayServerUrl : undefined,
       relayWorkspaceId:
         typeof parsed.relayWorkspaceId === 'string' ? parsed.relayWorkspaceId : undefined,
+      relayProjectMachineBindingId:
+        typeof parsed.relayProjectMachineBindingId === 'string'
+          ? parsed.relayProjectMachineBindingId
+          : undefined,
+      relayMachineId: typeof parsed.relayMachineId === 'string' ? parsed.relayMachineId : undefined,
       relayTlsVerify:
         parsed.relayTlsVerify === 'auto' ||
         parsed.relayTlsVerify === '0' ||

@@ -20,6 +20,8 @@ vi.mock('../src/internal-api.js', async () => {
 describe('relay bus client', () => {
   function signFrame(input: {
     workspaceId: string;
+    projectMachineBindingId?: string;
+    machineId?: string;
     sourceRelayId: string;
     targetRelayId: string | null;
     direction: 'client_to_daemon' | 'daemon_to_clients';
@@ -29,6 +31,8 @@ describe('relay bus client', () => {
   }): string {
     const base = [
       input.workspaceId,
+      input.projectMachineBindingId ?? '',
+      input.machineId ?? '',
       input.sourceRelayId,
       input.targetRelayId ?? '',
       input.direction,

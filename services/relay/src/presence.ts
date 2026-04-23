@@ -10,6 +10,8 @@ interface PresenceResolveResponse {
   relayWsBaseUrl?: string | null;
   daemonConnected?: boolean;
   stale?: boolean;
+  projectMachineBindingId?: string | null;
+  machineId?: string | null;
 }
 
 interface PresenceUpsertResponse {
@@ -20,7 +22,13 @@ interface PresenceCacheEntry {
   relayId: string;
   relayWsBaseUrl: string;
   daemonConnected: boolean;
+  projectMachineBindingId?: string;
+  machineId?: string;
   expiresAt: number;
+}
+
+function presenceCacheKey(workspaceId: string, projectMachineBindingId?: string): string {
+  return projectMachineBindingId ? `${workspaceId}:${projectMachineBindingId}` : workspaceId;
 }
 
 export function isAllowedRedirectWsBaseUrl(relayWsBaseUrl: string, config: RelayConfig): boolean {
@@ -78,7 +86,12 @@ export class RelayPresenceClient {
     this.enabled = config.presenceSyncEnabled && !!config.relayInternalKey;
   }
 
-  async upsert(workspaceId: string, daemonConnected: boolean): Promise<void> {
+  async upsert(
+    workspaceId: string,
+    daemonConnected: boolean,
+    projectMachineBindingId?: string,
+    machineId?: string,
+  ): Promise<void> {
     if (!this.enabled) return;
 
     const endpoint = new URL('/api/runtime/internal/relay/presence/upsert', this.config.serverUrl);
@@ -87,6 +100,8 @@ export class RelayPresenceClient {
         endpoint,
         {
           workspaceId,
+          projectMachineBindingId,
+          machineId,
           relayId: this.config.relayId,
           relayWsBaseUrl: this.config.publicWsBaseUrl,
           daemonConnected,
@@ -116,12 +131,16 @@ export class RelayPresenceClient {
     }
   }
 
-  async resolve(workspaceId: string): Promise<PresenceCacheEntry | null> {
+  async resolve(
+    workspaceId: string,
+    projectMachineBindingId?: string,
+  ): Promise<PresenceCacheEntry | null> {
     if (!this.enabled) return null;
 
-    const cached = this.resolveCache.get(workspaceId);
+    const cacheKey = presenceCacheKey(workspaceId, projectMachineBindingId);
+    const cached = this.resolveCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-      this.touchCache(workspaceId, cached);
+      this.touchCache(cacheKey, cached);
       return cached;
     }
 
@@ -129,7 +148,7 @@ export class RelayPresenceClient {
     try {
       const res = await postInternalJson<Record<string, unknown>, PresenceResolveResponse>(
         endpoint,
-        { workspaceId },
+        { workspaceId, projectMachineBindingId },
         {
           'x-relay-internal-key': this.config.relayInternalKey!,
         },
@@ -147,6 +166,7 @@ export class RelayPresenceClient {
       const relayWsBaseUrl =
         typeof res.json.relayWsBaseUrl === 'string' ? res.json.relayWsBaseUrl : '';
       if (!daemonConnected || !relayId || !relayWsBaseUrl) {
+        this.resolveCache.delete(cacheKey);
         return null;
       }
       if (!isAllowedRedirectWsBaseUrl(relayWsBaseUrl, this.config)) {
@@ -163,9 +183,14 @@ export class RelayPresenceClient {
         relayId,
         relayWsBaseUrl,
         daemonConnected: true,
+        projectMachineBindingId:
+          typeof res.json.projectMachineBindingId === 'string'
+            ? res.json.projectMachineBindingId
+            : undefined,
+        machineId: typeof res.json.machineId === 'string' ? res.json.machineId : undefined,
         expiresAt: Date.now() + 2_000,
       };
-      this.touchCache(workspaceId, entry);
+      this.touchCache(cacheKey, entry);
       this.trimCache();
       this.metrics.increment('relay_presence_resolve_ok_total');
       return entry;

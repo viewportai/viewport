@@ -90,6 +90,8 @@ export interface DaemonRelayBridgeOptions {
   relayEndpoint: string;
   relayServerUrl: string;
   workspaceId: string;
+  projectMachineBindingId?: string;
+  machineId?: string;
   issueToken?: string;
   daemonWsUrl: string;
   daemonAuthToken?: string;
@@ -438,6 +440,7 @@ export class DaemonRelayBridge {
         body: JSON.stringify({
           credential: this.daemonIssueToken ?? undefined,
           daemonPublicKey: identity.publicKey,
+          projectMachineBindingId: this.options.projectMachineBindingId,
         }),
         signal: controller.signal,
         tlsVerify: this.options.relayTlsVerify ?? 'auto',
@@ -561,7 +564,10 @@ export class DaemonRelayBridge {
 
       const relayUrl =
         `${this.relayEndpoint}?role=workspace-daemon` +
-        `&workspaceId=${encodeURIComponent(this.options.workspaceId)}`;
+        `&workspaceId=${encodeURIComponent(this.options.workspaceId)}` +
+        (this.options.projectMachineBindingId
+          ? `&projectMachineBindingId=${encodeURIComponent(this.options.projectMachineBindingId)}`
+          : '');
 
       const relayTlsOptions = resolveRelayTlsOptions(
         relayUrl,
@@ -1238,6 +1244,7 @@ export class DaemonRelayBridge {
         body: JSON.stringify({
           role: 'workspace-daemon',
           workspaceId: this.options.workspaceId,
+          projectMachineBindingId: this.options.projectMachineBindingId,
           credential: this.daemonIssueToken,
         }),
         signal: controller.signal,
