@@ -59,42 +59,20 @@ docker run --rm -p 7781:7781 \
 ## Development
 
 ```bash
-# Install dependencies
-npm ci
-
-# Build and link this checkout as the active global vpd
 npm run daemon
 
-# Start the linked global daemon in the foreground from this checkout
 npm run daemon:start
-
-# Inspect the daemon
 npm run daemon:status
 npm run daemon:doctor
-
-# Stop or restart the repo-local dev daemon
 npm run daemon:stop
 npm run daemon:restart
-
-# Run relay in local dev mode
 npm run relay
-
-# Run the raw relay package entrypoint only
-npm run relay:raw
-
-# Test and check each component
 npm run daemon:test
 npm run daemon:install:verify
-npm run relay:test
 npm run daemon:check
+npm run relay
+npm run relay:test
 npm run relay:check
-```
-
-Full integration flows are operator-only surfaces:
-
-```bash
-npm run integration:operator
-npm run integration:e2e
 ```
 
 `npm run daemon` prepares this checkout as the active global daemon build by running `npm link` for `@viewportai/daemon`. After that, normal `vpd ...` usage points at the daemon code from this repo until you relink or reinstall a different build.
@@ -115,6 +93,8 @@ That means:
 For local-domain development, keep the runtime override in `.viewport/config.json` and stage certificates into `~/.viewport/certs` or `.viewport/certs`. The repo wrapper will promote project certs into the global daemon home when needed so restart keeps working.
 
 `npm run relay` starts only the relay. If pairing stalls on relay reconnect, run `npm run daemon:status` and look for the `Relay state` and `Relay last` lines before digging into raw logs.
+
+Everything else is package-local or maintainer-only and should be run from the relevant package directory rather than surfaced at the repo root.
 
 ## Contribution Naming
 
