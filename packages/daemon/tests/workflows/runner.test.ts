@@ -67,6 +67,34 @@ nodes:
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
+  it('runs a browser-provided workflow snapshot without requiring a local workflow file', async () => {
+    const daemon = await setup();
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowYaml: `
+schema: viewport.workflow/v1
+name: viewport/snapshot-proof
+title: Snapshot Proof
+nodes:
+  proof:
+    type: shell
+    command: printf "snapshot"
+`,
+      workflowSourceRef: 'viewport://templates/snapshot-proof',
+      directoryId,
+      initiation: 'browser',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.sourceType).toBe('viewport_snapshot');
+    expect(completed?.sourcePath).toBe('viewport://templates/snapshot-proof');
+    expect(completed?.nodes.proof?.output).toBe('snapshot');
+  });
+
   it('keeps a prompt node running until the launched agent session ends', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

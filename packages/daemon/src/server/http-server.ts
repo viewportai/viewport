@@ -52,19 +52,31 @@ const DirectoryRegisterBodySchema = z
   .strict();
 const WorkflowValidateBodySchema = z
   .object({
-    workflowPath: z.string().trim().min(1),
+    workflowPath: z.string().trim().min(1).optional(),
+    workflowYaml: z.string().trim().min(1).max(256_000).optional(),
+    workflowSourceRef: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
+    message: 'workflowPath or workflowYaml is required',
+    path: ['workflowPath'],
+  });
 const WorkflowRunBodySchema = z
   .object({
-    workflowPath: z.string().trim().min(1),
+    workflowPath: z.string().trim().min(1).optional(),
+    workflowYaml: z.string().trim().min(1).max(256_000).optional(),
+    workflowSourceRef: z.string().trim().min(1).optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     projectId: z.string().trim().min(1).optional(),
     projectMachineBindingId: z.string().trim().min(1).optional(),
     initiation: z.enum(['cli', 'browser', 'agent_skill']).optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
+    message: 'workflowPath or workflowYaml is required',
+    path: ['workflowPath'],
+  });
 const PairRedeemBodySchema = z
   .object({
     offerId: z.string().trim().min(1),
@@ -587,7 +599,12 @@ export function registerHttpRoutes(
       }
 
       try {
-        const workflow = await daemon.workflowRunner.validateFile(parsedBody.data.workflowPath);
+        const workflow = parsedBody.data.workflowYaml
+          ? daemon.workflowRunner.validateText(
+              parsedBody.data.workflowYaml,
+              parsedBody.data.workflowSourceRef,
+            )
+          : await daemon.workflowRunner.validateFile(parsedBody.data.workflowPath!);
         return {
           workflow: {
             name: workflow.definition.name,
@@ -615,6 +632,8 @@ export function registerHttpRoutes(
   app.post<{
     Body: {
       workflowPath?: string;
+      workflowYaml?: string;
+      workflowSourceRef?: string;
       directoryId?: string;
       inputs?: Record<string, string | number | boolean>;
       projectId?: string;
@@ -630,6 +649,8 @@ export function registerHttpRoutes(
     try {
       const run = await daemon.workflowRunner.startRun({
         workflowPath: parsedBody.data.workflowPath,
+        workflowYaml: parsedBody.data.workflowYaml,
+        workflowSourceRef: parsedBody.data.workflowSourceRef,
         directoryId: parsedBody.data.directoryId,
         inputs: parsedBody.data.inputs,
         projectId: parsedBody.data.projectId,

@@ -8,10 +8,13 @@ export class WorkflowRunStore {
 
   async save(run: WorkflowRunRecord): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true });
-    await fs.writeFile(this.runPath(run.id), `${JSON.stringify(run, null, 2)}\n`, {
+    const finalPath = this.runPath(run.id);
+    const tempPath = path.join(this.rootDir, `.${run.id}.${process.pid}.${Date.now()}.tmp`);
+    await fs.writeFile(tempPath, `${JSON.stringify(run, null, 2)}\n`, {
       encoding: 'utf-8',
       mode: 0o600,
     });
+    await fs.rename(tempPath, finalPath);
   }
 
   async appendEvent(runId: string, event: WorkflowRunEvent): Promise<WorkflowRunRecord> {

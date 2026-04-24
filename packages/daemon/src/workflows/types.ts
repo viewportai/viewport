@@ -143,7 +143,9 @@ export interface WorkflowPreflightResult {
 }
 
 export interface WorkflowRunRequest {
-  workflowPath: string;
+  workflowPath?: string;
+  workflowYaml?: string;
+  workflowSourceRef?: string;
   directoryId: string;
   inputs?: Record<string, string | number | boolean>;
   projectId?: string;

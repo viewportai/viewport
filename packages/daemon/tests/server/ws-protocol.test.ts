@@ -237,7 +237,9 @@ describe('Workflow schemas', () => {
   it('accepts a workflow run command', () => {
     const result = WorkflowRunSchema.safeParse({
       type: 'workflow-run',
-      workflowPath: '.viewport/workflows/pr-review.yaml',
+      workflowYaml:
+        'schema: viewport.workflow/v1\nname: proof\nnodes:\n  one:\n    type: shell\n    command: echo ok\n',
+      workflowSourceRef: 'viewport://templates/proof',
       directoryId: 'dir-1',
       inputs: { pr: '123' },
       requestId: 'req-1',

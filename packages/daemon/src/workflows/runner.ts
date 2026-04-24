@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
-import { workflowNodeOrder, parseWorkflowFile } from './parser.js';
+import { parseWorkflow, workflowNodeOrder, parseWorkflowFile } from './parser.js';
 import { preflightWorkflow } from './preflight.js';
 import { WorkflowRunStore } from './store.js';
 import type {
@@ -24,6 +24,10 @@ export class WorkflowRunner {
     return parseWorkflowFile(filePath);
   }
 
+  validateText(sourceText: string, sourceRef = 'viewport://workflow/inline'): ParsedWorkflow {
+    return parseWorkflow(sourceText, sourceRef);
+  }
+
   async listRuns(limit?: number): Promise<WorkflowRunRecord[]> {
     return this.store.list(limit);
   }
@@ -38,17 +42,14 @@ export class WorkflowRunner {
       throw new Error(`Directory not registered: ${request.directoryId}`);
     }
 
-    const workflowPath = path.isAbsolute(request.workflowPath)
-      ? request.workflowPath
-      : path.join(directory.path, request.workflowPath);
-    const parsed = await parseWorkflowFile(workflowPath);
+    const parsed = await this.resolveWorkflow(request, directory.path);
     const now = Date.now();
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
       workflowName: parsed.definition.name,
       workflowTitle: parsed.definition.title,
-      sourceType: 'local_file',
-      sourcePath: parsed.sourcePath,
+      sourceType: request.workflowYaml ? 'viewport_snapshot' : 'local_file',
+      sourcePath: request.workflowYaml ? request.workflowSourceRef : parsed.sourcePath,
       digest: parsed.digest,
       schema: parsed.definition.schema,
       yamlSnapshot: parsed.sourceText,
@@ -220,6 +221,27 @@ export class WorkflowRunner {
   private async saveAndEmit(run: WorkflowRunRecord): Promise<void> {
     await this.store.save(run);
     this.daemon.emit('workflow:run-updated', { run });
+  }
+
+  private async resolveWorkflow(
+    request: WorkflowRunRequest,
+    directoryPath: string,
+  ): Promise<ParsedWorkflow> {
+    if (request.workflowYaml) {
+      return parseWorkflow(
+        request.workflowYaml,
+        request.workflowSourceRef?.trim() || 'viewport://workflow/inline',
+      );
+    }
+
+    if (!request.workflowPath) {
+      throw new Error('Workflow run requires a workflow file path or YAML snapshot');
+    }
+
+    const workflowPath = path.isAbsolute(request.workflowPath)
+      ? request.workflowPath
+      : path.join(directoryPath, request.workflowPath);
+    return parseWorkflowFile(workflowPath);
   }
 }
 

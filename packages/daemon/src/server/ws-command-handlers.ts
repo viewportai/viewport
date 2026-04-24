@@ -291,6 +291,8 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
     'workflow-run': async (client, msg) => {
       const run = await daemon.workflowRunner.startRun({
         workflowPath: msg.workflowPath,
+        workflowYaml: msg.workflowYaml,
+        workflowSourceRef: msg.workflowSourceRef,
         directoryId: msg.directoryId,
         inputs: msg.inputs,
         projectId: msg.projectId,

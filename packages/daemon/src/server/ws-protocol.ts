@@ -139,15 +139,22 @@ export const SyncRequestSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
-export const WorkflowRunSchema = z.object({
-  type: z.literal('workflow-run'),
-  workflowPath: z.string().min(1).max(4096),
-  directoryId: z.string().min(1).max(512),
-  inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
-  projectId: z.string().min(1).max(256).optional(),
-  projectMachineBindingId: z.string().min(1).max(256).optional(),
-  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
-});
+export const WorkflowRunSchema = z
+  .object({
+    type: z.literal('workflow-run'),
+    workflowPath: z.string().min(1).max(4096).optional(),
+    workflowYaml: z.string().min(1).max(256_000).optional(),
+    workflowSourceRef: z.string().min(1).max(4096).optional(),
+    directoryId: z.string().min(1).max(512),
+    inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    projectId: z.string().min(1).max(256).optional(),
+    projectMachineBindingId: z.string().min(1).max(256).optional(),
+    requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+  })
+  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
+    message: 'workflowPath or workflowYaml is required',
+    path: ['workflowPath'],
+  });
 
 export const WorkflowListRunsSchema = z.object({
   type: z.literal('workflow-list-runs'),
