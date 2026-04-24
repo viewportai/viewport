@@ -138,6 +138,79 @@ nodes:
     expect(completed?.events.map((event) => event.type)).toContain('session-ended');
   });
 
+  it('completes a prompt node when the launched agent session becomes idle', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-idle-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current directory.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.review?.status).toBe('completed');
+    expect(completed?.nodes.review?.output).toBe('done');
+    expect(completed?.events.map((event) => event.type)).toContain('session-idle');
+  });
+
+  it('passes shell output into downstream templates', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: dataflow-proof
+nodes:
+  first:
+    type: shell
+    command: printf "upstream"
+  second:
+    type: shell
+    needs: [first]
+    command: printf "{{ nodes.first.output }}-downstream"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.second?.output).toBe('upstream-downstream');
+  });
+
   it('blocks runs when preflight finds unsupported executable nodes', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -272,6 +345,20 @@ class MockSession extends EventEmitter implements Session {
   simulateEnd(reason: string): void {
     this.state = 'completed';
     this.emit('ended', reason);
+  }
+
+  simulateIdle(): void {
+    this.state = 'idle';
+    this.emit('state-change', 'idle');
+  }
+
+  emitAgentMessage(text: string): void {
+    this.emit('message', {
+      type: 'agent_message',
+      messageId: crypto.randomUUID(),
+      text,
+      timestamp: Date.now(),
+    });
   }
 }
 

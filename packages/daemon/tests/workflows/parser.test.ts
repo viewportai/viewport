@@ -104,6 +104,45 @@ nodes:
     ).toThrow(/dependency cycle/);
   });
 
+  it('requires node output references to depend on the producing node', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: output-reference
+nodes:
+  inspect:
+    type: shell
+    command: printf ok
+  review:
+    type: prompt
+    prompt: Review {{ nodes.inspect.output }}
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/references inspect output but does not depend on it/);
+  });
+
+  it('accepts explicit node output dataflow references', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: output-reference
+nodes:
+  inspect:
+    type: shell
+    command: printf ok
+  review:
+    type: prompt
+    needs: [inspect]
+    prompt: Review {{ nodes.inspect.output }}
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.nodes.review?.type).toBe('prompt');
+  });
+
   it('parses workflows from disk with resolved source paths', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-parser-'));
     try {

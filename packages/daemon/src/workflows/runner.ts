@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
+import { configDir } from '../core/config.js';
 import { parseWorkflow, workflowNodeOrder, parseWorkflowFile } from './parser.js';
 import { preflightWorkflow } from './preflight.js';
 import { WorkflowRunStore } from './store.js';
+import type { SessionMessage, SessionState } from '../core/types.js';
 import type {
   ParsedWorkflow,
   WorkflowNode,
@@ -17,6 +20,7 @@ const MAX_OUTPUT_CHARS = 32_000;
 
 export class WorkflowRunner {
   private readonly store = new WorkflowRunStore();
+  private readonly activeRunIds = new Set<string>();
 
   constructor(private readonly daemon: Daemon) {}
 
@@ -29,11 +33,14 @@ export class WorkflowRunner {
   }
 
   async listRuns(limit?: number): Promise<WorkflowRunRecord[]> {
-    return this.store.list(limit);
+    const runs = await this.store.list(limit);
+    const reconciled = await Promise.all(runs.map((run) => this.reconcileRun(run)));
+    return reconciled;
   }
 
   async getRun(runId: string): Promise<WorkflowRunRecord | null> {
-    return this.store.get(runId);
+    const run = await this.store.get(runId);
+    return run ? this.reconcileRun(run) : null;
   }
 
   async startRun(request: WorkflowRunRequest): Promise<WorkflowRunRecord> {
@@ -87,41 +94,46 @@ export class WorkflowRunner {
   }
 
   private async executeRun(runId: string, parsed: ParsedWorkflow): Promise<void> {
-    const run = await this.requireRun(runId);
-    run.status = 'running';
-    run.updatedAt = Date.now();
-    addEvent(run, 'run-started', 'Workflow run started');
-    run.preflight = await preflightWorkflow(parsed.definition, {
-      availableAgents: () => this.daemon.getAvailableAgents(),
-      directoryPath: run.directoryPath,
-    });
-
-    if (!run.preflight.ok) {
-      run.status = 'blocked';
-      run.completedAt = Date.now();
-      run.updatedAt = run.completedAt;
-      addEvent(run, 'run-blocked', 'Workflow blocked by preflight', {
-        issues: run.preflight.issues,
+    this.activeRunIds.add(runId);
+    try {
+      const run = await this.requireRun(runId);
+      run.status = 'running';
+      run.updatedAt = Date.now();
+      addEvent(run, 'run-started', 'Workflow run started');
+      run.preflight = await preflightWorkflow(parsed.definition, {
+        availableAgents: () => this.daemon.getAvailableAgents(),
+        directoryPath: run.directoryPath,
       });
+
+      if (!run.preflight.ok) {
+        run.status = 'blocked';
+        run.completedAt = Date.now();
+        run.updatedAt = run.completedAt;
+        addEvent(run, 'run-blocked', 'Workflow blocked by preflight', {
+          issues: run.preflight.issues,
+        });
+        await this.saveAndEmit(run);
+        return;
+      }
+
       await this.saveAndEmit(run);
-      return;
+
+      for (const nodeId of workflowNodeOrder(parsed.definition)) {
+        const freshRun = await this.requireRun(runId);
+        const node = parsed.definition.nodes[nodeId];
+        if (!node) continue;
+        await this.executeNode(freshRun, nodeId, node);
+      }
+
+      const complete = await this.requireRun(runId);
+      complete.status = 'completed';
+      complete.completedAt = Date.now();
+      complete.updatedAt = complete.completedAt;
+      addEvent(complete, 'run-completed', 'Workflow run completed');
+      await this.saveAndEmit(complete);
+    } finally {
+      this.activeRunIds.delete(runId);
     }
-
-    await this.saveAndEmit(run);
-
-    for (const nodeId of workflowNodeOrder(parsed.definition)) {
-      const freshRun = await this.requireRun(runId);
-      const node = parsed.definition.nodes[nodeId];
-      if (!node) continue;
-      await this.executeNode(freshRun, nodeId, node);
-    }
-
-    const complete = await this.requireRun(runId);
-    complete.status = 'completed';
-    complete.completedAt = Date.now();
-    complete.updatedAt = complete.completedAt;
-    addEvent(complete, 'run-completed', 'Workflow run completed');
-    await this.saveAndEmit(complete);
   }
 
   private async executeNode(
@@ -140,14 +152,24 @@ export class WorkflowRunner {
 
     try {
       if (node.type === 'shell') {
-        const output = await runShellNode(node.command, {
-          cwd: resolveNodeCwd(run.directoryPath, node.cwd),
+        const output = await runShellNode(renderTemplate(node.command, run), {
+          cwd: resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run)),
           timeoutSeconds: node.timeoutSeconds,
         });
         state.output = output;
         addEvent(run, 'node-output', `Node ${nodeId} produced shell output`, { output }, nodeId);
       } else if (node.type === 'prompt') {
-        const prompt = renderTemplate(node.prompt, run.inputs);
+        const prompt = renderTemplate(node.prompt, run);
+        const outputChunks: string[] = [];
+        const messageHandler = (event: { sessionId: string; message: SessionMessage }): void => {
+          if (event.sessionId !== state.sessionId) return;
+          if (event.message.type === 'agent_message') {
+            outputChunks.push(event.message.text);
+          } else if (event.message.type === 'agent_message_chunk') {
+            outputChunks.push(event.message.text);
+          }
+        };
+        this.daemon.on('session:message', messageHandler);
         const sessionId = await this.daemon.launchSession(run.directoryId, prompt, {
           ...(node.agent ? { agent: node.agent } : {}),
           ...(node.model ? { model: node.model } : {}),
@@ -164,16 +186,22 @@ export class WorkflowRunner {
         );
         run.updatedAt = Date.now();
         await this.saveAndEmit(run);
-        const reason = await waitForSessionEnd(this.daemon, sessionId);
-        addEvent(
-          run,
-          'session-ended',
-          `Node ${nodeId} session ${sessionId} ended`,
-          { sessionId, reason },
-          nodeId,
-        );
-        if (isFailedSessionReason(reason)) {
-          throw new Error(`Session ${sessionId} failed: ${reason}`);
+        try {
+          const reason = await waitForPromptSessionComplete(this.daemon, sessionId);
+          state.output = outputChunks.join('').trim() || state.output;
+          const eventType = reason === 'idle' ? 'session-idle' : 'session-ended';
+          addEvent(
+            run,
+            eventType,
+            `Node ${nodeId} session ${sessionId} ${reason === 'idle' ? 'became idle' : 'ended'}`,
+            { sessionId, reason },
+            nodeId,
+          );
+          if (isFailedSessionReason(reason)) {
+            throw new Error(`Session ${sessionId} failed: ${reason}`);
+          }
+        } finally {
+          this.daemon.off('session:message', messageHandler);
         }
       } else {
         throw new Error(`Unsupported executable node type: ${node.type}`);
@@ -216,12 +244,64 @@ export class WorkflowRunner {
     if (!run) {
       throw new Error(`Workflow run not found: ${runId}`);
     }
-    return run;
+    return this.reconcileRun(run);
   }
 
   private async saveAndEmit(run: WorkflowRunRecord): Promise<void> {
     await this.store.save(run);
     this.daemon.emit('workflow:run-updated', { run });
+  }
+
+  private async reconcileRun(run: WorkflowRunRecord): Promise<WorkflowRunRecord> {
+    if (!['queued', 'running'].includes(run.status)) return run;
+    if (this.activeRunIds.has(run.id)) return run;
+
+    let changed = false;
+    for (const node of Object.values(run.nodes)) {
+      if (node.status !== 'running' || node.type !== 'prompt' || !node.sessionId) continue;
+
+      const state =
+        getSessionState(this.daemon, node.sessionId) ??
+        (await readReplaySessionState(node.sessionId));
+      if (state === 'idle' || state === 'completed') {
+        node.status = 'completed';
+        node.completedAt = node.completedAt ?? Date.now();
+        run.updatedAt = node.completedAt;
+        addEvent(
+          run,
+          state === 'idle' ? 'session-idle' : 'session-ended',
+          `Node ${node.id} session ${node.sessionId} ${state === 'idle' ? 'became idle' : 'ended'}`,
+          { sessionId: node.sessionId, reason: state },
+          node.id,
+        );
+        addEvent(run, 'node-completed', `Node ${node.id} completed`, undefined, node.id);
+        changed = true;
+      } else if (state === 'errored') {
+        node.status = 'failed';
+        node.error = `Session ${node.sessionId} errored`;
+        node.completedAt = Date.now();
+        run.status = 'failed';
+        run.error = node.error;
+        run.completedAt = node.completedAt;
+        run.updatedAt = node.completedAt;
+        addEvent(run, 'node-failed', `Node ${node.id} failed: ${node.error}`, undefined, node.id);
+        addEvent(run, 'run-failed', `Workflow run failed: ${node.error}`);
+        changed = true;
+      }
+    }
+
+    if (changed && Object.values(run.nodes).every((node) => node.status === 'completed')) {
+      run.status = 'completed';
+      run.completedAt = run.completedAt ?? Date.now();
+      run.updatedAt = run.completedAt;
+      addEvent(run, 'run-completed', 'Workflow run completed');
+    }
+
+    if (changed) {
+      await this.saveAndEmit(run);
+    }
+
+    return run;
   }
 
   private async resolveWorkflow(
@@ -246,19 +326,88 @@ export class WorkflowRunner {
   }
 }
 
-async function waitForSessionEnd(daemon: Daemon, sessionId: string): Promise<string> {
+async function waitForPromptSessionComplete(daemon: Daemon, sessionId: string): Promise<string> {
+  const initial = getSessionState(daemon, sessionId);
+  if (isPromptTerminalState(initial)) return initial;
+
   return await new Promise<string>((resolve) => {
-    const handler = (event: { sessionId: string; reason: string }): void => {
-      if (event.sessionId !== sessionId) return;
-      daemon.off('session:ended', handler);
-      resolve(event.reason);
+    let settled = false;
+    let missingPolls = 0;
+    const finish = (reason: string): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      daemon.off('session:ended', endedHandler);
+      daemon.off('session:state-changed', stateHandler);
+      resolve(reason);
     };
-    daemon.on('session:ended', handler);
+    const endedHandler = (event: { sessionId: string; reason: string }): void => {
+      if (event.sessionId !== sessionId) return;
+      finish(event.reason);
+    };
+    const stateHandler = (event: { sessionId: string; state: SessionState }): void => {
+      if (event.sessionId !== sessionId || !isPromptTerminalState(event.state)) return;
+      finish(event.state);
+    };
+    const timer = setInterval(() => {
+      const state = getSessionState(daemon, sessionId);
+      if (isPromptTerminalState(state)) finish(state);
+      if (state === null && !daemon.hasSession(sessionId)) {
+        missingPolls += 1;
+        if (missingPolls >= 2) finish('completed');
+      } else {
+        missingPolls = 0;
+      }
+    }, 250);
+    daemon.on('session:ended', endedHandler);
+    daemon.on('session:state-changed', stateHandler);
   });
 }
 
 function isFailedSessionReason(reason: string): boolean {
-  return /(^|[\s:_-])(error|failed|failure)([\s:_-]|$)/i.test(reason);
+  return /(^|[\s:_-])(error|errored|failed|failure)([\s:_-]|$)/i.test(reason);
+}
+
+function isPromptTerminalState(
+  state: SessionState | null,
+): state is 'idle' | 'completed' | 'errored' {
+  return state === 'idle' || state === 'completed' || state === 'errored';
+}
+
+function getSessionState(daemon: Daemon, sessionId: string): SessionState | null {
+  try {
+    return daemon.getSessionInfo(sessionId).state;
+  } catch {
+    return null;
+  }
+}
+
+async function readReplaySessionState(sessionId: string): Promise<SessionState | null> {
+  try {
+    const filePath = path.join(configDir(), 'replay', `${sessionId}.jsonl`);
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const lines = raw.trim().split('\n').reverse();
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as {
+        update?: { updateType?: unknown; state?: unknown };
+      };
+      if (parsed.update?.updateType !== 'state-change') continue;
+      const state = parsed.update.state;
+      if (
+        state === 'idle' ||
+        state === 'completed' ||
+        state === 'errored' ||
+        state === 'running' ||
+        state === 'starting' ||
+        state === 'waiting_permission'
+      ) {
+        return state;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeInputs(
@@ -305,14 +454,29 @@ function resolveNodeCwd(directoryPath: string, cwd?: string): string {
   return path.isAbsolute(cwd) ? cwd : path.join(directoryPath, cwd);
 }
 
-function renderTemplate(
-  template: string,
-  inputs: Record<string, string | number | boolean>,
-): string {
-  return template.replace(/\{\{\s*inputs\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_, key: string) => {
-    const value = inputs[key];
-    return value === undefined ? '' : String(value);
-  });
+function renderOptionalTemplate(
+  template: string | undefined,
+  run: WorkflowRunRecord,
+): string | undefined {
+  return template ? renderTemplate(template, run) : undefined;
+}
+
+function renderTemplate(template: string, run: WorkflowRunRecord): string {
+  return template
+    .replace(/\{\{\s*inputs\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_, key: string) => {
+      const value = run.inputs[key];
+      return value === undefined ? '' : String(value);
+    })
+    .replace(/\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g, (_, nodeId: string) => {
+      return run.nodes[nodeId]?.output ?? '';
+    })
+    .replace(
+      /\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.(output|status|sessionId|error)\s*\}\}/g,
+      (_, nodeId: string, key: keyof WorkflowNodeRunState) => {
+        const value = run.nodes[nodeId]?.[key];
+        return value === undefined ? '' : String(value);
+      },
+    );
 }
 
 async function runShellNode(

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { configDir } from '../core/config.js';
 import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 
@@ -9,7 +10,10 @@ export class WorkflowRunStore {
   async save(run: WorkflowRunRecord): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true });
     const finalPath = this.runPath(run.id);
-    const tempPath = path.join(this.rootDir, `.${run.id}.${process.pid}.${Date.now()}.tmp`);
+    const tempPath = path.join(
+      this.rootDir,
+      `.${run.id}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`,
+    );
     await fs.writeFile(tempPath, `${JSON.stringify(run, null, 2)}\n`, {
       encoding: 'utf-8',
       mode: 0o600,

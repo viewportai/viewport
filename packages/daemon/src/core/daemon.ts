@@ -241,6 +241,10 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
     return this.sessionManager.getSessionInfo(sessionId);
   }
 
+  hasSession(sessionId: string): boolean {
+    return this.sessionManager.hasSession(sessionId);
+  }
+
   listActiveSessions(): Array<{
     sessionId: string;
     directoryId: string;

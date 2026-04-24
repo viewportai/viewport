@@ -175,6 +175,63 @@ function validateWorkflowGraph(definition: WorkflowDefinition): void {
   }
 
   workflowNodeOrder(definition);
+  validateTemplateReferences(definition);
+}
+
+function validateTemplateReferences(definition: WorkflowDefinition): void {
+  for (const [nodeId, node] of Object.entries(definition.nodes)) {
+    const templates = nodeTemplates(node);
+    if (templates.length === 0) continue;
+
+    const dependencies = transitiveDependencies(definition, nodeId);
+    for (const template of templates) {
+      for (const reference of nodeOutputReferences(template)) {
+        if (!definition.nodes[reference]) {
+          throw new Error(`Workflow node ${nodeId} references missing node ${reference}`);
+        }
+        if (!dependencies.has(reference)) {
+          throw new Error(
+            `Workflow node ${nodeId} references ${reference} output but does not depend on it`,
+          );
+        }
+      }
+    }
+  }
+}
+
+function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
+  if (node.type === 'prompt') return [node.prompt];
+  if (node.type === 'shell')
+    return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
+  return [node.prompt];
+}
+
+function nodeOutputReferences(template: string): string[] {
+  const references = new Set<string>();
+  const patterns = [
+    /\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.(?:output|status|sessionId|error)\s*\}\}/g,
+    /\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of template.matchAll(pattern)) {
+      if (match[1]) references.add(match[1]);
+    }
+  }
+  return [...references];
+}
+
+function transitiveDependencies(definition: WorkflowDefinition, nodeId: string): Set<string> {
+  const result = new Set<string>();
+  const visit = (current: string): void => {
+    const node = definition.nodes[current];
+    for (const dependency of node?.needs ?? []) {
+      if (result.has(dependency)) continue;
+      result.add(dependency);
+      visit(dependency);
+    }
+  };
+  visit(nodeId);
+  return result;
 }
 
 function stableJson(value: unknown): string {

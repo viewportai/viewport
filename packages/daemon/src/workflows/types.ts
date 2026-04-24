@@ -99,6 +99,7 @@ export interface WorkflowRunEvent {
     | 'node-completed'
     | 'node-failed'
     | 'session-started'
+    | 'session-idle'
     | 'session-ended';
   nodeId?: string;
   message: string;
