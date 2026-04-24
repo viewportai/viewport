@@ -1,10 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   resolveDaemonRuntimeIdentity,
   toInstallCapabilities,
 } from '../../src/core/runtime-identity.js';
 
 describe('runtime identity', () => {
+  let tmpDir: string;
+  let originalCwd: string;
+
+  beforeEach(async () => {
+    originalCwd = process.cwd();
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runtime-identity-test-'));
+    process.chdir(tmpDir);
+  });
+
+  afterEach(async () => {
+    process.chdir(originalCwd);
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
   it('treats hosted defaults with global home as managed', () => {
     const identity = resolveDaemonRuntimeIdentity({
       daemonVersion: '1.2.3',

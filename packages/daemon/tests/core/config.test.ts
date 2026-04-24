@@ -8,6 +8,7 @@ import {
   resolveConfig,
   ConfigManager,
   loadConfig,
+  resolveProjectConfig,
   saveConfig,
 } from '../../src/core/config.js';
 import { AgentRegistry } from '../../src/core/agent-registry.js';
@@ -185,21 +186,33 @@ describe('Config I/O', () => {
   let tmpDir: string;
   let originalHome: string;
   let originalProjectConfigDir: string | undefined;
+  let originalVpdProjectConfigDir: string | undefined;
+  let originalCwd: string;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-config-test-'));
     originalHome = process.env['HOME'] ?? '';
     originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    originalVpdProjectConfigDir = process.env['VPD_PROJECT_CONFIG_DIR'];
+    originalCwd = process.cwd();
     process.env['HOME'] = tmpDir;
     delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    delete process.env['VPD_PROJECT_CONFIG_DIR'];
+    process.chdir(tmpDir);
   });
 
   afterEach(async () => {
+    process.chdir(originalCwd);
     process.env['HOME'] = originalHome;
     if (originalProjectConfigDir === undefined) {
       delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
     } else {
       process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+    }
+    if (originalVpdProjectConfigDir === undefined) {
+      delete process.env['VPD_PROJECT_CONFIG_DIR'];
+    } else {
+      process.env['VPD_PROJECT_CONFIG_DIR'] = originalVpdProjectConfigDir;
     }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -261,6 +274,45 @@ describe('Config I/O', () => {
     expect(config.daemon?.server?.url).toBe('https://getviewport.test');
     expect(config.daemon?.relay?.serverUrl).toBe('https://getviewport.test');
     expect(config.daemon?.relay?.endpoint).toBe('wss://getviewport.test:7781/ws');
+  });
+
+  it('resolveProjectConfig ignores .viewport directories without config files', async () => {
+    const sharedConfigDir = path.join(tmpDir, '.viewport');
+    const repoDir = path.join(tmpDir, 'repo');
+    await fs.mkdir(path.join(repoDir, '.viewport', 'worktrees'), { recursive: true });
+    await fs.mkdir(sharedConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sharedConfigDir, 'config.json'),
+      JSON.stringify({ daemon: { server: { url: 'https://getviewport.test' } } }),
+      'utf-8',
+    );
+
+    process.chdir(repoDir);
+
+    expect(resolveProjectConfig()).toEqual({
+      dir: await fs.realpath(sharedConfigDir),
+      source: 'ancestor',
+    });
+  });
+
+  it('resolveProjectConfig falls through explicit directories without config files', async () => {
+    const sharedConfigDir = path.join(tmpDir, '.viewport');
+    const repoConfigDir = path.join(tmpDir, 'repo', '.viewport');
+    await fs.mkdir(repoConfigDir, { recursive: true });
+    await fs.mkdir(sharedConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sharedConfigDir, 'config.json'),
+      JSON.stringify({ daemon: { server: { url: 'https://getviewport.test' } } }),
+      'utf-8',
+    );
+
+    process.env['VPD_PROJECT_CONFIG_DIR'] = repoConfigDir;
+    process.chdir(path.dirname(repoConfigDir));
+
+    expect(resolveProjectConfig()).toEqual({
+      dir: await fs.realpath(sharedConfigDir),
+      source: 'ancestor',
+    });
   });
 
   it('loadConfig throws on malformed JSON with actionable error', async () => {

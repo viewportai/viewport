@@ -224,19 +224,23 @@ export function resolveProjectConfig(
   if (typeof explicit === 'string' && explicit.trim().length > 0) {
     const resolved = path.resolve(explicit.trim());
     try {
-      if (fsSync.statSync(resolved).isDirectory()) {
+      const configPath = path.join(resolved, 'config.json');
+      if (fsSync.statSync(resolved).isDirectory() && fsSync.statSync(configPath).isFile()) {
         return { dir: resolved, source: 'explicit' };
       }
     } catch {
-      return { dir: null, source: null };
+      // Ignore explicit project config directories that do not contain a config file.
+      // A .viewport directory can also hold runtime worktrees and should not block
+      // discovery of a real ancestor override.
     }
   }
 
   let current = process.cwd();
   while (true) {
     const candidate = path.join(current, '.viewport');
+    const configPath = path.join(candidate, 'config.json');
     try {
-      if (fsSync.statSync(candidate).isDirectory()) {
+      if (fsSync.statSync(candidate).isDirectory() && fsSync.statSync(configPath).isFile()) {
         return { dir: candidate, source: 'ancestor' };
       }
     } catch {
