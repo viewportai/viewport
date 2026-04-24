@@ -218,6 +218,14 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     getFlag('relay-workspace') ??
     envValue('VPD_RELAY_WORKSPACE', 'VIEWPORT_RELAY_WORKSPACE') ??
     daemonConfig?.relay?.workspaceId;
+  const relayProjectMachineBindingId =
+    getFlag('relay-project-machine-binding') ??
+    envValue('VPD_RELAY_PROJECT_MACHINE_BINDING', 'VIEWPORT_RELAY_PROJECT_MACHINE_BINDING') ??
+    daemonConfig?.relay?.projectMachineBindingId;
+  const relayMachineId =
+    getFlag('relay-machine') ??
+    envValue('VPD_RELAY_MACHINE', 'VIEWPORT_RELAY_MACHINE') ??
+    daemonConfig?.relay?.machineId;
   const relayIssueToken =
     getFlag('relay-issue-token') ??
     envValue('VPD_RELAY_ISSUE_TOKEN', 'VIEWPORT_RELAY_ISSUE_TOKEN') ??
@@ -297,6 +305,8 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     relayEndpoint,
     relayServerUrl,
     relayWorkspaceId,
+    relayProjectMachineBindingId,
+    relayMachineId,
     relayIssueToken,
     relayTlsVerify,
     relayCaCertPath,

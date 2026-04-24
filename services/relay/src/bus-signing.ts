@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 
 export interface BusSignatureFields {
   workspaceId: string;
+  projectMachineBindingId?: string;
+  machineId?: string;
   sourceRelayId: string;
   targetRelayId: string | null;
   direction: 'client_to_daemon' | 'daemon_to_clients';
@@ -12,6 +14,8 @@ export interface BusSignatureFields {
 export function busSignatureBase(fields: BusSignatureFields): string {
   return [
     fields.workspaceId,
+    fields.projectMachineBindingId ?? '',
+    fields.machineId ?? '',
     fields.sourceRelayId,
     fields.targetRelayId ?? '',
     fields.direction,

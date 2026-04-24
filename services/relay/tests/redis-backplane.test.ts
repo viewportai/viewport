@@ -36,8 +36,7 @@ function fakeRedisClient() {
     set: vi.fn(async (key: string, value: string, options?: { PX?: number }) => {
       presenceStore.set(key, {
         value,
-        expiresAt:
-          typeof options?.PX === 'number' && options.PX > 0 ? Date.now() + options.PX : null,
+        expiresAt: typeof options?.PX === 'number' && options.PX > 0 ? Date.now() + options.PX : null,
       });
       return 'OK';
     }),
@@ -135,11 +134,17 @@ describe('redis relay backplane', () => {
   });
 
   it('publishes targeted bus frames and pulls them with signature verification', async () => {
-    const source = createBackplane({ RELAY_ID: 'relay-a', RELAY_PUBLIC_WS_BASE_URL: 'ws://relay-a.test/ws' });
-    const target = createBackplane({ RELAY_ID: 'relay-b', RELAY_PUBLIC_WS_BASE_URL: 'ws://relay-b.test/ws' });
+    const source = createBackplane({
+      RELAY_ID: 'relay-a',
+      RELAY_PUBLIC_WS_BASE_URL: 'ws://relay-a.test/ws',
+    });
+    const target = createBackplane({
+      RELAY_ID: 'relay-b',
+      RELAY_PUBLIC_WS_BASE_URL: 'ws://relay-b.test/ws',
+    });
 
     await expect(
-      source.publishClientToDaemon('workspace_demo', '{"type":"e2ee"}', 'relay-b'),
+      source.publishClientToDaemon('workspace_demo', 'binding_demo', 'machine_demo', '{"type":"e2ee"}', 'relay-b'),
     ).resolves.toBe(true);
 
     const frames = await target.pullFrames();
@@ -172,7 +177,7 @@ describe('redis relay backplane', () => {
 
     await expect(backplane.pullFrames()).resolves.toEqual([]);
     await expect(
-      backplane.publishDaemonToClients('workspace_demo', '{"type":"e2ee"}', null),
+      backplane.publishDaemonToClients('workspace_demo', 'binding_demo', 'machine_demo', '{"type":"e2ee"}', null),
     ).resolves.toBe(false);
 
     await backplane.close();

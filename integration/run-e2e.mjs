@@ -1,21 +1,23 @@
-import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
-import { WebSocket } from 'ws';
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import net from "node:net";
+import { spawn, spawnSync } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { WebSocket } from "ws";
 
-const INTEGRATION_SCENARIO = (process.env.INTEGRATION_SCENARIO || 'operator').toLowerCase();
+const INTEGRATION_SCENARIO = (
+  process.env.INTEGRATION_SCENARIO || "operator"
+).toLowerCase();
 const REQUESTED_SERVER_PORT = Number(process.env.SERVER_PORT || 7780);
 const REQUESTED_RELAY_PORT = Number(process.env.RELAY_PORT || 7781);
 const REQUESTED_DAEMON_PORT = Number(process.env.DAEMON_PORT || 7790);
 const RELAY_ADMIN_TOKEN =
-  process.env.RELAY_ADMIN_TOKEN || 'integration-relay-admin-token';
+  process.env.RELAY_ADMIN_TOKEN || "integration-relay-admin-token";
 const RELAY_INTERNAL_KEY =
-  process.env.RELAY_INTERNAL_KEY || 'integration-relay-internal-key';
+  process.env.RELAY_INTERNAL_KEY || "integration-relay-internal-key";
 
 function resolveExistingDir(...candidates) {
   for (const candidate of candidates) {
@@ -25,48 +27,56 @@ function resolveExistingDir(...candidates) {
       // Try next candidate.
     }
   }
-  throw new Error(`Unable to resolve directory from candidates: ${candidates.join(', ')}`);
+  throw new Error(
+    `Unable to resolve directory from candidates: ${candidates.join(", ")}`,
+  );
 }
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const LEGACY_ROOT = path.resolve(ROOT, '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const LEGACY_ROOT = path.resolve(ROOT, "..");
 const PLATFORM_ROOT = process.env.PLATFORM_ROOT
   ? path.resolve(process.env.PLATFORM_ROOT)
   : resolveExistingDir(
-      path.join(ROOT, 'platform'),
-      path.join(LEGACY_ROOT, 'platform'),
+      path.join(ROOT, "platform"),
+      path.join(LEGACY_ROOT, "platform"),
     );
 
 const SERVER_DIR = resolveExistingDir(
-  path.join(PLATFORM_ROOT, 'apps', 'api'),
-  path.join(ROOT, 'server'),
-  path.join(LEGACY_ROOT, 'platform', 'apps', 'api'),
+  path.join(PLATFORM_ROOT, "apps", "api"),
+  path.join(ROOT, "server"),
+  path.join(LEGACY_ROOT, "platform", "apps", "api"),
 );
 const RELAY_DIR = resolveExistingDir(
-  path.join(ROOT, 'services', 'relay'),
-  path.join(ROOT, 'relay'),
+  path.join(ROOT, "services", "relay"),
+  path.join(ROOT, "relay"),
 );
 const DAEMON_DIR = resolveExistingDir(
-  path.join(ROOT, 'packages', 'daemon'),
-  path.join(ROOT, 'daemon'),
+  path.join(ROOT, "packages", "daemon"),
+  path.join(ROOT, "daemon"),
 );
 
-function log(step, details = '') {
-  process.stdout.write(`[integration] ${step}${details ? ` ${details}` : ''}\n`);
+function log(step, details = "") {
+  process.stdout.write(
+    `[integration] ${step}${details ? ` ${details}` : ""}\n`,
+  );
 }
 
 function resolvePhpBin() {
   if (process.env.PHP_BIN && process.env.PHP_BIN.trim()) {
     return process.env.PHP_BIN.trim();
   }
-  const probe = spawnSync('/bin/zsh', ['-lc', 'command -v php84 || command -v php'], {
-    encoding: 'utf8',
-  });
+  const probe = spawnSync(
+    "/bin/zsh",
+    ["-lc", "command -v php84 || command -v php"],
+    {
+      encoding: "utf8",
+    },
+  );
   if (probe.status === 0) {
-    const candidate = probe.stdout.trim().split('\n')[0]?.trim();
+    const candidate = probe.stdout.trim().split("\n")[0]?.trim();
     if (candidate) return candidate;
   }
-  return 'php';
+  return "php";
 }
 
 const PHP_BIN = resolvePhpBin();
@@ -75,14 +85,14 @@ function spawnProc(name, cmd, args, cwd, env = {}) {
   const child = spawn(cmd, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
-  child.stdout.on('data', (chunk) => {
-    process.stdout.write(`[${name}] ${chunk.toString('utf8')}`);
+  child.stdout.on("data", (chunk) => {
+    process.stdout.write(`[${name}] ${chunk.toString("utf8")}`);
   });
-  child.stderr.on('data', (chunk) => {
-    process.stderr.write(`[${name}] ${chunk.toString('utf8')}`);
+  child.stderr.on("data", (chunk) => {
+    process.stderr.write(`[${name}] ${chunk.toString("utf8")}`);
   });
 
   return child;
@@ -91,8 +101,11 @@ function spawnProc(name, cmd, args, cwd, env = {}) {
 async function waitForProcessExit(child, timeoutMs = 10_000) {
   if (!child || child.exitCode !== null) return;
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timed out waiting for process exit')), timeoutMs);
-    child.once('exit', () => {
+    const timeout = setTimeout(
+      () => reject(new Error("Timed out waiting for process exit")),
+      timeoutMs,
+    );
+    child.once("exit", () => {
       clearTimeout(timeout);
       resolve(undefined);
     });
@@ -103,11 +116,11 @@ async function runCommand(cmd, args, cwd, env = {}) {
   const child = spawn(cmd, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: 'inherit',
+    stdio: "inherit",
   });
-  const code = await new Promise((resolve) => child.once('exit', resolve));
+  const code = await new Promise((resolve) => child.once("exit", resolve));
   if (code !== 0) {
-    throw new Error(`${cmd} ${args.join(' ')} failed with code ${code}`);
+    throw new Error(`${cmd} ${args.join(" ")} failed with code ${code}`);
   }
 }
 
@@ -115,29 +128,29 @@ async function runJsonCommand(cmd, args, cwd, env = {}) {
   const child = spawn(cmd, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  let stdout = '';
-  let stderr = '';
-  child.stdout.on('data', (chunk) => {
-    stdout += chunk.toString('utf8');
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
   });
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk.toString('utf8');
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
   });
-  const code = await new Promise((resolve) => child.once('exit', resolve));
+  const code = await new Promise((resolve) => child.once("exit", resolve));
   if (code !== 0) {
     throw new Error(
-      `${cmd} ${args.join(' ')} failed with code ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      `${cmd} ${args.join(" ")} failed with code ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
     );
   }
 
-  return parseJsonFromStdout(stdout, `${cmd} ${args.join(' ')}`);
+  return parseJsonFromStdout(stdout, `${cmd} ${args.join(" ")}`);
 }
 
 function parseJsonFromStdout(stdout, commandLabel) {
   const trimmed = stdout.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     return JSON.parse(trimmed);
   }
 
@@ -155,7 +168,9 @@ function parseJsonFromStdout(stdout, commandLabel) {
   });
 
   if (!jsonLine) {
-    throw new Error(`Expected JSON output from ${commandLabel}, got:\n${stdout}`);
+    throw new Error(
+      `Expected JSON output from ${commandLabel}, got:\n${stdout}`,
+    );
   }
 
   return JSON.parse(jsonLine);
@@ -184,27 +199,55 @@ async function waitForHealth(url, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-async function httpJson(baseUrl, pathname, options = {}, expectedStatuses = [200]) {
+async function httpJson(
+  baseUrl,
+  pathname,
+  options = {},
+  expectedStatuses = [200],
+) {
   const response = await fetch(`${baseUrl}${pathname}`, options);
   const json = await response.json().catch(() => ({}));
   if (!expectedStatuses.includes(response.status)) {
     throw new Error(
-      `${options.method || 'GET'} ${pathname} expected ${expectedStatuses.join('/')} got ${response.status}: ${JSON.stringify(json)}`,
+      `${options.method || "GET"} ${pathname} expected ${expectedStatuses.join("/")} got ${response.status}: ${JSON.stringify(json)}`,
     );
   }
   return json;
 }
 
-async function upsertEnvFile(filePath, values, examplePath = null) {
-  let source = '';
+async function snapshotFile(filePath) {
   try {
-    source = await fs.readFile(filePath, 'utf8');
+    return {
+      existed: true,
+      content: await fs.readFile(filePath, "utf8"),
+    };
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return { existed: false, content: "" };
+    }
+    throw error;
+  }
+}
+
+async function restoreFile(filePath, snapshot) {
+  if (snapshot.existed) {
+    await fs.writeFile(filePath, snapshot.content, "utf8");
+    return;
+  }
+
+  await fs.rm(filePath, { force: true });
+}
+
+async function upsertEnvFile(filePath, values, examplePath = null) {
+  let source = "";
+  try {
+    source = await fs.readFile(filePath, "utf8");
   } catch {
     if (examplePath) {
       try {
-        source = await fs.readFile(examplePath, 'utf8');
+        source = await fs.readFile(examplePath, "utf8");
       } catch {
-        source = '';
+        source = "";
       }
     }
   }
@@ -226,17 +269,34 @@ async function upsertEnvFile(filePath, values, examplePath = null) {
     }
   }
 
-  await fs.writeFile(filePath, `${updated.join('\n').replace(/\n*$/, '\n')}`, 'utf8');
+  await fs.writeFile(
+    filePath,
+    `${updated.join("\n").replace(/\n*$/, "\n")}`,
+    "utf8",
+  );
+}
+
+function assertSafeIntegrationDatabase(env) {
+  const database = String(env.DB_DATABASE || "");
+  const tmpRoot = path.resolve(os.tmpdir());
+  const databasePath = path.resolve(database);
+
+  if (env.DB_CONNECTION !== "sqlite" || !databasePath.startsWith(tmpRoot)) {
+    throw new Error(
+      `Refusing to run integration migrations against non-temporary database: ${databasePath}`,
+    );
+  }
 }
 
 function waitForPort(host, requestedPort) {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();
-    server.once('error', reject);
+    server.once("error", reject);
     server.listen(requestedPort, host, () => {
       const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : requestedPort;
+      const port =
+        typeof address === "object" && address ? address.port : requestedPort;
       server.close((closeErr) => {
         if (closeErr) {
           reject(closeErr);
@@ -254,7 +314,7 @@ async function findAvailablePort(startPort, reservedPorts) {
   for (let attempt = 0; attempt < 200; attempt += 1, candidate += 1) {
     if (reservedPorts.has(candidate)) continue;
     try {
-      const port = await waitForPort('127.0.0.1', candidate);
+      const port = await waitForPort("127.0.0.1", candidate);
       reservedPorts.add(port);
       return port;
     } catch {
@@ -267,12 +327,15 @@ async function findAvailablePort(startPort, reservedPorts) {
 async function openWs(url, options = {}, timeoutMs = 10_000) {
   const ws = new WebSocket(url, options);
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`WS open timeout: ${url}`)), timeoutMs);
-    ws.once('open', () => {
+    const timeout = setTimeout(
+      () => reject(new Error(`WS open timeout: ${url}`)),
+      timeoutMs,
+    );
+    ws.once("open", () => {
       clearTimeout(timeout);
       resolve(undefined);
     });
-    ws.once('error', (error) => {
+    ws.once("error", (error) => {
       clearTimeout(timeout);
       reject(error);
     });
@@ -280,18 +343,21 @@ async function openWs(url, options = {}, timeoutMs = 10_000) {
   return ws;
 }
 
-async function seedOperatorFixture(serverUrl) {
+async function seedOperatorFixture(serverUrl, env) {
   const json = await runJsonCommand(
     PHP_BIN,
-    ['artisan', 'viewport:seed-operator-integration-fixture', '--json'],
+    ["artisan", "viewport:seed-operator-integration-fixture", "--json"],
     SERVER_DIR,
     {
+      ...env,
       APP_URL: serverUrl,
     },
   );
 
   if (!json?.user?.email || !json?.workspace?.id) {
-    throw new Error(`Unexpected operator integration fixture payload: ${JSON.stringify(json)}`);
+    throw new Error(
+      `Unexpected operator integration fixture payload: ${JSON.stringify(json)}`,
+    );
   }
 
   return json;
@@ -300,10 +366,15 @@ async function seedOperatorFixture(serverUrl) {
 async function waitForPairingClaim(serverUrl, code) {
   const start = Date.now();
   while (Date.now() - start < 20_000) {
-    const json = await httpJson(serverUrl, `/api/pairing-codes/${encodeURIComponent(code)}/status`);
-    if (json?.status === 'claimed') return json;
-    if (json?.status === 'denied' || json?.status === 'expired') {
-      throw new Error(`Pairing code entered terminal state before approval: ${JSON.stringify(json)}`);
+    const json = await httpJson(
+      serverUrl,
+      `/api/pairing-codes/${encodeURIComponent(code)}/status`,
+    );
+    if (json?.status === "claimed") return json;
+    if (json?.status === "denied" || json?.status === "expired") {
+      throw new Error(
+        `Pairing code entered terminal state before approval: ${JSON.stringify(json)}`,
+      );
     }
     await sleep(250);
   }
@@ -314,23 +385,28 @@ async function waitForDaemonReady(daemonUrl) {
   await waitForHealth(`${daemonUrl}/health`, 45_000);
 }
 
-async function waitForRelayPresence(serverUrl, workspaceId, relayHttpUrl) {
+async function waitForRelayPresence(
+  serverUrl,
+  workspaceId,
+  projectMachineBindingId,
+  relayHttpUrl,
+) {
   const start = Date.now();
   while (Date.now() - start < 30_000) {
     const resolved = await httpJson(
       serverUrl,
-      '/api/runtime/internal/relay/presence/resolve',
+      "/api/runtime/internal/relay/presence/resolve",
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'content-type': 'application/json',
-          'x-relay-internal-key': RELAY_INTERNAL_KEY,
+          "content-type": "application/json",
+          "x-relay-internal-key": RELAY_INTERNAL_KEY,
         },
-        body: JSON.stringify({ workspaceId }),
+        body: JSON.stringify({ workspaceId, projectMachineBindingId }),
       },
     );
 
-    const relayState = await httpJson(relayHttpUrl, '/state', {
+    const relayState = await httpJson(relayHttpUrl, "/state", {
       headers: {
         authorization: `Bearer ${RELAY_ADMIN_TOKEN}`,
       },
@@ -340,7 +416,12 @@ async function waitForRelayPresence(serverUrl, workspaceId, relayHttpUrl) {
       ? relayState.workspaces.find((item) => item.workspaceId === workspaceId)
       : null;
 
-    if (resolved?.daemonConnected === true && relayWorkspace?.daemonConnected === true) {
+    if (
+      resolved?.daemonConnected === true &&
+      resolved?.projectMachineBindingId === projectMachineBindingId &&
+      relayWorkspace?.daemonConnected === true &&
+      relayWorkspace?.projectMachineBindingId === projectMachineBindingId
+    ) {
       return {
         resolvePayload: resolved,
         relayWorkspace,
@@ -349,127 +430,169 @@ async function waitForRelayPresence(serverUrl, workspaceId, relayHttpUrl) {
 
     await sleep(500);
   }
-  throw new Error(`Timed out waiting for relay presence for workspace ${workspaceId}`);
+  throw new Error(
+    `Timed out waiting for relay presence for workspace ${workspaceId} and project machine ${projectMachineBindingId}`,
+  );
 }
 
 async function stopDaemon(env) {
   try {
-    await runJsonCommand('node', ['dist/index.js', 'stop', '--json'], DAEMON_DIR, env);
+    await runJsonCommand(
+      "node",
+      ["dist/index.js", "stop", "--json"],
+      DAEMON_DIR,
+      env,
+    );
   } catch {
     // Best effort during cleanup.
   }
 }
 
 async function main() {
-  if (!['operator', 'e2e'].includes(INTEGRATION_SCENARIO)) {
+  if (!["operator", "e2e"].includes(INTEGRATION_SCENARIO)) {
     throw new Error(
       `Unsupported INTEGRATION_SCENARIO=${INTEGRATION_SCENARIO}. This harness currently supports operator|e2e.`,
     );
   }
 
   const reservedPorts = new Set();
-  const serverPort = await findAvailablePort(REQUESTED_SERVER_PORT, reservedPorts);
-  const relayPort = await findAvailablePort(REQUESTED_RELAY_PORT, reservedPorts);
-  const daemonPort = await findAvailablePort(REQUESTED_DAEMON_PORT, reservedPorts);
+  const serverPort = await findAvailablePort(
+    REQUESTED_SERVER_PORT,
+    reservedPorts,
+  );
+  const relayPort = await findAvailablePort(
+    REQUESTED_RELAY_PORT,
+    reservedPorts,
+  );
+  const daemonPort = await findAvailablePort(
+    REQUESTED_DAEMON_PORT,
+    reservedPorts,
+  );
 
   const serverUrl = `http://127.0.0.1:${serverPort}`;
   const relayHttpUrl = `http://127.0.0.1:${relayPort}`;
   const relayWsUrl = `ws://127.0.0.1:${relayPort}/ws`;
   const daemonUrl = `http://127.0.0.1:${daemonPort}`;
-  const daemonHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-integration-home-'));
-  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-integration-project-'));
+  const daemonHome = await fs.mkdtemp(
+    path.join(os.tmpdir(), "viewport-integration-home-"),
+  );
+  const serverStateDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "viewport-integration-api-"),
+  );
+  const serverDatabasePath = path.join(serverStateDir, "database.sqlite");
+  const projectDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "viewport-integration-project-"),
+  );
 
   const daemonEnv = {
     VIEWPORT_HOME: daemonHome,
     VIEWPORT_LISTEN: `127.0.0.1:${daemonPort}`,
-    VIEWPORT_AUTH: '0',
-    VIEWPORT_TLS: '0',
-    VIEWPORT_ALLOWED_HOSTS: '127.0.0.1,localhost',
-    VIEWPORT_ALLOWED_ORIGINS: '127.0.0.1,localhost',
-    VIEWPORT_RELAY_TLS_VERIFY: '0',
+    VIEWPORT_AUTH: "0",
+    VIEWPORT_TLS: "0",
+    VIEWPORT_ALLOWED_HOSTS: "127.0.0.1,localhost",
+    VIEWPORT_ALLOWED_ORIGINS: "127.0.0.1,localhost",
+    VIEWPORT_RELAY_TLS_VERIFY: "0",
   };
 
   const serverEnvValues = {
-    APP_ENV: 'local',
+    APP_ENV: "local",
     APP_URL: serverUrl,
     SPA_URL: serverUrl,
+    DB_CONNECTION: "sqlite",
+    DB_DATABASE: serverDatabasePath,
+    CACHE_STORE: "array",
+    SESSION_DRIVER: "array",
+    QUEUE_CONNECTION: "sync",
     RELAY_WS_URL: relayWsUrl,
     VIEWPORT_RELAY_HTTP_URL: relayHttpUrl,
     VIEWPORT_RELAY_INTERNAL_KEY: RELAY_INTERNAL_KEY,
     VIEWPORT_RELAY_ADMIN_TOKEN: RELAY_ADMIN_TOKEN,
-    VIEWPORT_RELAY_VERIFY_TLS: '0',
-    VIEWPORT_RELAY_INTERNAL_ALLOW_LOOPBACK_LOCAL: '1',
+    VIEWPORT_RELAY_VERIFY_TLS: "0",
+    VIEWPORT_RELAY_INTERNAL_ALLOW_LOOPBACK_LOCAL: "1",
   };
 
   const procs = [];
   let daemonStopped = false;
+  const serverEnvPath = path.join(SERVER_DIR, ".env");
+  const serverEnvSnapshot = await snapshotFile(serverEnvPath);
 
   try {
-    log('ports', `server=${serverPort} relay=${relayPort} daemon=${daemonPort}`);
-
-    await upsertEnvFile(
-      path.join(SERVER_DIR, '.env'),
-      serverEnvValues,
-      path.join(SERVER_DIR, '.env.example'),
+    log(
+      "ports",
+      `server=${serverPort} relay=${relayPort} daemon=${daemonPort}`,
     );
 
-    log('api', 'migrate fresh');
-    await runCommand(PHP_BIN, ['artisan', 'migrate:fresh', '--force'], SERVER_DIR);
-    await runCommand(PHP_BIN, ['artisan', 'config:clear'], SERVER_DIR);
+    await fs.writeFile(serverDatabasePath, "", "utf8");
+    assertSafeIntegrationDatabase(serverEnvValues);
+    await upsertEnvFile(
+      serverEnvPath,
+      serverEnvValues,
+      path.join(SERVER_DIR, ".env.example"),
+    );
 
-    log('api', 'start');
-    const serverProc = spawnProc(
-      'server',
+    log("api", "migrate fresh");
+    await runCommand(
       PHP_BIN,
-      ['artisan', 'serve', '--host=127.0.0.1', `--port=${serverPort}`],
+      ["artisan", "migrate:fresh", "--force"],
+      SERVER_DIR,
+      serverEnvValues,
+    );
+    await runCommand(
+      PHP_BIN,
+      ["artisan", "config:clear"],
+      SERVER_DIR,
+      serverEnvValues,
+    );
+
+    log("api", "start");
+    const serverProc = spawnProc(
+      "server",
+      PHP_BIN,
+      ["artisan", "serve", "--host=127.0.0.1", `--port=${serverPort}`],
       SERVER_DIR,
       serverEnvValues,
     );
     procs.push(serverProc);
     await waitForHealth(`${serverUrl}/api/health`, 45_000);
 
-    const fixture = await seedOperatorFixture(serverUrl);
+    const fixture = await seedOperatorFixture(serverUrl, serverEnvValues);
     const workspaceId = fixture.workspace.id;
     const operatorToken = fixture.token;
     if (!operatorToken) {
-      throw new Error(`Operator integration fixture did not return a token: ${JSON.stringify(fixture)}`);
+      throw new Error(
+        `Operator integration fixture did not return a token: ${JSON.stringify(fixture)}`,
+      );
     }
 
-    log('relay', 'build');
-    await runCommand('npm', ['run', 'build'], RELAY_DIR);
-    log('daemon', 'build');
-    await runCommand('npm', ['run', 'build'], DAEMON_DIR);
+    log("relay", "build");
+    await runCommand("npm", ["run", "build"], RELAY_DIR);
+    log("daemon", "build");
+    await runCommand("npm", ["run", "build"], DAEMON_DIR);
 
-    log('relay', 'start');
-    const relayProc = spawnProc(
-      'relay',
-      'node',
-      ['dist/index.js'],
-      RELAY_DIR,
-      {
-        PORT: String(relayPort),
-        HOST: '127.0.0.1',
-        SERVER_URL: serverUrl,
-        RELAY_PUBLIC_WS_BASE_URL: relayWsUrl,
-        RELAY_MODE: 'dev',
-        RELAY_TLS: '0',
-        RELAY_ENABLE_ADMIN_HTTP: '1',
-        RELAY_ADMIN_TOKEN: RELAY_ADMIN_TOKEN,
-        RELAY_INTERNAL_KEY: RELAY_INTERNAL_KEY,
-      },
-    );
+    log("relay", "start");
+    const relayProc = spawnProc("relay", "node", ["dist/index.js"], RELAY_DIR, {
+      PORT: String(relayPort),
+      HOST: "127.0.0.1",
+      SERVER_URL: serverUrl,
+      RELAY_PUBLIC_WS_BASE_URL: relayWsUrl,
+      RELAY_MODE: "dev",
+      RELAY_TLS: "0",
+      RELAY_ENABLE_ADMIN_HTTP: "1",
+      RELAY_ADMIN_TOKEN: RELAY_ADMIN_TOKEN,
+      RELAY_INTERNAL_KEY: RELAY_INTERNAL_KEY,
+    });
     procs.push(relayProc);
     await waitForHealth(`${relayHttpUrl}/health`, 45_000);
 
-    log('pair', 'issue web pairing code');
+    log("pair", "issue web pairing code");
     const pairingCode = await httpJson(
       serverUrl,
       `/api/workspaces/${encodeURIComponent(workspaceId)}/pairing-codes`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
           authorization: `Bearer ${operatorToken}`,
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
         body: JSON.stringify({}),
       },
@@ -477,65 +600,76 @@ async function main() {
     );
 
     if (!pairingCode?.code) {
-      throw new Error(`Pairing code response missing code: ${JSON.stringify(pairingCode)}`);
+      throw new Error(
+        `Pairing code response missing code: ${JSON.stringify(pairingCode)}`,
+      );
     }
 
-    log('pair', `claim ${pairingCode.code}`);
+    log("pair", `claim ${pairingCode.code}`);
     const pairProc = spawn(
-      'node',
-      ['dist/index.js', 'pair', pairingCode.code, '--server', serverUrl, '--json'],
+      "node",
+      [
+        "dist/index.js",
+        "pair",
+        pairingCode.code,
+        "--server",
+        serverUrl,
+        "--json",
+      ],
       {
         cwd: DAEMON_DIR,
         env: { ...process.env, ...daemonEnv },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ["ignore", "pipe", "pipe"],
       },
     );
 
-    let pairStdout = '';
-    let pairStderr = '';
-    pairProc.stdout.on('data', (chunk) => {
-      pairStdout += chunk.toString('utf8');
+    let pairStdout = "";
+    let pairStderr = "";
+    pairProc.stdout.on("data", (chunk) => {
+      pairStdout += chunk.toString("utf8");
     });
-    pairProc.stderr.on('data', (chunk) => {
-      pairStderr += chunk.toString('utf8');
+    pairProc.stderr.on("data", (chunk) => {
+      pairStderr += chunk.toString("utf8");
     });
 
     const claimed = await waitForPairingClaim(serverUrl, pairingCode.code);
     if (!claimed?.daemon_name) {
-      throw new Error(`Pairing claim missing daemon_name: ${JSON.stringify(claimed)}`);
+      throw new Error(
+        `Pairing claim missing daemon_name: ${JSON.stringify(claimed)}`,
+      );
     }
 
-    log('pair', 'approve');
+    log("pair", "approve");
     await httpJson(
       serverUrl,
       `/api/pairing-codes/${encodeURIComponent(pairingCode.code)}/approve`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
           authorization: `Bearer ${operatorToken}`,
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
         body: JSON.stringify({}),
       },
     );
 
-    const pairExitCode = await new Promise((resolve) => pairProc.once('exit', resolve));
+    const pairExitCode = await new Promise((resolve) =>
+      pairProc.once("exit", resolve),
+    );
     if (pairExitCode !== 0) {
-      throw new Error(`vpd pair failed with code ${pairExitCode}\nstdout:\n${pairStdout}\nstderr:\n${pairStderr}`);
+      throw new Error(
+        `vpd pair failed with code ${pairExitCode}\nstdout:\n${pairStdout}\nstderr:\n${pairStderr}`,
+      );
     }
 
-    const pairResult = parseJsonFromStdout(pairStdout, 'vpd pair');
+    const pairResult = parseJsonFromStdout(pairStdout, "vpd pair");
     if (pairResult?.ok !== true) {
-      throw new Error(`Unexpected vpd pair result: ${JSON.stringify(pairResult)}`);
+      throw new Error(
+        `Unexpected vpd pair result: ${JSON.stringify(pairResult)}`,
+      );
     }
 
-    log('daemon', 'wait for health');
-    await waitForDaemonReady(daemonUrl);
-
-    log('relay', 'wait for workspace presence');
-    const presence = await waitForRelayPresence(serverUrl, workspaceId, relayHttpUrl);
-
-    log('api', 'verify install list');
+    log("api", "verify install list");
     const installs = await httpJson(
       serverUrl,
       `/api/workspaces/${encodeURIComponent(workspaceId)}/installs`,
@@ -546,60 +680,92 @@ async function main() {
       },
     );
     const installRows = Array.isArray(installs?.data) ? installs.data : [];
-    const claimedInstall = installRows.find((install) => install.name === claimed.daemon_name);
+    const claimedInstall = installRows.find(
+      (install) => install.name === claimed.daemon_name,
+    );
     if (!claimedInstall) {
-      throw new Error(`Could not find paired install for ${claimed.daemon_name}`);
+      throw new Error(
+        `Could not find paired install for ${claimed.daemon_name}`,
+      );
+    }
+    const projectMachineBindingId = claimedInstall.project_machine_binding_id;
+    if (!projectMachineBindingId) {
+      throw new Error(
+        `Paired install is missing project_machine_binding_id: ${JSON.stringify(claimedInstall)}`,
+      );
     }
 
-    log('daemon', 'register local directory');
-    await fs.writeFile(path.join(projectDir, 'README.md'), '# viewport operator integration\n', 'utf8');
+    log("daemon", "wait for health");
+    await waitForDaemonReady(daemonUrl);
+
+    log("relay", "wait for project machine presence");
+    const presence = await waitForRelayPresence(
+      serverUrl,
+      workspaceId,
+      projectMachineBindingId,
+      relayHttpUrl,
+    );
+
+    log("daemon", "register local directory");
+    await fs.writeFile(
+      path.join(projectDir, "README.md"),
+      "# viewport operator integration\n",
+      "utf8",
+    );
     const createdDirectory = await httpJson(
       daemonUrl,
-      '/api/directories',
+      "/api/directories",
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
         body: JSON.stringify({ path: projectDir }),
       },
       [201],
     );
     if (!createdDirectory?.id) {
-      throw new Error(`Directory registration failed: ${JSON.stringify(createdDirectory)}`);
+      throw new Error(
+        `Directory registration failed: ${JSON.stringify(createdDirectory)}`,
+      );
     }
 
-    log('api', 'issue browser relay token');
+    log("api", "issue browser relay token");
     const browserRelayToken = await httpJson(
       serverUrl,
       `/api/workspaces/${encodeURIComponent(workspaceId)}/relay-token`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
           authorization: `Bearer ${operatorToken}`,
-          'content-type': 'application/json',
+          "content-type": "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          project_machine_binding_id: projectMachineBindingId,
+        }),
       },
     );
     if (!browserRelayToken?.token) {
-      throw new Error(`Browser relay token response missing token: ${JSON.stringify(browserRelayToken)}`);
+      throw new Error(
+        `Browser relay token response missing token: ${JSON.stringify(browserRelayToken)}`,
+      );
     }
 
-    log('api', 'validate browser relay token');
+    log("api", "validate browser relay token");
     const validated = await httpJson(
       serverUrl,
-      '/api/runtime/internal/relay/validate',
+      "/api/runtime/internal/relay/validate",
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'x-relay-internal-key': RELAY_INTERNAL_KEY,
-          'content-type': 'application/json',
+          "x-relay-internal-key": RELAY_INTERNAL_KEY,
+          "content-type": "application/json",
         },
         body: JSON.stringify({
           relayToken: browserRelayToken.token,
-          role: 'client',
+          role: "client",
           workspaceId,
+          projectMachineBindingId,
         }),
       },
     );
@@ -607,9 +773,9 @@ async function main() {
       throw new Error(`Runtime validate failed: ${JSON.stringify(validated)}`);
     }
 
-    log('relay', 'open browser websocket');
+    log("relay", "open browser websocket");
     const clientWs = await openWs(
-      `${relayWsUrl}?role=client&workspaceId=${encodeURIComponent(workspaceId)}`,
+      `${relayWsUrl}?role=client&workspaceId=${encodeURIComponent(workspaceId)}&projectMachineBindingId=${encodeURIComponent(projectMachineBindingId)}`,
       {
         headers: {
           authorization: `Bearer ${browserRelayToken.token}`,
@@ -619,14 +785,18 @@ async function main() {
     );
     clientWs.close();
 
-    if (INTEGRATION_SCENARIO === 'e2e') {
-      log('daemon', 'verify local directory list');
-      const directoryList = await httpJson(daemonUrl, '/api/directories');
+    if (INTEGRATION_SCENARIO === "e2e") {
+      log("daemon", "verify local directory list");
+      const directoryList = await httpJson(daemonUrl, "/api/directories");
       const hasDirectory = Array.isArray(directoryList)
-        ? directoryList.some((directory) => directory.id === createdDirectory.id)
+        ? directoryList.some(
+            (directory) => directory.id === createdDirectory.id,
+          )
         : false;
       if (!hasDirectory) {
-        throw new Error(`Registered directory missing from daemon list: ${JSON.stringify(directoryList)}`);
+        throw new Error(
+          `Registered directory missing from daemon list: ${JSON.stringify(directoryList)}`,
+        );
       }
     }
 
@@ -638,11 +808,12 @@ async function main() {
       daemonUrl,
       workspaceId,
       installId: claimedInstall.id,
+      projectMachineBindingId,
       claimedDaemonName: claimed.daemon_name,
       relayPresence: presence.resolvePayload,
     };
 
-    log('pass', JSON.stringify(summary));
+    log("pass", JSON.stringify(summary));
   } finally {
     if (!daemonStopped) {
       await stopDaemon(daemonEnv);
@@ -650,15 +821,20 @@ async function main() {
     }
 
     for (const proc of procs.reverse()) {
-      proc.kill('SIGTERM');
+      proc.kill("SIGTERM");
       await waitForProcessExit(proc, 5_000).catch(() => {
-        proc.kill('SIGKILL');
+        proc.kill("SIGKILL");
       });
     }
+
+    await restoreFile(serverEnvPath, serverEnvSnapshot);
+    await fs.rm(serverStateDir, { force: true, recursive: true });
   }
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  console.error(
+    error instanceof Error ? (error.stack ?? error.message) : String(error),
+  );
   process.exitCode = 1;
 });

@@ -4,10 +4,15 @@ import type { ClientConnectionMeta, WorkspaceState } from './types.js';
 export class ConnectionRegistry {
   private readonly workspaces = new Map<string, WorkspaceState>();
 
-  getOrCreate(workspaceId: string): WorkspaceState {
-    let state = this.workspaces.get(workspaceId);
+  getOrCreate(
+    key: string,
+    metadata?: { workspaceId?: string; projectMachineBindingId?: string },
+  ): WorkspaceState {
+    let state = this.workspaces.get(key);
     if (!state) {
       state = {
+        workspaceId: metadata?.workspaceId ?? key,
+        projectMachineBindingId: metadata?.projectMachineBindingId,
         daemon: null,
         daemonIssueGeneration: null,
         clients: new Map<WebSocket, ClientConnectionMeta>(),
@@ -16,7 +21,10 @@ export class ConnectionRegistry {
         pairingRequests: new Map(),
         lastActivityAt: Date.now(),
       };
-      this.workspaces.set(workspaceId, state);
+      this.workspaces.set(key, state);
+    } else if (metadata?.workspaceId) {
+      state.workspaceId = metadata.workspaceId;
+      state.projectMachineBindingId = metadata.projectMachineBindingId;
     }
     return state;
   }

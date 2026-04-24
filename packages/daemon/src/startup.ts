@@ -504,6 +504,8 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
         relayEndpoint: config.relayEndpoint!,
         relayServerUrl: config.relayServerUrl!,
         workspaceId: config.relayWorkspaceId!,
+        projectMachineBindingId: config.relayProjectMachineBindingId,
+        machineId: config.relayMachineId,
         issueToken: config.relayIssueToken,
         daemonWsUrl: daemonWsUrl!,
         daemonAuthToken: daemonToken ?? undefined,

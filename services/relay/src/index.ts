@@ -40,11 +40,7 @@ const logger = new RelayLogger(config.maxLogs);
 const metrics = new RelayMetrics();
 const registry = new ConnectionRegistry();
 const backplane = createRelayBackplane(config, logger, metrics);
-const upgradeLimiter = new FixedWindowRateLimiter(
-  config.maxUpgradeRatePerMinute,
-  60_000,
-  config.maxUpgradeRateBuckets,
-);
+const upgradeLimiter = new FixedWindowRateLimiter(config.maxUpgradeRatePerMinute, 60_000, config.maxUpgradeRateBuckets);
 const kexFrameLimiter = new FixedWindowRateLimiter(
   config.maxKeyExchangeInitPerMinute,
   60_000,
@@ -86,7 +82,17 @@ const wsHeartbeatState = new WeakMap<
 
 const UpgradeQuerySchema = z.object({
   role: z.enum(['workspace-daemon', 'client']),
-  workspaceId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+  workspaceId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9._:-]+$/),
+  projectMachineBindingId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9._:-]+$/)
+    .optional(),
 });
 
 function closeWithReason(ws: WebSocket, code: number, reason: string): void {
@@ -144,13 +150,12 @@ function buildStatePayload(): Record<string, unknown> {
     backplaneMode: config.backplaneMode,
     busEnabled: config.busEnabled,
     clientRedirectEnabled: config.clientRedirectEnabled,
-    workspaces: registry.workspaceEntries().map(([workspaceId, state]) => ({
-      workspaceId,
+    workspaces: registry.workspaceEntries().map(([, state]) => ({
+      workspaceId: state.workspaceId,
+      projectMachineBindingId: state.projectMachineBindingId,
       daemonConnected: !!(state.daemon && state.daemon.readyState === WebSocket.OPEN),
       clientCount: [...state.clients.keys()].filter((ws) => ws.readyState === WebSocket.OPEN).length,
-      clientIds: config.stateIncludeClientIds
-        ? [...state.clients.values()].map((item) => item.clientId)
-        : undefined,
+      clientIds: config.stateIncludeClientIds ? [...state.clients.values()].map((item) => item.clientId) : undefined,
       lastActivityAt: new Date(state.lastActivityAt).toISOString(),
     })),
   };
@@ -208,13 +213,18 @@ function requestHandler(req: http.IncomingMessage, res: http.ServerResponse): vo
 
   if (req.method === 'GET' && parsed.pathname === '/logs') {
     if (!requireAdmin(req, res)) return;
-    writeJson(res, 200, { ok: true, logs: config.healthVerbose ? logger.recent() : logger.recentSummaries() });
+    writeJson(res, 200, {
+      ok: true,
+      logs: config.healthVerbose ? logger.recent() : logger.recentSummaries(),
+    });
     return;
   }
 
   if (req.method === 'GET' && parsed.pathname === '/metrics') {
     if (!requireAdmin(req, res)) return;
-    res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+    res.writeHead(200, {
+      'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+    });
     res.end(metrics.toPrometheus());
     return;
   }
@@ -232,7 +242,10 @@ const server = config.tlsEnabled
     )
   : http.createServer(requestHandler);
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: config.maxFrameBytes });
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: config.maxFrameBytes,
+});
 
 function setupHeartbeat(ws: WebSocket): void {
   const now = Date.now();
@@ -316,6 +329,7 @@ server.on('upgrade', async (req, socket, head) => {
     const validated = UpgradeQuerySchema.safeParse({
       role: parsed.searchParams.get('role') ?? '',
       workspaceId: parsed.searchParams.get('workspaceId') ?? '',
+      projectMachineBindingId: parsed.searchParams.get('projectMachineBindingId') ?? undefined,
     });
     if (!validated.success) {
       metrics.increment('relay_upgrade_invalid_query_total');
@@ -323,15 +337,12 @@ server.on('upgrade', async (req, socket, head) => {
       socket.destroy();
       return;
     }
-    const { role, workspaceId } = validated.data;
+    const { role, workspaceId, projectMachineBindingId } = validated.data;
     const auth = resolveUpgradeAuth({
       relayMode: config.relayMode,
-      authorizationHeader:
-        typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+      authorizationHeader: typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
       protocolHeader:
-        typeof req.headers['sec-websocket-protocol'] === 'string'
-          ? req.headers['sec-websocket-protocol']
-          : undefined,
+        typeof req.headers['sec-websocket-protocol'] === 'string' ? req.headers['sec-websocket-protocol'] : undefined,
       queryToken: parsed.searchParams.get('token') ?? undefined,
     });
     if (!auth.ok) {
@@ -343,7 +354,9 @@ server.on('upgrade', async (req, socket, head) => {
     const token = auth.token;
 
     if (role === 'client') {
-      const workspaceState = registry.getOrCreate(workspaceId);
+      const workspaceState = registry.getOrCreate(
+        projectMachineBindingId ? `${workspaceId}:${projectMachineBindingId}` : workspaceId,
+      );
       if (workspaceState.clients.size >= config.maxClientsPerWorkspace) {
         metrics.increment('relay_upgrade_rejected_workspace_clients_total');
         socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
@@ -352,7 +365,12 @@ server.on('upgrade', async (req, socket, head) => {
       }
     }
 
-    const admission = await validateAdmission(config, { token, role, workspaceId });
+    const admission = await validateAdmission(config, {
+      token,
+      role,
+      workspaceId,
+      projectMachineBindingId,
+    });
     if (!admission.ok) {
       metrics.increment('relay_admission_denied_total');
       logger.warn('admission_denied', {
@@ -369,19 +387,15 @@ server.on('upgrade', async (req, socket, head) => {
 
     metrics.increment('relay_admission_ok_total');
     let redirectWsBaseUrl: string | null = null;
-    if (role === 'client' && config.clientRedirectEnabled) {
-      const preferred = await backplane.resolvePresence(workspaceId);
-      if (
-        preferred &&
-        preferred.daemonConnected &&
-        preferred.relayWsBaseUrl !== config.publicWsBaseUrl
-      ) {
+    if (role === 'client' && config.clientRedirectEnabled && projectMachineBindingId) {
+      const preferred = await backplane.resolvePresence(workspaceId, projectMachineBindingId);
+      if (preferred && preferred.daemonConnected && preferred.relayWsBaseUrl !== config.publicWsBaseUrl) {
         redirectWsBaseUrl = preferred.relayWsBaseUrl;
       }
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      registerConnection(routingContext, ws, role, workspaceId, ip, admission.claims);
+      registerConnection(routingContext, ws, role, workspaceId, projectMachineBindingId, ip, admission.claims);
       if (redirectWsBaseUrl) {
         metrics.increment('relay_client_redirect_total');
         safeSend(ws, JSON.stringify(relayRedirectPayload(workspaceId, redirectWsBaseUrl)));
@@ -439,9 +453,9 @@ const cleanupInterval = setInterval(() => {
 
 const presenceSyncInterval = setInterval(async () => {
   if (!config.presenceSyncEnabled) return;
-  for (const [workspaceId, state] of registry.workspaceEntries()) {
+  for (const [, state] of registry.workspaceEntries()) {
     if (state.daemon && state.daemon.readyState === WebSocket.OPEN) {
-      await backplane.upsertPresence(workspaceId, true);
+      await backplane.upsertPresence(state.workspaceId, true, state.projectMachineBindingId);
     }
   }
 }, config.presenceSyncIntervalMs);

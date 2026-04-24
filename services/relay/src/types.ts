@@ -6,6 +6,8 @@ export interface AdmissionClaims {
   clientId?: string;
   userId?: string;
   installId?: string;
+  projectMachineBindingId?: string;
+  machineId?: string;
   role?: RelayRole;
   workspaceId?: string;
   scope?: 'runtime' | 'pairing';
@@ -37,6 +39,8 @@ export interface ClientConnectionMeta {
 }
 
 export interface WorkspaceState {
+  workspaceId: string;
+  projectMachineBindingId?: string;
   daemon: WebSocket | null;
   daemonIssueGeneration: number | null;
   clients: Map<WebSocket, ClientConnectionMeta>;
@@ -79,5 +83,6 @@ export interface RelayStatusPayload {
   code: string;
   message: string;
   workspaceId: string;
+  projectMachineBindingId?: string;
   relayWsBaseUrl?: string;
 }

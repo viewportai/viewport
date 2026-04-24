@@ -61,6 +61,8 @@ export interface HealthResponse {
     relayEndpoint?: string;
     relayServerUrl?: string;
     relayWorkspaceId?: string;
+    relayProjectMachineBindingId?: string;
+    relayMachineId?: string;
     hostedDefaults?: boolean;
   };
 }

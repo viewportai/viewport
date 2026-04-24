@@ -179,6 +179,8 @@ export interface ViewportConfig {
       serverUrl?: string;
       workspaceId?: string;
       installId?: string;
+      projectMachineBindingId?: string;
+      machineId?: string;
       issueToken?: string;
       tlsVerify?: 'auto' | '0' | '1';
       caCertPath?: string;
@@ -484,6 +486,8 @@ export class ConfigManager {
           serverUrl?: string;
           workspaceId?: string;
           installId?: string;
+          projectMachineBindingId?: string;
+          machineId?: string;
           issueToken?: string;
           tlsVerify?: 'auto' | '0' | '1';
           caCertPath?: string;
