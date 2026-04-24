@@ -245,6 +245,10 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
     return this.sessionManager.hasSession(sessionId);
   }
 
+  getSessionWorktreePath(sessionId: string): string {
+    return this.sessionManager.getSessionWorktreePath(sessionId);
+  }
+
   listActiveSessions(): Array<{
     sessionId: string;
     directoryId: string;

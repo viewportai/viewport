@@ -11,12 +11,15 @@ import type { SessionState } from '../../src/core/types.js';
 let tempHome: string;
 let projectDir: string;
 let originalHome: string | undefined;
+let originalCodexHome: string | undefined;
 
 async function setup(): Promise<Daemon> {
   tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-home-'));
   projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-project-'));
   originalHome = process.env['HOME'];
+  originalCodexHome = process.env['CODEX_HOME'];
   process.env['HOME'] = tempHome;
+  process.env['CODEX_HOME'] = path.join(tempHome, '.codex');
 
   const daemon = new Daemon();
   await daemon.initialize();
@@ -27,6 +30,8 @@ async function setup(): Promise<Daemon> {
 async function cleanup(): Promise<void> {
   if (originalHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = originalHome;
+  if (originalCodexHome === undefined) delete process.env['CODEX_HOME'];
+  else process.env['CODEX_HOME'] = originalCodexHome;
   await fs.rm(tempHome, { recursive: true, force: true });
   await fs.rm(projectDir, { recursive: true, force: true });
 }
@@ -217,6 +222,44 @@ nodes:
     const completed = await daemon.workflowRunner.getRun(run.id);
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.review?.output).toBe('Hello world');
+  });
+
+  it('recovers missing prompt output from the agent transcript', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-transcript-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current directory.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    await writeCodexTranscript(projectDir, 'Recovered transcript output');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.review?.output).toBe('Recovered transcript output');
   });
 
   it('passes shell output into downstream templates', async () => {
@@ -451,4 +494,31 @@ async function waitForNodeSession(daemon: Daemon, runId: string, nodeId: string)
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for workflow node session ${nodeId}`);
+}
+
+async function writeCodexTranscript(cwd: string, output: string): Promise<void> {
+  const root = path.join(process.env['CODEX_HOME'] ?? tempHome, 'sessions', '2026', '04', '24');
+  await fs.mkdir(root, { recursive: true });
+  const filePath = path.join(root, `${crypto.randomUUID()}.jsonl`);
+  const timestamp = new Date().toISOString();
+  const lines = [
+    {
+      timestamp,
+      type: 'session_meta',
+      payload: {
+        id: crypto.randomUUID(),
+        cwd,
+      },
+    },
+    {
+      timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: output }],
+      },
+    },
+  ];
+  await fs.writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
 }

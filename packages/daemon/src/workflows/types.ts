@@ -80,6 +80,7 @@ export interface WorkflowNodeRunState {
   startedAt?: number;
   completedAt?: number;
   sessionId?: string;
+  worktreePath?: string;
   output?: string;
   error?: string;
 }

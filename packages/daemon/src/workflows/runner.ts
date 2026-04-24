@@ -17,7 +17,11 @@ import {
   readReplaySessionState,
   waitForPromptSessionComplete,
 } from './session-completion.js';
-import { createSessionOutputCollector } from './session-output.js';
+import {
+  createSessionOutputCollector,
+  readCodexWorktreeSessionOutput,
+  readPersistedSessionOutput,
+} from './session-output.js';
 import { WorkflowRunStore } from './store.js';
 import type {
   ParsedWorkflow,
@@ -180,6 +184,7 @@ export class WorkflowRunner {
           ...(node.model ? { model: node.model } : {}),
         });
         state.sessionId = sessionId;
+        state.worktreePath = this.readActiveSessionWorktreePath(sessionId);
         addEvent(
           run,
           'session-started',
@@ -258,7 +263,9 @@ export class WorkflowRunner {
   }
 
   private async reconcileRun(run: WorkflowRunRecord): Promise<WorkflowRunRecord> {
-    if (!['queued', 'running'].includes(run.status)) return run;
+    if (!['queued', 'running'].includes(run.status)) {
+      return this.backfillPromptOutputs(run);
+    }
     if (this.activeRunIds.has(run.id)) return run;
 
     let changed = false;
@@ -269,6 +276,7 @@ export class WorkflowRunner {
         getSessionState(this.daemon, node.sessionId) ??
         (await readReplaySessionState(node.sessionId));
       if (state === 'idle' || state === 'completed') {
+        node.output = node.output || (await this.readPromptNodeOutput(run, node));
         node.status = 'completed';
         node.completedAt = node.completedAt ?? Date.now();
         run.updatedAt = node.completedAt;
@@ -307,6 +315,56 @@ export class WorkflowRunner {
     }
 
     return run;
+  }
+
+  private async backfillPromptOutputs(run: WorkflowRunRecord): Promise<WorkflowRunRecord> {
+    let changed = false;
+    for (const node of Object.values(run.nodes)) {
+      if (node.type !== 'prompt' || node.output || !node.sessionId) continue;
+      const output = await this.readPromptNodeOutput(run, node);
+      if (!output) continue;
+      node.output = output;
+      run.updatedAt = Date.now();
+      addEvent(run, 'node-output', `Node ${node.id} recovered prompt output`, { output }, node.id);
+      changed = true;
+    }
+
+    if (changed) {
+      await this.saveAndEmit(run);
+    }
+
+    return run;
+  }
+
+  private async readPromptNodeOutput(
+    run: WorkflowRunRecord,
+    node: WorkflowNodeRunState,
+  ): Promise<string> {
+    if (!node.sessionId) return '';
+
+    const persisted = readPersistedSessionOutput(node.sessionId);
+    if (persisted) return persisted;
+
+    const worktreePath = node.worktreePath ?? this.defaultWorktreePath(run, node.sessionId);
+    if (!worktreePath) return '';
+
+    try {
+      return await readCodexWorktreeSessionOutput(worktreePath);
+    } catch {
+      return '';
+    }
+  }
+
+  private readActiveSessionWorktreePath(sessionId: string): string | undefined {
+    try {
+      return this.daemon.getSessionWorktreePath(sessionId);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private defaultWorktreePath(run: WorkflowRunRecord, sessionId: string): string {
+    return path.join(run.directoryPath, '.viewport', 'worktrees', sessionId);
   }
 
   private async resolveWorkflow(

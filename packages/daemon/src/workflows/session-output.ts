@@ -1,4 +1,10 @@
 import type { SessionMessage } from '../core/types.js';
+import {
+  readRichSessionMessagesFromFile,
+  type RichSessionMessage,
+} from '../discovery/jsonl-reader.js';
+import { readPersistedSessionMessagesRich } from '../server/ring-buffer.js';
+import { CodexDiscovery } from '../discovery/codex.js';
 
 export interface SessionOutputCollector {
   push(message: SessionMessage): void;
@@ -27,4 +33,25 @@ export function createSessionOutputCollector(): SessionOutputCollector {
       return [...chunksWithoutFinal, ...finalMessages.values()].join('').trim();
     },
   };
+}
+
+export function outputFromRichMessages(messages: RichSessionMessage[]): string {
+  const text: string[] = [];
+  for (const message of messages) {
+    if (message.kind === 'text' && message.role === 'assistant') {
+      text.push(message.text);
+    }
+  }
+  return text.join('\n').trim();
+}
+
+export function readPersistedSessionOutput(sessionId: string): string {
+  return outputFromRichMessages(readPersistedSessionMessagesRich(sessionId));
+}
+
+export async function readCodexWorktreeSessionOutput(worktreePath: string): Promise<string> {
+  const sessions = await new CodexDiscovery().discoverSessions(worktreePath);
+  const sourcePath = sessions[0]?.sourcePath;
+  if (!sourcePath) return '';
+  return outputFromRichMessages(await readRichSessionMessagesFromFile(sourcePath));
 }

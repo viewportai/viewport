@@ -334,6 +334,10 @@ export class SessionManager {
     return this.sessions.has(sessionId);
   }
 
+  getSessionWorktreePath(sessionId: string): string {
+    return this.getActiveSession(sessionId).worktreePath;
+  }
+
   /** Get the session config (for runtime permission updates). */
   getSessionConfig(sessionId: string): SessionConfig | undefined {
     return this.sessions.get(sessionId)?.config;
