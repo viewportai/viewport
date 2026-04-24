@@ -1,22 +1,30 @@
-import { spawn } from 'node:child_process';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
-import { configDir } from '../core/config.js';
+import type { SessionMessage } from '../core/types.js';
 import { parseWorkflow, workflowNodeOrder, parseWorkflowFile } from './parser.js';
 import { preflightWorkflow } from './preflight.js';
+import {
+  addEvent,
+  normalizeInputs,
+  renderOptionalTemplate,
+  renderTemplate,
+  resolveNodeCwd,
+  runShellNode,
+} from './runtime-helpers.js';
+import {
+  getSessionState,
+  isFailedSessionReason,
+  readReplaySessionState,
+  waitForPromptSessionComplete,
+} from './session-completion.js';
 import { WorkflowRunStore } from './store.js';
-import type { SessionMessage, SessionState } from '../core/types.js';
 import type {
   ParsedWorkflow,
   WorkflowNode,
   WorkflowNodeRunState,
-  WorkflowRunEvent,
   WorkflowRunRecord,
   WorkflowRunRequest,
 } from './types.js';
-
-const MAX_OUTPUT_CHARS = 32_000;
 
 export class WorkflowRunner {
   private readonly store = new WorkflowRunStore();
@@ -324,194 +332,4 @@ export class WorkflowRunner {
       : path.join(directoryPath, request.workflowPath);
     return parseWorkflowFile(workflowPath);
   }
-}
-
-async function waitForPromptSessionComplete(daemon: Daemon, sessionId: string): Promise<string> {
-  const initial = getSessionState(daemon, sessionId);
-  if (isPromptTerminalState(initial)) return initial;
-
-  return await new Promise<string>((resolve) => {
-    let settled = false;
-    let missingPolls = 0;
-    const finish = (reason: string): void => {
-      if (settled) return;
-      settled = true;
-      clearInterval(timer);
-      daemon.off('session:ended', endedHandler);
-      daemon.off('session:state-changed', stateHandler);
-      resolve(reason);
-    };
-    const endedHandler = (event: { sessionId: string; reason: string }): void => {
-      if (event.sessionId !== sessionId) return;
-      finish(event.reason);
-    };
-    const stateHandler = (event: { sessionId: string; state: SessionState }): void => {
-      if (event.sessionId !== sessionId || !isPromptTerminalState(event.state)) return;
-      finish(event.state);
-    };
-    const timer = setInterval(() => {
-      const state = getSessionState(daemon, sessionId);
-      if (isPromptTerminalState(state)) finish(state);
-      if (state === null && !daemon.hasSession(sessionId)) {
-        missingPolls += 1;
-        if (missingPolls >= 2) finish('completed');
-      } else {
-        missingPolls = 0;
-      }
-    }, 250);
-    daemon.on('session:ended', endedHandler);
-    daemon.on('session:state-changed', stateHandler);
-  });
-}
-
-function isFailedSessionReason(reason: string): boolean {
-  return /(^|[\s:_-])(error|errored|failed|failure)([\s:_-]|$)/i.test(reason);
-}
-
-function isPromptTerminalState(
-  state: SessionState | null,
-): state is 'idle' | 'completed' | 'errored' {
-  return state === 'idle' || state === 'completed' || state === 'errored';
-}
-
-function getSessionState(daemon: Daemon, sessionId: string): SessionState | null {
-  try {
-    return daemon.getSessionInfo(sessionId).state;
-  } catch {
-    return null;
-  }
-}
-
-async function readReplaySessionState(sessionId: string): Promise<SessionState | null> {
-  try {
-    const filePath = path.join(configDir(), 'replay', `${sessionId}.jsonl`);
-    const raw = await fs.readFile(filePath, 'utf-8');
-    const lines = raw.trim().split('\n').reverse();
-    for (const line of lines) {
-      const parsed = JSON.parse(line) as {
-        update?: { updateType?: unknown; state?: unknown };
-      };
-      if (parsed.update?.updateType !== 'state-change') continue;
-      const state = parsed.update.state;
-      if (
-        state === 'idle' ||
-        state === 'completed' ||
-        state === 'errored' ||
-        state === 'running' ||
-        state === 'starting' ||
-        state === 'waiting_permission'
-      ) {
-        return state;
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeInputs(
-  parsed: ParsedWorkflow,
-  provided: Record<string, string | number | boolean>,
-): Record<string, string | number | boolean> {
-  const result: Record<string, string | number | boolean> = {};
-  for (const [key, definition] of Object.entries(parsed.definition.inputs ?? {})) {
-    const value = provided[key] ?? definition.default;
-    if (value === undefined) {
-      if (definition.required) {
-        throw new Error(`Missing required workflow input: ${key}`);
-      }
-      continue;
-    }
-    result[key] = value;
-  }
-  for (const [key, value] of Object.entries(provided)) {
-    if (!(key in result)) result[key] = value;
-  }
-  return result;
-}
-
-function addEvent(
-  run: WorkflowRunRecord,
-  type: WorkflowRunEvent['type'],
-  message: string,
-  data?: Record<string, unknown>,
-  nodeId?: string,
-): void {
-  run.events.push({
-    id: crypto.randomUUID(),
-    runId: run.id,
-    timestamp: Date.now(),
-    type,
-    nodeId,
-    message,
-    data,
-  });
-}
-
-function resolveNodeCwd(directoryPath: string, cwd?: string): string {
-  if (!cwd) return directoryPath;
-  return path.isAbsolute(cwd) ? cwd : path.join(directoryPath, cwd);
-}
-
-function renderOptionalTemplate(
-  template: string | undefined,
-  run: WorkflowRunRecord,
-): string | undefined {
-  return template ? renderTemplate(template, run) : undefined;
-}
-
-function renderTemplate(template: string, run: WorkflowRunRecord): string {
-  return template
-    .replace(/\{\{\s*inputs\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_, key: string) => {
-      const value = run.inputs[key];
-      return value === undefined ? '' : String(value);
-    })
-    .replace(/\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g, (_, nodeId: string) => {
-      return run.nodes[nodeId]?.output ?? '';
-    })
-    .replace(
-      /\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.(output|status|sessionId|error)\s*\}\}/g,
-      (_, nodeId: string, key: keyof WorkflowNodeRunState) => {
-        const value = run.nodes[nodeId]?.[key];
-        return value === undefined ? '' : String(value);
-      },
-    );
-}
-
-async function runShellNode(
-  command: string,
-  options: { cwd: string; timeoutSeconds?: number },
-): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const child = spawn('sh', ['-lc', command], {
-      cwd: options.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let output = '';
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const append = (chunk: Buffer): void => {
-      output = `${output}${chunk.toString('utf-8')}`.slice(-MAX_OUTPUT_CHARS);
-    };
-
-    child.stdout.on('data', append);
-    child.stderr.on('data', append);
-    child.once('error', reject);
-    child.once('close', (code) => {
-      if (timer) clearTimeout(timer);
-      if (code === 0) {
-        resolve(output.trim());
-      } else {
-        reject(new Error(`Shell node exited with code ${code}: ${output.trim()}`));
-      }
-    });
-
-    if (options.timeoutSeconds) {
-      timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error(`Shell node timed out after ${options.timeoutSeconds}s`));
-      }, options.timeoutSeconds * 1000);
-    }
-  });
 }
