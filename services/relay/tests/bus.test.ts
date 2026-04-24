@@ -7,9 +7,7 @@ import { RelayMetrics } from '../src/metrics.js';
 import { postInternalJson } from '../src/internal-api.js';
 
 vi.mock('../src/internal-api.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/internal-api.js')>(
-    '../src/internal-api.js',
-  );
+  const actual = await vi.importActual<typeof import('../src/internal-api.js')>('../src/internal-api.js');
   return {
     ...actual,
     resolveInternalApiTlsRejectUnauthorized: () => true,
@@ -54,16 +52,25 @@ describe('relay bus client', () => {
       json: {
         ok: true,
         frames: [
-          { id: 0, workspaceId: 'w', sourceRelayId: 'relay-b', direction: 'client_to_daemon', payload: 'a' },
+          {
+            id: 0,
+            workspaceId: 'w',
+            projectMachineBindingId: 'binding_demo',
+            sourceRelayId: 'relay-b',
+            direction: 'client_to_daemon',
+            payload: 'a',
+          },
           {
             id: 1,
             workspaceId: 'w',
+            projectMachineBindingId: 'binding_demo',
             sourceRelayId: 'relay-a',
             direction: 'client_to_daemon',
             payload: 'b',
             issuedAtMs: now - 1,
             signature: signFrame({
               workspaceId: 'w',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-a',
               targetRelayId: null,
               direction: 'client_to_daemon',
@@ -75,6 +82,7 @@ describe('relay bus client', () => {
           {
             id: 2,
             workspaceId: 'w',
+            projectMachineBindingId: 'binding_demo',
             sourceRelayId: 'relay-b',
             direction: 'client_to_daemon',
             payload: 'c',
@@ -82,6 +90,7 @@ describe('relay bus client', () => {
             issuedAtMs: now,
             signature: signFrame({
               workspaceId: 'w',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -122,6 +131,7 @@ describe('relay bus client', () => {
           {
             id: 50,
             workspaceId: 'workspace_demo',
+            projectMachineBindingId: 'binding_demo',
             sourceRelayId: 'relay-b',
             targetRelayId: 'relay-a',
             direction: 'client_to_daemon',
@@ -155,6 +165,7 @@ describe('relay bus client', () => {
           {
             id: 60,
             workspaceId: 'workspace_demo',
+            projectMachineBindingId: 'binding_demo',
             sourceRelayId: 'relay-b',
             targetRelayId: 'relay-c',
             direction: 'client_to_daemon',
@@ -193,7 +204,13 @@ describe('relay bus client', () => {
       RELAY_BUS_HMAC_KEY: 'bus-hmac',
     });
     const client = new RelayBusClient(config, new RelayLogger(5), new RelayMetrics());
-    const ok = await client.publishClientToDaemon('workspace_demo', 'payload', 'relay-b');
+    const ok = await client.publishClientToDaemon(
+      'workspace_demo',
+      'binding_demo',
+      'machine_demo',
+      'payload',
+      'relay-b',
+    );
     expect(ok).toBe(true);
 
     const body = mockedPost.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
@@ -216,6 +233,7 @@ describe('relay bus client', () => {
             {
               id: 10,
               workspaceId: 'workspace_demo',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -236,7 +254,13 @@ describe('relay bus client', () => {
       RELAY_BUS_HMAC_KEY: 'bus-hmac',
     });
     const client = new RelayBusClient(config, new RelayLogger(5), new RelayMetrics());
-    const publishOk = await client.publishClientToDaemon('workspace_demo', 'payload', 'relay-b');
+    const publishOk = await client.publishClientToDaemon(
+      'workspace_demo',
+      'binding_demo',
+      'machine_demo',
+      'payload',
+      'relay-b',
+    );
     expect(publishOk).toBe(true);
 
     const publishBody = mockedPost.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
@@ -259,6 +283,7 @@ describe('relay bus client', () => {
           {
             id: 11,
             workspaceId: 'workspace_demo',
+            projectMachineBindingId: 'binding_demo',
             sourceRelayId: 'relay-b',
             targetRelayId: 'relay-a',
             direction: 'client_to_daemon',
@@ -266,6 +291,7 @@ describe('relay bus client', () => {
             issuedAtMs: staleIssuedAt,
             signature: signFrame({
               workspaceId: 'workspace_demo',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -304,6 +330,7 @@ describe('relay bus client', () => {
             {
               id: 21,
               workspaceId: 'workspace_demo',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -311,6 +338,7 @@ describe('relay bus client', () => {
               issuedAtMs: now,
               signature: signFrame({
                 workspaceId: 'workspace_demo',
+                projectMachineBindingId: 'binding_demo',
                 sourceRelayId: 'relay-b',
                 targetRelayId: 'relay-a',
                 direction: 'client_to_daemon',
@@ -330,6 +358,7 @@ describe('relay bus client', () => {
             {
               id: 22,
               workspaceId: 'workspace_demo',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -337,6 +366,7 @@ describe('relay bus client', () => {
               issuedAtMs: now - 1,
               signature: signFrame({
                 workspaceId: 'workspace_demo',
+                projectMachineBindingId: 'binding_demo',
                 sourceRelayId: 'relay-b',
                 targetRelayId: 'relay-a',
                 direction: 'client_to_daemon',
@@ -371,6 +401,7 @@ describe('relay bus client', () => {
     const now = Date.now();
     const signature = signFrame({
       workspaceId: 'workspace_demo',
+      projectMachineBindingId: 'binding_demo',
       sourceRelayId: 'relay-b',
       targetRelayId: 'relay-a',
       direction: 'client_to_daemon',
@@ -388,6 +419,7 @@ describe('relay bus client', () => {
             {
               id: 23,
               workspaceId: 'workspace_demo',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -406,6 +438,7 @@ describe('relay bus client', () => {
             {
               id: 24,
               workspaceId: 'workspace_demo',
+              projectMachineBindingId: 'binding_demo',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -445,6 +478,7 @@ describe('relay bus client', () => {
             {
               id: 31,
               workspaceId: 'workspace_a',
+              projectMachineBindingId: 'binding_a',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -452,6 +486,7 @@ describe('relay bus client', () => {
               issuedAtMs: now,
               signature: signFrame({
                 workspaceId: 'workspace_a',
+                projectMachineBindingId: 'binding_a',
                 sourceRelayId: 'relay-b',
                 targetRelayId: 'relay-a',
                 direction: 'client_to_daemon',
@@ -471,6 +506,7 @@ describe('relay bus client', () => {
             {
               id: 32,
               workspaceId: 'workspace_b',
+              projectMachineBindingId: 'binding_b',
               sourceRelayId: 'relay-b',
               targetRelayId: 'relay-a',
               direction: 'client_to_daemon',
@@ -478,6 +514,7 @@ describe('relay bus client', () => {
               issuedAtMs: now - 1,
               signature: signFrame({
                 workspaceId: 'workspace_b',
+                projectMachineBindingId: 'binding_b',
                 sourceRelayId: 'relay-b',
                 targetRelayId: 'relay-a',
                 direction: 'client_to_daemon',

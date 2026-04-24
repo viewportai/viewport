@@ -104,7 +104,7 @@ jobs:
       - run: npm run check
 
   integration-platform:
-    name: Integration (private platform smoke)
+    name: Integration (private platform operator)
     needs: changes
     if: needs.changes.outputs.integration == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.fork == false)
     runs-on: ubuntu-latest
@@ -124,9 +124,9 @@ jobs:
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Skip private platform smoke
+      - name: Skip private platform operator
         if: steps.platform-token.outputs.available != 'true'
-        run: echo "PLATFORM_REPO_READ_TOKEN is not configured; skipping private cross-repo smoke."
+        run: echo "PLATFORM_REPO_READ_TOKEN is not configured; skipping private cross-repo operator integration."
       - uses: actions/checkout@v4
         if: steps.platform-token.outputs.available == 'true'
         with:
@@ -136,7 +136,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         if: steps.platform-token.outputs.available == 'true'
         with:
-          php-version: '8.4'
+          php-version: "8.4"
           tools: composer:v2
           coverage: none
       - uses: actions/setup-node@v4
@@ -165,5 +165,5 @@ jobs:
       - run: php artisan migrate --force
         if: steps.platform-token.outputs.available == 'true'
         working-directory: platform/apps/api
-      - run: PLATFORM_ROOT="$GITHUB_WORKSPACE/platform" npm run test:smoke
+      - run: PLATFORM_ROOT="$GITHUB_WORKSPACE/platform" npm run test:operator
         if: steps.platform-token.outputs.available == 'true'

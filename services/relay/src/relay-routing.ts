@@ -268,7 +268,7 @@ export function relayStatusPayload(workspaceId: string): RelayStatusPayload {
   return {
     type: 'relay_status',
     code: 'DAEMON_UNAVAILABLE',
-    message: 'No workspace-daemon is connected for this workspace',
+    message: 'No machine runtime is connected for this project target',
     workspaceId,
   };
 }
@@ -304,10 +304,17 @@ async function routeClientMessageWithoutLocalDaemon(
     if (config.clientRedirectEnabled) {
       safeSend(
         ws,
-        JSON.stringify(
-          relayRedirectPayload(workspaceId, preferred.relayWsBaseUrl, projectMachineBindingId),
-        ),
+        JSON.stringify(relayRedirectPayload(workspaceId, preferred.relayWsBaseUrl, projectMachineBindingId)),
       );
+    }
+    if (!projectMachineBindingId) {
+      safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId)));
+      logger.warn('client_message_dropped', {
+        workspaceId,
+        clientId,
+        reason: 'missing_project_machine_binding',
+      });
+      return;
     }
     const published = await backplane.publishClientToDaemon(
       workspaceId,
@@ -329,7 +336,11 @@ async function routeClientMessageWithoutLocalDaemon(
 
   metrics.increment('relay_client_messages_dropped_total');
   safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId)));
-  logger.warn('client_message_dropped', { workspaceId, clientId, reason: 'daemon_unavailable' });
+  logger.warn('client_message_dropped', {
+    workspaceId,
+    clientId,
+    reason: 'daemon_unavailable',
+  });
 }
 
 function pruneStalePairingRequests(state: ReturnType<ConnectionRegistry['getOrCreate']>): void {
@@ -424,7 +435,7 @@ function routeSessionOwnedFrame(
     return true;
   }
 
-  if (owner.sourceRelayId) {
+  if (owner.sourceRelayId && state.projectMachineBindingId) {
     void backplane.publishDaemonToClients(
       workspaceId,
       state.projectMachineBindingId,
@@ -440,9 +451,10 @@ function routeSessionOwnedFrame(
   return false;
 }
 
-function resolveRuntimeLimiters(
-  context: RelayRoutingContext,
-): { byClient: TokenBucketRateLimiter; byWorkspace: TokenBucketRateLimiter } {
+function resolveRuntimeLimiters(context: RelayRoutingContext): {
+  byClient: TokenBucketRateLimiter;
+  byWorkspace: TokenBucketRateLimiter;
+} {
   if (context.runtimeClientLimiter && context.runtimeWorkspaceLimiter) {
     return {
       byClient: context.runtimeClientLimiter,
@@ -467,9 +479,10 @@ function resolveRuntimeLimiters(
   return created;
 }
 
-function resolveControlFrameLimiters(
-  context: RelayRoutingContext,
-): { kex: FixedWindowRateLimiter; pairing: FixedWindowRateLimiter } {
+function resolveControlFrameLimiters(context: RelayRoutingContext): {
+  kex: FixedWindowRateLimiter;
+  pairing: FixedWindowRateLimiter;
+} {
   if (context.kexFrameLimiter && context.pairingFrameLimiter) {
     return {
       kex: context.kexFrameLimiter,
@@ -516,10 +529,8 @@ function routeKeyExchangeResponse(
 ): boolean {
   const { registry, safeSend, metrics, logger } = context;
   const { backplane } = context;
-  const requestId =
-    typeof parsedFrame['requestId'] === 'string' ? parsedFrame['requestId'].trim() : '';
-  const sessionId =
-    typeof parsedFrame['sessionId'] === 'string' ? parsedFrame['sessionId'].trim() : '';
+  const requestId = typeof parsedFrame['requestId'] === 'string' ? parsedFrame['requestId'].trim() : '';
+  const sessionId = typeof parsedFrame['sessionId'] === 'string' ? parsedFrame['sessionId'].trim() : '';
   if (!requestId || !sessionId) {
     metrics.increment('relay_key_exchange_response_dropped_total');
     return true;
@@ -529,7 +540,11 @@ function routeKeyExchangeResponse(
   const owner = state.keyExchangeRequests.get(requestId);
   if (!owner) {
     metrics.increment('relay_key_exchange_response_dropped_total');
-    logger.warn('key_exchange_response_owner_missing', { workspaceId, requestId, sessionId });
+    logger.warn('key_exchange_response_owner_missing', {
+      workspaceId,
+      requestId,
+      sessionId,
+    });
     return true;
   }
   state.keyExchangeRequests.delete(requestId);
@@ -548,7 +563,7 @@ function routeKeyExchangeResponse(
     metrics.increment('relay_key_exchange_response_routed_local_total');
     return true;
   }
-  if (owner.sourceRelayId) {
+  if (owner.sourceRelayId && state.projectMachineBindingId) {
     void backplane.publishDaemonToClients(
       workspaceId,
       state.projectMachineBindingId,
@@ -592,7 +607,7 @@ function routePairingResponse(
     metrics.increment('relay_pairing_response_routed_local_total');
     return true;
   }
-  if (owner.sourceRelayId) {
+  if (owner.sourceRelayId && state.projectMachineBindingId) {
     void backplane.publishDaemonToClients(
       workspaceId,
       state.projectMachineBindingId,
@@ -609,6 +624,15 @@ function routePairingResponse(
 
 export function routeBusFrame(context: RelayRoutingContext, frame: RelayBusFrame): void {
   const { registry, safeSend, metrics, logger } = context;
+  if (!frame.projectMachineBindingId) {
+    metrics.increment('relay_bus_frames_rejected_total');
+    logger.warn('bus_frame_rejected', {
+      workspaceId: frame.workspaceId,
+      direction: frame.direction,
+      reason: 'missing_project_machine_binding',
+    });
+    return;
+  }
   const scopeKey = runtimeScopeKey(frame.workspaceId, frame.projectMachineBindingId);
   const state = registry.getOrCreate(scopeKey, {
     workspaceId: frame.workspaceId,
@@ -700,13 +724,7 @@ export function routeBusFrame(context: RelayRoutingContext, frame: RelayBusFrame
   }
 
   if (parsed && isE2eeEnvelope(parsed) && typeof parsed['sessionId'] === 'string') {
-    const routed = routeSessionOwnedFrame(
-      context,
-      frame.workspaceId,
-      scopeKey,
-      parsed['sessionId'],
-      frame.payload,
-    );
+    const routed = routeSessionOwnedFrame(context, frame.workspaceId, scopeKey, parsed['sessionId'], frame.payload);
     if (routed) {
       metrics.increment('relay_bus_frames_to_clients_total');
     }
@@ -714,13 +732,7 @@ export function routeBusFrame(context: RelayRoutingContext, frame: RelayBusFrame
   }
 
   if (parsed && isKeyUpdateRequiredFrame(parsed) && typeof parsed['sessionId'] === 'string') {
-    const routed = routeSessionOwnedFrame(
-      context,
-      frame.workspaceId,
-      scopeKey,
-      parsed['sessionId'],
-      frame.payload,
-    );
+    const routed = routeSessionOwnedFrame(context, frame.workspaceId, scopeKey, parsed['sessionId'], frame.payload);
     if (routed) {
       metrics.increment('relay_bus_frames_to_clients_total');
     }
@@ -740,16 +752,10 @@ export function registerConnection(
   ws: WebSocket,
   role: RelayRole,
   workspaceId: string,
-  requestedProjectMachineBindingIdOrIp: string | undefined,
-  ipOrClaims?: string | AdmissionClaims,
-  maybeClaims?: AdmissionClaims,
+  requestedProjectMachineBindingId: string | undefined,
+  ip: string,
+  claims?: AdmissionClaims,
 ): void {
-  const scopedCall = typeof ipOrClaims === 'string';
-  const requestedProjectMachineBindingId = scopedCall
-    ? requestedProjectMachineBindingIdOrIp
-    : undefined;
-  const ip = scopedCall ? ipOrClaims : (requestedProjectMachineBindingIdOrIp ?? 'unknown');
-  const claims = scopedCall ? maybeClaims : ipOrClaims;
   const {
     registry,
     wsIp,
@@ -771,8 +777,7 @@ export function registerConnection(
   } = context;
 
   const clientScopeClaim = claims?.scope;
-  const claimedWorkspaceId =
-    typeof claims?.workspaceId === 'string' ? claims.workspaceId.trim() : '';
+  const claimedWorkspaceId = typeof claims?.workspaceId === 'string' ? claims.workspaceId.trim() : '';
   if (claimedWorkspaceId === '') {
     metrics.increment('relay_ws_connections_rejected_total');
     logger.warn('connection_rejected', {
@@ -797,13 +802,8 @@ export function registerConnection(
     return;
   }
   const claimedProjectMachineBindingId =
-    typeof claims?.projectMachineBindingId === 'string'
-      ? claims.projectMachineBindingId.trim()
-      : '';
-  if (
-    requestedProjectMachineBindingId &&
-    claimedProjectMachineBindingId !== requestedProjectMachineBindingId
-  ) {
+    typeof claims?.projectMachineBindingId === 'string' ? claims.projectMachineBindingId.trim() : '';
+  if (requestedProjectMachineBindingId && claimedProjectMachineBindingId !== requestedProjectMachineBindingId) {
     metrics.increment('relay_ws_connections_rejected_total');
     logger.warn('connection_rejected', {
       workspaceId,
@@ -816,10 +816,8 @@ export function registerConnection(
     closeWithReason(ws, 4008, 'project machine claim mismatch');
     return;
   }
-  const projectMachineBindingId =
-    claimedProjectMachineBindingId || requestedProjectMachineBindingId;
+  const projectMachineBindingId = claimedProjectMachineBindingId || requestedProjectMachineBindingId;
   const machineId = typeof claims?.machineId === 'string' ? claims.machineId.trim() : undefined;
-  const scopeKey = runtimeScopeKey(workspaceId, projectMachineBindingId);
   if (role === 'client' && clientScopeClaim !== 'runtime' && clientScopeClaim !== 'pairing') {
     metrics.increment('relay_ws_connections_rejected_total');
     logger.warn('client_connection_rejected', {
@@ -831,8 +829,23 @@ export function registerConnection(
     closeWithReason(ws, 4008, 'invalid scope claim');
     return;
   }
+  if ((role === 'workspace-daemon' || clientScopeClaim === 'runtime') && !projectMachineBindingId) {
+    metrics.increment('relay_ws_connections_rejected_total');
+    logger.warn('connection_rejected', {
+      workspaceId,
+      role,
+      ip,
+      reason: 'missing_project_machine_binding_claim',
+    });
+    closeWithReason(ws, 4008, 'missing project machine claim');
+    return;
+  }
 
-  const state = registry.getOrCreate(scopeKey, { workspaceId, projectMachineBindingId });
+  const scopeKey = runtimeScopeKey(workspaceId, projectMachineBindingId);
+  const state = registry.getOrCreate(scopeKey, {
+    workspaceId,
+    projectMachineBindingId,
+  });
   registry.touch(scopeKey);
   pruneStalePairingRequests(state);
   pruneStaleKeyExchangeRequests(state);
@@ -886,7 +899,12 @@ export function registerConnection(
     state.keyExchangeRequests.clear();
     state.sessionOwners.clear();
     void context.backplane.upsertPresence(workspaceId, true, projectMachineBindingId, machineId);
-    logger.info('daemon_connected', { workspaceId, projectMachineBindingId, machineId, ip });
+    logger.info('daemon_connected', {
+      workspaceId,
+      projectMachineBindingId,
+      machineId,
+      ip,
+    });
     updateGauges();
 
     ws.on('message', (raw) => {
@@ -906,7 +924,10 @@ export function registerConnection(
       }
       if (!isAllowedDaemonFrame(text)) {
         metrics.increment('relay_frames_daemon_rejected_total');
-        logger.warn('daemon_frame_rejected', { workspaceId, reason: 'invalid_daemon_frame' });
+        logger.warn('daemon_frame_rejected', {
+          workspaceId,
+          reason: 'invalid_daemon_frame',
+        });
         return;
       }
       const parsed = parseFramePayload(text);
@@ -963,7 +984,12 @@ export function registerConnection(
       void context.backplane.upsertPresence(workspaceId, false, projectMachineBindingId, machineId);
       adjustIpConnectionCount(ip, -1);
       metrics.increment('relay_ws_connections_closed_total');
-      logger.info('daemon_disconnected', { workspaceId, projectMachineBindingId, machineId, ip });
+      logger.info('daemon_disconnected', {
+        workspaceId,
+        projectMachineBindingId,
+        machineId,
+        ip,
+      });
       updateGauges();
     });
 
@@ -978,8 +1004,7 @@ export function registerConnection(
   }
 
   const clientId = typeof claims?.clientId === 'string' ? claims.clientId : 'client_unknown';
-  const clientScope: 'runtime' | 'pairing' =
-    clientScopeClaim === 'pairing' ? 'pairing' : 'runtime';
+  const clientScope: 'runtime' | 'pairing' = clientScopeClaim === 'pairing' ? 'pairing' : 'runtime';
   const clientExpectedProfile = claims?.e2eeProfile;
   wsIp.set(ws, ip);
   wsWorkspace.set(ws, workspaceId);
@@ -998,23 +1023,26 @@ export function registerConnection(
   const pairingRateLimiter = pairingFrameLimiter ?? resolvedControlLimiters.pairing;
   const resolvedRuntimeLimiters = resolveRuntimeLimiters(context);
   const runtimeLimiterByClient = runtimeClientLimiter ?? resolvedRuntimeLimiters.byClient;
-  const runtimeLimiterByWorkspace =
-    runtimeWorkspaceLimiter ?? resolvedRuntimeLimiters.byWorkspace;
+  const runtimeLimiterByWorkspace = runtimeWorkspaceLimiter ?? resolvedRuntimeLimiters.byWorkspace;
   const kexLimiterKey = `${workspaceId}:${clientId}:${ip}`;
   const pairingLimiterKey = `${workspaceId}:${clientId}:${ip}`;
 
-    ws.on('message', (raw) => {
-      markWsActivity(ws);
-      const text = raw.toString('utf8');
-      const size = Buffer.byteLength(text);
-      if (size > config.maxFrameBytes) {
-        metrics.increment('relay_ws_frame_too_large_total');
-        closeWithReason(ws, 1009, 'frame too large');
-        return;
-      }
+  ws.on('message', (raw) => {
+    markWsActivity(ws);
+    const text = raw.toString('utf8');
+    const size = Buffer.byteLength(text);
+    if (size > config.maxFrameBytes) {
+      metrics.increment('relay_ws_frame_too_large_total');
+      closeWithReason(ws, 1009, 'frame too large');
+      return;
+    }
     if (!isAllowedClientFrame(text)) {
       metrics.increment('relay_frames_client_rejected_total');
-      logger.warn('client_frame_rejected', { workspaceId, clientId, reason: 'invalid_client_frame' });
+      logger.warn('client_frame_rejected', {
+        workspaceId,
+        clientId,
+        reason: 'invalid_client_frame',
+      });
       safeSend(
         ws,
         JSON.stringify({
@@ -1056,11 +1084,7 @@ export function registerConnection(
       return;
     }
     const frameProfile = parsed ? extractFrameProfile(parsed) : null;
-    if (
-      clientExpectedProfile &&
-      frameProfile &&
-      clientExpectedProfile !== frameProfile
-    ) {
+    if (clientExpectedProfile && frameProfile && clientExpectedProfile !== frameProfile) {
       metrics.increment('relay_frames_client_rejected_profile_mismatch_total');
       logger.warn('client_frame_rejected', {
         workspaceId,
@@ -1097,10 +1121,7 @@ export function registerConnection(
       }
     }
     if (isE2eeEnvelope(parsed)) {
-      if (
-        !runtimeLimiterByClient.allow(clientId) ||
-        !runtimeLimiterByWorkspace.allow(workspaceId)
-      ) {
+      if (!runtimeLimiterByClient.allow(clientId) || !runtimeLimiterByWorkspace.allow(workspaceId)) {
         metrics.increment('relay_frames_client_runtime_rate_limited_total');
         closeWithReason(ws, 4008, 'runtime rate limit exceeded');
         return;

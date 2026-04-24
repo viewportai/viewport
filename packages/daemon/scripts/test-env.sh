@@ -53,8 +53,8 @@ if [[ -z "${VIEWPORT_HOME-}" && -z "${VPD_HOME-}" ]]; then
   CREATED_HOME=1
 fi
 
-SMOKE_PORT="$(node -e "const net=require('node:net'); const s=net.createServer(); s.listen(0, '127.0.0.1', () => { const addr=s.address(); if (!addr || typeof addr === 'string') process.exit(1); console.log(addr.port); s.close(); });")"
-LISTEN_TARGET="127.0.0.1:${SMOKE_PORT}"
+TEST_PORT="$(node -e "const net=require('node:net'); const s=net.createServer(); s.listen(0, '127.0.0.1', () => { const addr=s.address(); if (!addr || typeof addr === 'string') process.exit(1); console.log(addr.port); s.close(); });")"
+LISTEN_TARGET="127.0.0.1:${TEST_PORT}"
 
 cleanup_basic() {
   vpd stop --force --json >/dev/null 2>&1 || true

@@ -48,11 +48,11 @@ describe('relay backplane', () => {
     await expect(backplane.resolvePresence('workspace_demo')).resolves.toBeNull();
     await expect(backplane.upsertPresence('workspace_demo', true)).resolves.toBeUndefined();
     await expect(
-      backplane.publishClientToDaemon('workspace_demo', 'payload', 'relay-b'),
+      backplane.publishClientToDaemon('workspace_demo', 'binding_demo', 'machine_demo', 'payload', 'relay-b'),
     ).resolves.toBe(false);
-    await expect(backplane.publishDaemonToClients('workspace_demo', 'payload')).resolves.toBe(
-      false,
-    );
+    await expect(
+      backplane.publishDaemonToClients('workspace_demo', 'binding_demo', 'machine_demo', 'payload'),
+    ).resolves.toBe(false);
     await expect(backplane.pullFrames()).resolves.toEqual([]);
     expect(presenceInstance.resolve).not.toHaveBeenCalled();
     expect(busInstance.publishClientToDaemon).not.toHaveBeenCalled();
@@ -70,6 +70,7 @@ describe('relay backplane', () => {
       {
         id: 7,
         workspaceId: 'workspace_demo',
+        projectMachineBindingId: 'binding_demo',
         sourceRelayId: 'relay-b',
         targetRelayId: 'relay-a',
         direction: 'client_to_daemon',
@@ -97,15 +98,16 @@ describe('relay backplane', () => {
     });
     await expect(backplane.upsertPresence('workspace_demo', true)).resolves.toBeUndefined();
     await expect(
-      backplane.publishClientToDaemon('workspace_demo', 'payload', 'relay-b'),
+      backplane.publishClientToDaemon('workspace_demo', 'binding_demo', 'machine_demo', 'payload', 'relay-b'),
     ).resolves.toBe(true);
-    await expect(backplane.publishDaemonToClients('workspace_demo', 'payload', 'relay-a')).resolves.toBe(
-      true,
-    );
+    await expect(
+      backplane.publishDaemonToClients('workspace_demo', 'binding_demo', 'machine_demo', 'payload', 'relay-a'),
+    ).resolves.toBe(true);
     await expect(backplane.pullFrames()).resolves.toEqual([
       {
         id: 7,
         workspaceId: 'workspace_demo',
+        projectMachineBindingId: 'binding_demo',
         sourceRelayId: 'relay-b',
         targetRelayId: 'relay-a',
         direction: 'client_to_daemon',
@@ -116,11 +118,15 @@ describe('relay backplane', () => {
     expect(presenceInstance.upsert).toHaveBeenCalledWith('workspace_demo', true);
     expect(busInstance.publishClientToDaemon).toHaveBeenCalledWith(
       'workspace_demo',
+      'binding_demo',
+      'machine_demo',
       'payload',
       'relay-b',
     );
     expect(busInstance.publishDaemonToClients).toHaveBeenCalledWith(
       'workspace_demo',
+      'binding_demo',
+      'machine_demo',
       'payload',
       'relay-a',
     );

@@ -9,7 +9,7 @@ import type { RelayMetrics } from './metrics.js';
 
 interface RedisBusEnvelope {
   workspaceId: string;
-  projectMachineBindingId?: string;
+  projectMachineBindingId: string;
   machineId?: string;
   sourceRelayId: string;
   targetRelayId: string | null;
@@ -43,14 +43,13 @@ function isRedisBusEnvelope(value: unknown): value is RedisBusEnvelope {
   const candidate = value as Record<string, unknown>;
   return (
     typeof candidate['workspaceId'] === 'string' &&
-    (typeof candidate['projectMachineBindingId'] === 'undefined' ||
-      typeof candidate['projectMachineBindingId'] === 'string') &&
+    typeof candidate['projectMachineBindingId'] === 'string' &&
+    candidate['projectMachineBindingId'].trim().length > 0 &&
     (typeof candidate['machineId'] === 'undefined' || typeof candidate['machineId'] === 'string') &&
     typeof candidate['sourceRelayId'] === 'string' &&
     typeof candidate['payload'] === 'string' &&
     (candidate['targetRelayId'] === null || typeof candidate['targetRelayId'] === 'string') &&
-    (candidate['direction'] === 'client_to_daemon' ||
-      candidate['direction'] === 'daemon_to_clients') &&
+    (candidate['direction'] === 'client_to_daemon' || candidate['direction'] === 'daemon_to_clients') &&
     (typeof candidate['issuedAtMs'] === 'undefined' || typeof candidate['issuedAtMs'] === 'number') &&
     (typeof candidate['signature'] === 'undefined' || typeof candidate['signature'] === 'string')
   );
@@ -75,9 +74,7 @@ function parseRedisPresenceEntry(raw: string | null): RedisPresenceEntry | null 
       relayWsBaseUrl: entry['relayWsBaseUrl'],
       daemonConnected: entry['daemonConnected'],
       projectMachineBindingId:
-        typeof entry['projectMachineBindingId'] === 'string'
-          ? entry['projectMachineBindingId']
-          : undefined,
+        typeof entry['projectMachineBindingId'] === 'string' ? entry['projectMachineBindingId'] : undefined,
       machineId: typeof entry['machineId'] === 'string' ? entry['machineId'] : undefined,
       updatedAtMs: entry['updatedAtMs'],
     };
@@ -264,33 +261,29 @@ export class RedisRelayBackplane implements RelayBackplane {
 
   async publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingIdOrPayload: string | undefined,
-    machineIdOrTargetRelayId: string | undefined,
-    payload?: string,
+    projectMachineBindingId: string,
+    machineId: string | undefined,
+    payload: string,
     targetRelayId?: string,
   ): Promise<boolean> {
-    const scopedCall = typeof payload === 'string';
     return await this.publish(
       workspaceId,
-      scopedCall ? projectMachineBindingIdOrPayload : undefined,
-      scopedCall ? machineIdOrTargetRelayId : undefined,
+      projectMachineBindingId,
+      machineId,
       'client_to_daemon',
-      scopedCall ? payload : (projectMachineBindingIdOrPayload ?? ''),
-      scopedCall ? (targetRelayId ?? '') : (machineIdOrTargetRelayId ?? ''),
+      payload,
+      targetRelayId ?? '',
     );
   }
 
   async publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingIdOrPayload: string | undefined,
-    machineIdOrTargetRelayId?: string | null,
-    payload?: string,
+    projectMachineBindingId: string,
+    machineId: string | undefined,
+    payload: string,
     targetRelayId?: string | null,
   ): Promise<boolean> {
-    const scopedCall = typeof payload === 'string';
-    const resolvedTargetRelayId = scopedCall
-      ? (targetRelayId ?? null)
-      : (machineIdOrTargetRelayId ?? null);
+    const resolvedTargetRelayId = targetRelayId ?? null;
     if (!resolvedTargetRelayId) {
       this.logger.warn('relay_bus_publish_failed', {
         workspaceId,
@@ -302,10 +295,10 @@ export class RedisRelayBackplane implements RelayBackplane {
     }
     return await this.publish(
       workspaceId,
-      scopedCall ? projectMachineBindingIdOrPayload : undefined,
-      scopedCall && typeof machineIdOrTargetRelayId === 'string' ? machineIdOrTargetRelayId : undefined,
+      projectMachineBindingId,
+      machineId,
       'daemon_to_clients',
-      scopedCall ? payload : (projectMachineBindingIdOrPayload ?? ''),
+      payload,
       resolvedTargetRelayId,
     );
   }
@@ -318,6 +311,17 @@ export class RedisRelayBackplane implements RelayBackplane {
     payload: string,
     targetRelayId: string,
   ): Promise<boolean> {
+    if (!projectMachineBindingId || projectMachineBindingId.trim().length === 0) {
+      this.logger.warn('relay_bus_publish_failed', {
+        workspaceId,
+        direction,
+        targetRelayId,
+        reason: 'missing_project_machine_binding',
+      });
+      this.metrics.increment('relay_bus_publish_failed_total');
+      return false;
+    }
+
     try {
       const client = await this.ensureCommandClient();
       const signedFields = {
@@ -398,10 +402,7 @@ export class RedisRelayBackplane implements RelayBackplane {
         ) {
           continue;
         }
-        if (
-          parsed.direction !== 'client_to_daemon' &&
-          parsed.direction !== 'daemon_to_clients'
-        ) {
+        if (parsed.direction !== 'client_to_daemon' && parsed.direction !== 'daemon_to_clients') {
           continue;
         }
         if (this.busHmacKey) {
@@ -419,15 +420,12 @@ export class RedisRelayBackplane implements RelayBackplane {
             this.metrics.increment('relay_bus_pull_stale_signature_total');
             continue;
           }
-          const freshnessKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}`;
+          const freshnessKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.projectMachineBindingId}`;
           const previousIssuedAt = this.lastAcceptedIssuedAtMs.get(freshnessKey);
           const previousSignature = this.lastAcceptedSignature.get(freshnessKey);
-          const seenFrameKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.signature}`;
+          const seenFrameKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.projectMachineBindingId}\n${parsed.signature}`;
           const seenFrameIssuedAt = this.seenSignedFrames.get(seenFrameKey);
-          if (
-            typeof seenFrameIssuedAt === 'number' &&
-            parsed.issuedAtMs <= seenFrameIssuedAt
-          ) {
+          if (typeof seenFrameIssuedAt === 'number' && parsed.issuedAtMs <= seenFrameIssuedAt) {
             this.metrics.increment('relay_bus_pull_replayed_signature_total');
             continue;
           }

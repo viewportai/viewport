@@ -17,10 +17,7 @@ export interface RelayBackplane {
   readonly mode: RelayBackplaneMode;
   readonly crossRelayEnabled: boolean;
   readonly pollIntervalMs: number | null;
-  resolvePresence(
-    workspaceId: string,
-    projectMachineBindingId?: string,
-  ): Promise<RelayPresenceResolution | null>;
+  resolvePresence(workspaceId: string, projectMachineBindingId?: string): Promise<RelayPresenceResolution | null>;
   upsertPresence(
     workspaceId: string,
     daemonConnected: boolean,
@@ -29,16 +26,16 @@ export interface RelayBackplane {
   ): Promise<void>;
   publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingIdOrPayload: string | undefined,
-    machineIdOrTargetRelayId: string | undefined,
-    payload?: string,
+    projectMachineBindingId: string,
+    machineId: string | undefined,
+    payload: string,
     targetRelayId?: string,
   ): Promise<boolean>;
   publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingIdOrPayload: string | undefined,
-    machineIdOrTargetRelayId?: string | null,
-    payload?: string,
+    projectMachineBindingId: string,
+    machineId: string | undefined,
+    payload: string,
     targetRelayId?: string | null,
   ): Promise<boolean>;
   pullFrames(): Promise<RelayBusFrame[]>;
@@ -110,46 +107,34 @@ class ServerRelayBackplane implements RelayBackplane {
 
   async publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingIdOrPayload: string | undefined,
-    machineIdOrTargetRelayId: string | undefined,
-    payload?: string,
+    projectMachineBindingId: string,
+    machineId: string | undefined,
+    payload: string,
     targetRelayId?: string,
   ): Promise<boolean> {
-    return typeof payload === 'string'
-      ? await this.bus.publishClientToDaemon(
-          workspaceId,
-          projectMachineBindingIdOrPayload,
-          machineIdOrTargetRelayId,
-          payload,
-          targetRelayId,
-        )
-      : await this.bus.publishClientToDaemon(
-          workspaceId,
-          projectMachineBindingIdOrPayload,
-          machineIdOrTargetRelayId,
-        );
+    return await this.bus.publishClientToDaemon(
+      workspaceId,
+      projectMachineBindingId,
+      machineId,
+      payload,
+      targetRelayId,
+    );
   }
 
   async publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingIdOrPayload: string | undefined,
-    machineIdOrTargetRelayId?: string | null,
-    payload?: string,
+    projectMachineBindingId: string,
+    machineId: string | undefined,
+    payload: string,
     targetRelayId?: string | null,
   ): Promise<boolean> {
-    return typeof payload === 'string'
-      ? await this.bus.publishDaemonToClients(
-          workspaceId,
-          projectMachineBindingIdOrPayload,
-          machineIdOrTargetRelayId,
-          payload,
-          targetRelayId,
-        )
-      : await this.bus.publishDaemonToClients(
-          workspaceId,
-          projectMachineBindingIdOrPayload,
-          machineIdOrTargetRelayId,
-        );
+    return await this.bus.publishDaemonToClients(
+      workspaceId,
+      projectMachineBindingId,
+      machineId,
+      payload,
+      targetRelayId,
+    );
   }
 
   async pullFrames(): Promise<RelayBusFrame[]> {
@@ -157,11 +142,7 @@ class ServerRelayBackplane implements RelayBackplane {
   }
 }
 
-export function createRelayBackplane(
-  config: RelayConfig,
-  logger: RelayLogger,
-  metrics: RelayMetrics,
-): RelayBackplane {
+export function createRelayBackplane(config: RelayConfig, logger: RelayLogger, metrics: RelayMetrics): RelayBackplane {
   switch (config.backplaneMode) {
     case 'single':
       return new SingleRelayBackplane();
