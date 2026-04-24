@@ -93,6 +93,7 @@ export class WorkflowRunner {
     addEvent(run, 'run-started', 'Workflow run started');
     run.preflight = await preflightWorkflow(parsed.definition, {
       availableAgents: () => this.daemon.getAvailableAgents(),
+      directoryPath: run.directoryPath,
     });
 
     if (!run.preflight.ok) {

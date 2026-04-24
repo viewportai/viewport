@@ -6,6 +6,7 @@
  * changes such as reconnect or relay key exchange.
  */
 
+import { execFileSync } from 'node:child_process';
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRegistry } from '../core/agent-registry.js';
 import { logger } from '../core/logger.js';
@@ -43,6 +44,7 @@ export interface SnapshotPayload {
     id: string;
     path: string;
     name: string;
+    isGitRepository: boolean;
   }>;
   activeSessions: Array<{
     id: string;
@@ -69,6 +71,7 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
     id: d.id,
     path: d.path,
     name: d.path.split('/').pop() ?? d.path,
+    isGitRepository: isGitWorkTree(d.path),
   }));
 
   const activeSessions = daemon.getActiveSessions().map((id) => {
@@ -148,6 +151,18 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
     agents,
     models,
   };
+}
+
+function isGitWorkTree(directoryPath: string): boolean {
+  try {
+    execFileSync('git', ['-C', directoryPath, 'rev-parse', '--is-inside-work-tree'], {
+      stdio: 'ignore',
+      timeout: 2_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function logSnapshotDelivery(kind: 'hello' | 'sync-snapshot', snapshot: SnapshotPayload): void {

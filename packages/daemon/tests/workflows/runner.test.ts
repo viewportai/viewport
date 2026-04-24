@@ -197,6 +197,39 @@ nodes:
     expect(failed?.error).toMatch(/code 7/);
   });
 
+  it('blocks git workflows before shell execution when the target directory is not a git worktree', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-proof
+requires:
+  tools:
+    - git
+nodes:
+  inspect:
+    type: shell
+    command: git status --short
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.nodes.inspect?.status).toBe('queued');
+    expect(blocked?.preflight.issues[0]?.message).toMatch(/not a git repository/);
+  });
+
   it('rejects required inputs before queuing a run', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

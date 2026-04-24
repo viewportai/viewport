@@ -11,6 +11,7 @@ const SAFE_TOOL_NAME = /^[A-Za-z0-9._+/-]+$/;
 
 export interface WorkflowCapabilityProvider {
   availableAgents: () => string[];
+  directoryPath?: string;
 }
 
 export async function preflightWorkflow(
@@ -57,6 +58,16 @@ export async function preflightWorkflow(
     }
   }
 
+  if (definition.requires?.tools?.includes('git') && capabilities.directoryPath) {
+    if (!(await isGitWorkTree(capabilities.directoryPath))) {
+      issues.push({
+        kind: 'tool',
+        name: 'git',
+        message: `Selected directory is not a git repository: ${capabilities.directoryPath}`,
+      });
+    }
+  }
+
   return { ok: issues.length === 0, issues };
 }
 
@@ -71,4 +82,15 @@ async function hasShellTool(tool: string): Promise<boolean> {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+async function isGitWorkTree(directoryPath: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['-C', directoryPath, 'rev-parse', '--is-inside-work-tree'], {
+      timeout: 2_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
