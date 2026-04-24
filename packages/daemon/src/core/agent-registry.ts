@@ -52,6 +52,8 @@ export interface AgentDetection {
 
 /** Model info from agent SDKs (e.g. Claude's supportedModels()). */
 export interface ModelInfo {
+  /** Agent that can execute this model. */
+  agentId?: string;
   /** Model identifier to use in API calls. */
   value: string;
   /** Human-readable display name. */
@@ -187,7 +189,9 @@ export class AgentRegistry {
       if (def.fetchModels) {
         try {
           const models = await def.fetchModels();
-          allModels.push(...models);
+          allModels.push(
+            ...models.map((model) => ({ ...model, agentId: model.agentId ?? def.id })),
+          );
         } catch {
           // Agent's model fetch failed — non-fatal
         }
