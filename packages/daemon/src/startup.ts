@@ -38,6 +38,7 @@ import {
   startSupervisorDetached,
   loadWorkerConfigFromEnv,
 } from './cli/supervisor.js';
+import { resolveLocalTlsState } from './cli/local-tls.js';
 import {
   WORKER_EXIT_RESTART,
   WORKER_EXIT_SHUTDOWN,
@@ -51,7 +52,7 @@ import { maybeOfferAgentPrerequisites } from './startup-prereqs.js';
 import { setupSessionPersistence } from './startup-session-persistence.js';
 import { validateRelayRuntimeSecurity } from './startup-relay-security.js';
 import { DaemonRelayBridge } from './relay/daemon-relay-bridge.js';
-import { configDir, configFilePath, projectConfigFilePath } from './core/config.js';
+import { configDir } from './core/config.js';
 
 export { decodeAutoRegisterEntry };
 
@@ -113,94 +114,25 @@ export function missingRelayRuntimeConfig(config: RuntimeLaunchConfig): string[]
   return missing;
 }
 
-function loadTlsCandidatesFromConfig(): string[] {
-  const candidates: string[] = [];
-  const files = [projectConfigFilePath(), configFilePath()].filter(
-    (value): value is string => typeof value === 'string' && value.length > 0,
-  );
-
-  for (const file of files) {
-    if (!existsSync(file)) continue;
-    try {
-      const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
-        daemon?: { server?: { url?: string }; relay?: { endpoint?: string } };
-      };
-      const urls = [parsed.daemon?.server?.url, parsed.daemon?.relay?.endpoint];
-      for (const value of urls) {
-        if (typeof value !== 'string' || value.length === 0) continue;
-        try {
-          const host = new URL(value).hostname;
-          if (!host) continue;
-          candidates.push(host);
-          if (!host.startsWith('app.')) {
-            candidates.push(`app.${host}`);
-          }
-        } catch {
-          // Ignore malformed config URLs.
-        }
-      }
-    } catch {
-      // Ignore unreadable config files here; the config layer will surface schema errors separately.
-    }
-  }
-
-  return [...new Set(candidates)];
-}
-
 function resolveTlsOptions(): { cert: Buffer; key: Buffer; tlsHost: string } | null {
-  const tlsEnv = (process.env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
-  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') return null;
+  const tls = resolveLocalTlsState();
+  if (!tls.enabled) return null;
 
-  const explicitTlsHost = process.env['VIEWPORT_TLS_HOST'];
-  const explicitCertDir = process.env['VIEWPORT_TLS_CERT_DIR'];
-  const globalCertDir = path.join(configDir(), 'certs');
-  const projectConfigPath = projectConfigFilePath();
-  const projectCertDir = projectConfigPath
-    ? path.join(path.dirname(projectConfigPath), 'certs')
-    : null;
-
-  const candidateHosts = explicitTlsHost
-    ? [explicitTlsHost]
-    : ['localhost', ...loadTlsCandidatesFromConfig()];
-
-  const candidateCertDirs = explicitCertDir
-    ? [explicitCertDir]
-    : [projectCertDir, globalCertDir].filter((value): value is string => !!value);
-
-  for (const tlsHost of candidateHosts) {
-    for (const certDir of candidateCertDirs) {
-      const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
-      const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
-      if (!existsSync(certPath) || !existsSync(keyPath)) {
-        continue;
-      }
-
-      return {
-        cert: readFileSync(certPath),
-        key: readFileSync(keyPath),
-        tlsHost,
-      };
-    }
-  }
-
-  if (tlsEnv === '1' || tlsEnv === 'true' || tlsEnv === 'on') {
-    const tlsHost = explicitTlsHost ?? 'localhost';
-    const certDir = explicitCertDir ?? globalCertDir;
-    const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
-    const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
-    if (!existsSync(certPath) || !existsSync(keyPath)) {
+  if (!tls.certPath || !tls.keyPath || !existsSync(tls.certPath) || !existsSync(tls.keyPath)) {
+    const tlsEnv = (process.env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
+    if (tlsEnv === '1' || tlsEnv === 'true' || tlsEnv === 'on') {
       throw new Error(
-        `VIEWPORT_TLS enabled but certs not found (cert=${certPath}, key=${keyPath})`,
+        `VIEWPORT_TLS enabled but certs not found (cert=${tls.certPath}, key=${tls.keyPath})`,
       );
     }
-    return {
-      cert: readFileSync(certPath),
-      key: readFileSync(keyPath),
-      tlsHost,
-    };
+    return null;
   }
 
-  return null;
+  return {
+    cert: readFileSync(tls.certPath),
+    key: readFileSync(tls.keyPath),
+    tlsHost: tls.host,
+  };
 }
 
 function parsePositiveIntEnv(name: string): number | undefined {

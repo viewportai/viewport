@@ -2,7 +2,6 @@
  * HTTP client helpers for talking to a running daemon instance.
  */
 
-import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -11,6 +10,7 @@ import { getFlag, getDaemonPort } from './args.js';
 import { readDaemonRuntimeState } from './daemon-lifecycle.js';
 import { parseListenTarget } from './listen-target.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
+import { resolveLocalTlsState } from './local-tls.js';
 
 export interface DaemonDirectoryInfo {
   id: string;
@@ -50,29 +50,6 @@ function resolveClientHost(host: string): string {
   return host;
 }
 
-/**
- * Detect whether the daemon is serving with TLS by checking the configured
- * local cert directory, mirroring the auto-detection logic in startup.ts.
- */
-function getDaemonTlsInfo(): { enabled: boolean; host: string } {
-  const tlsEnv = (process.env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
-  const tlsHost = process.env['VIEWPORT_TLS_HOST'] ?? 'localhost';
-
-  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
-    return { enabled: false, host: '127.0.0.1' };
-  }
-
-  const certDir = process.env['VIEWPORT_TLS_CERT_DIR'] ?? path.join(configDir(), 'certs');
-  const certPath = process.env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
-  const keyPath = process.env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
-
-  if (tlsEnv === 'auto') {
-    const enabled = existsSync(certPath) && existsSync(keyPath);
-    return { enabled, host: enabled ? tlsHost : '127.0.0.1' };
-  }
-  return { enabled: true, host: tlsHost };
-}
-
 async function readAuthToken(): Promise<string | null> {
   if (cachedAuthToken !== undefined) return cachedAuthToken;
   try {
@@ -97,7 +74,8 @@ function resolveTlsPreferenceFromStateOrEnv(
       host: state.tlsHost?.trim() || process.env['VIEWPORT_TLS_HOST'] || 'localhost',
     };
   }
-  return getDaemonTlsInfo();
+  const tls = resolveLocalTlsState();
+  return { enabled: tls.enabled, host: tls.host };
 }
 
 function resolveEndpointFromFlags(): DaemonEndpoint {

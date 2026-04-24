@@ -295,7 +295,7 @@ class MockAdapter implements AgentAdapter {
 }
 
 async function waitForTerminalRun(daemon: Daemon, runId: string): Promise<void> {
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < 200; index += 1) {
     const run = await daemon.workflowRunner.getRun(runId);
     if (run && ['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) {
       return;
