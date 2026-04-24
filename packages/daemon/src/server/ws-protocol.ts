@@ -139,6 +139,28 @@ export const SyncRequestSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const WorkflowRunSchema = z.object({
+  type: z.literal('workflow-run'),
+  workflowPath: z.string().min(1).max(4096),
+  directoryId: z.string().min(1).max(512),
+  inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  projectId: z.string().min(1).max(256).optional(),
+  projectMachineBindingId: z.string().min(1).max(256).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const WorkflowListRunsSchema = z.object({
+  type: z.literal('workflow-list-runs'),
+  limit: z.number().int().positive().max(200).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const WorkflowShowRunSchema = z.object({
+  type: z.literal('workflow-show-run'),
+  runId: z.string().min(1).max(256),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Supervision (hook-based remote permission control)
 // ---------------------------------------------------------------------------
@@ -179,6 +201,9 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
   SyncRequestSchema,
+  WorkflowRunSchema,
+  WorkflowListRunsSchema,
+  WorkflowShowRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
 ]);

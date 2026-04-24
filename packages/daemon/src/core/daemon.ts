@@ -31,6 +31,7 @@ import { SessionManager } from './session-manager.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { logger } from './logger.js';
 import { dedupeDiscoveredSessions } from './discovered-sessions.js';
+import { WorkflowRunner } from '../workflows/runner.js';
 
 const log = logger.child({ module: 'daemon' });
 
@@ -41,6 +42,7 @@ const log = logger.child({ module: 'daemon' });
 export class Daemon extends TypedEventEmitter<DaemonEvents> {
   readonly configManager: ConfigManager;
   readonly directoryManager: DirectoryManager;
+  readonly workflowRunner: WorkflowRunner;
 
   private adapters = new Map<string, AgentAdapter>();
   private discoveries = new Map<string, SessionDiscovery>();
@@ -68,6 +70,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
       this.adapters,
       () => this.trackerFactory,
     );
+    this.workflowRunner = new WorkflowRunner(this);
   }
 
   /** Register an agent adapter (e.g. ClaudeAdapter). */

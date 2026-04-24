@@ -288,6 +288,37 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       sendAck(client, msg.requestId, 'ok');
     },
 
+    'workflow-run': async (client, msg) => {
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath: msg.workflowPath,
+        directoryId: msg.directoryId,
+        inputs: msg.inputs,
+        projectId: msg.projectId,
+        projectMachineBindingId: msg.projectMachineBindingId,
+        initiation: 'browser',
+      });
+      client.send(JSON.stringify({ type: 'workflow-run-started', run }));
+      sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id });
+    },
+
+    'workflow-list-runs': async (client, msg) => {
+      const runs = await daemon.workflowRunner.listRuns(msg.limit);
+      client.send(JSON.stringify({ type: 'workflow-runs', runs }));
+      sendAck(client, msg.requestId, 'ok');
+    },
+
+    'workflow-show-run': async (client, msg) => {
+      const run = await daemon.workflowRunner.getRun(msg.runId);
+      if (!run) {
+        sendAck(client, msg.requestId, 'error', `Workflow run not found: ${msg.runId}`, {
+          errorCode: ErrorCodes.INVALID_INPUT,
+        });
+        return;
+      }
+      client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
+      sendAck(client, msg.requestId, 'ok');
+    },
+
     supervise: async (client, msg) => {
       if (!supervision) {
         sendAck(client, msg.requestId, 'error', 'Hooks not enabled', {

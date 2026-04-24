@@ -12,6 +12,9 @@ import {
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
+  WorkflowRunSchema,
+  WorkflowListRunsSchema,
+  WorkflowShowRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
   IncomingMessageSchema,
@@ -225,6 +228,37 @@ describe('BranchRetrySchema', () => {
       type: 'branch-retry',
       sessionId: 's1',
       fromSha: 'abc1234',
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('Workflow schemas', () => {
+  it('accepts a workflow run command', () => {
+    const result = WorkflowRunSchema.safeParse({
+      type: 'workflow-run',
+      workflowPath: '.viewport/workflows/pr-review.yaml',
+      directoryId: 'dir-1',
+      inputs: { pr: '123' },
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow list command', () => {
+    const result = WorkflowListRunsSchema.safeParse({
+      type: 'workflow-list-runs',
+      limit: 25,
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow show command', () => {
+    const result = WorkflowShowRunSchema.safeParse({
+      type: 'workflow-show-run',
+      runId: 'run-1',
+      requestId: 'req-1',
     });
     expect(result.success).toBe(true);
   });

@@ -122,6 +122,36 @@
       "surfacedInCli": false
     },
     {
+      "type": "workflow-run",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#WorkflowRunSchema",
+      "handler": "src/server/ws-command-handlers.ts#workflow-run",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
+      "type": "workflow-list-runs",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#WorkflowListRunsSchema",
+      "handler": "src/server/ws-command-handlers.ts#workflow-list-runs",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
+      "type": "workflow-show-run",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#WorkflowShowRunSchema",
+      "handler": "src/server/ws-command-handlers.ts#workflow-show-run",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
       "type": "watch-discovered-session",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#WatchDiscoveredSessionSchema",

@@ -50,6 +50,21 @@ const DirectoryRegisterBodySchema = z
     config: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
+const WorkflowValidateBodySchema = z
+  .object({
+    workflowPath: z.string().trim().min(1),
+  })
+  .strict();
+const WorkflowRunBodySchema = z
+  .object({
+    workflowPath: z.string().trim().min(1),
+    directoryId: z.string().trim().min(1),
+    inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    projectId: z.string().trim().min(1).optional(),
+    projectMachineBindingId: z.string().trim().min(1).optional(),
+    initiation: z.enum(['cli', 'browser', 'agent_skill']).optional(),
+  })
+  .strict();
 const PairRedeemBodySchema = z
   .object({
     offerId: z.string().trim().min(1),
@@ -557,6 +572,84 @@ export function registerHttpRoutes(
     await daemon.directoryManager.unregister(request.params.id);
     daemon.emit('directory:unregistered', { directoryId: request.params.id });
     return reply.status(204).send();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Workflows
+  // ---------------------------------------------------------------------------
+
+  app.post<{ Body: { workflowPath?: string } }>(
+    '/api/workflows/validate',
+    async (request, reply) => {
+      const parsedBody = WorkflowValidateBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+      }
+
+      try {
+        const workflow = await daemon.workflowRunner.validateFile(parsedBody.data.workflowPath);
+        return {
+          workflow: {
+            name: workflow.definition.name,
+            title: workflow.definition.title,
+            description: workflow.definition.description,
+            digest: workflow.digest,
+            sourcePath: workflow.sourcePath,
+            nodeCount: Object.keys(workflow.definition.nodes).length,
+          },
+        };
+      } catch (error) {
+        return reply.status(400).send({
+          error: error instanceof Error ? error.message : 'Workflow validation failed',
+        });
+      }
+    },
+  );
+
+  app.get<{ Querystring: { limit?: string } }>('/api/workflows/runs', async (request) => {
+    const limit = Number.parseInt(request.query.limit ?? '50', 10);
+    const runs = await daemon.workflowRunner.listRuns(Number.isFinite(limit) ? limit : 50);
+    return { runs };
+  });
+
+  app.post<{
+    Body: {
+      workflowPath?: string;
+      directoryId?: string;
+      inputs?: Record<string, string | number | boolean>;
+      projectId?: string;
+      projectMachineBindingId?: string;
+      initiation?: 'cli' | 'browser' | 'agent_skill';
+    };
+  }>('/api/workflows/runs', async (request, reply) => {
+    const parsedBody = WorkflowRunBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+    }
+
+    try {
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath: parsedBody.data.workflowPath,
+        directoryId: parsedBody.data.directoryId,
+        inputs: parsedBody.data.inputs,
+        projectId: parsedBody.data.projectId,
+        projectMachineBindingId: parsedBody.data.projectMachineBindingId,
+        initiation: parsedBody.data.initiation ?? 'browser',
+      });
+      return reply.status(201).send({ run });
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to start workflow run',
+      });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/api/workflows/runs/:id', async (request, reply) => {
+    const run = await daemon.workflowRunner.getRun(request.params.id);
+    if (!run) {
+      return reply.status(404).send({ error: 'Workflow run not found' });
+    }
+    return { run };
   });
 
   // ---------------------------------------------------------------------------

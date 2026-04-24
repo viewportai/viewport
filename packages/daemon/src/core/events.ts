@@ -18,6 +18,7 @@ import type {
 } from './types.js';
 import type { RichSessionMessage } from '../discovery/jsonl-reader.js';
 import type { HookEventKind } from '../hooks/types.js';
+import type { WorkflowRunRecord } from '../workflows/types.js';
 
 // ---------------------------------------------------------------------------
 // Event definitions
@@ -51,6 +52,9 @@ export interface DaemonEvents {
   // Directory
   'directory:registered': { directoryId: string; path: string };
   'directory:unregistered': { directoryId: string };
+
+  // Workflows
+  'workflow:run-updated': { run: WorkflowRunRecord };
 
   // Discovery
   'discovery:updated': Record<string, never>;

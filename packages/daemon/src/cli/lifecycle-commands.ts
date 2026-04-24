@@ -1252,6 +1252,11 @@ export function showHelp(): void {
     '  worktree squash <sid> [--target <branch>] [--message <text>] [--json|--format <fmt>]',
   );
   console.log('                               Worktree and git-step operator controls');
+  console.log('  workflow validate <file> [--json]');
+  console.log('  workflow run <file> [--directory <path>] [--input k=v] [--json]');
+  console.log('  workflow runs [--json]');
+  console.log('  workflow show <run-id> [--json]');
+  console.log('                               Validate, run, and inspect local workflows');
   console.log('  pair [<code>] [--server <url>] [--app-url <url>] [--json]');
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');

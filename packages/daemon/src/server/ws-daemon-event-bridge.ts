@@ -296,6 +296,13 @@ export function registerWsDaemonEventBridge(
     }
   });
 
+  daemon.on('workflow:run-updated', ({ run }) => {
+    const msg = JSON.stringify({ type: 'workflow-run-updated', run });
+    for (const client of clients) {
+      client.send(msg);
+    }
+  });
+
   daemon.on('discovery:session-tail', ({ sessionId, sessionIds, directoryId, newBlocks }) => {
     const aliases = Array.from(new Set([sessionId, ...(sessionIds ?? [])]));
     for (const client of clients) {

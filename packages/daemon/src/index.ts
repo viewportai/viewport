@@ -39,6 +39,7 @@ import {
   permit,
   agent,
   worktree,
+  workflow,
   service,
   setup,
   remote,
@@ -82,6 +83,7 @@ const commands: Record<string, () => Promise<void>> = {
   permit,
   agent,
   worktree,
+  workflow,
   service,
   setup,
   remote,
@@ -137,6 +139,8 @@ if (command === 'hook') {
       handler = agent;
     } else if (command === 'worktree') {
       handler = worktree;
+    } else if (command === 'workflow') {
+      handler = workflow;
     } else if (command === 'remote') {
       handler = remote;
     }
