@@ -214,25 +214,26 @@ export class PtyAdapter implements AgentAdapter {
     const args = [...(this.options.defaultArgs ?? [])];
 
     // Add initial prompt based on mode
-    if (options?.initialPrompt) {
+    const initialPrompt = options?.deferInitialPrompt ? undefined : options?.initialPrompt;
+    if (initialPrompt) {
       const mode = this.options.promptMode ?? 'positional';
       if (mode === 'positional') {
-        args.push(options.initialPrompt);
+        args.push(initialPrompt);
       } else if (mode === 'stdin') {
         // Will be sent after process starts
       } else {
         // Flag mode: --flag "prompt"
-        args.push(mode, options.initialPrompt);
+        args.push(mode, initialPrompt);
       }
     }
 
     session.start(this.command, args, cwd, this.options.env);
 
     // For stdin mode, send prompt after process starts
-    if (this.options.promptMode === 'stdin' && options?.initialPrompt) {
+    if (this.options.promptMode === 'stdin' && initialPrompt) {
       // Small delay for the process to be ready
       setTimeout(() => {
-        session.sendPrompt(options.initialPrompt!).catch(() => {
+        session.sendPrompt(initialPrompt).catch(() => {
           // Process may have exited quickly
         });
       }, 100);
@@ -250,20 +251,21 @@ export class PtyAdapter implements AgentAdapter {
     const resumed = new PtySession(crypto.randomUUID(), this.options.maxOutputBufferBytes);
     const args = [...(this.options.defaultArgs ?? []), ...this.options.resumeArgs, sessionId];
 
-    if (options?.initialPrompt) {
+    const initialPrompt = options?.deferInitialPrompt ? undefined : options?.initialPrompt;
+    if (initialPrompt) {
       const mode = this.options.promptMode ?? 'positional';
       if (mode === 'positional') {
-        args.push(options.initialPrompt);
+        args.push(initialPrompt);
       } else if (mode !== 'stdin') {
-        args.push(mode, options.initialPrompt);
+        args.push(mode, initialPrompt);
       }
     }
 
     resumed.start(this.command, args, cwd, this.options.env);
 
-    if (this.options.promptMode === 'stdin' && options?.initialPrompt) {
+    if (this.options.promptMode === 'stdin' && initialPrompt) {
       setTimeout(() => {
-        resumed.sendPrompt(options.initialPrompt!).catch(() => {
+        resumed.sendPrompt(initialPrompt).catch(() => {
           // Process may have exited quickly
         });
       }, 100);

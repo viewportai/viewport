@@ -178,6 +178,47 @@ nodes:
     expect(completed?.events.map((event) => event.type)).toContain('session-idle');
   });
 
+  it('stores streamed prompt output once when the adapter emits chunks and a final message', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-stream-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current directory.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    const messageId = crypto.randomUUID();
+    adapter.lastSession?.emitAgentMessageChunk(messageId, 'Hello ');
+    adapter.lastSession?.emitAgentMessageChunk(messageId, 'world');
+    adapter.lastSession?.emitAgentMessage('Hello world', messageId);
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.review?.output).toBe('Hello world');
+  });
+
   it('passes shell output into downstream templates', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -352,10 +393,19 @@ class MockSession extends EventEmitter implements Session {
     this.emit('state-change', 'idle');
   }
 
-  emitAgentMessage(text: string): void {
+  emitAgentMessage(text: string, messageId = crypto.randomUUID()): void {
     this.emit('message', {
       type: 'agent_message',
-      messageId: crypto.randomUUID(),
+      messageId,
+      text,
+      timestamp: Date.now(),
+    });
+  }
+
+  emitAgentMessageChunk(messageId: string, text: string): void {
+    this.emit('message', {
+      type: 'agent_message_chunk',
+      messageId,
       text,
       timestamp: Date.now(),
     });

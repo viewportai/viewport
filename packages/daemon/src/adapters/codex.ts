@@ -236,7 +236,7 @@ export class CodexAdapter implements AgentAdapter {
       cwd,
       model: options?.model,
     });
-    await session.start(options?.initialPrompt ?? '');
+    await session.start(options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? ''));
     return session;
   }
 
@@ -250,7 +250,7 @@ export class CodexAdapter implements AgentAdapter {
       cwd,
       model: options?.model,
     });
-    await session.start(options?.initialPrompt ?? 'Continue.');
+    await session.start(options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? 'Continue.'));
     return session;
   }
 

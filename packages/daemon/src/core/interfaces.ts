@@ -34,6 +34,11 @@ export interface AgentAdapter {
 export interface SessionOptions {
   /** Initial prompt to send to the agent. */
   initialPrompt?: string;
+  /**
+   * Internal daemon option: create the session without dispatching the initial
+   * prompt so SessionManager can wire lifecycle/message listeners first.
+   */
+  deferInitialPrompt?: boolean;
   /** Model override (e.g. 'claude-sonnet-4-6'). */
   model?: string;
   /** Permission handler — called before each tool execution. */

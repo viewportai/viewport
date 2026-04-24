@@ -749,7 +749,11 @@ export class ClaudeAdapter implements AgentAdapter {
     log.info({ sessionId, cwd }, 'ClaudeAdapter.startSession');
     const session = new ClaudeSession(sessionId, this.queryFn, options?.canUseTool);
 
-    await session.start(options?.initialPrompt ?? '', cwd, options);
+    await session.start(
+      options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? ''),
+      cwd,
+      options,
+    );
     return session;
   }
 

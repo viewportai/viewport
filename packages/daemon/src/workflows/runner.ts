@@ -17,6 +17,7 @@ import {
   readReplaySessionState,
   waitForPromptSessionComplete,
 } from './session-completion.js';
+import { createSessionOutputCollector } from './session-output.js';
 import { WorkflowRunStore } from './store.js';
 import type {
   ParsedWorkflow,
@@ -168,14 +169,10 @@ export class WorkflowRunner {
         addEvent(run, 'node-output', `Node ${nodeId} produced shell output`, { output }, nodeId);
       } else if (node.type === 'prompt') {
         const prompt = renderTemplate(node.prompt, run);
-        const outputChunks: string[] = [];
+        const output = createSessionOutputCollector();
         const messageHandler = (event: { sessionId: string; message: SessionMessage }): void => {
           if (event.sessionId !== state.sessionId) return;
-          if (event.message.type === 'agent_message') {
-            outputChunks.push(event.message.text);
-          } else if (event.message.type === 'agent_message_chunk') {
-            outputChunks.push(event.message.text);
-          }
+          output.push(event.message);
         };
         this.daemon.on('session:message', messageHandler);
         const sessionId = await this.daemon.launchSession(run.directoryId, prompt, {
@@ -196,7 +193,7 @@ export class WorkflowRunner {
         await this.saveAndEmit(run);
         try {
           const reason = await waitForPromptSessionComplete(this.daemon, sessionId);
-          state.output = outputChunks.join('').trim() || state.output;
+          state.output = output.text() || state.output;
           const eventType = reason === 'idle' ? 'session-idle' : 'session-ended';
           addEvent(
             run,

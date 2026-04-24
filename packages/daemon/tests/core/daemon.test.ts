@@ -86,6 +86,48 @@ class MockAdapter implements AgentAdapter {
   }
 }
 
+class EagerPromptSession extends EventEmitter implements Session {
+  readonly id = crypto.randomUUID();
+  state: SessionState = 'idle';
+
+  async sendPrompt(text: string): Promise<void> {
+    this.state = 'running';
+    this.emit('state-change', 'running');
+    this.emit('message', {
+      type: 'agent_message',
+      text: `response: ${text}`,
+      messageId: crypto.randomUUID(),
+      timestamp: Date.now(),
+    } satisfies SessionMessage);
+    this.state = 'idle';
+    this.emit('state-change', 'idle');
+  }
+
+  async kill(): Promise<void> {
+    this.state = 'completed';
+    this.emit('ended', 'killed');
+  }
+}
+
+class EagerPromptAdapter implements AgentAdapter {
+  readonly agentId = 'claude';
+  deferInitialPromptSeen = false;
+
+  async startSession(_cwd: string, options?: SessionOptions): Promise<Session> {
+    this.deferInitialPromptSeen = options?.deferInitialPrompt === true;
+    return new EagerPromptSession();
+  }
+
+  async resumeSession(
+    _sessionId: string,
+    _cwd: string,
+    options?: SessionOptions,
+  ): Promise<Session> {
+    this.deferInitialPromptSeen = options?.deferInitialPrompt === true;
+    return new EagerPromptSession();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Mock tracker
 // ---------------------------------------------------------------------------
@@ -335,6 +377,32 @@ describe('Daemon', () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0]).toEqual(expect.objectContaining({ sessionId, message: msg }));
+  });
+
+  it('wires session listeners before dispatching the initial prompt', async () => {
+    const daemon = new Daemon();
+    const adapter = new EagerPromptAdapter();
+    daemon.registerAdapter(adapter);
+    await daemon.initialize();
+    await daemon.directoryManager.register(testDir);
+
+    const messages: Array<{ sessionId: string; message: SessionMessage }> = [];
+    daemon.on('session:message', (data) => messages.push(data));
+
+    const sessionId = await daemon.launchSession(getDirectoryId(), 'Hello');
+
+    await vi.waitFor(() => {
+      expect(messages.length).toBe(1);
+    });
+
+    expect(adapter.deferInitialPromptSeen).toBe(true);
+    expect(messages[0]).toMatchObject({
+      sessionId,
+      message: {
+        type: 'agent_message',
+        text: 'response: Hello',
+      },
+    });
   });
 
   it('forwards messages to tracker', async () => {
