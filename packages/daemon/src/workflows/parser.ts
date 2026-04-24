@@ -14,6 +14,51 @@ const InputDefinitionSchema = z
   })
   .strict();
 
+const identifierSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(/^[a-zA-Z0-9._/-]+$/);
+
+const OutputDefinitionSchema = z
+  .object({
+    type: z.enum(['string', 'number', 'boolean', 'json', 'file', 'artifact']),
+    description: z.string().optional(),
+  })
+  .strict();
+
+const ArtifactDefinitionSchema = z
+  .object({
+    path: z.string().trim().min(1),
+    type: z.enum(['file', 'directory', 'patch', 'report', 'log']).optional(),
+    description: z.string().optional(),
+  })
+  .strict();
+
+const RetryPolicySchema = z
+  .object({
+    maxAttempts: z.number().int().min(1).max(10),
+    backoffSeconds: z.number().int().min(0).max(86_400).optional(),
+  })
+  .strict();
+
+const NodePolicySchema = z
+  .object({
+    onFailure: z.enum(['halt', 'continue', 'skip_dependents']).optional(),
+    approvalRequired: z.boolean().optional(),
+  })
+  .strict();
+
+const EnvValueSchema = z
+  .object({
+    value: z.string().optional(),
+    secret: identifierSchema.optional(),
+  })
+  .strict()
+  .refine((entry) => Boolean(entry.value) !== Boolean(entry.secret), {
+    message: 'Set exactly one of value or secret.',
+  });
+
 const RequiresSchema = z
   .object({
     agents: z.array(z.string().trim().min(1)).optional(),
@@ -24,12 +69,19 @@ const RequiresSchema = z
 const NodeBaseSchema = z.object({
   title: z.string().trim().min(1).optional(),
   needs: z.array(z.string().trim().min(1)).optional(),
+  timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+  retry: RetryPolicySchema.optional(),
+  policy: NodePolicySchema.optional(),
+  outputs: z.record(identifierSchema, OutputDefinitionSchema).optional(),
+  artifacts: z.record(identifierSchema, ArtifactDefinitionSchema).optional(),
+  env: z.record(identifierSchema, EnvValueSchema).optional(),
 });
 
 const PromptNodeSchema = NodeBaseSchema.extend({
   type: z.literal('prompt'),
   prompt: z.string().trim().min(1),
   agent: z.string().trim().min(1).optional(),
+  provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
 }).strict();
 
@@ -37,7 +89,6 @@ const ShellNodeSchema = NodeBaseSchema.extend({
   type: z.literal('shell'),
   command: z.string().trim().min(1),
   cwd: z.string().trim().min(1).optional(),
-  timeoutSeconds: z.number().int().positive().max(86_400).optional(),
 }).strict();
 
 const ApprovalNodeSchema = NodeBaseSchema.extend({
@@ -54,11 +105,7 @@ const WorkflowNodeSchema = z.discriminatedUnion('type', [
 const WorkflowDefinitionSchema = z
   .object({
     schema: z.literal('viewport.workflow/v1'),
-    name: z
-      .string()
-      .trim()
-      .min(1)
-      .regex(/^[a-zA-Z0-9._/-]+$/),
+    name: identifierSchema,
     title: z.string().trim().min(1).optional(),
     description: z.string().optional(),
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
@@ -185,14 +232,32 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 
     const dependencies = transitiveDependencies(definition, nodeId);
     for (const template of templates) {
-      for (const reference of nodeOutputReferences(template)) {
-        if (!definition.nodes[reference]) {
-          throw new Error(`Workflow node ${nodeId} references missing node ${reference}`);
+      for (const reference of nodeReferences(template)) {
+        if (!definition.nodes[reference.nodeId]) {
+          throw new Error(`Workflow node ${nodeId} references missing node ${reference.nodeId}`);
         }
-        if (!dependencies.has(reference)) {
+        if (!dependencies.has(reference.nodeId)) {
           throw new Error(
-            `Workflow node ${nodeId} references ${reference} output but does not depend on it`,
+            `Workflow node ${nodeId} references ${reference.nodeId} output but does not depend on it`,
           );
+        }
+
+        if (reference.kind === 'output') {
+          const upstream = definition.nodes[reference.nodeId];
+          if (!upstream?.outputs?.[reference.name]) {
+            throw new Error(
+              `Workflow node ${nodeId} references undeclared output ${reference.nodeId}.${reference.name}`,
+            );
+          }
+        }
+
+        if (reference.kind === 'artifact') {
+          const upstream = definition.nodes[reference.nodeId];
+          if (!upstream?.artifacts?.[reference.name]) {
+            throw new Error(
+              `Workflow node ${nodeId} references undeclared artifact ${reference.nodeId}.${reference.name}`,
+            );
+          }
         }
       }
     }
@@ -206,18 +271,50 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
   return [node.prompt];
 }
 
-function nodeOutputReferences(template: string): string[] {
-  const references = new Set<string>();
-  const patterns = [
+type WorkflowTemplateReference =
+  | { kind: 'raw'; nodeId: string }
+  | { kind: 'output'; nodeId: string; name: string }
+  | { kind: 'artifact'; nodeId: string; name: string };
+
+function nodeReferences(template: string): WorkflowTemplateReference[] {
+  const references = new Map<string, WorkflowTemplateReference>();
+  const rawPatterns = [
     /\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.(?:output|status|sessionId|error)\s*\}\}/g,
     /\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g,
   ];
-  for (const pattern of patterns) {
+
+  for (const pattern of rawPatterns) {
     for (const match of template.matchAll(pattern)) {
-      if (match[1]) references.add(match[1]);
+      if (match[1]) references.set(`raw:${match[1]}`, { kind: 'raw', nodeId: match[1] });
     }
   }
-  return [...references];
+
+  const namedPatterns: Array<[RegExp, 'output' | 'artifact']> = [
+    [/\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g, 'output'],
+    [/\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.artifacts\.([A-Za-z0-9._/-]+)\s*\}\}/g, 'artifact'],
+    [/\{\{\s*artifacts\.([A-Za-z0-9._/-]+)\.([A-Za-z0-9._/-]+)\s*\}\}/g, 'artifact'],
+  ];
+
+  for (const [pattern, kind] of namedPatterns) {
+    for (const match of template.matchAll(pattern)) {
+      if (!match[1] || !match[2]) continue;
+      if (kind === 'output') {
+        references.set(`output:${match[1]}:${match[2]}`, {
+          kind: 'output',
+          nodeId: match[1],
+          name: match[2],
+        });
+      } else {
+        references.set(`artifact:${match[1]}:${match[2]}`, {
+          kind: 'artifact',
+          nodeId: match[1],
+          name: match[2],
+        });
+      }
+    }
+  }
+
+  return [...references.values()];
 }
 
 function transitiveDependencies(definition: WorkflowDefinition, nodeId: string): Set<string> {

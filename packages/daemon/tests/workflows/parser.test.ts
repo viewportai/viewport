@@ -143,6 +143,88 @@ nodes:
     expect(parsed.definition.nodes.review?.type).toBe('prompt');
   });
 
+  it('accepts mature workflow schema fields without losing deterministic parsing', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: rich-schema
+nodes:
+  collect:
+    type: shell
+    command: npm test
+    timeoutSeconds: 120
+    retry:
+      maxAttempts: 2
+      backoffSeconds: 5
+    env:
+      CI_TOKEN:
+        secret: github/ci-token
+    outputs:
+      summary:
+        type: string
+        description: Short test summary.
+    artifacts:
+      report:
+        path: artifacts/test-report.md
+        type: report
+  review:
+    type: prompt
+    needs: [collect]
+    agent: codex
+    provider: openai
+    model: gpt-5.4
+    policy:
+      onFailure: halt
+      approvalRequired: true
+    prompt: Review {{ nodes.collect.outputs.summary }} and {{ artifacts.collect.report }}.
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.nodes.collect?.outputs?.summary?.type).toBe('string');
+    expect(parsed.definition.nodes.review?.type).toBe('prompt');
+  });
+
+  it('requires named outputs and artifacts to be declared', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: undeclared-dataflow
+nodes:
+  collect:
+    type: shell
+    command: npm test
+  review:
+    type: prompt
+    needs: [collect]
+    prompt: Review {{ nodes.collect.outputs.summary }} and {{ artifacts.collect.report }}.
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/undeclared output/);
+  });
+
+  it('rejects env entries that mix literal values and secret references', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: bad-env
+nodes:
+  collect:
+    type: shell
+    command: npm test
+    env:
+      BAD:
+        value: literal
+        secret: secret/name
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/Set exactly one/);
+  });
+
   it('parses workflows from disk with resolved source paths', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-parser-'));
     try {
