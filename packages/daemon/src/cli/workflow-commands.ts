@@ -38,7 +38,11 @@ export async function workflow(): Promise<void> {
     await showWorkflowRun();
     return;
   }
-  throw new Error('Usage: vpd workflow <validate|run|runs|show> ...');
+  if (subcommand === 'approve') {
+    await approveWorkflowNode();
+    return;
+  }
+  throw new Error('Usage: vpd workflow <validate|run|runs|show|approve> ...');
 }
 
 async function validateWorkflow(): Promise<void> {
@@ -113,6 +117,31 @@ async function showWorkflowRun(): Promise<void> {
   }
   const run = (response as WorkflowRunResponse).run;
   printRun(run);
+}
+
+async function approveWorkflowNode(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const runId = requiredArg(
+    2,
+    'Usage: vpd workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]',
+  );
+  const nodeId = requiredArg(
+    3,
+    'Usage: vpd workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]',
+  );
+  const response = (await postJson(
+    `/api/workflows/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(nodeId)}`,
+    {
+      approved: !hasFlag('deny'),
+      ...(getFlag('message') ? { message: getFlag('message') } : {}),
+    },
+  )) as WorkflowRunResponse;
+
+  if (isJsonMode()) {
+    printJson({ command: 'workflow approve', ok: true, ...response });
+    return;
+  }
+  printRun(response.run);
 }
 
 async function pollWorkflowRun(runId: string): Promise<WorkflowRunResponse> {

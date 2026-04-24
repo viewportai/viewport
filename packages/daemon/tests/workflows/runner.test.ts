@@ -5,8 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
-import type { AgentAdapter, Session, SessionOptions } from '../../src/core/interfaces.js';
-import type { SessionState } from '../../src/core/types.js';
+import type {
+  AgentAdapter,
+  DiscoveredSession,
+  RunTracker,
+  Session,
+  SessionOptions,
+} from '../../src/core/interfaces.js';
+import type { SessionState, Step } from '../../src/core/types.js';
 
 let tempHome: string;
 let projectDir: string;
@@ -262,6 +268,77 @@ nodes:
     expect(completed?.nodes.review?.output).toBe('Recovered transcript output');
   });
 
+  it('reconciles workflow worktree sessions back to the parent directory during discovery', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    const discovery = new PathDiscovery('claude');
+    daemon.registerAdapter(adapter);
+    daemon.registerDiscovery(discovery);
+    daemon.setTrackerFactory(
+      (_config, sessionId) =>
+        new WorktreeTracker(path.join(projectDir, '.viewport', 'worktrees', sessionId)),
+    );
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-worktree-discovery-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current directory.
+`,
+      'utf-8',
+    );
+
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId,
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    const running = await daemon.workflowRunner.getRun(run.id);
+    const sessionId = running?.nodes.review?.sessionId;
+    const worktreePath = running?.nodes.review?.worktreePath;
+    expect(sessionId).toBeTruthy();
+    expect(worktreePath).toContain(path.join('.viewport', 'worktrees'));
+    expect(adapter.lastSession?.id).not.toBe(sessionId);
+
+    discovery.setProjectSessions(worktreePath!, [
+      {
+        agentId: 'claude',
+        sessionId: adapter.lastSession!.id,
+        summary: 'Workflow child session',
+        lastModified: Date.now(),
+        cwd: worktreePath,
+        resumable: true,
+        messageCount: 3,
+      },
+    ]);
+    adapter.lastSession?.simulateEnd('completed');
+    await waitForTerminalRun(daemon, run.id);
+
+    await daemon.runDiscovery();
+    const discovered = daemon.getDiscoveredSessions(directoryId).get(directoryId) ?? [];
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]).toMatchObject({
+      sessionId: adapter.lastSession!.id,
+      summary: 'Workflow child session',
+      workflowRunId: run.id,
+      workflowNodeId: 'review',
+      parentDirectoryId: directoryId,
+      parentDirectoryPath: projectDir,
+      worktreePath,
+    });
+  });
+
   it('passes shell output into downstream templates', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -295,14 +372,67 @@ nodes:
     expect(completed?.nodes.second?.output).toBe('upstream-downstream');
   });
 
-  it('blocks runs when preflight finds unsupported executable nodes', async () => {
+  it('pauses at approval gates and resumes after approval', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
     await fs.writeFile(
       workflowPath,
       `
 schema: viewport.workflow/v1
-name: blocked-proof
+name: approval-proof
+nodes:
+  inspect:
+    type: shell
+    command: printf "ready"
+  gate:
+    type: approval
+    needs: [inspect]
+    prompt: Approve {{ nodes.inspect.output }}
+  after:
+    type: shell
+    needs: [gate]
+    command: printf "{{ nodes.gate.output }} after"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.nodes.inspect?.status).toBe('completed');
+    expect(blocked?.nodes.gate?.status).toBe('blocked');
+    expect(blocked?.nodes.gate?.approval?.prompt).toBe('Approve ready');
+    expect(blocked?.nodes.after?.status).toBe('queued');
+
+    await daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: true,
+      message: 'Approved by test',
+    });
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.gate?.output).toBe('Approved by test');
+    expect(completed?.nodes.after?.output).toBe('Approved by test after');
+    expect(completed?.events.map((event) => event.type)).toContain('approval-requested');
+    expect(completed?.events.map((event) => event.type)).toContain('approval-resolved');
+  });
+
+  it('cancels approval-gated workflows when approval is denied', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: approval-deny-proof
 nodes:
   gate:
     type: approval
@@ -318,10 +448,15 @@ nodes:
     });
 
     await waitForTerminalRun(daemon, run.id);
-    const blocked = await daemon.workflowRunner.getRun(run.id);
+    await daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: false,
+      message: 'No',
+    });
+    const canceled = await daemon.workflowRunner.getRun(run.id);
 
-    expect(blocked?.status).toBe('blocked');
-    expect(blocked?.preflight.issues[0]?.kind).toBe('node');
+    expect(canceled?.status).toBe('canceled');
+    expect(canceled?.nodes.gate?.status).toBe('failed');
+    expect(canceled?.error).toBe('No');
   });
 
   it('marks shell node failures on the run record', async () => {
@@ -474,6 +609,53 @@ class MockAdapter implements AgentAdapter {
   }
 }
 
+class PathDiscovery {
+  readonly agentId: string;
+  private readonly sessionsByPath = new Map<string, DiscoveredSession[]>();
+
+  constructor(agentId: string) {
+    this.agentId = agentId;
+  }
+
+  setProjectSessions(projectPath: string, sessions: DiscoveredSession[]): void {
+    this.sessionsByPath.set(path.resolve(projectPath), sessions);
+  }
+
+  async discoverSessions(projectPath: string): Promise<DiscoveredSession[]> {
+    return this.sessionsByPath.get(path.resolve(projectPath)) ?? [];
+  }
+}
+
+class WorktreeTracker implements RunTracker {
+  readonly steps: ReadonlyArray<Step> = [];
+  onStepCommitted?: (step: Step) => void;
+
+  constructor(private readonly worktreePath: string) {}
+
+  async setup(_sessionId: string, _projectPath: string): Promise<string> {
+    await fs.mkdir(this.worktreePath, { recursive: true });
+    return this.worktreePath;
+  }
+
+  onMessage(): void {}
+  async flushPendingCommits(): Promise<void> {}
+  async teardown(): Promise<void> {}
+  async rollback(_toSha: string): Promise<void> {}
+  async branchRetry(_fromSha: string): Promise<string> {
+    return this.worktreePath;
+  }
+  async squashMerge(_targetBranch: string, _commitMessage: string): Promise<void> {}
+  async getDiff(_sha: string): Promise<string> {
+    return '';
+  }
+  async getStepDiffs(): Promise<Array<{ step: number; sha: string; diff: string }>> {
+    return [];
+  }
+  async getSummaryDiff(): Promise<string> {
+    return '';
+  }
+}
+
 async function waitForTerminalRun(daemon: Daemon, runId: string): Promise<void> {
   for (let index = 0; index < 200; index += 1) {
     const run = await daemon.workflowRunner.getRun(runId);
@@ -483,6 +665,18 @@ async function waitForTerminalRun(daemon: Daemon, runId: string): Promise<void> 
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for workflow run ${runId}`);
+}
+
+async function waitForCompletedRun(daemon: Daemon, runId: string): Promise<void> {
+  for (let index = 0; index < 200; index += 1) {
+    const run = await daemon.workflowRunner.getRun(runId);
+    if (run?.status === 'completed') return;
+    if (run && ['failed', 'canceled'].includes(run.status)) {
+      throw new Error(`Workflow run ${runId} ended as ${run.status}: ${run.error ?? ''}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for completed workflow run ${runId}`);
 }
 
 async function waitForNodeSession(daemon: Daemon, runId: string, nodeId: string): Promise<void> {

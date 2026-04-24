@@ -77,6 +77,12 @@ const WorkflowRunBodySchema = z
     message: 'workflowPath or workflowYaml is required',
     path: ['workflowPath'],
   });
+const WorkflowApprovalBodySchema = z
+  .object({
+    approved: z.boolean(),
+    message: z.string().trim().min(1).max(2_000).optional(),
+  })
+  .strict();
 const PairRedeemBodySchema = z
   .object({
     offerId: z.string().trim().min(1),
@@ -671,6 +677,29 @@ export function registerHttpRoutes(
       return reply.status(404).send({ error: 'Workflow run not found' });
     }
     return { run };
+  });
+
+  app.post<{
+    Params: { id: string; nodeId: string };
+    Body: { approved?: boolean; message?: string };
+  }>('/api/workflows/runs/:id/approvals/:nodeId', async (request, reply) => {
+    const parsedBody = WorkflowApprovalBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+    }
+
+    try {
+      const run = await daemon.workflowRunner.decideApproval(
+        request.params.id,
+        request.params.nodeId,
+        parsedBody.data,
+      );
+      return { run };
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to resolve workflow approval',
+      });
+    }
   });
 
   // ---------------------------------------------------------------------------

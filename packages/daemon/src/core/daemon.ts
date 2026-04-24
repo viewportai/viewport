@@ -31,7 +31,9 @@ import { SessionManager } from './session-manager.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { logger } from './logger.js';
 import { dedupeDiscoveredSessions } from './discovered-sessions.js';
+import { addWorkflowLinkedDiscoveredSessions } from './workflow-linked-discovery.js';
 import { WorkflowRunner } from '../workflows/runner.js';
+import { WorkflowSessionLinkStore } from '../workflows/session-links.js';
 
 const log = logger.child({ module: 'daemon' });
 
@@ -50,6 +52,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
 
   private readonly permissionCoordinator: PermissionCoordinator;
   private readonly sessionManager: SessionManager;
+  private readonly workflowSessionLinks = new WorkflowSessionLinkStore();
 
   /**
    * Discovered sessions from JSONL files, keyed by directoryId.
@@ -146,6 +149,14 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
         nextDiscovered.set(dir.id, dedupedSessions);
       }
     }
+
+    await addWorkflowLinkedDiscoveredSessions({
+      discoveredByDirectory: nextDiscovered,
+      directories,
+      discoveries: this.discoveries,
+      links: await this.workflowSessionLinks.list(),
+      log,
+    });
 
     // Replace atomically so stale entries are removed when sessions disappear.
     this.discoveredSessions = nextDiscovered;
@@ -247,6 +258,10 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
 
   getSessionWorktreePath(sessionId: string): string {
     return this.sessionManager.getSessionWorktreePath(sessionId);
+  }
+
+  getSessionNativeId(sessionId: string): string {
+    return this.sessionManager.getSessionNativeId(sessionId);
   }
 
   listActiveSessions(): Array<{

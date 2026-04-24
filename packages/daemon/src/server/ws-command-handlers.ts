@@ -321,6 +321,25 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       sendAck(client, msg.requestId, 'ok');
     },
 
+    'workflow-approve': async (client, msg) => {
+      try {
+        const run = await daemon.workflowRunner.decideApproval(msg.runId, msg.nodeId, {
+          approved: msg.approved,
+          ...(msg.message ? { message: msg.message } : {}),
+        });
+        client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
+        sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id, nodeId: msg.nodeId });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Failed to resolve workflow approval',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
     supervise: async (client, msg) => {
       if (!supervision) {
         sendAck(client, msg.requestId, 'error', 'Hooks not enabled', {

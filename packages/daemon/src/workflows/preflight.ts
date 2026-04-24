@@ -39,13 +39,6 @@ export async function preflightWorkflow(
         message: `Node ${nodeId} requires unavailable agent: ${node.agent}`,
       });
     }
-    if (node.type === 'approval') {
-      issues.push({
-        kind: 'node',
-        name: nodeId,
-        message: `Approval node ${nodeId} is reserved but not executable yet`,
-      });
-    }
   }
 
   for (const tool of definition.requires?.tools ?? []) {

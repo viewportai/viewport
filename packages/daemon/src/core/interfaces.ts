@@ -173,4 +173,14 @@ export interface DiscoveredSession {
   messageCount?: number;
   /** Optional source file backing this discovered session. */
   sourcePath?: string;
+  /** Workflow run that spawned this session, when it came from a workflow node. */
+  workflowRunId?: string;
+  /** Workflow node that spawned this session, when it came from a workflow node. */
+  workflowNodeId?: string;
+  /** Original registered directory that launched a worktree-backed workflow session. */
+  parentDirectoryId?: string;
+  /** Original registered directory path that launched a worktree-backed workflow session. */
+  parentDirectoryPath?: string;
+  /** Working tree path used by the spawned session, when different from the parent directory. */
+  worktreePath?: string;
 }

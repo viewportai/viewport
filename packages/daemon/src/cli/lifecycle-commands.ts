@@ -1256,6 +1256,7 @@ export function showHelp(): void {
   console.log('  workflow run <file> [--directory <path>] [--input k=v] [--json]');
   console.log('  workflow runs [--json]');
   console.log('  workflow show <run-id> [--json]');
+  console.log('  workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]');
   console.log('                               Validate, run, and inspect local workflows');
   console.log('  pair [<code>] [--server <url>] [--app-url <url>] [--json]');
   console.log('                               Pair with Viewport via pairing code');

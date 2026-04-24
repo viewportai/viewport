@@ -15,6 +15,7 @@ import {
   WorkflowRunSchema,
   WorkflowListRunsSchema,
   WorkflowShowRunSchema,
+  WorkflowApproveRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
   IncomingMessageSchema,
@@ -260,6 +261,18 @@ describe('Workflow schemas', () => {
     const result = WorkflowShowRunSchema.safeParse({
       type: 'workflow-show-run',
       runId: 'run-1',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow approval command', () => {
+    const result = WorkflowApproveRunSchema.safeParse({
+      type: 'workflow-approve',
+      runId: 'run-1',
+      nodeId: 'gate',
+      approved: true,
+      message: 'ship it',
       requestId: 'req-1',
     });
     expect(result.success).toBe(true);

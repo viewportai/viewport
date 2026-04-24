@@ -80,9 +80,17 @@ export interface WorkflowNodeRunState {
   startedAt?: number;
   completedAt?: number;
   sessionId?: string;
+  nativeSessionId?: string;
   worktreePath?: string;
   output?: string;
   error?: string;
+  approval?: {
+    prompt: string;
+    requestedAt: number;
+    resolvedAt?: number;
+    approved?: boolean;
+    message?: string;
+  };
 }
 
 export interface WorkflowRunEvent {
@@ -97,6 +105,8 @@ export interface WorkflowRunEvent {
     | 'run-failed'
     | 'node-started'
     | 'node-output'
+    | 'approval-requested'
+    | 'approval-resolved'
     | 'node-completed'
     | 'node-failed'
     | 'session-started'
@@ -153,4 +163,9 @@ export interface WorkflowRunRequest {
   projectId?: string;
   projectMachineBindingId?: string;
   initiation: WorkflowRunRecord['initiation'];
+}
+
+export interface WorkflowApprovalDecision {
+  approved: boolean;
+  message?: string;
 }

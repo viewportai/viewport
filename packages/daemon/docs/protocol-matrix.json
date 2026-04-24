@@ -152,6 +152,16 @@
       "surfacedInCli": true
     },
     {
+      "type": "workflow-approve",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#WorkflowApproveRunSchema",
+      "handler": "src/server/ws-command-handlers.ts#workflow-approve",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": true
+    },
+    {
       "type": "watch-discovered-session",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#WatchDiscoveredSessionSchema",

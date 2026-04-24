@@ -27,6 +27,11 @@ function mergeSessionPair(
     sourcePath: winner.sourcePath ?? loser.sourcePath,
     gitBranch: winner.gitBranch ?? loser.gitBranch,
     cwd: winner.cwd ?? loser.cwd,
+    workflowRunId: winner.workflowRunId ?? loser.workflowRunId,
+    workflowNodeId: winner.workflowNodeId ?? loser.workflowNodeId,
+    parentDirectoryId: winner.parentDirectoryId ?? loser.parentDirectoryId,
+    parentDirectoryPath: winner.parentDirectoryPath ?? loser.parentDirectoryPath,
+    worktreePath: winner.worktreePath ?? loser.worktreePath,
   };
 }
 

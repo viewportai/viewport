@@ -54,7 +54,7 @@ nodes:
     ]);
   });
 
-  it('blocks approval nodes until the approval runtime exists', async () => {
+  it('accepts approval nodes as executable gates', async () => {
     const workflow = parseWorkflow(
       `
 schema: viewport.workflow/v1
@@ -71,13 +71,8 @@ nodes:
       availableAgents: () => [],
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.issues[0]).toEqual(
-      expect.objectContaining({
-        kind: 'node',
-        name: 'gate',
-      }),
-    );
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
   });
 
   it('checks required shell tools and rejects unsafe tool names', async () => {

@@ -28,6 +28,11 @@ function mergePair(
     agentId: winner.agentId ?? loser.agentId,
     waiting: winner.waiting !== undefined ? winner.waiting : loser.waiting,
     waitingToolName: winner.waitingToolName ?? loser.waitingToolName,
+    workflowRunId: winner.workflowRunId ?? loser.workflowRunId,
+    workflowNodeId: winner.workflowNodeId ?? loser.workflowNodeId,
+    parentDirectoryId: winner.parentDirectoryId ?? loser.parentDirectoryId,
+    parentDirectoryPath: winner.parentDirectoryPath ?? loser.parentDirectoryPath,
+    worktreePath: winner.worktreePath ?? loser.worktreePath,
   };
 }
 

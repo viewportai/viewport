@@ -244,6 +244,10 @@ export class SessionManager {
     };
   }
 
+  getSessionNativeId(sessionId: string): string {
+    return this.getActiveSession(sessionId).session.id;
+  }
+
   listSessionSummaries(): Array<{
     sessionId: string;
     directoryId: string;

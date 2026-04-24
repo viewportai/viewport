@@ -1,31 +1,16 @@
-import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
-import type { SessionMessage } from '../core/types.js';
-import { parseWorkflow, workflowNodeOrder, parseWorkflowFile } from './parser.js';
+import { parseWorkflow, parseWorkflowFile, workflowNodeOrder } from './parser.js';
 import { preflightWorkflow } from './preflight.js';
-import {
-  addEvent,
-  normalizeInputs,
-  renderOptionalTemplate,
-  renderTemplate,
-  resolveNodeCwd,
-  runShellNode,
-} from './runtime-helpers.js';
-import {
-  getSessionState,
-  isFailedSessionReason,
-  readReplaySessionState,
-  waitForPromptSessionComplete,
-} from './session-completion.js';
-import {
-  createSessionOutputCollector,
-  readCodexWorktreeSessionOutput,
-  readPersistedSessionOutput,
-} from './session-output.js';
+import { addEvent, normalizeInputs } from './runtime-helpers.js';
+import { executeWorkflowNode } from './node-executor.js';
+import { getSessionState, readReplaySessionState } from './session-completion.js';
+import { readPromptNodeOutput } from './prompt-output.js';
+import { WorkflowSessionLinkStore } from './session-links.js';
 import { WorkflowRunStore } from './store.js';
+import { resolveWorkflowSource } from './workflow-source.js';
 import type {
   ParsedWorkflow,
-  WorkflowNode,
+  WorkflowApprovalDecision,
   WorkflowNodeRunState,
   WorkflowRunRecord,
   WorkflowRunRequest,
@@ -33,6 +18,7 @@ import type {
 
 export class WorkflowRunner {
   private readonly store = new WorkflowRunStore();
+  private readonly sessionLinks = new WorkflowSessionLinkStore();
   private readonly activeRunIds = new Set<string>();
 
   constructor(private readonly daemon: Daemon) {}
@@ -62,7 +48,7 @@ export class WorkflowRunner {
       throw new Error(`Directory not registered: ${request.directoryId}`);
     }
 
-    const parsed = await this.resolveWorkflow(request, directory.path);
+    const parsed = await resolveWorkflowSource(request, directory.path);
     const now = Date.now();
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
@@ -106,13 +92,86 @@ export class WorkflowRunner {
     return run;
   }
 
-  private async executeRun(runId: string, parsed: ParsedWorkflow): Promise<void> {
+  async decideApproval(
+    runId: string,
+    nodeId: string,
+    decision: WorkflowApprovalDecision,
+  ): Promise<WorkflowRunRecord> {
+    const run = await this.requireRun(runId);
+    const state = run.nodes[nodeId];
+    if (!state || state.type !== 'approval') {
+      throw new Error(`Workflow approval node not found: ${nodeId}`);
+    }
+    if (run.status !== 'blocked' || state.status !== 'blocked') {
+      throw new Error(`Workflow node is not awaiting approval: ${nodeId}`);
+    }
+
+    const resolvedAt = Date.now();
+    state.approval = {
+      prompt: state.approval?.prompt ?? 'Approval requested',
+      requestedAt: state.approval?.requestedAt ?? resolvedAt,
+      resolvedAt,
+      approved: decision.approved,
+      ...(decision.message ? { message: decision.message } : {}),
+    };
+
+    if (!decision.approved) {
+      state.status = 'failed';
+      state.error = decision.message ?? 'Approval denied';
+      state.completedAt = resolvedAt;
+      run.status = 'canceled';
+      run.error = state.error;
+      run.completedAt = resolvedAt;
+      run.updatedAt = resolvedAt;
+      addEvent(
+        run,
+        'approval-resolved',
+        `Approval denied for node ${nodeId}`,
+        { ...decision },
+        nodeId,
+      );
+      addEvent(run, 'run-failed', `Workflow canceled by approval gate: ${nodeId}`);
+      await this.saveAndEmit(run);
+      return run;
+    }
+
+    state.status = 'completed';
+    state.completedAt = resolvedAt;
+    state.output = decision.message ?? 'Approved';
+    run.status = 'running';
+    run.updatedAt = resolvedAt;
+    addEvent(
+      run,
+      'approval-resolved',
+      `Approval granted for node ${nodeId}`,
+      { ...decision },
+      nodeId,
+    );
+    addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
+    await this.saveAndEmit(run);
+
+    const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+    void this.executeRun(run.id, parsed, { resumed: true }).catch((error) => {
+      void this.failRun(run.id, error instanceof Error ? error.message : String(error));
+    });
+    return run;
+  }
+
+  private async executeRun(
+    runId: string,
+    parsed: ParsedWorkflow,
+    options: { resumed?: boolean } = {},
+  ): Promise<void> {
     this.activeRunIds.add(runId);
     try {
       const run = await this.requireRun(runId);
       run.status = 'running';
       run.updatedAt = Date.now();
-      addEvent(run, 'run-started', 'Workflow run started');
+      addEvent(
+        run,
+        'run-started',
+        options.resumed ? 'Workflow run resumed' : 'Workflow run started',
+      );
       run.preflight = await preflightWorkflow(parsed.definition, {
         availableAgents: () => this.daemon.getAvailableAgents(),
         directoryPath: run.directoryPath,
@@ -133,9 +192,20 @@ export class WorkflowRunner {
 
       for (const nodeId of workflowNodeOrder(parsed.definition)) {
         const freshRun = await this.requireRun(runId);
+        if (freshRun.status !== 'running') return;
         const node = parsed.definition.nodes[nodeId];
         if (!node) continue;
-        await this.executeNode(freshRun, nodeId, node);
+        const result = await executeWorkflowNode(
+          {
+            daemon: this.daemon,
+            sessionLinks: this.sessionLinks,
+            saveAndEmit: (nextRun) => this.saveAndEmit(nextRun),
+          },
+          freshRun,
+          nodeId,
+          node,
+        );
+        if (result === 'blocked') return;
       }
 
       const complete = await this.requireRun(runId);
@@ -146,95 +216,6 @@ export class WorkflowRunner {
       await this.saveAndEmit(complete);
     } finally {
       this.activeRunIds.delete(runId);
-    }
-  }
-
-  private async executeNode(
-    run: WorkflowRunRecord,
-    nodeId: string,
-    node: WorkflowNode,
-  ): Promise<void> {
-    const state = run.nodes[nodeId];
-    if (!state) return;
-
-    state.status = 'running';
-    state.startedAt = Date.now();
-    run.updatedAt = state.startedAt;
-    addEvent(run, 'node-started', `Node ${nodeId} started`, undefined, nodeId);
-    await this.saveAndEmit(run);
-
-    try {
-      if (node.type === 'shell') {
-        const output = await runShellNode(renderTemplate(node.command, run), {
-          cwd: resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run)),
-          timeoutSeconds: node.timeoutSeconds,
-        });
-        state.output = output;
-        addEvent(run, 'node-output', `Node ${nodeId} produced shell output`, { output }, nodeId);
-      } else if (node.type === 'prompt') {
-        const prompt = renderTemplate(node.prompt, run);
-        const output = createSessionOutputCollector();
-        const messageHandler = (event: { sessionId: string; message: SessionMessage }): void => {
-          if (event.sessionId !== state.sessionId) return;
-          output.push(event.message);
-        };
-        this.daemon.on('session:message', messageHandler);
-        const sessionId = await this.daemon.launchSession(run.directoryId, prompt, {
-          ...(node.agent ? { agent: node.agent } : {}),
-          ...(node.model ? { model: node.model } : {}),
-        });
-        state.sessionId = sessionId;
-        state.worktreePath = this.readActiveSessionWorktreePath(sessionId);
-        addEvent(
-          run,
-          'session-started',
-          `Node ${nodeId} started session ${sessionId}`,
-          {
-            sessionId,
-          },
-          nodeId,
-        );
-        run.updatedAt = Date.now();
-        await this.saveAndEmit(run);
-        try {
-          const reason = await waitForPromptSessionComplete(this.daemon, sessionId);
-          state.output = output.text() || state.output;
-          const eventType = reason === 'idle' ? 'session-idle' : 'session-ended';
-          addEvent(
-            run,
-            eventType,
-            `Node ${nodeId} session ${sessionId} ${reason === 'idle' ? 'became idle' : 'ended'}`,
-            { sessionId, reason },
-            nodeId,
-          );
-          if (isFailedSessionReason(reason)) {
-            throw new Error(`Session ${sessionId} failed: ${reason}`);
-          }
-        } finally {
-          this.daemon.off('session:message', messageHandler);
-        }
-      } else {
-        throw new Error(`Unsupported executable node type: ${node.type}`);
-      }
-
-      state.status = 'completed';
-      state.completedAt = Date.now();
-      run.updatedAt = state.completedAt;
-      addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
-      await this.saveAndEmit(run);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      state.status = 'failed';
-      state.error = message;
-      state.completedAt = Date.now();
-      run.status = 'failed';
-      run.error = message;
-      run.completedAt = state.completedAt;
-      run.updatedAt = state.completedAt;
-      addEvent(run, 'node-failed', `Node ${nodeId} failed: ${message}`, undefined, nodeId);
-      addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
-      await this.saveAndEmit(run);
-      throw error;
     }
   }
 
@@ -276,7 +257,7 @@ export class WorkflowRunner {
         getSessionState(this.daemon, node.sessionId) ??
         (await readReplaySessionState(node.sessionId));
       if (state === 'idle' || state === 'completed') {
-        node.output = node.output || (await this.readPromptNodeOutput(run, node));
+        node.output = node.output || (await readPromptNodeOutput(run, node));
         node.status = 'completed';
         node.completedAt = node.completedAt ?? Date.now();
         run.updatedAt = node.completedAt;
@@ -321,7 +302,7 @@ export class WorkflowRunner {
     let changed = false;
     for (const node of Object.values(run.nodes)) {
       if (node.type !== 'prompt' || node.output || !node.sessionId) continue;
-      const output = await this.readPromptNodeOutput(run, node);
+      const output = await readPromptNodeOutput(run, node);
       if (!output) continue;
       node.output = output;
       run.updatedAt = Date.now();
@@ -334,57 +315,5 @@ export class WorkflowRunner {
     }
 
     return run;
-  }
-
-  private async readPromptNodeOutput(
-    run: WorkflowRunRecord,
-    node: WorkflowNodeRunState,
-  ): Promise<string> {
-    if (!node.sessionId) return '';
-
-    const persisted = readPersistedSessionOutput(node.sessionId);
-    if (persisted) return persisted;
-
-    const worktreePath = node.worktreePath ?? this.defaultWorktreePath(run, node.sessionId);
-    if (!worktreePath) return '';
-
-    try {
-      return await readCodexWorktreeSessionOutput(worktreePath);
-    } catch {
-      return '';
-    }
-  }
-
-  private readActiveSessionWorktreePath(sessionId: string): string | undefined {
-    try {
-      return this.daemon.getSessionWorktreePath(sessionId);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private defaultWorktreePath(run: WorkflowRunRecord, sessionId: string): string {
-    return path.join(run.directoryPath, '.viewport', 'worktrees', sessionId);
-  }
-
-  private async resolveWorkflow(
-    request: WorkflowRunRequest,
-    directoryPath: string,
-  ): Promise<ParsedWorkflow> {
-    if (request.workflowYaml) {
-      return parseWorkflow(
-        request.workflowYaml,
-        request.workflowSourceRef?.trim() || 'viewport://workflow/inline',
-      );
-    }
-
-    if (!request.workflowPath) {
-      throw new Error('Workflow run requires a workflow file path or YAML snapshot');
-    }
-
-    const workflowPath = path.isAbsolute(request.workflowPath)
-      ? request.workflowPath
-      : path.join(directoryPath, request.workflowPath);
-    return parseWorkflowFile(workflowPath);
   }
 }

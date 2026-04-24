@@ -59,6 +59,11 @@ export interface SnapshotPayload {
     lastActivity: number;
     messageCount: number;
     resumable: boolean;
+    workflowRunId?: string;
+    workflowNodeId?: string;
+    parentDirectoryId?: string;
+    parentDirectoryPath?: string;
+    worktreePath?: string;
   }>;
   discoveredSessionsTruncated: boolean;
   availableAgents: string[];
@@ -93,7 +98,7 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
   for (const [directoryId, sessions] of daemon.getDiscoveredSessions()) {
     for (const s of sessions) {
       if (discoveredSessions.length >= MAX_DISCOVERED_HELLO_SESSIONS) break;
-      discoveredSessions.push({
+      const discoveredSession: SnapshotPayload['discoveredSessions'][number] = {
         id: s.sessionId,
         agentId: s.agentId,
         directoryId,
@@ -101,7 +106,13 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
         lastActivity: s.lastModified,
         messageCount: s.messageCount ?? 0,
         resumable: s.resumable,
-      });
+      };
+      if (s.workflowRunId) discoveredSession.workflowRunId = s.workflowRunId;
+      if (s.workflowNodeId) discoveredSession.workflowNodeId = s.workflowNodeId;
+      if (s.parentDirectoryId) discoveredSession.parentDirectoryId = s.parentDirectoryId;
+      if (s.parentDirectoryPath) discoveredSession.parentDirectoryPath = s.parentDirectoryPath;
+      if (s.worktreePath) discoveredSession.worktreePath = s.worktreePath;
+      discoveredSessions.push(discoveredSession);
     }
     if (discoveredSessions.length >= MAX_DISCOVERED_HELLO_SESSIONS) break;
   }
