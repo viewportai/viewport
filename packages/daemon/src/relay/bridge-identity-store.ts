@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { configDir } from '../core/config.js';
-import { fromBase64Url, toBase64Url } from './bridge-crypto.js';
+import { fromBase64Url, normalizeP256PrivateKey, toBase64Url } from './bridge-crypto.js';
 
 export interface DaemonRelayIdentity {
   deviceId: string;
@@ -35,15 +35,15 @@ async function readIdentityFile(filePath: string): Promise<DaemonRelayIdentity |
       typeof parsed.publicKey === 'string' &&
       typeof parsed.privateKey === 'string'
     ) {
-      const priv = fromBase64Url(parsed.privateKey);
+      const priv = normalizeP256PrivateKey(fromBase64Url(parsed.privateKey));
       const pub = fromBase64Url(parsed.publicKey);
-      if (priv.length === 32 && pub.length === 65 && pub[0] === 0x04) {
+      if (priv && pub.length === 65 && pub[0] === 0x04) {
         return {
           deviceId: parsed.deviceId,
           createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : 0,
           algorithm: 'p256',
           publicKey: parsed.publicKey,
-          privateKey: parsed.privateKey,
+          privateKey: toBase64Url(priv),
         };
       }
     }
@@ -63,7 +63,11 @@ async function createIdentity(): Promise<DaemonRelayIdentity> {
 
   const ecdh = crypto.createECDH('prime256v1');
   const publicKey = ecdh.generateKeys();
-  const privateKey = ecdh.getPrivateKey();
+  const privateKey = normalizeP256PrivateKey(ecdh.getPrivateKey());
+  if (!privateKey) {
+    throw new Error('failed to generate daemon relay identity');
+  }
+
   return {
     deviceId,
     createdAt,

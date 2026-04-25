@@ -34,6 +34,18 @@ export function fromBase64Url(value: string): Buffer {
   return Buffer.from(value, 'base64url');
 }
 
+export function normalizeP256PrivateKey(raw: Buffer): Buffer | null {
+  if (raw.length === 0 || raw.length > 32) {
+    return null;
+  }
+
+  if (raw.length === 32) {
+    return raw;
+  }
+
+  return Buffer.concat([Buffer.alloc(32 - raw.length, 0), raw]);
+}
+
 export function parseRelayEnvelope(raw: string): RelayEnvelopeV2 {
   const parsed = JSON.parse(raw) as Partial<RelayEnvelopeV2>;
   if (
