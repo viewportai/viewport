@@ -467,6 +467,7 @@ nodes:
     type: approval
     needs: [inspect]
     prompt: Approve {{ nodes.inspect.output }}
+    captureResponse: true
   after:
     type: shell
     needs: [gate]
@@ -520,6 +521,47 @@ nodes:
     expect(completed?.nodes.after?.output).toBe('Approved by test after');
     expect(completed?.events.map((event) => event.type)).toContain('approval-requested');
     expect(completed?.events.map((event) => event.type)).toContain('approval-resolved');
+  });
+
+  it('keeps the approver message off the node output unless captureResponse is set', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: approval-default-output
+nodes:
+  gate:
+    type: approval
+    prompt: Approve this run.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.nodes.gate?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: true,
+      message: 'Confidential reviewer note — should not leak into output',
+    });
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    // Default behavior: output is the constant 'Approved' string. The message
+    // is preserved on the audit record so reviewers can still inspect it.
+    expect(completed?.nodes.gate?.output).toBe('Approved');
+    expect(completed?.nodes.gate?.approval?.message).toContain('Confidential');
   });
 
   it('cancels approval-gated workflows when approval is denied', async () => {

@@ -148,6 +148,13 @@ const ShellNodeSchema = NodeBaseSchema.extend({
 const ApprovalNodeSchema = NodeBaseSchema.extend({
   type: z.literal('approval'),
   prompt: z.string().trim().min(1),
+  /**
+   * When true, the approver's free-text message is captured as the node's
+   * `output` so downstream nodes can reference it. Defaults to false — output
+   * is a constant 'Approved' string and the message is only kept on the
+   * approval audit record (`nodes.<id>.approval.message`).
+   */
+  captureResponse: z.boolean().optional(),
 }).strict();
 
 const GateNodeSchema = NodeBaseSchema.extend({

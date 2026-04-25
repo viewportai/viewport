@@ -100,6 +100,8 @@ export interface WorkflowShellNode extends WorkflowNodeBase {
 export interface WorkflowApprovalNode extends WorkflowNodeBase {
   type: 'approval';
   prompt: string;
+  /** When true, the approver's message becomes the node's output. */
+  captureResponse?: boolean;
 }
 
 export interface WorkflowGateNode extends WorkflowNodeBase {

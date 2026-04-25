@@ -163,9 +163,18 @@ export class WorkflowRunner {
       return run;
     }
 
+    const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
     state.status = 'completed';
     state.completedAt = resolvedAt;
-    state.output = decision.message ?? 'Approved';
+    const approvalNode = parsed.definition.nodes[nodeId];
+    // type=approval defaults to constant 'Approved' output so the reviewer's
+    // free-text doesn't accidentally flow into downstream prompts. Authors
+    // opt into message capture via `captureResponse: true`.
+    // type=gate (human_review) keeps the message as output — gate output is
+    // expected to be a free-text payload by design.
+    const isOptInApproval =
+      approvalNode?.type === 'approval' && approvalNode.captureResponse !== true;
+    state.output = isOptInApproval ? 'Approved' : decision.message ?? 'Approved';
     run.status = 'running';
     run.updatedAt = resolvedAt;
     addEvent(
@@ -178,7 +187,6 @@ export class WorkflowRunner {
     addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
     await this.saveAndEmit(run);
 
-    const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
     void this.executeRun(run.id, parsed, { resumed: true }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
