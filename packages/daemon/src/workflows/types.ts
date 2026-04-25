@@ -35,6 +35,8 @@ export interface WorkflowArtifactDefinition {
 export interface WorkflowRetryPolicy {
   maxAttempts: number;
   backoffSeconds?: number;
+  transient?: string[];
+  fatal?: string[];
 }
 
 export interface WorkflowNodePolicy {
@@ -201,6 +203,12 @@ export interface WorkflowNodeRunState {
    * encoded as JSON, so `{{ nodes.<id>.output }}` yields the full series.
    */
   iterations?: WorkflowLoopIterationRecord[];
+  /**
+   * Number of attempts the runner made for this node, including retries. 1
+   * for the common single-attempt path; > 1 only when `retry.maxAttempts > 1`
+   * and at least one transient failure was reclassified as retryable.
+   */
+  attempts?: number;
 }
 
 export interface WorkflowLoopIterationRecord {
@@ -257,7 +265,8 @@ export interface WorkflowRunEvent {
     | 'execution-policy-selected'
     | 'loop-iteration-started'
     | 'loop-iteration-completed'
-    | 'loop-iteration-failed';
+    | 'loop-iteration-failed'
+    | 'node-retry';
   nodeId?: string;
   message: string;
   data?: Record<string, unknown>;

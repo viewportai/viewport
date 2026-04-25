@@ -917,6 +917,96 @@ nodes:
     ]);
   });
 
+  it('retries a transient shell failure and succeeds on a later attempt', async () => {
+    const daemon = await setup();
+    const counterFile = path.join(projectDir, 'attempts.txt');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    // Body: increment counter, fail with "rate limit" while the counter is
+    // below 3, then printf "ok". Combined with retry.transient=['rate limit']
+    // and maxAttempts=5 the runner should hit success on the third try.
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: retry-transient-proof
+nodes:
+  flaky:
+    type: shell
+    command: |
+      attempts=$(cat ${counterFile} 2>/dev/null || echo 0)
+      attempts=$((attempts+1))
+      printf %s "$attempts" > ${counterFile}
+      if [ "$attempts" -lt 3 ]; then
+        echo "rate limit reached" >&2
+        exit 1
+      fi
+      printf ok
+    retry:
+      maxAttempts: 5
+      transient:
+        - rate limit
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.flaky?.status).toBe('completed');
+    expect(completed?.nodes.flaky?.output).toBe('ok');
+    const retries = (completed?.events ?? []).filter((event) => event.type === 'node-retry');
+    expect(retries).toHaveLength(2);
+    expect(await fs.readFile(counterFile, 'utf-8')).toBe('3');
+  });
+
+  it('fails fast on a fatal classifier match without burning the retry budget', async () => {
+    const daemon = await setup();
+    const counterFile = path.join(projectDir, 'fatal-attempts.txt');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: retry-fatal-proof
+nodes:
+  busted:
+    type: shell
+    command: |
+      attempts=$(cat ${counterFile} 2>/dev/null || echo 0)
+      attempts=$((attempts+1))
+      printf %s "$attempts" > ${counterFile}
+      echo "permission denied" >&2
+      exit 1
+    retry:
+      maxAttempts: 5
+      fatal:
+        - permission denied
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('failed');
+    expect(completed?.nodes.busted?.status).toBe('failed');
+    expect(completed?.nodes.busted?.attempts).toBe(1);
+    const retries = (completed?.events ?? []).filter((event) => event.type === 'node-retry');
+    expect(retries).toHaveLength(0);
+    expect(await fs.readFile(counterFile, 'utf-8')).toBe('1');
+  });
+
   it('falls through a failed sibling when a downstream node uses triggerRule one_success', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

@@ -18,6 +18,7 @@ import {
   readPromptNodeOutput,
   readPromptNodeTranscriptExcerpt,
 } from './prompt-output.js';
+import { classifyRetry } from './retry-classifier.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -42,72 +43,99 @@ export async function executeWorkflowNode(
   addEvent(run, 'node-started', `Node ${nodeId} started`, undefined, nodeId);
   await context.saveAndEmit(run);
 
-  try {
-    let artifactCwd = run.directoryPath;
-    if (node.type === 'shell') {
-      artifactCwd = resolveNodeCwd(run.directoryPath, await renderOptionalTemplate(node.cwd, run));
-      const result = await runShellNode(await renderTemplate(node.command, run), {
-        cwd: artifactCwd,
-        timeoutSeconds: node.timeoutSeconds,
-        onOutput: ({ source, chunk, output }) => {
-          addEvent(
-            run,
-            'node-log',
-            `Node ${nodeId} wrote ${source}`,
-            { source, chunk, output },
-            nodeId,
-          );
-          run.updatedAt = Date.now();
-          void context.saveAndEmit(run);
-        },
-      });
-      state.output = result.output;
-      state.exitCode = result.exitCode;
-      addEvent(
-        run,
-        'node-output',
-        `Node ${nodeId} produced shell output`,
-        { output: result.output, exitCode: result.exitCode },
-        nodeId,
-      );
-    } else if (node.type === 'prompt') {
-      await executePromptNode(context, run, nodeId, node);
-    } else if (node.type === 'approval') {
-      await blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
-      return 'blocked';
-    } else if (node.type === 'gate') {
-      const gateResult = await executeGateNode(context, run, nodeId, node);
-      if (gateResult === 'blocked') return 'blocked';
-    } else if (node.type === 'loop') {
-      await executeLoopNode(context, run, nodeId, node);
-    }
+  const maxAttempts = node.retry?.maxAttempts ?? 1;
+  const backoffMs = (node.retry?.backoffSeconds ?? 0) * 1000;
+  let attempt = 0;
+  let lastError: unknown = null;
 
-    await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      let artifactCwd = run.directoryPath;
+      if (node.type === 'shell') {
+        artifactCwd = resolveNodeCwd(
+          run.directoryPath,
+          await renderOptionalTemplate(node.cwd, run),
+        );
+        const result = await runShellNode(await renderTemplate(node.command, run), {
+          cwd: artifactCwd,
+          timeoutSeconds: node.timeoutSeconds,
+          onOutput: ({ source, chunk, output }) => {
+            addEvent(
+              run,
+              'node-log',
+              `Node ${nodeId} wrote ${source}`,
+              { source, chunk, output },
+              nodeId,
+            );
+            run.updatedAt = Date.now();
+            void context.saveAndEmit(run);
+          },
+        });
+        state.output = result.output;
+        state.exitCode = result.exitCode;
+        addEvent(
+          run,
+          'node-output',
+          `Node ${nodeId} produced shell output`,
+          { output: result.output, exitCode: result.exitCode },
+          nodeId,
+        );
+      } else if (node.type === 'prompt') {
+        await executePromptNode(context, run, nodeId, node);
+      } else if (node.type === 'approval') {
+        await blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
+        return 'blocked';
+      } else if (node.type === 'gate') {
+        const gateResult = await executeGateNode(context, run, nodeId, node);
+        if (gateResult === 'blocked') return 'blocked';
+      } else if (node.type === 'loop') {
+        await executeLoopNode(context, run, nodeId, node);
+      }
 
-    state.status = 'completed';
-    state.completedAt = Date.now();
-    run.updatedAt = state.completedAt;
-    addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
-    await context.saveAndEmit(run);
-    return 'completed';
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof ShellNodeError) {
-      state.output = error.output || state.output;
-      state.exitCode = error.exitCode ?? undefined;
+      await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);
+
+      state.status = 'completed';
+      state.completedAt = Date.now();
+      run.updatedAt = state.completedAt;
+      addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
+      await context.saveAndEmit(run);
+      return 'completed';
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof ShellNodeError) {
+        state.output = error.output || state.output;
+        state.exitCode = error.exitCode ?? undefined;
+      }
+      const decision = classifyRetry(message, node.retry);
+      const remaining = maxAttempts - attempt;
+      if (decision === 'retry' && remaining > 0) {
+        addEvent(
+          run,
+          'node-retry',
+          `Node ${nodeId} retry ${attempt + 1}/${maxAttempts}: ${message}`,
+          { attempt, message, backoffMs },
+          nodeId,
+        );
+        run.updatedAt = Date.now();
+        await context.saveAndEmit(run);
+        if (backoffMs > 0) await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        continue;
+      }
+      break;
     }
-    state.status = 'failed';
-    state.error = message;
-    state.completedAt = Date.now();
-    run.updatedAt = state.completedAt;
-    addEvent(run, 'node-failed', `Node ${nodeId} failed: ${message}`, undefined, nodeId);
-    // Run-level failure is decided by the runner now: in parallel layers, a
-    // single node failing should not preempt sibling nodes that are still in
-    // flight, and a sibling with `triggerRule` may still consume the failure
-    // gracefully.
-    await context.saveAndEmit(run);
-    throw error;
   }
+
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  state.status = 'failed';
+  state.error = message;
+  state.completedAt = Date.now();
+  state.attempts = attempt;
+  run.updatedAt = state.completedAt;
+  addEvent(run, 'node-failed', `Node ${nodeId} failed: ${message}`, { attempts: attempt }, nodeId);
+  await context.saveAndEmit(run);
+  throw lastError instanceof Error ? lastError : new Error(message);
 }
 
 async function executeGateNode(

@@ -39,6 +39,19 @@ const RetryPolicySchema = z
   .object({
     maxAttempts: z.number().int().min(1).max(10),
     backoffSeconds: z.number().int().min(0).max(86_400).optional(),
+    /**
+     * Substrings (case-insensitive) classifying an error as transient. When
+     * omitted, every error is retryable up to `maxAttempts`. When set, only
+     * errors matching one of the patterns are retried; everything else fails
+     * fast.
+     */
+    transient: z.array(z.string().min(1)).optional(),
+    /**
+     * Substrings (case-insensitive) classifying an error as fatal. A fatal
+     * error skips all remaining attempts even when `maxAttempts > 1`. Wins
+     * over `transient` if both lists match.
+     */
+    fatal: z.array(z.string().min(1)).optional(),
   })
   .strict();
 
