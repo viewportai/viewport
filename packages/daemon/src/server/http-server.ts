@@ -88,6 +88,15 @@ const WorkflowApprovalBodySchema = z
   .object({
     approved: z.boolean(),
     message: z.string().trim().min(1).max(2_000).optional(),
+    actor: z
+      .object({
+        id: z.string().trim().min(1).max(255).optional(),
+        name: z.string().trim().min(1).max(255).optional(),
+        email: z.string().email().max(255).optional(),
+        source: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 const PairRedeemBodySchema = z

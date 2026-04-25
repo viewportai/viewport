@@ -277,6 +277,12 @@ describe('Workflow schemas', () => {
       nodeId: 'gate',
       approved: true,
       message: 'ship it',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
       requestId: 'req-1',
     });
     expect(result.success).toBe(true);

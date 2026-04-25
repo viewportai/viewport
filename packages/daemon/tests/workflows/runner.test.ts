@@ -481,8 +481,14 @@ nodes:
       initiation: 'cli',
     });
 
-    await waitForTerminalRun(daemon, run.id);
-    const blocked = await daemon.workflowRunner.getRun(run.id);
+    const blocked = await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) =>
+        candidate.status === 'blocked' &&
+        candidate.nodes.inspect?.status === 'completed' &&
+        candidate.nodes.gate?.status === 'blocked',
+    );
 
     expect(blocked?.status).toBe('blocked');
     expect(blocked?.nodes.inspect?.status).toBe('completed');
@@ -493,12 +499,24 @@ nodes:
     await daemon.workflowRunner.decideApproval(run.id, 'gate', {
       approved: true,
       message: 'Approved by test',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'unit-test',
+      },
     });
     await waitForCompletedRun(daemon, run.id);
     const completed = await daemon.workflowRunner.getRun(run.id);
 
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.gate?.output).toBe('Approved by test');
+    expect(completed?.nodes.gate?.approval?.actor).toEqual({
+      id: '42',
+      name: 'Test User',
+      email: 'test@example.test',
+      source: 'unit-test',
+    });
     expect(completed?.nodes.after?.output).toBe('Approved by test after');
     expect(completed?.events.map((event) => event.type)).toContain('approval-requested');
     expect(completed?.events.map((event) => event.type)).toContain('approval-resolved');
@@ -757,6 +775,19 @@ async function waitForCompletedRun(daemon: Daemon, runId: string): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for completed workflow run ${runId}`);
+}
+
+async function waitForRunState(
+  daemon: Daemon,
+  runId: string,
+  predicate: (run: NonNullable<Awaited<ReturnType<Daemon['workflowRunner']['getRun']>>>) => boolean,
+): Promise<NonNullable<Awaited<ReturnType<Daemon['workflowRunner']['getRun']>>>> {
+  for (let index = 0; index < 200; index += 1) {
+    const run = await daemon.workflowRunner.getRun(runId);
+    if (run && predicate(run)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for workflow run ${runId} to match expected state`);
 }
 
 async function waitForNodeSession(daemon: Daemon, runId: string, nodeId: string): Promise<void> {

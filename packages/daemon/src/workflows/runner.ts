@@ -129,6 +129,7 @@ export class WorkflowRunner {
       resolvedAt,
       approved: decision.approved,
       ...(decision.message ? { message: decision.message } : {}),
+      ...(decision.actor ? { actor: decision.actor } : {}),
     };
 
     if (!decision.approved) {

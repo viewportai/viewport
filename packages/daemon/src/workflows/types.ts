@@ -129,6 +129,7 @@ export interface WorkflowNodeRunState {
     resolvedAt?: number;
     approved?: boolean;
     message?: string;
+    actor?: WorkflowApprovalActor;
   };
 }
 
@@ -230,4 +231,12 @@ export interface WorkflowRunRequest {
 export interface WorkflowApprovalDecision {
   approved: boolean;
   message?: string;
+  actor?: WorkflowApprovalActor;
+}
+
+export interface WorkflowApprovalActor {
+  id?: string;
+  name?: string;
+  email?: string;
+  source?: string;
 }

@@ -95,12 +95,24 @@ describe('ws workflow command handlers', () => {
       nodeId: 'gate',
       approved: true,
       message: 'Approved from test',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
       requestId: 'req-approve',
     });
 
     expect(decideApproval).toHaveBeenCalledWith('run-1', 'gate', {
       approved: true,
       message: 'Approved from test',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
     });
     expect(sent).toContainEqual({ type: 'workflow-run-detail', run });
     expect(sendAck).toHaveBeenCalledWith(client, 'req-approve', 'ok', undefined, {

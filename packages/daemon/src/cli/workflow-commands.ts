@@ -134,6 +134,10 @@ async function approveWorkflowNode(): Promise<void> {
     {
       approved: !hasFlag('deny'),
       ...(getFlag('message') ? { message: getFlag('message') } : {}),
+      actor: {
+        name: 'Local CLI',
+        source: 'vpd-cli',
+      },
     },
   )) as WorkflowRunResponse;
 

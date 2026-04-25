@@ -328,6 +328,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
         const run = await daemon.workflowRunner.decideApproval(msg.runId, msg.nodeId, {
           approved: msg.approved,
           ...(msg.message ? { message: msg.message } : {}),
+          ...(msg.actor ? { actor: msg.actor } : {}),
         });
         client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
         sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id, nodeId: msg.nodeId });
