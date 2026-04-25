@@ -1,4 +1,4 @@
-export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate';
+export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop';
 
 /**
  * Join semantics when a node has multiple `needs`. Default is `all_success`.
@@ -105,11 +105,28 @@ export interface WorkflowGateNode extends WorkflowNodeBase {
   gate: WorkflowGateDefinition;
 }
 
+export type WorkflowLoopBody = {
+  type: 'shell';
+  command: string;
+  cwd?: string;
+  timeoutSeconds?: number;
+};
+
+export interface WorkflowLoopNode extends WorkflowNodeBase {
+  type: 'loop';
+  foreach?: string;
+  while?: string;
+  until?: string;
+  maxIterations: number;
+  body: WorkflowLoopBody;
+}
+
 export type WorkflowNode =
   | WorkflowPromptNode
   | WorkflowShellNode
   | WorkflowApprovalNode
-  | WorkflowGateNode;
+  | WorkflowGateNode
+  | WorkflowLoopNode;
 
 export interface WorkflowDefinition {
   schema: 'viewport.workflow/v1';
@@ -178,6 +195,24 @@ export interface WorkflowNodeRunState {
     message?: string;
     actor?: WorkflowApprovalActor;
   };
+  /**
+   * Per-iteration records for `loop` nodes. Each entry captures one body run.
+   * The aggregate `output` of a loop node is `iterations.map(it => it.output)`
+   * encoded as JSON, so `{{ nodes.<id>.output }}` yields the full series.
+   */
+  iterations?: WorkflowLoopIterationRecord[];
+}
+
+export interface WorkflowLoopIterationRecord {
+  index: number;
+  status: 'completed' | 'failed' | 'skipped';
+  startedAt: number;
+  completedAt?: number;
+  output?: string;
+  exitCode?: number;
+  error?: string;
+  /** The `$loop.item` value (foreach mode only). Stored for replay/inspection. */
+  item?: unknown;
 }
 
 export interface WorkflowRunArtifactRecord {
@@ -219,7 +254,10 @@ export interface WorkflowRunEvent {
     | 'session-started'
     | 'session-idle'
     | 'session-ended'
-    | 'execution-policy-selected';
+    | 'execution-policy-selected'
+    | 'loop-iteration-started'
+    | 'loop-iteration-completed'
+    | 'loop-iteration-failed';
   nodeId?: string;
   message: string;
   data?: Record<string, unknown>;

@@ -832,6 +832,91 @@ nodes:
     expect(elapsed).toBeLessThan(700);
   });
 
+  it('iterates a foreach loop over an upstream JSON array and aggregates per-iteration output', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: loop-foreach-proof
+nodes:
+  list:
+    type: shell
+    command: echo '["alpha","beta","gamma"]'
+    outputs:
+      items:
+        type: json
+  process:
+    type: loop
+    needs: [list]
+    foreach: nodes.list.outputs.items
+    maxIterations: 5
+    body:
+      type: shell
+      command: 'printf %s {{ loop.item }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    const node = completed?.nodes.process;
+    expect(node?.status).toBe('completed');
+    expect(node?.iterations).toHaveLength(3);
+    expect(node?.iterations?.map((iter) => iter.output)).toEqual(['alpha', 'beta', 'gamma']);
+    expect(node?.iterations?.map((iter) => iter.item)).toEqual(['alpha', 'beta', 'gamma']);
+    const events = completed?.events ?? [];
+    expect(events.filter((event) => event.type === 'loop-iteration-started')).toHaveLength(3);
+    expect(events.filter((event) => event.type === 'loop-iteration-completed')).toHaveLength(3);
+  });
+
+  it('runs a while loop until its condition turns falsy and respects maxIterations', async () => {
+    const daemon = await setup();
+    const counterFile = path.join(projectDir, 'counter.txt');
+    await fs.writeFile(counterFile, '0', 'utf-8');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: loop-while-proof
+nodes:
+  bump:
+    type: loop
+    while: 'loop.index < 4'
+    maxIterations: 10
+    body:
+      type: shell
+      command: 'printf %s {{ loop.index }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.bump?.iterations?.map((iter) => iter.output)).toEqual([
+      '0',
+      '1',
+      '2',
+      '3',
+    ]);
+  });
+
   it('falls through a failed sibling when a downstream node uses triggerRule one_success', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

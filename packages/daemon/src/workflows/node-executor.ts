@@ -12,6 +12,7 @@ import { isFailedSessionReason, waitForPromptSessionComplete } from './session-c
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { collectNodeArtifacts } from './artifact-collector.js';
+import { executeLoopNode } from './loop-executor.js';
 import {
   defaultWorktreePath,
   readPromptNodeOutput,
@@ -77,6 +78,8 @@ export async function executeWorkflowNode(
     } else if (node.type === 'gate') {
       const gateResult = await executeGateNode(context, run, nodeId, node);
       if (gateResult === 'blocked') return 'blocked';
+    } else if (node.type === 'loop') {
+      await executeLoopNode(context, run, nodeId, node);
     }
 
     await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);

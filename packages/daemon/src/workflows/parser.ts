@@ -142,11 +142,48 @@ const GateNodeSchema = NodeBaseSchema.extend({
   gate: GateDefinitionSchema,
 }).strict();
 
+/**
+ * Inline mini-node executed by a `loop` parent. Cannot declare its own
+ * `needs`, `triggerRule`, or `when`. Shell only for the first cut — prompt
+ * bodies need per-iteration session lifecycle and ship in a follow-up.
+ */
+const LoopBodySchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('shell'),
+      command: z.string().trim().min(1),
+      cwd: z.string().trim().min(1).optional(),
+      timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+    })
+    .strict(),
+]);
+
+const LoopNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('loop'),
+  foreach: z.string().trim().min(1).optional(),
+  while: z.string().trim().min(1).optional(),
+  until: z.string().trim().min(1).optional(),
+  maxIterations: z.number().int().min(1).max(1000),
+  body: LoopBodySchema,
+})
+  .strict()
+  .superRefine((node, ctx) => {
+    const modes = [node.foreach, node.while, node.until].filter(Boolean).length;
+    if (modes !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Loop node must specify exactly one of foreach, while, or until.',
+        path: [],
+      });
+    }
+  });
+
 const WorkflowNodeSchema = z.discriminatedUnion('type', [
   PromptNodeSchema,
   ShellNodeSchema,
   ApprovalNodeSchema,
   GateNodeSchema,
+  LoopNodeSchema,
 ]);
 
 const WorkflowDefinitionSchema = z
@@ -319,6 +356,17 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     if (node.gate.type === 'check' || node.gate.type === 'policy') return [node.gate.expression];
     if (node.gate.type === 'human_review') return [node.gate.prompt];
     return [node.gate.waitUntil];
+  }
+  if (node.type === 'loop') {
+    const templates: string[] = [];
+    if (node.foreach) templates.push(node.foreach);
+    if (node.while) templates.push(node.while);
+    if (node.until) templates.push(node.until);
+    if (node.body.type === 'shell') {
+      templates.push(node.body.command);
+      if (node.body.cwd) templates.push(node.body.cwd);
+    }
+    return templates;
   }
   return [node.prompt];
 }

@@ -73,8 +73,9 @@ export function resolveNodeCwd(directoryPath: string, cwd?: string): string {
 export async function renderOptionalTemplate(
   template: string | undefined,
   run: WorkflowRunRecord,
+  extras?: Record<string, unknown>,
 ): Promise<string | undefined> {
-  return template !== undefined ? await renderTemplate(template, run) : undefined;
+  return template !== undefined ? await renderTemplate(template, run, extras) : undefined;
 }
 
 /**
@@ -89,9 +90,13 @@ export async function renderOptionalTemplate(
  *   - `artifacts.X.Y` → rewritten to a synthetic accessor that maps the run's
  *     artifact list back into `<nodeId>.<artifactName>` shape.
  */
-export async function renderTemplate(template: string, run: WorkflowRunRecord): Promise<string> {
+export async function renderTemplate(
+  template: string,
+  run: WorkflowRunRecord,
+  extras?: Record<string, unknown>,
+): Promise<string> {
   const rewritten = applyLegacyTemplateAliases(template);
-  const context = buildArtifactAwareContext(run);
+  const context = { ...buildArtifactAwareContext(run), ...(extras ?? {}) };
   try {
     return await renderTemplateString(rewritten, context);
   } catch (error) {
