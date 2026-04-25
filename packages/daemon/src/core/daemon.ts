@@ -94,6 +94,11 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   /** Initialize the daemon — loads config from disk. */
   async initialize(): Promise<void> {
     await this.configManager.load();
+    // Load workflow plugins from `~/.viewport/plugins.json` before resuming
+    // pending runs so any custom node types in those runs have an executor
+    // registered when the runner picks them back up.
+    const { loadPlugins } = await import('../workflows/plugin-loader.js');
+    await loadPlugins();
     // Resume any workflow runs that were running when we last shut down.
     // Failures during resume are logged onto the run record; never block the
     // daemon from coming online.

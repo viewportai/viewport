@@ -61,13 +61,19 @@ export interface BuiltinExecutorHelpers {
 }
 
 /**
- * Lookup table mapping `node.type` to its executor. Today we register the
- * built-in node types here; the daemon's plugin loader will extend this
- * registry with `defineNode()` registrations from `~/.viewport/plugins.json`
- * once the loader ships. Keeping this surface small and table-driven is the
- * whole point — adding a node type should be one entry, not five files.
+ * Mutable registry of node executors keyed by `node.type`. Built-ins are
+ * registered at module load (immediately below); the plugin loader extends
+ * this map at daemon boot with `defineNode()` entries from
+ * `~/.viewport/plugins.json`. Keep this table-driven so adding a node type
+ * is one entry, not five files.
  */
-export const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> = {
+export const NODE_EXECUTORS = new Map<string, BuiltinNodeExecutor>();
+
+export function registerNodeExecutor(type: string, executor: BuiltinNodeExecutor): void {
+  NODE_EXECUTORS.set(type, executor);
+}
+
+const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> = {
   shell: async (context, run, nodeId, node) => {
     if (node.type !== 'shell') return { result: 'completed' };
     const state = run.nodes[nodeId];
@@ -134,3 +140,8 @@ export const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExe
     return { result: 'completed' };
   },
 };
+
+// Seed the mutable registry with built-ins. Plugin entries register at boot.
+for (const [type, executor] of Object.entries(BUILTIN_NODE_EXECUTORS)) {
+  NODE_EXECUTORS.set(type, executor);
+}

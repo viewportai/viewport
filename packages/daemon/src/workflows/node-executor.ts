@@ -11,7 +11,7 @@ import {
   readPromptNodeTranscriptExcerpt,
 } from './prompt-output.js';
 import { classifyRetry } from './retry-classifier.js';
-import { BUILTIN_NODE_EXECUTORS } from './node-registry.js';
+import { NODE_EXECUTORS } from './node-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -48,7 +48,7 @@ export async function executeWorkflowNode(
       // registered in `node-registry.ts`; the plugin loader will extend the
       // same map with `defineNode()` registrations from
       // `~/.viewport/plugins.json` once that integration ships.
-      const executor = BUILTIN_NODE_EXECUTORS[node.type];
+      const executor = NODE_EXECUTORS.get(node.type);
       if (!executor) {
         throw new Error(`No executor registered for node type '${node.type}' on node ${nodeId}.`);
       }
