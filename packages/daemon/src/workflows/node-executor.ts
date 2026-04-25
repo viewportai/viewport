@@ -10,7 +10,7 @@ import {
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
-import { defaultWorktreePath } from './prompt-output.js';
+import { defaultWorktreePath, readPromptNodeOutput } from './prompt-output.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -124,7 +124,17 @@ async function executePromptNode(
 
   try {
     const reason = await waitForPromptSessionComplete(context.daemon, sessionId);
-    state.output = output.text() || state.output;
+    const capturedOutput = output.text() || (await readPromptNodeOutput(run, state));
+    if (capturedOutput && capturedOutput !== state.output) {
+      state.output = capturedOutput;
+      addEvent(
+        run,
+        'node-output',
+        `Node ${nodeId} produced prompt output`,
+        { output: capturedOutput },
+        nodeId,
+      );
+    }
     addEvent(
       run,
       reason === 'idle' ? 'session-idle' : 'session-ended',

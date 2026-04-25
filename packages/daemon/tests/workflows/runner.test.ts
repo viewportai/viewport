@@ -187,6 +187,13 @@ nodes:
     expect(completed?.nodes.review?.status).toBe('completed');
     expect(completed?.nodes.review?.output).toBe('done');
     expect(completed?.events.map((event) => event.type)).toContain('session-idle');
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-output',
+        nodeId: 'review',
+        data: { output: 'done' },
+      }),
+    );
   });
 
   it('stores streamed prompt output once when the adapter emits chunks and a final message', async () => {
