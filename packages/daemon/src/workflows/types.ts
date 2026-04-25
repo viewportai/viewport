@@ -102,6 +102,15 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
   prompt: string;
   /** When true, the approver's message becomes the node's output. */
   captureResponse?: boolean;
+  /**
+   * Optional shell command run when approval is denied, before the run fails.
+   * Useful for notifications, audit log writes, or rollbacks.
+   */
+  onReject?: {
+    command: string;
+    cwd?: string;
+    timeoutSeconds?: number;
+  };
 }
 
 export interface WorkflowGateNode extends WorkflowNodeBase {

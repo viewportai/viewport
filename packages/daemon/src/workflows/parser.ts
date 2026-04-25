@@ -155,6 +155,21 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
    * approval audit record (`nodes.<id>.approval.message`).
    */
   captureResponse: z.boolean().optional(),
+  /**
+   * Run a follow-up shell command before failing when approval is denied. The
+   * approver's rejection message is exposed to the command via the
+   * `VIEWPORT_REJECT_MESSAGE` env var and through `{{ nodes.<id>.approval.message }}`
+   * template references. Output of the follow-up is captured into the node's
+   * audit record as `onRejectOutput` for the run timeline.
+   */
+  onReject: z
+    .object({
+      command: z.string().trim().min(1),
+      cwd: z.string().trim().min(1).optional(),
+      timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+    })
+    .strict()
+    .optional(),
 }).strict();
 
 const GateNodeSchema = NodeBaseSchema.extend({
