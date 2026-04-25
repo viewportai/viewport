@@ -11,6 +11,7 @@ import {
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
+import { collectNodeArtifacts } from './artifact-collector.js';
 import {
   defaultWorktreePath,
   readPromptNodeOutput,
@@ -41,9 +42,11 @@ export async function executeWorkflowNode(
   await context.saveAndEmit(run);
 
   try {
+    let artifactCwd = run.directoryPath;
     if (node.type === 'shell') {
+      artifactCwd = resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run));
       const result = await runShellNode(renderTemplate(node.command, run), {
-        cwd: resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run)),
+        cwd: artifactCwd,
         timeoutSeconds: node.timeoutSeconds,
         onOutput: ({ source, chunk, output }) => {
           addEvent(
@@ -73,6 +76,8 @@ export async function executeWorkflowNode(
       return 'blocked';
     }
 
+    await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);
+
     state.status = 'completed';
     state.completedAt = Date.now();
     run.updatedAt = state.completedAt;
@@ -96,6 +101,44 @@ export async function executeWorkflowNode(
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await context.saveAndEmit(run);
     throw error;
+  }
+}
+
+async function collectAndRecordArtifacts(
+  context: WorkflowNodeExecutorContext,
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowNode,
+  cwd: string,
+): Promise<void> {
+  if (!node.artifacts || Object.keys(node.artifacts).length === 0) return;
+  const result = await collectNodeArtifacts(run, nodeId, node, cwd);
+  for (const artifact of result.artifacts) {
+    run.artifacts ??= [];
+    run.artifacts = run.artifacts.filter(
+      (existing) => existing.nodeId !== artifact.nodeId || existing.name !== artifact.name,
+    );
+    run.artifacts.push(artifact);
+    addEvent(
+      run,
+      'artifact-collected',
+      `Node ${nodeId} collected artifact ${artifact.name}`,
+      { artifact },
+      nodeId,
+    );
+  }
+  for (const missing of result.missing) {
+    addEvent(
+      run,
+      'artifact-missing',
+      `Node ${nodeId} did not collect artifact ${missing.name}: ${missing.reason}`,
+      missing,
+      nodeId,
+    );
+  }
+  if (result.artifacts.length > 0 || result.missing.length > 0) {
+    run.updatedAt = Date.now();
+    await context.saveAndEmit(run);
   }
 }
 

@@ -93,6 +93,58 @@ nodes:
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
+  it('collects declared shell artifacts inside the workflow directory', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: artifact-proof
+nodes:
+  report:
+    type: shell
+    command: mkdir -p artifacts && printf "ready" > artifacts/report.txt
+    artifacts:
+      report:
+        path: artifacts/report.txt
+        type: report
+        description: Review report
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.artifacts).toContainEqual(
+      expect.objectContaining({
+        nodeId: 'report',
+        name: 'report',
+        kind: 'report',
+        path: path.join(projectDir, 'artifacts/report.txt'),
+        description: 'Review report',
+        metadata: expect.objectContaining({
+          declaredPath: 'artifacts/report.txt',
+          digest: expect.stringMatching(/^sha256:/),
+        }),
+      }),
+    );
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'artifact-collected',
+        nodeId: 'report',
+      }),
+    );
+  });
+
   it('runs a browser-provided workflow snapshot without requiring a local workflow file', async () => {
     const daemon = await setup();
     const directoryId = DirectoryManager.idFromPath(projectDir);

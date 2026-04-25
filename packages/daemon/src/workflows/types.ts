@@ -131,6 +131,20 @@ export interface WorkflowNodeRunState {
   };
 }
 
+export interface WorkflowRunArtifactRecord {
+  id: string;
+  runId: string;
+  nodeId: string;
+  name: string;
+  kind: WorkflowArtifactDefinition['type'];
+  path: string;
+  digest?: string;
+  description?: string;
+  sizeBytes?: number;
+  createdAt: number;
+  metadata?: Record<string, unknown>;
+}
+
 export interface WorkflowRunEvent {
   id: string;
   runId: string;
@@ -144,6 +158,8 @@ export interface WorkflowRunEvent {
     | 'node-started'
     | 'node-log'
     | 'node-output'
+    | 'artifact-collected'
+    | 'artifact-missing'
     | 'approval-requested'
     | 'approval-resolved'
     | 'node-completed'
@@ -177,6 +193,7 @@ export interface WorkflowRunRecord {
   inputs: Record<string, string | number | boolean>;
   preflight: WorkflowPreflightResult;
   nodes: Record<string, WorkflowNodeRunState>;
+  artifacts: WorkflowRunArtifactRecord[];
   events: WorkflowRunEvent[];
   createdAt: number;
   updatedAt: number;

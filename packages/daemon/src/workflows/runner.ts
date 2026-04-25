@@ -80,6 +80,7 @@ export class WorkflowRunner {
           } satisfies WorkflowNodeRunState,
         ]),
       ),
+      artifacts: [],
       events: [],
       createdAt: now,
       updatedAt: now,
