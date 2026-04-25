@@ -182,21 +182,25 @@ describe('fullstack CLI workflow e2e', () => {
       expect(squashPayload['ok']).toBe(true);
 
       await rotateAuthToken();
-      const pairResult = await runCliCommand(
-        ['pair', '--json'],
-        '../../src/cli/lifecycle-commands.js',
-        'pair',
-      );
-      const pairPayload = parseJsonLog(pairResult.logs) as {
-        offer?: { offerId: string; redeemSecret: string; trustAnchor: string };
+      const offerResponse = await daemonFetch('/api/pair/offer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttlSeconds: 60 }),
+      });
+      expect(offerResponse?.status).toBe(200);
+      const offer = (await offerResponse?.json()) as {
+        offerId?: string;
+        redeemSecret?: string;
+        trustAnchor?: string;
       };
-      expect(pairPayload.offer?.offerId).toBeTruthy();
-      expect(pairPayload.offer?.trustAnchor).toBeTruthy();
+      expect(offer.offerId).toBeTruthy();
+      expect(offer.redeemSecret).toBeTruthy();
+      expect(offer.trustAnchor).toBeTruthy();
       const clientIdentity = createPairingClientIdentity();
       const clientProof = createPairingRedeemProof({
-        offerId: pairPayload.offer!.offerId,
-        redeemSecret: pairPayload.offer!.redeemSecret,
-        trustAnchor: pairPayload.offer!.trustAnchor,
+        offerId: offer.offerId!,
+        redeemSecret: offer.redeemSecret!,
+        trustAnchor: offer.trustAnchor!,
         clientIdentity,
       });
 
@@ -204,9 +208,9 @@ describe('fullstack CLI workflow e2e', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          offerId: pairPayload.offer!.offerId,
-          proof: pairPayload.offer!.redeemSecret,
-          trustAnchor: pairPayload.offer!.trustAnchor,
+          offerId: offer.offerId!,
+          proof: offer.redeemSecret!,
+          trustAnchor: offer.trustAnchor!,
           clientPublicKey: clientProof.clientPublicKey,
           clientProof: clientProof.clientProof,
         }),
@@ -220,8 +224,8 @@ describe('fullstack CLI workflow e2e', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          offerId: pairPayload.offer!.offerId,
-          proof: pairPayload.offer!.redeemSecret,
+          offerId: offer.offerId!,
+          proof: offer.redeemSecret!,
           trustAnchor: 'dead:beef',
           clientPublicKey: clientProof.clientPublicKey,
           clientProof: clientProof.clientProof,
