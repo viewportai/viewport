@@ -780,6 +780,101 @@ nodes:
       }),
     ).rejects.toThrow(/Missing required workflow input/);
   });
+
+  it('runs sibling shell nodes concurrently in the same DAG layer', async () => {
+    // Two siblings each sleep ~250ms then write a marker. If the runner is
+    // sequential, both end-to-end should take >= 500ms; in parallel layers
+    // they should comfortably finish in under 400ms even with scheduler jitter.
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: parallel-proof
+nodes:
+  left:
+    type: shell
+    command: 'sleep 0.25 && printf left'
+    outputs:
+      mark:
+        type: string
+  right:
+    type: shell
+    command: 'sleep 0.25 && printf right'
+    outputs:
+      mark:
+        type: string
+  join:
+    type: shell
+    needs: [left, right]
+    command: 'printf {{ nodes.left.outputs.mark }}-{{ nodes.right.outputs.mark }}'
+`,
+      'utf-8',
+    );
+
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    const begin = Date.now();
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId,
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const elapsed = Date.now() - begin;
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.left?.status).toBe('completed');
+    expect(completed?.nodes.right?.status).toBe('completed');
+    expect(completed?.nodes.join?.output).toBe('left-right');
+    expect(elapsed).toBeLessThan(700);
+  });
+
+  it('falls through a failed sibling when a downstream node uses triggerRule one_success', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: trigger-rule-proof
+nodes:
+  unstable:
+    type: shell
+    command: 'exit 7'
+    policy:
+      onFailure: continue
+  reliable:
+    type: shell
+    command: 'printf reliable'
+    outputs:
+      mark:
+        type: string
+  notify:
+    type: shell
+    needs: [unstable, reliable]
+    triggerRule: one_success
+    command: 'printf notify-{{ nodes.reliable.outputs.mark }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.unstable?.status).toBe('failed');
+    expect(completed?.nodes.reliable?.status).toBe('completed');
+    expect(completed?.nodes.notify?.status).toBe('completed');
+    expect(completed?.nodes.notify?.output).toBe('notify-reliable');
+  });
 });
 
 class MockSession extends EventEmitter implements Session {

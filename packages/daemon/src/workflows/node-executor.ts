@@ -96,12 +96,12 @@ export async function executeWorkflowNode(
     state.status = 'failed';
     state.error = message;
     state.completedAt = Date.now();
-    run.status = 'failed';
-    run.error = message;
-    run.completedAt = state.completedAt;
     run.updatedAt = state.completedAt;
     addEvent(run, 'node-failed', `Node ${nodeId} failed: ${message}`, undefined, nodeId);
-    addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
+    // Run-level failure is decided by the runner now: in parallel layers, a
+    // single node failing should not preempt sibling nodes that are still in
+    // flight, and a sibling with `triggerRule` may still consume the failure
+    // gracefully.
     await context.saveAndEmit(run);
     throw error;
   }
