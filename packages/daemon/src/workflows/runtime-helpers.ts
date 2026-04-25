@@ -138,12 +138,15 @@ export async function runShellNode(
   options: {
     cwd: string;
     timeoutSeconds?: number;
+    /** Extra environment variables merged with process.env for this child. */
+    env?: Record<string, string>;
     onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
   },
 ): Promise<ShellNodeResult> {
   return await new Promise<ShellNodeResult>((resolve, reject) => {
     const child = spawn('sh', ['-lc', command], {
       cwd: options.cwd,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';

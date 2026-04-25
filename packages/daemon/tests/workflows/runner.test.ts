@@ -564,6 +564,53 @@ nodes:
     expect(completed?.nodes.gate?.approval?.message).toContain('Confidential');
   });
 
+  it('runs the approval onReject command on denial and exposes the rejection message', async () => {
+    const daemon = await setup();
+    const markerFile = path.join(projectDir, 'rejection-marker.txt');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: approval-on-reject-proof
+nodes:
+  gate:
+    type: approval
+    prompt: Approve the deploy.
+    onReject:
+      command: 'printf %s "$VIEWPORT_REJECT_MESSAGE" > ${markerFile}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.nodes.gate?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: false,
+      message: 'Reverted: shipped without integration test',
+    });
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('canceled');
+    // The follow-up shell wrote the rejection message into the marker file.
+    expect(await fs.readFile(markerFile, 'utf-8')).toBe(
+      'Reverted: shipped without integration test',
+    );
+    const rejectLogs = (completed?.events ?? []).filter(
+      (event) => event.type === 'node-log' && event.message.toLowerCase().includes('onreject'),
+    );
+    expect(rejectLogs.length).toBeGreaterThan(0);
+  });
+
   it('cancels approval-gated workflows when approval is denied', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

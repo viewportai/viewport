@@ -159,6 +159,22 @@ export class WorkflowRunner {
     };
 
     if (!decision.approved) {
+      // Run the approval node's onReject command if declared. Failures here
+      // are recorded but never block the rejection — the run is canceling
+      // anyway. The approver's free-text rejection message is exposed via
+      // VIEWPORT_REJECT_MESSAGE so scripts can react to it.
+      const parsedForReject = parseWorkflow(
+        run.yamlSnapshot,
+        run.sourcePath ?? `viewport://runs/${run.id}`,
+      );
+      const rejectingNode = parsedForReject.definition.nodes[nodeId];
+      if (
+        rejectingNode?.type === 'approval' &&
+        rejectingNode.onReject &&
+        rejectingNode.onReject.command
+      ) {
+        await this.runOnRejectFollowUp(run, nodeId, rejectingNode.onReject, decision.message);
+      }
       state.status = 'failed';
       state.error = decision.message ?? 'Approval denied';
       state.completedAt = resolvedAt;
@@ -217,6 +233,56 @@ export class WorkflowRunner {
     run.updatedAt = run.completedAt;
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await this.saveAndEmit(run);
+  }
+
+  /**
+   * Run the approval node's `onReject` shell command after a denial. Output
+   * is recorded as a `node-log` event on the run timeline so reviewers can
+   * see what the follow-up did. Failures are caught and emitted as a
+   * `node-log` so the rejection itself isn't masked by a follow-up error.
+   */
+  private async runOnRejectFollowUp(
+    run: WorkflowRunRecord,
+    nodeId: string,
+    onReject: { command: string; cwd?: string; timeoutSeconds?: number },
+    rejectionMessage: string | undefined,
+  ): Promise<void> {
+    const {
+      runShellNode,
+      resolveNodeCwd,
+      addEvent: addRunEvent,
+    } = await import('./runtime-helpers.js');
+    const cwd = resolveNodeCwd(run.directoryPath, onReject.cwd);
+    addRunEvent(
+      run,
+      'node-log',
+      `Approval ${nodeId} rejected — running onReject command`,
+      { command: onReject.command, cwd },
+      nodeId,
+    );
+    try {
+      const result = await runShellNode(onReject.command, {
+        cwd,
+        timeoutSeconds: onReject.timeoutSeconds,
+        env: rejectionMessage ? { VIEWPORT_REJECT_MESSAGE: rejectionMessage } : undefined,
+      });
+      addRunEvent(
+        run,
+        'node-log',
+        `onReject for ${nodeId} exited ${result.exitCode}`,
+        { exitCode: result.exitCode, output: result.output },
+        nodeId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addRunEvent(
+        run,
+        'node-log',
+        `onReject for ${nodeId} errored: ${message}`,
+        { error: message },
+        nodeId,
+      );
+    }
   }
 
   private async requireRun(runId: string): Promise<WorkflowRunRecord> {
