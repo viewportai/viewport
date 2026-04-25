@@ -198,12 +198,55 @@ const LoopNodeSchema = NodeBaseSchema.extend({
     }
   });
 
+/**
+ * Inline mini-workflow executed by a `subflow` parent. Restricted to shell-only
+ * nodes for the first cut so the daemon can run them sequentially without
+ * pulling in session lifecycle complexity. Prompt-bodied subflows ship next.
+ */
+const SubflowChildShellSchema = z
+  .object({
+    type: z.literal('shell'),
+    title: z.string().trim().min(1).optional(),
+    needs: z.array(z.string().trim().min(1)).optional(),
+    when: z.string().trim().min(1).optional(),
+    command: z.string().trim().min(1),
+    cwd: z.string().trim().min(1).optional(),
+    timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+    outputs: z.record(identifierSchema, OutputDefinitionSchema).optional(),
+  })
+  .strict();
+
+const SubflowChildSchema = z.discriminatedUnion('type', [SubflowChildShellSchema]);
+
+const SubflowNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('subflow'),
+  /**
+   * Inline child workflow definition. Currently only shell children are
+   * supported — see SubflowChildSchema. Each child shares the parent's
+   * directory, inputs, and run record but executes in its own topological
+   * order. The aggregate output of the subflow node is the child terminal
+   * outputs encoded as a JSON map keyed by child node id.
+   */
+  inline: z
+    .object({
+      nodes: z.record(z.string().trim().min(1), SubflowChildSchema),
+    })
+    .strict(),
+  /**
+   * Optional input map. Keys are visible to the child as `inputs.<key>` via
+   * the same JSONata context the parent uses; values are JSONata expressions
+   * resolved against the parent's run state at subflow start.
+   */
+  inputs: z.record(identifierSchema, z.string().trim().min(1)).optional(),
+}).strict();
+
 const WorkflowNodeSchema = z.discriminatedUnion('type', [
   PromptNodeSchema,
   ShellNodeSchema,
   ApprovalNodeSchema,
   GateNodeSchema,
   LoopNodeSchema,
+  SubflowNodeSchema,
 ]);
 
 const WorkflowDefinitionSchema = z
@@ -386,6 +429,17 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
       templates.push(node.body.command);
       if (node.body.cwd) templates.push(node.body.cwd);
     }
+    return templates;
+  }
+  if (node.type === 'subflow') {
+    const templates: string[] = [];
+    for (const value of Object.values(node.inputs ?? {})) {
+      templates.push(value);
+    }
+    // Child node templates reference *child* node ids, not parent ids — they
+    // resolve in a separate scope, so we don't validate their refs against
+    // the parent dependency graph here. The runner enforces child references
+    // at execution time.
     return templates;
   }
   return [node.prompt];

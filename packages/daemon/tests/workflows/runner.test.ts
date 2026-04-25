@@ -1049,6 +1049,55 @@ nodes:
     expect(await fs.readFile(counterFile, 'utf-8')).toBe('1');
   });
 
+  it('runs an inline subflow with two child shells in topological order and aggregates outputs', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: subflow-proof
+inputs:
+  greeting:
+    type: string
+    default: hello
+nodes:
+  validate:
+    type: subflow
+    inputs:
+      label: inputs.greeting
+    inline:
+      nodes:
+        first:
+          type: shell
+          command: 'printf %s {{ inputs.label }}'
+        second:
+          type: shell
+          needs: [first]
+          command: 'printf %s "{{ nodes.first.output }}-then"'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      inputs: { greeting: 'subbie' },
+    });
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.validate?.status).toBe('completed');
+    const aggregated = JSON.parse(completed?.nodes.validate?.output ?? '{}');
+    expect(aggregated.first).toBe('subbie');
+    expect(aggregated.second).toBe('subbie-then');
+    const events = completed?.events ?? [];
+    expect(events.filter((event) => event.type === 'subflow-child-started')).toHaveLength(2);
+    expect(events.filter((event) => event.type === 'subflow-child-completed')).toHaveLength(2);
+  });
+
   it('falls through a failed sibling when a downstream node uses triggerRule one_success', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

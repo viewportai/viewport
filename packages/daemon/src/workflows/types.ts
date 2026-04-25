@@ -1,4 +1,4 @@
-export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop';
+export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop' | 'subflow';
 
 /**
  * Join semantics when a node has multiple `needs`. Default is `all_success`.
@@ -125,12 +125,30 @@ export interface WorkflowLoopNode extends WorkflowNodeBase {
   body: WorkflowLoopBody;
 }
 
+export type WorkflowSubflowChild = {
+  type: 'shell';
+  title?: string;
+  needs?: string[];
+  when?: string;
+  command: string;
+  cwd?: string;
+  timeoutSeconds?: number;
+  outputs?: Record<string, WorkflowOutputDefinition>;
+};
+
+export interface WorkflowSubflowNode extends WorkflowNodeBase {
+  type: 'subflow';
+  inline: { nodes: Record<string, WorkflowSubflowChild> };
+  inputs?: Record<string, string>;
+}
+
 export type WorkflowNode =
   | WorkflowPromptNode
   | WorkflowShellNode
   | WorkflowApprovalNode
   | WorkflowGateNode
-  | WorkflowLoopNode;
+  | WorkflowLoopNode
+  | WorkflowSubflowNode;
 
 export interface WorkflowDefinition {
   schema: 'viewport.workflow/v1';
@@ -268,7 +286,11 @@ export interface WorkflowRunEvent {
     | 'loop-iteration-started'
     | 'loop-iteration-completed'
     | 'loop-iteration-failed'
-    | 'node-retry';
+    | 'node-retry'
+    | 'subflow-child-started'
+    | 'subflow-child-completed'
+    | 'subflow-child-failed'
+    | 'subflow-child-skipped';
   nodeId?: string;
   message: string;
   data?: Record<string, unknown>;

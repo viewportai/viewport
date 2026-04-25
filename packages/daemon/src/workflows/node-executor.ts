@@ -19,6 +19,7 @@ import {
   readPromptNodeTranscriptExcerpt,
 } from './prompt-output.js';
 import { classifyRetry } from './retry-classifier.js';
+import { executeSubflowNode } from './subflow-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -91,6 +92,8 @@ export async function executeWorkflowNode(
         if (gateResult === 'blocked') return 'blocked';
       } else if (node.type === 'loop') {
         await executeLoopNode(context, run, nodeId, node);
+      } else if (node.type === 'subflow') {
+        await executeSubflowNode(context, run, nodeId, node);
       }
 
       await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);

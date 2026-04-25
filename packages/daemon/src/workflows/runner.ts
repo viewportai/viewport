@@ -174,7 +174,7 @@ export class WorkflowRunner {
     // expected to be a free-text payload by design.
     const isOptInApproval =
       approvalNode?.type === 'approval' && approvalNode.captureResponse !== true;
-    state.output = isOptInApproval ? 'Approved' : decision.message ?? 'Approved';
+    state.output = isOptInApproval ? 'Approved' : (decision.message ?? 'Approved');
     run.status = 'running';
     run.updatedAt = resolvedAt;
     addEvent(
