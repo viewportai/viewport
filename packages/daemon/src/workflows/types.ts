@@ -186,6 +186,7 @@ export interface WorkflowRunRecord {
   directoryPath: string;
   projectId?: string;
   projectMachineBindingId?: string;
+  platformRunId?: string;
   machineId: string;
   executionPolicy?: WorkflowExecutionPolicy;
   initiation: 'cli' | 'browser' | 'agent_skill';
@@ -220,6 +221,7 @@ export interface WorkflowRunRequest {
   inputs?: Record<string, string | number | boolean>;
   projectId?: string;
   projectMachineBindingId?: string;
+  platformRunId?: string;
   executionPolicy?: WorkflowExecutionPolicy;
   initiation: WorkflowRunRecord['initiation'];
 }

@@ -5,6 +5,7 @@ import { addEvent, normalizeInputs } from './runtime-helpers.js';
 import { executeWorkflowNode } from './node-executor.js';
 import { getSessionState, readReplaySessionState } from './session-completion.js';
 import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-output.js';
+import { WorkflowRunPlatformSync } from './platform-sync.js';
 import { WorkflowSessionLinkStore } from './session-links.js';
 import { WorkflowRunStore } from './store.js';
 import { resolveWorkflowSource } from './workflow-source.js';
@@ -19,9 +20,12 @@ import type {
 export class WorkflowRunner {
   private readonly store = new WorkflowRunStore();
   private readonly sessionLinks = new WorkflowSessionLinkStore();
+  private readonly platformSync: WorkflowRunPlatformSync;
   private readonly activeRunIds = new Set<string>();
 
-  constructor(private readonly daemon: Daemon) {}
+  constructor(private readonly daemon: Daemon) {
+    this.platformSync = new WorkflowRunPlatformSync(daemon.configManager);
+  }
 
   async validateFile(filePath: string): Promise<ParsedWorkflow> {
     return parseWorkflowFile(filePath);
@@ -63,6 +67,7 @@ export class WorkflowRunner {
       directoryPath: directory.path,
       projectId: request.projectId,
       projectMachineBindingId: request.projectMachineBindingId,
+      platformRunId: request.platformRunId,
       machineId: this.daemon.configManager.getMachineId(),
       executionPolicy: request.executionPolicy,
       initiation: request.initiation,
@@ -251,6 +256,7 @@ export class WorkflowRunner {
   private async saveAndEmit(run: WorkflowRunRecord): Promise<void> {
     await this.store.save(run);
     this.daemon.emit('workflow:run-updated', { run });
+    void this.platformSync.sync(run).catch(() => undefined);
   }
 
   private async reconcileRun(run: WorkflowRunRecord): Promise<WorkflowRunRecord> {

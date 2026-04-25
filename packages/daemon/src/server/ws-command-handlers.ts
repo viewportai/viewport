@@ -297,6 +297,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
         inputs: msg.inputs,
         projectId: msg.projectId,
         projectMachineBindingId: msg.projectMachineBindingId,
+        platformRunId: msg.platformRunId,
         executionPolicy: msg.executionPolicy,
         initiation: 'browser',
       });
