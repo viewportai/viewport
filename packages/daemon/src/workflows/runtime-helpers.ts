@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import type {
-  ParsedWorkflow,
-  WorkflowNodeRunState,
-  WorkflowRunEvent,
-  WorkflowRunRecord,
-} from './types.js';
+import {
+  buildExpressionContext,
+  renderTemplateString,
+  WorkflowExpressionError,
+} from './expression.js';
+import type { ParsedWorkflow, WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 
 const MAX_OUTPUT_CHARS = 32_000;
 const MAX_LOG_CHUNK_CHARS = 4_000;
@@ -70,29 +70,62 @@ export function resolveNodeCwd(directoryPath: string, cwd?: string): string {
   return path.isAbsolute(cwd) ? cwd : path.join(directoryPath, cwd);
 }
 
-export function renderOptionalTemplate(
+export async function renderOptionalTemplate(
   template: string | undefined,
   run: WorkflowRunRecord,
-): string | undefined {
-  return template ? renderTemplate(template, run) : undefined;
+): Promise<string | undefined> {
+  return template !== undefined ? await renderTemplate(template, run) : undefined;
 }
 
-export function renderTemplate(template: string, run: WorkflowRunRecord): string {
+/**
+ * Render a workflow template by replacing `{{ <jsonata> }}` placeholders. The
+ * legacy patterns (`{{ inputs.X }}`, `{{ nodes.X.output }}`, `{{ outputs.X }}`,
+ * `{{ artifacts.X.Y }}`) all evaluate as JSONata path expressions over the run
+ * context, so existing workflows keep working while authors gain the full
+ * JSONata expression language for new templates.
+ *
+ * Backwards-compat shims:
+ *   - `outputs.X` → rewritten to `nodes.X.output` (legacy alias).
+ *   - `artifacts.X.Y` → rewritten to a synthetic accessor that maps the run's
+ *     artifact list back into `<nodeId>.<artifactName>` shape.
+ */
+export async function renderTemplate(template: string, run: WorkflowRunRecord): Promise<string> {
+  const rewritten = applyLegacyTemplateAliases(template);
+  const context = buildArtifactAwareContext(run);
+  try {
+    return await renderTemplateString(rewritten, context);
+  } catch (error) {
+    if (error instanceof WorkflowExpressionError) {
+      throw new Error(`Template expression failed (${error.expression}): ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+const LEGACY_OUTPUTS_PATTERN = /\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g;
+const LEGACY_ARTIFACTS_PATTERN = /\{\{\s*artifacts\.([A-Za-z0-9._/-]+)\.([A-Za-z0-9._/-]+)\s*\}\}/g;
+
+function applyLegacyTemplateAliases(template: string): string {
   return template
-    .replace(/\{\{\s*inputs\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_, key: string) => {
-      const value = run.inputs[key];
-      return value === undefined ? '' : String(value);
-    })
-    .replace(/\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g, (_, nodeId: string) => {
-      return run.nodes[nodeId]?.output ?? '';
-    })
+    .replace(LEGACY_OUTPUTS_PATTERN, (_match, nodeId: string) => `{{ nodes.${nodeId}.output }}`)
     .replace(
-      /\{\{\s*nodes\.([A-Za-z0-9._/-]+)\.(output|status|sessionId|error)\s*\}\}/g,
-      (_, nodeId: string, key: keyof WorkflowNodeRunState) => {
-        const value = run.nodes[nodeId]?.[key];
-        return value === undefined ? '' : String(value);
-      },
+      LEGACY_ARTIFACTS_PATTERN,
+      (_match, nodeId: string, name: string) =>
+        `{{ artifacts[nodeId='${nodeId}' and name='${name}'].path }}`,
     );
+}
+
+function buildArtifactAwareContext(run: WorkflowRunRecord) {
+  const base = buildExpressionContext(run);
+  return {
+    ...base,
+    artifacts: (run.artifacts ?? []).map((artifact) => ({
+      nodeId: artifact.nodeId,
+      name: artifact.name,
+      path: artifact.path,
+      kind: artifact.kind ?? null,
+    })),
+  };
 }
 
 export async function runShellNode(

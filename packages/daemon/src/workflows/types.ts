@@ -1,5 +1,14 @@
 export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate';
 
+/**
+ * Join semantics when a node has multiple `needs`. Default is `all_success`.
+ *
+ * - `all_success`: every parent must reach `completed` for this node to run.
+ * - `all_done`: every parent must reach a terminal state (completed, failed, skipped).
+ * - `one_success`: at least one parent must `completed`.
+ */
+export type WorkflowTriggerRule = 'all_success' | 'all_done' | 'one_success';
+
 export interface WorkflowInputDefinition {
   type: 'string' | 'number' | 'boolean';
   required?: boolean;
@@ -53,6 +62,17 @@ export interface WorkflowNodeBase {
   type: WorkflowNodeType;
   title?: string;
   needs?: string[];
+  /**
+   * JSONata expression evaluated against the run context before this node runs.
+   * If the expression resolves to a falsy value the node is marked `skipped` and
+   * its outputs are unavailable to downstream references.
+   */
+  when?: string;
+  /**
+   * How to react to the `needs` set when one or more parents are non-success.
+   * Defaults to `all_success`.
+   */
+  triggerRule?: WorkflowTriggerRule;
   timeoutSeconds?: number;
   retry?: WorkflowRetryPolicy;
   policy?: WorkflowNodePolicy;
@@ -135,8 +155,20 @@ export interface WorkflowNodeRunState {
   nativeSessionId?: string;
   worktreePath?: string;
   output?: string;
+  /**
+   * Structured outputs declared by the node, populated after the node runs.
+   * Keys correspond to entries in `WorkflowNodeBase.outputs`. Values are
+   * coerced based on declared `type` (string, json, number, boolean) — text
+   * passthrough for `string`, `JSON.parse` for `json` (best-effort).
+   */
+  outputs?: Record<string, unknown>;
   exitCode?: number;
   error?: string;
+  /**
+   * Set when the node was skipped because its `when` expression resolved
+   * falsy or its `triggerRule` was unsatisfied.
+   */
+  skipReason?: string;
   metadata?: Record<string, unknown>;
   approval?: {
     prompt: string;
@@ -175,6 +207,7 @@ export interface WorkflowRunEvent {
     | 'node-started'
     | 'node-log'
     | 'node-output'
+    | 'node-skipped'
     | 'artifact-collected'
     | 'artifact-missing'
     | 'approval-requested'

@@ -44,8 +44,8 @@ export async function executeWorkflowNode(
   try {
     let artifactCwd = run.directoryPath;
     if (node.type === 'shell') {
-      artifactCwd = resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run));
-      const result = await runShellNode(renderTemplate(node.command, run), {
+      artifactCwd = resolveNodeCwd(run.directoryPath, await renderOptionalTemplate(node.cwd, run));
+      const result = await runShellNode(await renderTemplate(node.command, run), {
         cwd: artifactCwd,
         timeoutSeconds: node.timeoutSeconds,
         onOutput: ({ source, chunk, output }) => {
@@ -72,7 +72,7 @@ export async function executeWorkflowNode(
     } else if (node.type === 'prompt') {
       await executePromptNode(context, run, nodeId, node);
     } else if (node.type === 'approval') {
-      await blockForApproval(context, run, nodeId, renderTemplate(node.prompt, run));
+      await blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
       return 'blocked';
     } else if (node.type === 'gate') {
       const gateResult = await executeGateNode(context, run, nodeId, node);
@@ -115,14 +115,14 @@ async function executeGateNode(
 ): Promise<'completed' | 'blocked'> {
   const gate = node.gate;
   if (gate.type === 'human_review') {
-    await blockForApproval(context, run, nodeId, renderTemplate(gate.prompt, run));
+    await blockForApproval(context, run, nodeId, await renderTemplate(gate.prompt, run));
     addEvent(run, 'gate-blocked', `Human review gate ${nodeId} is waiting`, { gate }, nodeId);
     await context.saveAndEmit(run);
     return 'blocked';
   }
 
   if (gate.type === 'schedule') {
-    const waitUntil = new Date(renderTemplate(gate.waitUntil, run));
+    const waitUntil = new Date(await renderTemplate(gate.waitUntil, run));
     if (!Number.isFinite(waitUntil.getTime())) {
       throw new Error(`Schedule gate ${nodeId} has an invalid waitUntil value`);
     }
@@ -156,7 +156,7 @@ async function executeGateNode(
     return 'completed';
   }
 
-  const rendered = renderTemplate(gate.expression, run);
+  const rendered = await renderTemplate(gate.expression, run);
   if (!isTruthyGateValue(rendered)) {
     throw new Error(`${gate.type} gate ${nodeId} failed: ${rendered || 'false'}`);
   }
@@ -237,7 +237,7 @@ async function executePromptNode(
   context.daemon.on('session:message', messageHandler);
   const sessionId = await context.daemon.launchSession(
     run.directoryId,
-    renderTemplate(node.prompt, run),
+    await renderTemplate(node.prompt, run),
     {
       ...(node.agent ? { agent: node.agent } : {}),
       ...(node.model ? { model: node.model } : {}),

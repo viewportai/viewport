@@ -21,7 +21,7 @@ export async function collectNodeArtifacts(
   const missing: ArtifactCollectionResult['missing'] = [];
 
   for (const [name, definition] of Object.entries(node.artifacts ?? {})) {
-    const renderedPath = renderTemplate(definition.path, run);
+    const renderedPath = await renderTemplate(definition.path, run);
     const artifactPath = path.isAbsolute(renderedPath)
       ? renderedPath
       : path.resolve(cwd, renderedPath);

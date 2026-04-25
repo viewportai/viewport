@@ -246,4 +246,70 @@ nodes:
     expect(completed.nodes.inspect?.output).toContain('ship the change');
     expect(completed.nodes.review?.output).toContain('review acknowledged');
   });
+
+  it('routes a branch via when expressions and skips the unselected leg', async () => {
+    // Proves the v2 wedge: structured outputs feed JSONata `when:` expressions,
+    // matching nodes run, the unmatched branch is `skipped`, and a downstream
+    // node with triggerRule=one_success consumes whichever branch fired.
+    harness = await FullstackCliHarness.start();
+    const projectPath = await harness.createGitProject();
+    const workflowPath = path.join(projectPath, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: branching-proof
+title: Branching proof
+nodes:
+  classify:
+    type: shell
+    command: 'printf %s ''{"type":"BUG","priority":"P0"}'''
+    outputs:
+      payload:
+        type: json
+        description: Structured classification.
+  bug_branch:
+    type: shell
+    needs: [classify]
+    when: 'nodes.classify.outputs.payload.type = "BUG"'
+    command: 'echo handled-bug'
+  feature_branch:
+    type: shell
+    needs: [classify]
+    when: 'nodes.classify.outputs.payload.type = "FEATURE"'
+    command: 'echo handled-feature'
+  notify:
+    type: shell
+    needs: [bug_branch, feature_branch]
+    triggerRule: one_success
+    command: 'echo notify-from-{{ nodes.bug_branch.status }}-{{ nodes.feature_branch.status }}'
+`,
+      'utf-8',
+    );
+
+    const runResult = await runCliCommand(
+      ['workflow', 'run', workflowPath, '--directory', projectPath, '--detach', '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    expect(runResult.errors).toEqual([]);
+    const runId = String((parseJsonLog(runResult.logs) as { run?: { id?: string } }).run?.id);
+
+    const completed = await waitFor(async () => {
+      const run = await harness!.daemonInstance.workflowRunner.getRun(runId);
+      return run?.status === 'completed' ? run : null;
+    });
+
+    expect(completed.nodes.classify?.status).toBe('completed');
+    expect(completed.nodes.classify?.outputs).toEqual({
+      payload: { type: 'BUG', priority: 'P0' },
+    });
+    expect(completed.nodes.bug_branch?.status).toBe('completed');
+    expect(completed.nodes.bug_branch?.output).toContain('handled-bug');
+    expect(completed.nodes.feature_branch?.status).toBe('skipped');
+    expect(completed.nodes.feature_branch?.skipReason).toContain('when:');
+    expect(completed.nodes.notify?.status).toBe('completed');
+    expect(completed.nodes.notify?.output).toContain('completed');
+    expect(completed.nodes.notify?.output).toContain('skipped');
+  });
 });

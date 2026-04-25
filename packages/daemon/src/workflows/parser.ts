@@ -97,9 +97,19 @@ const RequiresSchema = z
   })
   .strict();
 
+const TriggerRuleSchema = z.enum(['all_success', 'all_done', 'one_success']);
+
 const NodeBaseSchema = z.object({
   title: z.string().trim().min(1).optional(),
   needs: z.array(z.string().trim().min(1)).optional(),
+  /**
+   * JSONata expression. Evaluated against the run context before the node
+   * runs. Falsy result skips the node. Parser only validates that the field
+   * is a string; runtime catches expression errors at exec time.
+   */
+  when: z.string().trim().min(1).optional(),
+  /** Join semantics when this node has multiple `needs`. */
+  triggerRule: TriggerRuleSchema.optional(),
   timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   retry: RetryPolicySchema.optional(),
   policy: NodePolicySchema.optional(),

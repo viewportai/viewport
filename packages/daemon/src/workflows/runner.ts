@@ -1,7 +1,18 @@
 import type { Daemon } from '../core/daemon.js';
+import {
+  buildExpressionContext,
+  evaluateConditionExpression,
+  WorkflowExpressionError,
+} from './expression.js';
 import { parseWorkflow, parseWorkflowFile, workflowNodeOrder } from './parser.js';
 import { preflightWorkflow } from './preflight.js';
 import { addEvent, normalizeInputs } from './runtime-helpers.js';
+import { captureNodeStructuredOutputs } from './structured-outputs.js';
+import {
+  evaluateTriggerRule,
+  isTriggerSkipReason,
+  type TriggerEvaluation,
+} from './trigger-rule.js';
 import { executeWorkflowNode } from './node-executor.js';
 import { getSessionState, readReplaySessionState } from './session-completion.js';
 import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-output.js';
@@ -212,6 +223,16 @@ export class WorkflowRunner {
         if (freshRun.status !== 'running') return;
         const node = parsed.definition.nodes[nodeId];
         if (!node) continue;
+        const state = freshRun.nodes[nodeId];
+        if (!state || state.status === 'completed' || state.status === 'skipped') continue;
+
+        const skipReason = await this.evaluateNodeGuards(freshRun, nodeId, node);
+        if (skipReason) {
+          this.markSkipped(freshRun, nodeId, skipReason);
+          await this.saveAndEmit(freshRun);
+          continue;
+        }
+
         const result = await executeWorkflowNode(
           {
             daemon: this.daemon,
@@ -223,6 +244,14 @@ export class WorkflowRunner {
           node,
         );
         if (result === 'blocked') return;
+
+        // Re-read after execution because executeWorkflowNode mutates and persists.
+        const completed = await this.requireRun(runId);
+        const completedState = completed.nodes[nodeId];
+        if (completedState?.status === 'completed') {
+          captureNodeStructuredOutputs(completedState, node);
+          await this.saveAndEmit(completed);
+        }
       }
 
       const complete = await this.requireRun(runId);
@@ -234,6 +263,51 @@ export class WorkflowRunner {
     } finally {
       this.activeRunIds.delete(runId);
     }
+  }
+
+  /**
+   * Decide whether this node should be skipped based on its `when:` expression
+   * and `triggerRule`. Returns a reason string if the node must be skipped, or
+   * null if the node should run.
+   */
+  private async evaluateNodeGuards(
+    run: WorkflowRunRecord,
+    nodeId: string,
+    node: ParsedWorkflow['definition']['nodes'][string],
+  ): Promise<string | null> {
+    const parents = (node.needs ?? [])
+      .map((parentId) => run.nodes[parentId])
+      .filter((parent): parent is NonNullable<typeof parent> => Boolean(parent));
+
+    const trigger: TriggerEvaluation = evaluateTriggerRule(node.triggerRule, parents);
+    if (!trigger.ready && trigger.reason && isTriggerSkipReason(trigger.reason)) {
+      return trigger.reason;
+    }
+
+    if (node.when) {
+      const context = buildExpressionContext(run);
+      try {
+        const truthy = await evaluateConditionExpression(node.when, context);
+        if (!truthy) return `when: ${node.when} → false`;
+      } catch (error) {
+        if (error instanceof WorkflowExpressionError) {
+          throw new Error(`Invalid when expression on ${nodeId}: ${error.message}`);
+        }
+        throw error;
+      }
+    }
+
+    return null;
+  }
+
+  private markSkipped(run: WorkflowRunRecord, nodeId: string, reason: string): void {
+    const state = run.nodes[nodeId];
+    if (!state) return;
+    state.status = 'skipped';
+    state.skipReason = reason;
+    state.completedAt = Date.now();
+    run.updatedAt = state.completedAt;
+    addEvent(run, 'node-skipped', `Node ${nodeId} skipped: ${reason}`, { reason }, nodeId);
   }
 
   private async failRun(runId: string, message: string): Promise<void> {
