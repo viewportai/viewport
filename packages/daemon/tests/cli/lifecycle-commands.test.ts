@@ -199,3 +199,27 @@ describe('lifecycle restart', () => {
     );
   });
 });
+
+describe('pairing machine name', () => {
+  const originalName = process.env['VIEWPORT_MACHINE_NAME'];
+
+  beforeEach(() => {
+    delete process.env['VIEWPORT_MACHINE_NAME'];
+  });
+
+  afterEach(() => {
+    if (originalName === undefined) {
+      delete process.env['VIEWPORT_MACHINE_NAME'];
+    } else {
+      process.env['VIEWPORT_MACHINE_NAME'] = originalName;
+    }
+  });
+
+  it('uses an explicit machine name when provided', async () => {
+    process.env['VIEWPORT_MACHINE_NAME'] = "  Mehr's MacBook Pro  ";
+
+    const { resolveDefaultPairingName } = await import('../../src/cli/lifecycle-commands.js');
+
+    await expect(resolveDefaultPairingName()).resolves.toBe("Mehr's MacBook Pro");
+  });
+});
