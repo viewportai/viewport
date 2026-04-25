@@ -1,0 +1,133 @@
+import type { Daemon } from '../core/daemon.js';
+import type { SessionMessage } from '../core/types.js';
+import { addEvent } from './runtime-helpers.js';
+import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
+import { createSessionOutputCollector } from './session-output.js';
+import type { WorkflowSessionLinkStore } from './session-links.js';
+import { defaultWorktreePath } from './prompt-output.js';
+import type { WorkflowRunRecord } from './types.js';
+
+export interface WorkflowSessionTarget {
+  sessionId?: string;
+  nativeSessionId?: string;
+  worktreePath?: string;
+  output?: string;
+}
+
+export interface WorkflowDaemonSessionContext {
+  daemon: Daemon;
+  sessionLinks: WorkflowSessionLinkStore;
+  saveAndEmit: (run: WorkflowRunRecord) => Promise<void>;
+}
+
+export interface WorkflowDaemonSessionRequest {
+  run: WorkflowRunRecord;
+  nodeId: string;
+  target: WorkflowSessionTarget;
+  prompt: string;
+  agent?: string;
+  model?: string;
+  outputFallback?: () => Promise<string>;
+  outputData?: (output: string) => Promise<Record<string, unknown>>;
+}
+
+export interface WorkflowDaemonSessionResult {
+  sessionId: string;
+  nativeSessionId: string;
+  worktreePath: string;
+  output: string;
+  reason: string;
+}
+
+export async function runWorkflowDaemonSession(
+  context: WorkflowDaemonSessionContext,
+  request: WorkflowDaemonSessionRequest,
+): Promise<WorkflowDaemonSessionResult> {
+  const { run, nodeId, target } = request;
+  const output = createSessionOutputCollector();
+  let activeSessionId: string | null = null;
+
+  const messageHandler = (event: { sessionId: string; message: SessionMessage }): void => {
+    if (event.sessionId !== activeSessionId) return;
+    output.push(event.message);
+  };
+
+  context.daemon.on('session:message', messageHandler);
+  try {
+    const sessionId = await context.daemon.launchSession(run.directoryId, request.prompt, {
+      ...(request.agent ? { agent: request.agent } : {}),
+      ...(request.model ? { model: request.model } : {}),
+    });
+    activeSessionId = sessionId;
+    const nativeSessionId = context.daemon.getSessionNativeId(sessionId);
+    const worktreePath =
+      readActiveSessionWorktreePath(context.daemon, sessionId) ??
+      defaultWorktreePath(run, sessionId);
+
+    target.sessionId = sessionId;
+    target.nativeSessionId = nativeSessionId;
+    target.worktreePath = worktreePath;
+
+    await context.sessionLinks.upsert({
+      sessionId,
+      nativeSessionId,
+      workflowRunId: run.id,
+      workflowNodeId: nodeId,
+      parentDirectoryId: run.directoryId,
+      parentDirectoryPath: run.directoryPath,
+      worktreePath,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    addEvent(
+      run,
+      'session-started',
+      `Node ${nodeId} started session ${sessionId}`,
+      { sessionId },
+      nodeId,
+    );
+    run.updatedAt = Date.now();
+    await context.saveAndEmit(run);
+
+    const reason = await waitForPromptSessionComplete(context.daemon, sessionId);
+    const capturedOutput =
+      output.text() || (request.outputFallback ? await request.outputFallback() : '');
+    if (capturedOutput && capturedOutput !== target.output) {
+      target.output = capturedOutput;
+      addEvent(
+        run,
+        'node-output',
+        `Node ${nodeId} produced prompt output`,
+        {
+          output: capturedOutput,
+          ...(request.outputData ? await request.outputData(capturedOutput) : {}),
+        },
+        nodeId,
+      );
+    }
+
+    addEvent(
+      run,
+      reason === 'idle' ? 'session-idle' : 'session-ended',
+      `Node ${nodeId} session ${sessionId} ${reason === 'idle' ? 'became idle' : 'ended'}`,
+      { sessionId, reason },
+      nodeId,
+    );
+    if (isFailedSessionReason(reason)) {
+      throw new Error(`Session ${sessionId} failed: ${reason}`);
+    }
+
+    return { sessionId, nativeSessionId, worktreePath, output: capturedOutput, reason };
+  } finally {
+    context.daemon.off('session:message', messageHandler);
+  }
+}
+
+function readActiveSessionWorktreePath(daemon: Daemon, sessionId: string): string | undefined {
+  try {
+    return daemon.getSessionWorktreePath(sessionId);
+  } catch {
+    return undefined;
+  }
+}

@@ -1,6 +1,12 @@
 import type { Daemon } from '../core/daemon.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
-import { addEvent, normalizeInputs } from './runtime-helpers.js';
+import {
+  addEvent,
+  normalizeInputs,
+  renderTemplate,
+  resolveNodeCwd,
+  runShellNode,
+} from './runtime-helpers.js';
 import { WorkflowRunPlatformSync } from './platform-sync.js';
 import { WorkflowSessionLinkStore } from './session-links.js';
 import { WorkflowRunStore } from './store.js';
@@ -9,9 +15,11 @@ import { WorkflowLayerScheduler } from './runner-scheduler.js';
 import { WorkflowRunResumer } from './runner-resumer.js';
 import { WorkflowRunReconciler } from './runner-reconciler.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
+import { runWorkflowDaemonSession } from './daemon-session.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
+  WorkflowApprovalNode,
   WorkflowNodeRunState,
   WorkflowRunRecord,
   WorkflowRunRequest,
@@ -168,11 +176,7 @@ export class WorkflowRunner {
         run.sourcePath ?? `viewport://runs/${run.id}`,
       );
       const rejectingNode = parsedForReject.definition.nodes[nodeId];
-      if (
-        rejectingNode?.type === 'approval' &&
-        rejectingNode.onReject &&
-        rejectingNode.onReject.command
-      ) {
+      if (rejectingNode?.type === 'approval' && rejectingNode.onReject) {
         await this.runOnRejectFollowUp(run, nodeId, rejectingNode.onReject, decision.message);
       }
       state.status = 'failed';
@@ -244,16 +248,55 @@ export class WorkflowRunner {
   private async runOnRejectFollowUp(
     run: WorkflowRunRecord,
     nodeId: string,
-    onReject: { command: string; cwd?: string; timeoutSeconds?: number },
+    onReject: NonNullable<WorkflowApprovalNode['onReject']>,
     rejectionMessage: string | undefined,
   ): Promise<void> {
-    const {
-      runShellNode,
-      resolveNodeCwd,
-      addEvent: addRunEvent,
-    } = await import('./runtime-helpers.js');
+    if ('prompt' in onReject) {
+      const state = run.nodes[nodeId];
+      if (!state) return;
+      addEvent(
+        run,
+        'node-log',
+        `Approval ${nodeId} rejected — running onReject prompt`,
+        {
+          prompt: onReject.prompt,
+          ...(onReject.agent ? { agent: onReject.agent } : {}),
+          ...(onReject.model ? { model: onReject.model } : {}),
+        },
+        nodeId,
+      );
+      await this.saveAndEmit(run);
+      try {
+        await runWorkflowDaemonSession(
+          {
+            daemon: this.daemon,
+            sessionLinks: this.sessionLinks,
+            saveAndEmit: (nextRun) => this.saveAndEmit(nextRun),
+          },
+          {
+            run,
+            nodeId,
+            target: state,
+            prompt: await renderTemplate(onReject.prompt, run),
+            ...(onReject.agent ? { agent: onReject.agent } : {}),
+            ...(onReject.model ? { model: onReject.model } : {}),
+          },
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addEvent(
+          run,
+          'node-log',
+          `onReject prompt for ${nodeId} errored: ${message}`,
+          { error: message },
+          nodeId,
+        );
+      }
+      return;
+    }
+
     const cwd = resolveNodeCwd(run.directoryPath, onReject.cwd);
-    addRunEvent(
+    addEvent(
       run,
       'node-log',
       `Approval ${nodeId} rejected — running onReject command`,
@@ -266,7 +309,7 @@ export class WorkflowRunner {
         timeoutSeconds: onReject.timeoutSeconds,
         env: rejectionMessage ? { VIEWPORT_REJECT_MESSAGE: rejectionMessage } : undefined,
       });
-      addRunEvent(
+      addEvent(
         run,
         'node-log',
         `onReject for ${nodeId} exited ${result.exitCode}`,
@@ -275,7 +318,7 @@ export class WorkflowRunner {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      addRunEvent(
+      addEvent(
         run,
         'node-log',
         `onReject for ${nodeId} errored: ${message}`,

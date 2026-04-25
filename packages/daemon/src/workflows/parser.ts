@@ -163,12 +163,22 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
    * audit record as `onRejectOutput` for the run timeline.
    */
   onReject: z
-    .object({
-      command: z.string().trim().min(1),
-      cwd: z.string().trim().min(1).optional(),
-      timeoutSeconds: z.number().int().positive().max(86_400).optional(),
-    })
-    .strict()
+    .union([
+      z
+        .object({
+          command: z.string().trim().min(1),
+          cwd: z.string().trim().min(1).optional(),
+          timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+        })
+        .strict(),
+      z
+        .object({
+          prompt: z.string().trim().min(1),
+          agent: z.string().trim().min(1).optional(),
+          model: z.string().trim().min(1).optional(),
+        })
+        .strict(),
+    ])
     .optional(),
 }).strict();
 
@@ -179,8 +189,8 @@ const GateNodeSchema = NodeBaseSchema.extend({
 
 /**
  * Inline mini-node executed by a `loop` parent. Cannot declare its own
- * `needs`, `triggerRule`, or `when`. Shell only for the first cut — prompt
- * bodies need per-iteration session lifecycle and ship in a follow-up.
+ * `needs`, `triggerRule`, or `when`. Shell bodies run deterministic commands;
+ * prompt bodies launch one agent session per iteration.
  */
 const LoopBodySchema = z.discriminatedUnion('type', [
   z
@@ -189,6 +199,14 @@ const LoopBodySchema = z.discriminatedUnion('type', [
       command: z.string().trim().min(1),
       cwd: z.string().trim().min(1).optional(),
       timeoutSeconds: z.number().int().positive().max(86_400).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('prompt'),
+      prompt: z.string().trim().min(1),
+      agent: z.string().trim().min(1).optional(),
+      model: z.string().trim().min(1).optional(),
     })
     .strict(),
 ]);

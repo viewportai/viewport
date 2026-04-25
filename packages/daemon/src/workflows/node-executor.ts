@@ -1,17 +1,11 @@
 import type { Daemon } from '../core/daemon.js';
-import type { SessionMessage } from '../core/types.js';
 import { addEvent, renderTemplate, ShellNodeError } from './runtime-helpers.js';
-import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
-import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { collectNodeArtifacts } from './artifact-collector.js';
-import {
-  defaultWorktreePath,
-  readPromptNodeOutput,
-  readPromptNodeTranscriptExcerpt,
-} from './prompt-output.js';
+import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-output.js';
 import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
+import { runWorkflowDaemonSession } from './daemon-session.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -232,77 +226,19 @@ async function executePromptNode(
   const state = run.nodes[nodeId];
   if (!state) return;
 
-  const output = createSessionOutputCollector();
-  const messageHandler = (event: { sessionId: string; message: SessionMessage }): void => {
-    if (event.sessionId !== state.sessionId) return;
-    output.push(event.message);
-  };
-  context.daemon.on('session:message', messageHandler);
-  const sessionId = await context.daemon.launchSession(
-    run.directoryId,
-    await renderTemplate(node.prompt, run),
-    {
-      ...(node.agent ? { agent: node.agent } : {}),
-      ...(node.model ? { model: node.model } : {}),
-    },
-  );
-  state.sessionId = sessionId;
-  state.nativeSessionId = context.daemon.getSessionNativeId(sessionId);
-  state.worktreePath =
-    readActiveSessionWorktreePath(context.daemon, sessionId) ?? defaultWorktreePath(run, sessionId);
-  await context.sessionLinks.upsert({
-    sessionId,
-    nativeSessionId: state.nativeSessionId,
-    workflowRunId: run.id,
-    workflowNodeId: nodeId,
-    parentDirectoryId: run.directoryId,
-    parentDirectoryPath: run.directoryPath,
-    worktreePath: state.worktreePath,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-  addEvent(
+  await runWorkflowDaemonSession(context, {
     run,
-    'session-started',
-    `Node ${nodeId} started session ${sessionId}`,
-    {
-      sessionId,
-    },
     nodeId,
-  );
-  run.updatedAt = Date.now();
-  await context.saveAndEmit(run);
-
-  try {
-    const reason = await waitForPromptSessionComplete(context.daemon, sessionId);
-    const capturedOutput = output.text() || (await readPromptNodeOutput(run, state));
-    if (capturedOutput && capturedOutput !== state.output) {
-      state.output = capturedOutput;
+    target: state,
+    prompt: await renderTemplate(node.prompt, run),
+    ...(node.agent ? { agent: node.agent } : {}),
+    ...(node.model ? { model: node.model } : {}),
+    outputFallback: () => readPromptNodeOutput(run, state),
+    outputData: async () => {
       const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state);
-      addEvent(
-        run,
-        'node-output',
-        `Node ${nodeId} produced prompt output`,
-        {
-          output: capturedOutput,
-          ...(transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {}),
-        },
-        nodeId,
-      );
-    }
-    addEvent(
-      run,
-      reason === 'idle' ? 'session-idle' : 'session-ended',
-      `Node ${nodeId} session ${sessionId} ${reason === 'idle' ? 'became idle' : 'ended'}`,
-      { sessionId, reason },
-      nodeId,
-    );
-    if (isFailedSessionReason(reason)) {
-      throw new Error(`Session ${sessionId} failed: ${reason}`);
-    }
-  } finally {
-    context.daemon.off('session:message', messageHandler);
-  }
+      return transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {};
+    },
+  });
 }
 
 async function blockForApproval(
@@ -324,12 +260,4 @@ async function blockForApproval(
   addEvent(run, 'approval-requested', `Approval requested for node ${nodeId}`, { prompt }, nodeId);
   addEvent(run, 'run-blocked', `Workflow blocked by approval gate: ${nodeId}`, undefined, nodeId);
   await context.saveAndEmit(run);
-}
-
-function readActiveSessionWorktreePath(daemon: Daemon, sessionId: string): string | undefined {
-  try {
-    return daemon.getSessionWorktreePath(sessionId);
-  } catch {
-    return undefined;
-  }
 }

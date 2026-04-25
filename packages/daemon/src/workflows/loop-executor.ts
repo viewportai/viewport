@@ -12,6 +12,7 @@ import {
   runShellNode,
   ShellNodeError,
 } from './runtime-helpers.js';
+import { runWorkflowDaemonSession } from './daemon-session.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowLoopIterationRecord, WorkflowLoopNode, WorkflowRunRecord } from './types.js';
 
@@ -105,6 +106,10 @@ async function runIteration(
   await context.saveAndEmit(run);
 
   const body = node.body;
+  if (body.type === 'prompt') {
+    return await runPromptIteration(context, run, nodeId, body, index, item, extras, startedAt);
+  }
+
   const cwd = resolveNodeCwd(
     run.directoryPath,
     await renderOptionalTemplate(body.cwd, run, extras),
@@ -167,6 +172,61 @@ async function runIteration(
       nodeId,
     );
     run.updatedAt = completedAt;
+    await context.saveAndEmit(run);
+    return record;
+  }
+}
+
+async function runPromptIteration(
+  context: WorkflowNodeExecutorContext,
+  run: WorkflowRunRecord,
+  nodeId: string,
+  body: Extract<WorkflowLoopNode['body'], { type: 'prompt' }>,
+  index: number,
+  item: unknown,
+  extras: LoopExtras,
+  startedAt: number,
+): Promise<WorkflowLoopIterationRecord> {
+  const record: WorkflowLoopIterationRecord = {
+    index,
+    status: 'completed',
+    startedAt,
+    ...(item !== undefined ? { item } : {}),
+  };
+
+  try {
+    const result = await runWorkflowDaemonSession(context, {
+      run,
+      nodeId,
+      target: record,
+      prompt: await renderTemplate(body.prompt, run, extras),
+      ...(body.agent ? { agent: body.agent } : {}),
+      ...(body.model ? { model: body.model } : {}),
+    });
+    record.completedAt = Date.now();
+    record.output = result.output;
+    addEvent(
+      run,
+      'loop-iteration-completed',
+      `Loop ${nodeId} iteration ${index} completed`,
+      { index, sessionId: result.sessionId, output: result.output },
+      nodeId,
+    );
+    run.updatedAt = record.completedAt;
+    await context.saveAndEmit(run);
+    return record;
+  } catch (error) {
+    record.status = 'failed';
+    record.completedAt = Date.now();
+    record.error = error instanceof Error ? error.message : String(error);
+    addEvent(
+      run,
+      'loop-iteration-failed',
+      `Loop ${nodeId} iteration ${index} failed: ${record.error}`,
+      { index, error: record.error },
+      nodeId,
+    );
+    run.updatedAt = record.completedAt;
     await context.saveAndEmit(run);
     return record;
   }

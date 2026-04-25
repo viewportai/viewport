@@ -103,14 +103,21 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
   /** When true, the approver's message becomes the node's output. */
   captureResponse?: boolean;
   /**
-   * Optional shell command run when approval is denied, before the run fails.
-   * Useful for notifications, audit log writes, or rollbacks.
+   * Optional follow-up run when approval is denied, before the run fails.
+   * Useful for notifications, audit log writes, rollbacks, or agent-authored
+   * rejection summaries.
    */
-  onReject?: {
-    command: string;
-    cwd?: string;
-    timeoutSeconds?: number;
-  };
+  onReject?:
+    | {
+        command: string;
+        cwd?: string;
+        timeoutSeconds?: number;
+      }
+    | {
+        prompt: string;
+        agent?: string;
+        model?: string;
+      };
 }
 
 export interface WorkflowGateNode extends WorkflowNodeBase {
@@ -118,12 +125,19 @@ export interface WorkflowGateNode extends WorkflowNodeBase {
   gate: WorkflowGateDefinition;
 }
 
-export type WorkflowLoopBody = {
-  type: 'shell';
-  command: string;
-  cwd?: string;
-  timeoutSeconds?: number;
-};
+export type WorkflowLoopBody =
+  | {
+      type: 'shell';
+      command: string;
+      cwd?: string;
+      timeoutSeconds?: number;
+    }
+  | {
+      type: 'prompt';
+      prompt: string;
+      agent?: string;
+      model?: string;
+    };
 
 export interface WorkflowLoopNode extends WorkflowNodeBase {
   type: 'loop';
@@ -245,6 +259,9 @@ export interface WorkflowLoopIterationRecord {
   status: 'completed' | 'failed' | 'skipped';
   startedAt: number;
   completedAt?: number;
+  sessionId?: string;
+  nativeSessionId?: string;
+  worktreePath?: string;
   output?: string;
   exitCode?: number;
   error?: string;

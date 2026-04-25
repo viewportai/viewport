@@ -27,6 +27,13 @@ export interface NodeContextEntry {
   sessionId: string | null;
   nativeSessionId: string | null;
   worktreePath: string | null;
+  approval: {
+    prompt: string;
+    message: string | null;
+    approved: boolean | null;
+    requestedAt: number;
+    resolvedAt: number | null;
+  } | null;
 }
 
 export class WorkflowExpressionError extends Error {
@@ -166,6 +173,15 @@ export function buildExpressionContext(run: WorkflowRunRecord): ExpressionContex
       sessionId: node.sessionId ?? null,
       nativeSessionId: node.nativeSessionId ?? null,
       worktreePath: node.worktreePath ?? null,
+      approval: node.approval
+        ? {
+            prompt: node.approval.prompt,
+            message: node.approval.message ?? null,
+            approved: node.approval.approved ?? null,
+            requestedAt: node.approval.requestedAt,
+            resolvedAt: node.approval.resolvedAt ?? null,
+          }
+        : null,
     };
   }
   return { inputs: { ...run.inputs }, nodes };

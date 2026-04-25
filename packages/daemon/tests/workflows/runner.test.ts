@@ -611,6 +611,64 @@ nodes:
     expect(rejectLogs.length).toBeGreaterThan(0);
   });
 
+  it('runs the approval onReject prompt on denial and records the follow-up session', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: approval-on-reject-prompt-proof
+nodes:
+  gate:
+    type: approval
+    prompt: Ship?
+    onReject:
+      prompt: 'Write a rejection summary for: {{ nodes.gate.approval.message }}'
+      agent: claude
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.nodes.gate?.status === 'blocked',
+    );
+
+    const decision = daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: false,
+      message: 'missing tests',
+    });
+    const followUp = await waitForAdapterSessionCount(adapter, 1);
+    expect(followUp.sendPrompt).toHaveBeenCalledWith(
+      'Write a rejection summary for: missing tests',
+    );
+    followUp.emitAgentMessage('Rejected because tests are missing.');
+    followUp.simulateIdle();
+    await decision;
+
+    const canceled = await daemon.workflowRunner.getRun(run.id);
+    expect(canceled?.status).toBe('canceled');
+    expect(canceled?.nodes.gate?.status).toBe('failed');
+    expect(canceled?.nodes.gate?.sessionId).toBeTruthy();
+    expect(canceled?.nodes.gate?.output).toBe('Rejected because tests are missing.');
+    expect(canceled?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-output',
+        nodeId: 'gate',
+        data: { output: 'Rejected because tests are missing.' },
+      }),
+    );
+  });
+
   it('cancels approval-gated workflows when approval is denied', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -967,6 +1025,62 @@ nodes:
     expect(events.filter((event) => event.type === 'loop-iteration-completed')).toHaveLength(3);
   });
 
+  it('iterates a foreach loop with prompt bodies and records per-iteration sessions', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: loop-prompt-proof
+nodes:
+  list:
+    type: shell
+    command: echo '["alpha","beta"]'
+    outputs:
+      items:
+        type: json
+  process:
+    type: loop
+    needs: [list]
+    foreach: nodes.list.outputs.items
+    maxIterations: 5
+    body:
+      type: prompt
+      agent: claude
+      prompt: 'Review {{ loop.item }} at index {{ loop.index }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const first = await waitForAdapterSessionCount(adapter, 1);
+    expect(first.sendPrompt).toHaveBeenCalledWith('Review alpha at index 0');
+    first.emitAgentMessage('alpha done');
+    first.simulateIdle();
+
+    const second = await waitForAdapterSessionCount(adapter, 2);
+    expect(second.sendPrompt).toHaveBeenCalledWith('Review beta at index 1');
+    second.emitAgentMessage('beta done');
+    second.simulateIdle();
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const node = completed?.nodes.process;
+
+    expect(completed?.status).toBe('completed');
+    expect(node?.iterations?.map((iter) => iter.output)).toEqual(['alpha done', 'beta done']);
+    expect(node?.iterations?.every((iter) => Boolean(iter.sessionId))).toBe(true);
+    expect(node?.output).toBe(JSON.stringify(['alpha done', 'beta done']));
+  });
+
   it('runs a while loop until its condition turns falsy and respects maxIterations', async () => {
     const daemon = await setup();
     const counterFile = path.join(projectDir, 'counter.txt');
@@ -1293,9 +1407,11 @@ class MockSession extends EventEmitter implements Session {
 class MockAdapter implements AgentAdapter {
   readonly agentId = 'claude';
   lastSession: MockSession | null = null;
+  readonly sessions: MockSession[] = [];
 
   async startSession(_cwd: string, _options?: SessionOptions): Promise<Session> {
     this.lastSession = new MockSession();
+    this.sessions.push(this.lastSession);
     return this.lastSession;
   }
 
@@ -1305,6 +1421,7 @@ class MockAdapter implements AgentAdapter {
     _options?: SessionOptions,
   ): Promise<Session> {
     this.lastSession = new MockSession();
+    this.sessions.push(this.lastSession);
     return this.lastSession;
   }
 }
@@ -1401,6 +1518,18 @@ async function waitForNodeSession(daemon: Daemon, runId: string, nodeId: string)
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for workflow node session ${nodeId}`);
+}
+
+async function waitForAdapterSessionCount(
+  adapter: MockAdapter,
+  count: number,
+): Promise<MockSession> {
+  for (let index = 0; index < 40; index += 1) {
+    const session = adapter.sessions[count - 1];
+    if (session) return session;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for adapter session ${count}`);
 }
 
 async function writeCodexTranscript(cwd: string, output: string): Promise<void> {

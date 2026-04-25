@@ -242,6 +242,7 @@ function buildSubflowContext(
       sessionId: null,
       nativeSessionId: null,
       worktreePath: null,
+      approval: null,
     };
   }
   return { inputs: inputs as ExpressionContext['inputs'], nodes };
