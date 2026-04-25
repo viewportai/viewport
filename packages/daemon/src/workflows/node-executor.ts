@@ -1,25 +1,17 @@
 import type { Daemon } from '../core/daemon.js';
 import type { SessionMessage } from '../core/types.js';
-import {
-  addEvent,
-  renderOptionalTemplate,
-  renderTemplate,
-  resolveNodeCwd,
-  runShellNode,
-  ShellNodeError,
-} from './runtime-helpers.js';
+import { addEvent, renderTemplate, ShellNodeError } from './runtime-helpers.js';
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { collectNodeArtifacts } from './artifact-collector.js';
-import { executeLoopNode } from './loop-executor.js';
 import {
   defaultWorktreePath,
   readPromptNodeOutput,
   readPromptNodeTranscriptExcerpt,
 } from './prompt-output.js';
 import { classifyRetry } from './retry-classifier.js';
-import { executeSubflowNode } from './subflow-executor.js';
+import { BUILTIN_NODE_EXECUTORS } from './node-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -52,51 +44,28 @@ export async function executeWorkflowNode(
   while (attempt < maxAttempts) {
     attempt += 1;
     try {
-      let artifactCwd = run.directoryPath;
-      if (node.type === 'shell') {
-        artifactCwd = resolveNodeCwd(
-          run.directoryPath,
-          await renderOptionalTemplate(node.cwd, run),
-        );
-        const result = await runShellNode(await renderTemplate(node.command, run), {
-          cwd: artifactCwd,
-          timeoutSeconds: node.timeoutSeconds,
-          onOutput: ({ source, chunk, output }) => {
-            addEvent(
-              run,
-              'node-log',
-              `Node ${nodeId} wrote ${source}`,
-              { source, chunk, output },
-              nodeId,
-            );
-            run.updatedAt = Date.now();
-            void context.saveAndEmit(run);
-          },
-        });
-        state.output = result.output;
-        state.exitCode = result.exitCode;
-        addEvent(
-          run,
-          'node-output',
-          `Node ${nodeId} produced shell output`,
-          { output: result.output, exitCode: result.exitCode },
-          nodeId,
-        );
-      } else if (node.type === 'prompt') {
-        await executePromptNode(context, run, nodeId, node);
-      } else if (node.type === 'approval') {
-        await blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
-        return 'blocked';
-      } else if (node.type === 'gate') {
-        const gateResult = await executeGateNode(context, run, nodeId, node);
-        if (gateResult === 'blocked') return 'blocked';
-      } else if (node.type === 'loop') {
-        await executeLoopNode(context, run, nodeId, node);
-      } else if (node.type === 'subflow') {
-        await executeSubflowNode(context, run, nodeId, node);
+      // Look up the per-type executor in the registry. Built-ins are
+      // registered in `node-registry.ts`; the plugin loader will extend the
+      // same map with `defineNode()` registrations from
+      // `~/.viewport/plugins.json` once that integration ships.
+      const executor = BUILTIN_NODE_EXECUTORS[node.type];
+      if (!executor) {
+        throw new Error(`No executor registered for node type '${node.type}' on node ${nodeId}.`);
       }
+      const outcome = await executor(context, run, nodeId, node, {
+        executePromptNode,
+        executeGateNode,
+        blockForApproval,
+      });
+      if (outcome.result === 'blocked') return 'blocked';
 
-      await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);
+      await collectAndRecordArtifacts(
+        context,
+        run,
+        nodeId,
+        node,
+        outcome.artifactCwd ?? run.directoryPath,
+      );
 
       state.status = 'completed';
       state.completedAt = Date.now();
