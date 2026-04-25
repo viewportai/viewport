@@ -1098,6 +1098,68 @@ nodes:
     expect(events.filter((event) => event.type === 'subflow-child-completed')).toHaveLength(2);
   });
 
+  it('resumes a workflow run that was mid-flight when the daemon restarted', async () => {
+    // Simulates a crash by hand-writing a run record that looks mid-flight
+    // (status running, node 'one' status running) then calling
+    // resumePendingRuns. We bypass startRun() so there's no in-flight
+    // executor racing with the resume — that mirrors the real boot path
+    // where the daemon process just started and nothing else is running.
+    const daemon = await setup();
+    const yaml = `
+schema: viewport.workflow/v1
+name: resume-proof
+nodes:
+  one:
+    type: shell
+    command: 'printf one'
+  two:
+    type: shell
+    needs: [one]
+    command: 'printf two'
+`;
+    const runId = crypto.randomUUID();
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    const runsDir = path.join(tempHome, '.viewport', 'runs', 'workflows');
+    await fs.mkdir(runsDir, { recursive: true });
+    const now = Date.now();
+    const record = {
+      id: runId,
+      workflowName: 'resume-proof',
+      sourceType: 'viewport_snapshot',
+      sourcePath: 'viewport://test-resume',
+      digest: 'test-digest',
+      schema: 'viewport.workflow/v1',
+      yamlSnapshot: yaml,
+      directoryId,
+      directoryPath: projectDir,
+      machineId: daemon.configManager.getMachineId(),
+      initiation: 'cli',
+      status: 'running',
+      inputs: {},
+      preflight: { ok: true, issues: [] },
+      nodes: {
+        one: { id: 'one', type: 'shell', status: 'running' },
+        two: { id: 'two', type: 'shell', status: 'queued' },
+      },
+      artifacts: [],
+      events: [],
+      createdAt: now - 10_000,
+      updatedAt: now - 5_000,
+    };
+    await fs.writeFile(path.join(runsDir, `${runId}.json`), JSON.stringify(record), 'utf-8');
+
+    const result = await daemon.workflowRunner.resumePendingRuns();
+    expect(result.resumed).toBeGreaterThan(0);
+
+    await waitForTerminalRun(daemon, runId);
+    const completed = await daemon.workflowRunner.getRun(runId);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.one?.output).toBe('one');
+    expect(completed?.nodes.two?.output).toBe('two');
+    const events = completed?.events.map((event) => event.message) ?? [];
+    expect(events.some((message) => message.includes('resumed'))).toBe(true);
+  });
+
   it('falls through a failed sibling when a downstream node uses triggerRule one_success', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

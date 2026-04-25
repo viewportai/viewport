@@ -94,6 +94,10 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   /** Initialize the daemon — loads config from disk. */
   async initialize(): Promise<void> {
     await this.configManager.load();
+    // Resume any workflow runs that were running when we last shut down.
+    // Failures during resume are logged onto the run record; never block the
+    // daemon from coming online.
+    void this.workflowRunner.resumePendingRuns().catch(() => undefined);
   }
 
   /**
