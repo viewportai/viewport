@@ -11,7 +11,11 @@ import {
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
-import { defaultWorktreePath, readPromptNodeOutput } from './prompt-output.js';
+import {
+  defaultWorktreePath,
+  readPromptNodeOutput,
+  readPromptNodeTranscriptExcerpt,
+} from './prompt-output.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -139,11 +143,15 @@ async function executePromptNode(
     const capturedOutput = output.text() || (await readPromptNodeOutput(run, state));
     if (capturedOutput && capturedOutput !== state.output) {
       state.output = capturedOutput;
+      const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state);
       addEvent(
         run,
         'node-output',
         `Node ${nodeId} produced prompt output`,
-        { output: capturedOutput },
+        {
+          output: capturedOutput,
+          ...(transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {}),
+        },
         nodeId,
       );
     }

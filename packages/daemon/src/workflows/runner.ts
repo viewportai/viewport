@@ -4,7 +4,7 @@ import { preflightWorkflow } from './preflight.js';
 import { addEvent, normalizeInputs } from './runtime-helpers.js';
 import { executeWorkflowNode } from './node-executor.js';
 import { getSessionState, readReplaySessionState } from './session-completion.js';
-import { readPromptNodeOutput } from './prompt-output.js';
+import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-output.js';
 import { WorkflowSessionLinkStore } from './session-links.js';
 import { WorkflowRunStore } from './store.js';
 import { resolveWorkflowSource } from './workflow-source.js';
@@ -315,7 +315,17 @@ export class WorkflowRunner {
       if (!output) continue;
       node.output = output;
       run.updatedAt = Date.now();
-      addEvent(run, 'node-output', `Node ${node.id} recovered prompt output`, { output }, node.id);
+      const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, node);
+      addEvent(
+        run,
+        'node-output',
+        `Node ${node.id} recovered prompt output`,
+        {
+          output,
+          ...(transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {}),
+        },
+        node.id,
+      );
       changed = true;
     }
 

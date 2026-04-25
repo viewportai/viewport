@@ -6,6 +6,11 @@ import {
 import { readPersistedSessionMessagesRich } from '../server/ring-buffer.js';
 import { CodexDiscovery } from '../discovery/codex.js';
 
+export interface TranscriptExcerptMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
 export interface SessionOutputCollector {
   push(message: SessionMessage): void;
   text(): string;
@@ -45,8 +50,35 @@ export function outputFromRichMessages(messages: RichSessionMessage[]): string {
   return text.join('\n').trim();
 }
 
+export function transcriptExcerptFromRichMessages(
+  messages: RichSessionMessage[],
+  options: { maxMessages?: number; maxCharsPerMessage?: number } = {},
+): TranscriptExcerptMessage[] {
+  const maxMessages = options.maxMessages ?? 6;
+  const maxCharsPerMessage = options.maxCharsPerMessage ?? 800;
+
+  return messages
+    .filter((message): message is Extract<RichSessionMessage, { kind: 'text' }> => {
+      return message.kind === 'text' && message.text.trim().length > 0;
+    })
+    .slice(-maxMessages)
+    .map((message) => ({
+      role: message.role,
+      text:
+        message.text.length > maxCharsPerMessage
+          ? `${message.text.slice(0, maxCharsPerMessage).trimEnd()}...`
+          : message.text,
+    }));
+}
+
 export function readPersistedSessionOutput(sessionId: string): string {
   return outputFromRichMessages(readPersistedSessionMessagesRich(sessionId));
+}
+
+export function readPersistedSessionTranscriptExcerpt(
+  sessionId: string,
+): TranscriptExcerptMessage[] {
+  return transcriptExcerptFromRichMessages(readPersistedSessionMessagesRich(sessionId));
 }
 
 export async function readCodexWorktreeSessionOutput(worktreePath: string): Promise<string> {
@@ -54,4 +86,13 @@ export async function readCodexWorktreeSessionOutput(worktreePath: string): Prom
   const sourcePath = sessions[0]?.sourcePath;
   if (!sourcePath) return '';
   return outputFromRichMessages(await readRichSessionMessagesFromFile(sourcePath));
+}
+
+export async function readCodexWorktreeSessionTranscriptExcerpt(
+  worktreePath: string,
+): Promise<TranscriptExcerptMessage[]> {
+  const sessions = await new CodexDiscovery().discoverSessions(worktreePath);
+  const sourcePath = sessions[0]?.sourcePath;
+  if (!sourcePath) return [];
+  return transcriptExcerptFromRichMessages(await readRichSessionMessagesFromFile(sourcePath));
 }
