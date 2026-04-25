@@ -9,6 +9,22 @@ import type {
 
 const MAX_OUTPUT_CHARS = 32_000;
 
+export interface ShellNodeResult {
+  output: string;
+  exitCode: number;
+}
+
+export class ShellNodeError extends Error {
+  constructor(
+    message: string,
+    readonly output: string,
+    readonly exitCode: number | null,
+  ) {
+    super(message);
+    this.name = 'ShellNodeError';
+  }
+}
+
 export function normalizeInputs(
   parsed: ParsedWorkflow,
   provided: Record<string, string | number | boolean>,
@@ -81,8 +97,8 @@ export function renderTemplate(template: string, run: WorkflowRunRecord): string
 export async function runShellNode(
   command: string,
   options: { cwd: string; timeoutSeconds?: number },
-): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
+): Promise<ShellNodeResult> {
+  return await new Promise<ShellNodeResult>((resolve, reject) => {
     const child = spawn('sh', ['-lc', command], {
       cwd: options.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -99,17 +115,30 @@ export async function runShellNode(
     child.once('error', reject);
     child.once('close', (code) => {
       if (timer) clearTimeout(timer);
+      const trimmedOutput = output.trim();
       if (code === 0) {
-        resolve(output.trim());
+        resolve({ output: trimmedOutput, exitCode: 0 });
       } else {
-        reject(new Error(`Shell node exited with code ${code}: ${output.trim()}`));
+        reject(
+          new ShellNodeError(
+            `Shell node exited with code ${code}: ${trimmedOutput}`,
+            trimmedOutput,
+            code,
+          ),
+        );
       }
     });
 
     if (options.timeoutSeconds) {
       timer = setTimeout(() => {
         child.kill('SIGTERM');
-        reject(new Error(`Shell node timed out after ${options.timeoutSeconds}s`));
+        reject(
+          new ShellNodeError(
+            `Shell node timed out after ${options.timeoutSeconds}s`,
+            output.trim(),
+            null,
+          ),
+        );
       }, options.timeoutSeconds * 1000);
     }
   });

@@ -120,6 +120,7 @@ export interface WorkflowNodeRunState {
   nativeSessionId?: string;
   worktreePath?: string;
   output?: string;
+  exitCode?: number;
   error?: string;
   approval?: {
     prompt: string;

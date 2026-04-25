@@ -75,6 +75,14 @@ nodes:
 
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.proof?.output).toBe('ok');
+    expect(completed?.nodes.proof?.exitCode).toBe(0);
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-output',
+        nodeId: 'proof',
+        data: { output: 'ok', exitCode: 0 },
+      }),
+    );
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
@@ -498,6 +506,7 @@ nodes:
 
     expect(failed?.status).toBe('failed');
     expect(failed?.nodes.fail?.status).toBe('failed');
+    expect(failed?.nodes.fail?.exitCode).toBe(7);
     expect(failed?.error).toMatch(/code 7/);
   });
 

@@ -6,6 +6,7 @@ import {
   renderTemplate,
   resolveNodeCwd,
   runShellNode,
+  ShellNodeError,
 } from './runtime-helpers.js';
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
 import { createSessionOutputCollector } from './session-output.js';
@@ -37,12 +38,19 @@ export async function executeWorkflowNode(
 
   try {
     if (node.type === 'shell') {
-      const output = await runShellNode(renderTemplate(node.command, run), {
+      const result = await runShellNode(renderTemplate(node.command, run), {
         cwd: resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run)),
         timeoutSeconds: node.timeoutSeconds,
       });
-      state.output = output;
-      addEvent(run, 'node-output', `Node ${nodeId} produced shell output`, { output }, nodeId);
+      state.output = result.output;
+      state.exitCode = result.exitCode;
+      addEvent(
+        run,
+        'node-output',
+        `Node ${nodeId} produced shell output`,
+        { output: result.output, exitCode: result.exitCode },
+        nodeId,
+      );
     } else if (node.type === 'prompt') {
       await executePromptNode(context, run, nodeId, node);
     } else if (node.type === 'approval') {
@@ -58,6 +66,10 @@ export async function executeWorkflowNode(
     return 'completed';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof ShellNodeError) {
+      state.output = error.output || state.output;
+      state.exitCode = error.exitCode ?? undefined;
+    }
     state.status = 'failed';
     state.error = message;
     state.completedAt = Date.now();
