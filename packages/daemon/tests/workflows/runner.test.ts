@@ -929,9 +929,9 @@ nodes:
   });
 
   it('runs sibling shell nodes concurrently in the same DAG layer', async () => {
-    // Two siblings each sleep ~250ms then write a marker. If the runner is
-    // sequential, both end-to-end should take >= 500ms; in parallel layers
-    // they should comfortably finish in under 400ms even with scheduler jitter.
+    // Two siblings each sleep before writing a marker. The assertion below
+    // proves their execution windows overlap, which is stronger and less
+    // load-sensitive than a wall-clock threshold.
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
     await fs.writeFile(
@@ -961,7 +961,6 @@ nodes:
     );
 
     const directoryId = DirectoryManager.idFromPath(projectDir);
-    const begin = Date.now();
     const run = await daemon.workflowRunner.startRun({
       workflowPath,
       directoryId,
@@ -969,14 +968,20 @@ nodes:
     });
 
     await waitForTerminalRun(daemon, run.id);
-    const elapsed = Date.now() - begin;
     const completed = await daemon.workflowRunner.getRun(run.id);
 
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.left?.status).toBe('completed');
     expect(completed?.nodes.right?.status).toBe('completed');
     expect(completed?.nodes.join?.output).toBe('left-right');
-    expect(elapsed).toBeLessThan(700);
+    const left = completed?.nodes.left;
+    const right = completed?.nodes.right;
+    expect(left?.startedAt).toBeTypeOf('number');
+    expect(left?.completedAt).toBeTypeOf('number');
+    expect(right?.startedAt).toBeTypeOf('number');
+    expect(right?.completedAt).toBeTypeOf('number');
+    expect(left!.startedAt!).toBeLessThan(right!.completedAt!);
+    expect(right!.startedAt!).toBeLessThan(left!.completedAt!);
   });
 
   it('iterates a foreach loop over an upstream JSON array and aggregates per-iteration output', async () => {

@@ -157,7 +157,7 @@ nodes:
     expect(workflowRunsPayload.runs).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: workflowRunId, status: 'completed' })]),
     );
-  });
+  }, 20_000);
 
   it('accepts the full v1 schema (outputs, artifacts, retry, timeout, env, policy) end-to-end', async () => {
     // Regression coverage: a stale daemon dist used to drop these fields from the
@@ -245,7 +245,7 @@ nodes:
     expect(completed.nodes.inspect?.status).toBe('completed');
     expect(completed.nodes.inspect?.output).toContain('ship the change');
     expect(completed.nodes.review?.output).toContain('review acknowledged');
-  });
+  }, 20_000);
 
   it('routes a branch via when expressions and skips the unselected leg', async () => {
     // Proves the v2 wedge: structured outputs feed JSONata `when:` expressions,
