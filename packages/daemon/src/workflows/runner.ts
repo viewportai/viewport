@@ -338,7 +338,20 @@ export class WorkflowRunner {
 
         const updated = await this.requireRun(runId);
         for (const result of results) {
-          if (result.status !== 'fulfilled') continue;
+          if (result.status === 'rejected') {
+            // executeWorkflowNode rejects after writing the failure on the
+            // node state — but if anything ever rejects without that path
+            // running first, we still want a trace on the timeline.
+            const reason =
+              result.reason instanceof Error ? result.reason.message : String(result.reason);
+            addEvent(
+              updated,
+              'run-failed',
+              `Layer task rejected without node-level handling: ${reason}`,
+              { reason },
+            );
+            continue;
+          }
           const nodeId = result.value.nodeId;
           const node = parsed.definition.nodes[nodeId];
           const state = updated.nodes[nodeId];
