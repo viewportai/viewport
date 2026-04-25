@@ -158,4 +158,92 @@ nodes:
       expect.arrayContaining([expect.objectContaining({ id: workflowRunId, status: 'completed' })]),
     );
   });
+
+  it('accepts the full v1 schema (outputs, artifacts, retry, timeout, env, policy) end-to-end', async () => {
+    // Regression coverage: a stale daemon dist used to drop these fields from the
+    // node base schema, so any template shipping with structured outputs failed
+    // at parse time with "Unrecognized key: outputs". Run the richest legal
+    // shape we ship through the full CLI pipeline so a future schema regression
+    // breaks here, not in production.
+    harness = await FullstackCliHarness.start();
+    const projectPath = await harness.createGitProject();
+    const workflowPath = path.join(projectPath, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: rich-schema-proof
+title: Rich schema proof
+inputs:
+  brief:
+    type: string
+    default: ship the change
+nodes:
+  inspect:
+    type: shell
+    title: Inspect repository state
+    command: "echo {{ inputs.brief }}"
+    timeoutSeconds: 60
+    retry:
+      maxAttempts: 2
+      backoffSeconds: 1
+    env:
+      EXTRA_NOTE:
+        value: workflow-fixture
+    outputs:
+      summary:
+        type: string
+        description: Captured stdout of the inspect step.
+    artifacts:
+      report:
+        path: artifacts/inspect-report.md
+        type: report
+        description: Stub artifact path reserved by the schema.
+    policy:
+      onFailure: halt
+  review:
+    type: prompt
+    title: Review the inspected state
+    needs:
+      - inspect
+    agent: fake
+    prompt: "Review this state: {{ nodes.inspect.outputs.summary }}"
+    policy:
+      approvalRequired: false
+`,
+      'utf-8',
+    );
+
+    const runResult = await runCliCommand(
+      ['workflow', 'run', workflowPath, '--directory', projectPath, '--detach', '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const runPayload = parseJsonLog(runResult.logs) as { run?: { id?: string; status?: string } };
+    expect(runResult.errors).toEqual([]);
+    expect(['queued', 'running']).toContain(runPayload.run?.status);
+    const runId = String(runPayload.run!.id);
+
+    const session = await waitFor(async () => {
+      const run = await harness!.daemonInstance.workflowRunner.getRun(runId);
+      if (!run?.nodes.review?.sessionId) return null;
+      return harness!.fakeAdapter.getLatestSession();
+    });
+    session.emitMessage({
+      type: 'agent_message',
+      text: 'review acknowledged',
+      messageId: 'rich-schema-review',
+      timestamp: Date.now(),
+    });
+    session.state = 'idle';
+    session.emit('state-change', 'idle');
+
+    const completed = await waitFor(async () => {
+      const run = await harness!.daemonInstance.workflowRunner.getRun(runId);
+      return run?.status === 'completed' ? run : null;
+    });
+    expect(completed.nodes.inspect?.status).toBe('completed');
+    expect(completed.nodes.inspect?.output).toContain('ship the change');
+    expect(completed.nodes.review?.output).toContain('review acknowledged');
+  });
 });

@@ -84,4 +84,67 @@ nodes:
 
     client.close();
   });
+
+  it('accepts a browser-provided snapshot using the full v1 schema (outputs, retry, env, policy)', async () => {
+    // Mirrors the CLI proof: a stale daemon dist used to drop these fields,
+    // breaking every browser-triggered run that referenced structured outputs.
+    harness = await ProtocolHarness.start();
+    const projectPath = await harness.createProject();
+    const directory = await harness.registerDirectory(projectPath);
+    const client = await harness.connectClient();
+    await client.waitForType('hello');
+
+    client.send({
+      type: 'workflow-run',
+      requestId: 'workflow-run-rich',
+      directoryId: directory.id,
+      projectId: 'project-1',
+      projectMachineBindingId: 'binding-1',
+      platformRunId: 'platform-run-rich',
+      executionPolicy: { mode: 'current_tree' },
+      workflowSourceRef: 'viewport://tests/protocol-workflow-rich',
+      workflowYaml: `
+schema: viewport.workflow/v1
+name: protocol-rich-schema
+title: Protocol rich schema proof
+inputs:
+  brief:
+    type: string
+    default: shipping change
+nodes:
+  inspect:
+    type: shell
+    title: Inspect selected directory
+    command: "echo {{ inputs.brief }}"
+    timeoutSeconds: 60
+    retry:
+      maxAttempts: 1
+    env:
+      EXTRA_NOTE:
+        value: protocol-fixture
+    outputs:
+      summary:
+        type: string
+        description: Captured stdout of the inspect step.
+    policy:
+      onFailure: halt
+`,
+    });
+
+    const ack = await client.waitForAck('workflow-run-rich');
+    expect(ack['status']).toBe('ok');
+    const runId = String(ack['runId']);
+
+    const completed = await client.waitFor((message) => {
+      if (message['type'] !== 'workflow-run-updated') return false;
+      const run = workflowRunFrom(message);
+      return run?.['id'] === runId && run?.['status'] === 'completed';
+    });
+    const completedRun = workflowRunFrom(completed);
+    const nodes = completedRun?.['nodes'] as Record<string, Record<string, unknown>>;
+    expect(nodes.inspect?.status).toBe('completed');
+    expect(String(nodes.inspect?.output)).toContain('shipping change');
+
+    client.close();
+  });
 });
