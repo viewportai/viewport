@@ -74,6 +74,9 @@ export async function executeWorkflowNode(
     } else if (node.type === 'approval') {
       await blockForApproval(context, run, nodeId, renderTemplate(node.prompt, run));
       return 'blocked';
+    } else if (node.type === 'gate') {
+      const gateResult = await executeGateNode(context, run, nodeId, node);
+      if (gateResult === 'blocked') return 'blocked';
     }
 
     await collectAndRecordArtifacts(context, run, nodeId, node, artifactCwd);
@@ -102,6 +105,81 @@ export async function executeWorkflowNode(
     await context.saveAndEmit(run);
     throw error;
   }
+}
+
+async function executeGateNode(
+  context: WorkflowNodeExecutorContext,
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: Extract<WorkflowNode, { type: 'gate' }>,
+): Promise<'completed' | 'blocked'> {
+  const gate = node.gate;
+  if (gate.type === 'human_review') {
+    await blockForApproval(context, run, nodeId, renderTemplate(gate.prompt, run));
+    addEvent(run, 'gate-blocked', `Human review gate ${nodeId} is waiting`, { gate }, nodeId);
+    await context.saveAndEmit(run);
+    return 'blocked';
+  }
+
+  if (gate.type === 'schedule') {
+    const waitUntil = new Date(renderTemplate(gate.waitUntil, run));
+    if (!Number.isFinite(waitUntil.getTime())) {
+      throw new Error(`Schedule gate ${nodeId} has an invalid waitUntil value`);
+    }
+    if (waitUntil.getTime() > Date.now()) {
+      const state = run.nodes[nodeId];
+      if (state) {
+        state.status = 'blocked';
+        state.output = `Waiting until ${waitUntil.toISOString()}`;
+      }
+      run.status = 'blocked';
+      run.updatedAt = Date.now();
+      addEvent(
+        run,
+        'gate-blocked',
+        `Schedule gate ${nodeId} is waiting until ${waitUntil.toISOString()}`,
+        { gate, waitUntil: waitUntil.toISOString() },
+        nodeId,
+      );
+      await context.saveAndEmit(run);
+      return 'blocked';
+    }
+
+    setGateOutput(run, nodeId, `Schedule reached: ${waitUntil.toISOString()}`);
+    addEvent(
+      run,
+      'gate-passed',
+      `Schedule gate ${nodeId} passed`,
+      { gate, waitUntil: waitUntil.toISOString() },
+      nodeId,
+    );
+    return 'completed';
+  }
+
+  const rendered = renderTemplate(gate.expression, run);
+  if (!isTruthyGateValue(rendered)) {
+    throw new Error(`${gate.type} gate ${nodeId} failed: ${rendered || 'false'}`);
+  }
+
+  setGateOutput(run, nodeId, rendered);
+  addEvent(
+    run,
+    'gate-passed',
+    `${gate.type} gate ${nodeId} passed`,
+    { gate, result: rendered },
+    nodeId,
+  );
+  return 'completed';
+}
+
+function setGateOutput(run: WorkflowRunRecord, nodeId: string, output: string): void {
+  const state = run.nodes[nodeId];
+  if (state) state.output = output;
+}
+
+function isTruthyGateValue(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return ['true', '1', 'yes', 'y', 'pass', 'passed', 'ok'].includes(normalized);
 }
 
 async function collectAndRecordArtifacts(

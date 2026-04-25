@@ -115,7 +115,7 @@ export class WorkflowRunner {
   ): Promise<WorkflowRunRecord> {
     const run = await this.requireRun(runId);
     const state = run.nodes[nodeId];
-    if (!state || state.type !== 'approval') {
+    if (!state || (state.type !== 'approval' && state.type !== 'gate')) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
     if (run.status !== 'blocked' || state.status !== 'blocked') {
@@ -363,6 +363,7 @@ function workflowNodeMetadata(
           model: node.model ?? null,
         }
       : {}),
+    ...(node.type === 'gate' ? { gate: node.gate } : {}),
   };
 }
 

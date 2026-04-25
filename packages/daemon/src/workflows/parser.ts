@@ -49,6 +49,37 @@ const NodePolicySchema = z
   })
   .strict();
 
+const GateDefinitionSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('check'),
+      expression: z.string().trim().min(1),
+      description: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('policy'),
+      expression: z.string().trim().min(1),
+      description: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('human_review'),
+      prompt: z.string().trim().min(1),
+      description: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule'),
+      waitUntil: z.string().trim().min(1),
+      description: z.string().optional(),
+    })
+    .strict(),
+]);
+
 const EnvValueSchema = z
   .object({
     value: z.string().optional(),
@@ -96,10 +127,16 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
   prompt: z.string().trim().min(1),
 }).strict();
 
+const GateNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('gate'),
+  gate: GateDefinitionSchema,
+}).strict();
+
 const WorkflowNodeSchema = z.discriminatedUnion('type', [
   PromptNodeSchema,
   ShellNodeSchema,
   ApprovalNodeSchema,
+  GateNodeSchema,
 ]);
 
 const WorkflowDefinitionSchema = z
@@ -268,6 +305,11 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
   if (node.type === 'prompt') return [node.prompt];
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
+  if (node.type === 'gate') {
+    if (node.gate.type === 'check' || node.gate.type === 'policy') return [node.gate.expression];
+    if (node.gate.type === 'human_review') return [node.gate.prompt];
+    return [node.gate.waitUntil];
+  }
   return [node.prompt];
 }
 

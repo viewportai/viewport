@@ -1,4 +1,4 @@
-export type WorkflowNodeType = 'prompt' | 'shell' | 'approval';
+export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate';
 
 export interface WorkflowInputDefinition {
   type: 'string' | 'number' | 'boolean';
@@ -32,6 +32,12 @@ export interface WorkflowNodePolicy {
   onFailure?: 'halt' | 'continue' | 'skip_dependents';
   approvalRequired?: boolean;
 }
+
+export type WorkflowGateDefinition =
+  | { type: 'check'; expression: string; description?: string }
+  | { type: 'policy'; expression: string; description?: string }
+  | { type: 'human_review'; prompt: string; description?: string }
+  | { type: 'schedule'; waitUntil: string; description?: string };
 
 export interface WorkflowExecutionPolicy {
   mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
@@ -74,7 +80,16 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
   prompt: string;
 }
 
-export type WorkflowNode = WorkflowPromptNode | WorkflowShellNode | WorkflowApprovalNode;
+export interface WorkflowGateNode extends WorkflowNodeBase {
+  type: 'gate';
+  gate: WorkflowGateDefinition;
+}
+
+export type WorkflowNode =
+  | WorkflowPromptNode
+  | WorkflowShellNode
+  | WorkflowApprovalNode
+  | WorkflowGateNode;
 
 export interface WorkflowDefinition {
   schema: 'viewport.workflow/v1';
@@ -164,6 +179,8 @@ export interface WorkflowRunEvent {
     | 'artifact-missing'
     | 'approval-requested'
     | 'approval-resolved'
+    | 'gate-blocked'
+    | 'gate-passed'
     | 'node-completed'
     | 'node-failed'
     | 'session-started'

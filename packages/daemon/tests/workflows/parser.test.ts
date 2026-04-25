@@ -185,6 +185,48 @@ nodes:
     expect(parsed.definition.nodes.review?.type).toBe('prompt');
   });
 
+  it('accepts check, policy, human review, and schedule gates', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: gate-schema
+nodes:
+  check_context:
+    type: gate
+    gate:
+      type: check
+      expression: "{{ inputs.ready }}"
+  policy_gate:
+    type: gate
+    needs: [check_context]
+    gate:
+      type: policy
+      expression: "true"
+  review_gate:
+    type: gate
+    needs: [policy_gate]
+    gate:
+      type: human_review
+      prompt: Approve release summary.
+  timed_gate:
+    type: gate
+    needs: [review_gate]
+    gate:
+      type: schedule
+      waitUntil: "2000-01-01T00:00:00.000Z"
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.nodes.check_context?.type).toBe('gate');
+    expect(workflowNodeOrder(parsed.definition)).toEqual([
+      'check_context',
+      'policy_gate',
+      'review_gate',
+      'timed_gate',
+    ]);
+  });
+
   it('requires named outputs and artifacts to be declared', () => {
     expect(() =>
       parseWorkflow(
