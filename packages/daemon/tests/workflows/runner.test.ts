@@ -78,6 +78,13 @@ nodes:
     expect(completed?.nodes.proof?.exitCode).toBe(0);
     expect(completed?.events).toContainEqual(
       expect.objectContaining({
+        type: 'node-log',
+        nodeId: 'proof',
+        data: expect.objectContaining({ source: 'stdout', chunk: 'ok' }),
+      }),
+    );
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
         type: 'node-output',
         nodeId: 'proof',
         data: { output: 'ok', exitCode: 0 },

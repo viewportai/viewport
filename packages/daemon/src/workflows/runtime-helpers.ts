@@ -8,6 +8,7 @@ import type {
 } from './types.js';
 
 const MAX_OUTPUT_CHARS = 32_000;
+const MAX_LOG_CHUNK_CHARS = 4_000;
 
 export interface ShellNodeResult {
   output: string;
@@ -96,7 +97,11 @@ export function renderTemplate(template: string, run: WorkflowRunRecord): string
 
 export async function runShellNode(
   command: string,
-  options: { cwd: string; timeoutSeconds?: number },
+  options: {
+    cwd: string;
+    timeoutSeconds?: number;
+    onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
+  },
 ): Promise<ShellNodeResult> {
   return await new Promise<ShellNodeResult>((resolve, reject) => {
     const child = spawn('sh', ['-lc', command], {
@@ -106,12 +111,20 @@ export async function runShellNode(
     let output = '';
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const append = (chunk: Buffer): void => {
-      output = `${output}${chunk.toString('utf-8')}`.slice(-MAX_OUTPUT_CHARS);
-    };
+    const append =
+      (source: 'stdout' | 'stderr') =>
+      (chunk: Buffer): void => {
+        const text = chunk.toString('utf-8');
+        output = `${output}${text}`.slice(-MAX_OUTPUT_CHARS);
+        options.onOutput?.({
+          source,
+          chunk: text.slice(-MAX_LOG_CHUNK_CHARS),
+          output: output.trim(),
+        });
+      };
 
-    child.stdout.on('data', append);
-    child.stderr.on('data', append);
+    child.stdout.on('data', append('stdout'));
+    child.stderr.on('data', append('stderr'));
     child.once('error', reject);
     child.once('close', (code) => {
       if (timer) clearTimeout(timer);

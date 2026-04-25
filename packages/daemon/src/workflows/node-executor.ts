@@ -45,6 +45,17 @@ export async function executeWorkflowNode(
       const result = await runShellNode(renderTemplate(node.command, run), {
         cwd: resolveNodeCwd(run.directoryPath, renderOptionalTemplate(node.cwd, run)),
         timeoutSeconds: node.timeoutSeconds,
+        onOutput: ({ source, chunk, output }) => {
+          addEvent(
+            run,
+            'node-log',
+            `Node ${nodeId} wrote ${source}`,
+            { source, chunk, output },
+            nodeId,
+          );
+          run.updatedAt = Date.now();
+          void context.saveAndEmit(run);
+        },
       });
       state.output = result.output;
       state.exitCode = result.exitCode;

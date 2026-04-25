@@ -142,6 +142,7 @@ export interface WorkflowRunEvent {
     | 'run-completed'
     | 'run-failed'
     | 'node-started'
+    | 'node-log'
     | 'node-output'
     | 'approval-requested'
     | 'approval-resolved'
