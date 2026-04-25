@@ -243,6 +243,9 @@ describe('Workflow schemas', () => {
       workflowSourceRef: 'viewport://templates/proof',
       directoryId: 'dir-1',
       inputs: { pr: '123' },
+      projectId: 'project-1',
+      projectMachineBindingId: 'binding-1',
+      platformRunId: 'platform-run-1',
       executionPolicy: { mode: 'named_branch', branch: 'main' },
       requestId: 'req-1',
     });

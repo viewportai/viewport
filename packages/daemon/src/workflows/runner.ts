@@ -82,6 +82,7 @@ export class WorkflowRunner {
             type: node.type,
             title: node.title,
             status: 'queued',
+            metadata: workflowNodeMetadata(node),
           } satisfies WorkflowNodeRunState,
         ]),
       ),
@@ -342,6 +343,26 @@ export class WorkflowRunner {
 
     return run;
   }
+}
+
+function workflowNodeMetadata(
+  node: ParsedWorkflow['definition']['nodes'][string],
+): Record<string, unknown> {
+  return {
+    needs: node.needs ?? [],
+    outputs: node.outputs ?? {},
+    artifacts: node.artifacts ?? {},
+    retry: node.retry ?? null,
+    policy: node.policy ?? null,
+    timeoutSeconds: node.timeoutSeconds ?? null,
+    ...(node.type === 'prompt'
+      ? {
+          agent: node.agent ?? null,
+          provider: node.provider ?? null,
+          model: node.model ?? null,
+        }
+      : {}),
+  };
 }
 
 function formatExecutionPolicy(policy: NonNullable<WorkflowRunRecord['executionPolicy']>): string {

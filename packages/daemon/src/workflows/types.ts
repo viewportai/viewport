@@ -122,6 +122,7 @@ export interface WorkflowNodeRunState {
   output?: string;
   exitCode?: number;
   error?: string;
+  metadata?: Record<string, unknown>;
   approval?: {
     prompt: string;
     requestedAt: number;

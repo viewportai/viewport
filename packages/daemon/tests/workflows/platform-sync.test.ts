@@ -38,6 +38,19 @@ describe('WorkflowRunPlatformSync', () => {
       status: 'running',
     });
     expect(calls[0]?.body['events']).toHaveLength(1);
+    expect(calls[0]?.body).toMatchObject({
+      nodes: [
+        {
+          node_key: 'inspect',
+          metadata: {
+            agent: 'codex',
+            model: 'gpt-5.4',
+            provider: 'openai',
+            exitCode: 0,
+          },
+        },
+      ],
+    });
     expect(calls[1]?.body['events']).toHaveLength(1);
     expect((calls[1]?.body['events'] as Array<Record<string, unknown>>)[0]?.['type']).toBe(
       'node-completed',
@@ -100,6 +113,11 @@ function workflowRun(): WorkflowRunRecord {
         status: 'running',
         output: 'git status',
         exitCode: 0,
+        metadata: {
+          agent: 'codex',
+          provider: 'openai',
+          model: 'gpt-5.4',
+        },
       },
     },
     artifacts: [

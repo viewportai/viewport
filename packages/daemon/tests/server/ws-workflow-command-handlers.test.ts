@@ -48,6 +48,7 @@ describe('ws workflow command handlers', () => {
       directoryId: 'dir-1',
       projectId: 'project-1',
       projectMachineBindingId: 'binding-1',
+      platformRunId: 'platform-run-1',
       inputs: { focus: 'risk' },
       requestId: 'req-run',
     });
@@ -60,6 +61,7 @@ describe('ws workflow command handlers', () => {
       inputs: { focus: 'risk' },
       projectId: 'project-1',
       projectMachineBindingId: 'binding-1',
+      platformRunId: 'platform-run-1',
       initiation: 'browser',
     });
     expect(sent).toContainEqual({ type: 'workflow-run-started', run });

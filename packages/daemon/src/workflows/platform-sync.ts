@@ -41,6 +41,7 @@ export class WorkflowRunPlatformSync {
           started_at: node.startedAt ? new Date(node.startedAt).toISOString() : null,
           completed_at: node.completedAt ? new Date(node.completedAt).toISOString() : null,
           metadata: {
+            ...(node.metadata ?? {}),
             approval: node.approval ?? null,
             nativeSessionId: node.nativeSessionId ?? null,
             exitCode: node.exitCode ?? null,
