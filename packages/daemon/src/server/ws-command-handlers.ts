@@ -297,6 +297,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
         inputs: msg.inputs,
         projectId: msg.projectId,
         projectMachineBindingId: msg.projectMachineBindingId,
+        executionPolicy: msg.executionPolicy,
         initiation: 'browser',
       });
       client.send(JSON.stringify({ type: 'workflow-run-started', run }));

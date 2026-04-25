@@ -149,6 +149,13 @@ export const WorkflowRunSchema = z
     inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     projectId: z.string().min(1).max(256).optional(),
     projectMachineBindingId: z.string().min(1).max(256).optional(),
+    executionPolicy: z
+      .object({
+        mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
+        branch: z.string().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
     requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
   })
   .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {

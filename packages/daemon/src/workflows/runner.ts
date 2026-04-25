@@ -64,6 +64,7 @@ export class WorkflowRunner {
       projectId: request.projectId,
       projectMachineBindingId: request.projectMachineBindingId,
       machineId: this.daemon.configManager.getMachineId(),
+      executionPolicy: request.executionPolicy,
       initiation: request.initiation,
       status: 'queued',
       inputs: normalizeInputs(parsed, request.inputs ?? {}),
@@ -85,6 +86,14 @@ export class WorkflowRunner {
     };
 
     addEvent(run, 'run-created', 'Workflow run created');
+    if (run.executionPolicy) {
+      addEvent(
+        run,
+        'execution-policy-selected',
+        `Execution policy selected: ${formatExecutionPolicy(run.executionPolicy)}`,
+        { executionPolicy: run.executionPolicy },
+      );
+    }
     await this.store.save(run);
     void this.executeRun(run.id, parsed).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
@@ -316,4 +325,12 @@ export class WorkflowRunner {
 
     return run;
   }
+}
+
+function formatExecutionPolicy(policy: NonNullable<WorkflowRunRecord['executionPolicy']>): string {
+  if (policy.mode === 'named_branch') {
+    return `named branch${policy.branch ? ` ${policy.branch}` : ''}`;
+  }
+  if (policy.mode === 'current_tree') return 'selected working tree';
+  return 'isolated agent worktree';
 }

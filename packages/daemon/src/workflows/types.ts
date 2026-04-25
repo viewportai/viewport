@@ -33,6 +33,11 @@ export interface WorkflowNodePolicy {
   approvalRequired?: boolean;
 }
 
+export interface WorkflowExecutionPolicy {
+  mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
+  branch?: string;
+}
+
 export interface WorkflowEnvValue {
   value?: string;
   secret?: string;
@@ -143,7 +148,8 @@ export interface WorkflowRunEvent {
     | 'node-failed'
     | 'session-started'
     | 'session-idle'
-    | 'session-ended';
+    | 'session-ended'
+    | 'execution-policy-selected';
   nodeId?: string;
   message: string;
   data?: Record<string, unknown>;
@@ -163,6 +169,7 @@ export interface WorkflowRunRecord {
   projectId?: string;
   projectMachineBindingId?: string;
   machineId: string;
+  executionPolicy?: WorkflowExecutionPolicy;
   initiation: 'cli' | 'browser' | 'agent_skill';
   status: WorkflowRunStatus;
   inputs: Record<string, string | number | boolean>;
@@ -194,6 +201,7 @@ export interface WorkflowRunRequest {
   inputs?: Record<string, string | number | boolean>;
   projectId?: string;
   projectMachineBindingId?: string;
+  executionPolicy?: WorkflowExecutionPolicy;
   initiation: WorkflowRunRecord['initiation'];
 }
 

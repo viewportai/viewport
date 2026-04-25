@@ -70,6 +70,13 @@ const WorkflowRunBodySchema = z
     inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     projectId: z.string().trim().min(1).optional(),
     projectMachineBindingId: z.string().trim().min(1).optional(),
+    executionPolicy: z
+      .object({
+        mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
+        branch: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
     initiation: z.enum(['cli', 'browser', 'agent_skill']).optional(),
   })
   .strict()
@@ -644,6 +651,10 @@ export function registerHttpRoutes(
       inputs?: Record<string, string | number | boolean>;
       projectId?: string;
       projectMachineBindingId?: string;
+      executionPolicy?: {
+        mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
+        branch?: string;
+      };
       initiation?: 'cli' | 'browser' | 'agent_skill';
     };
   }>('/api/workflows/runs', async (request, reply) => {
@@ -661,6 +672,7 @@ export function registerHttpRoutes(
         inputs: parsedBody.data.inputs,
         projectId: parsedBody.data.projectId,
         projectMachineBindingId: parsedBody.data.projectMachineBindingId,
+        executionPolicy: parsedBody.data.executionPolicy,
         initiation: parsedBody.data.initiation ?? 'browser',
       });
       return reply.status(201).send({ run });

@@ -94,6 +94,7 @@ nodes:
 `,
       workflowSourceRef: 'viewport://templates/snapshot-proof',
       directoryId,
+      executionPolicy: { mode: 'isolated_worktree' },
       initiation: 'browser',
     });
 
@@ -103,6 +104,10 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.sourceType).toBe('viewport_snapshot');
     expect(completed?.sourcePath).toBe('viewport://templates/snapshot-proof');
+    expect(completed?.executionPolicy).toEqual({ mode: 'isolated_worktree' });
+    expect(completed?.events.some((event) => event.type === 'execution-policy-selected')).toBe(
+      true,
+    );
     expect(completed?.nodes.proof?.output).toBe('snapshot');
   });
 

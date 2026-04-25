@@ -243,6 +243,7 @@ describe('Workflow schemas', () => {
       workflowSourceRef: 'viewport://templates/proof',
       directoryId: 'dir-1',
       inputs: { pr: '123' },
+      executionPolicy: { mode: 'named_branch', branch: 'main' },
       requestId: 'req-1',
     });
     expect(result.success).toBe(true);
