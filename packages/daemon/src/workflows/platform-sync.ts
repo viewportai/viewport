@@ -127,6 +127,7 @@ function collectOutputs(run: WorkflowRunRecord): Record<string, string> {
 
 function formatEvent(event: WorkflowRunEvent) {
   return {
+    runtime_event_id: event.id,
     node_key: event.nodeId ?? null,
     type: event.type,
     severity: eventSeverity(event),

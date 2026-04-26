@@ -61,6 +61,9 @@ describe('WorkflowRunPlatformSync', () => {
     expect((calls[1]?.body['events'] as Array<Record<string, unknown>>)[0]?.['type']).toBe(
       'node-completed',
     );
+    expect((calls[1]?.body['events'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      runtime_event_id: 'event-2',
+    });
   });
 
   it('skips sync when the run is not linked to a platform run', async () => {
