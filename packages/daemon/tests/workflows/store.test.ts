@@ -74,6 +74,71 @@ describe('workflow run store', () => {
       await fs.rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it('preserves terminal node state when a later save uses a stale node snapshot', async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-run-store-'));
+    try {
+      const store = new WorkflowRunStore(rootDir);
+      const run = makeRun({ id: 'run-1', createdAt: 1 });
+      await store.save({
+        ...run,
+        status: 'running',
+        completedAt: undefined,
+        nodes: {
+          proof: {
+            id: 'proof',
+            type: 'shell',
+            status: 'running',
+            startedAt: 1,
+          },
+        },
+      });
+      await store.save({
+        ...run,
+        status: 'completed',
+        updatedAt: 2,
+        completedAt: 2,
+        nodes: {
+          proof: {
+            id: 'proof',
+            type: 'shell',
+            status: 'completed',
+            startedAt: 1,
+            completedAt: 2,
+            output: 'done',
+            exitCode: 0,
+          },
+        },
+      });
+      await store.save({
+        ...run,
+        status: 'running',
+        updatedAt: 3,
+        completedAt: undefined,
+        nodes: {
+          proof: {
+            id: 'proof',
+            type: 'shell',
+            status: 'running',
+            startedAt: 1,
+          },
+        },
+      });
+
+      const saved = await store.get(run.id);
+      expect(saved?.status).toBe('completed');
+      expect(saved?.completedAt).toBe(2);
+      expect(saved?.nodes.proof).toMatchObject({
+        status: 'completed',
+        output: 'done',
+        exitCode: 0,
+        completedAt: 2,
+      });
+      expect(saved?.updatedAt).toBe(3);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function makeRun(overrides: { id: string; createdAt: number }): WorkflowRunRecord {

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { configDir } from '../core/config.js';
-import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
+import type { WorkflowNodeRunState, WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 
 export class WorkflowRunStore {
   private readonly saveQueues = new Map<string, Promise<void>>();
@@ -30,7 +30,7 @@ export class WorkflowRunStore {
       this.rootDir,
       `.${runId}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`,
     );
-    const merged = await this.mergeExistingEvents(snapshot);
+    const merged = await this.mergeExistingRun(snapshot);
     await fs.writeFile(tempPath, `${JSON.stringify(merged, null, 2)}\n`, {
       encoding: 'utf-8',
       mode: 0o600,
@@ -38,16 +38,19 @@ export class WorkflowRunStore {
     await fs.rename(tempPath, finalPath);
   }
 
-  private async mergeExistingEvents(snapshot: WorkflowRunRecord): Promise<WorkflowRunRecord> {
+  private async mergeExistingRun(snapshot: WorkflowRunRecord): Promise<WorkflowRunRecord> {
     const existing = await this.get(snapshot.id);
-    if (!existing || existing.events.length === 0) return snapshot;
+    if (!existing) return snapshot;
 
     const events = new Map(snapshot.events.map((event) => [event.id, event]));
     for (const event of existing.events) {
       if (!events.has(event.id)) events.set(event.id, event);
     }
+    const nodes = mergeExistingTerminalNodes(snapshot.nodes, existing.nodes);
     return {
       ...snapshot,
+      nodes,
+      ...mergeExistingTerminalRun(snapshot, existing),
       events: [...events.values()].sort((a, b) => a.timestamp - b.timestamp),
       updatedAt: Math.max(snapshot.updatedAt, existing.updatedAt),
     };
@@ -99,4 +102,61 @@ export class WorkflowRunStore {
   private runPath(runId: string): string {
     return path.join(this.rootDir, `${runId}.json`);
   }
+}
+
+function mergeExistingTerminalNodes(
+  snapshot: WorkflowRunRecord['nodes'],
+  existing: WorkflowRunRecord['nodes'],
+): WorkflowRunRecord['nodes'] {
+  const nodes = { ...snapshot };
+  for (const [nodeId, existingNode] of Object.entries(existing)) {
+    const snapshotNode = nodes[nodeId];
+    if (!snapshotNode) {
+      nodes[nodeId] = existingNode;
+      continue;
+    }
+    if (shouldPreserveExistingNode(snapshotNode, existingNode)) {
+      nodes[nodeId] = existingNode;
+    }
+  }
+  return nodes;
+}
+
+function shouldPreserveExistingNode(
+  snapshotNode: WorkflowNodeRunState,
+  existingNode: WorkflowNodeRunState,
+): boolean {
+  if (!isTerminalNodeStatus(existingNode.status)) return false;
+  if (!isTerminalNodeStatus(snapshotNode.status)) return true;
+  return (existingNode.completedAt ?? 0) > (snapshotNode.completedAt ?? 0);
+}
+
+function mergeExistingTerminalRun(
+  snapshot: WorkflowRunRecord,
+  existing: WorkflowRunRecord,
+): Partial<WorkflowRunRecord> {
+  if (!isTerminalRunStatus(existing.status)) return {};
+  if (isTerminalRunStatus(snapshot.status)) {
+    return (existing.completedAt ?? 0) > (snapshot.completedAt ?? 0)
+      ? {
+          status: existing.status,
+          completedAt: existing.completedAt,
+          error: existing.error,
+        }
+      : {};
+  }
+
+  return {
+    status: existing.status,
+    completedAt: existing.completedAt,
+    error: existing.error,
+  };
+}
+
+function isTerminalNodeStatus(status: WorkflowNodeRunState['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'skipped';
+}
+
+function isTerminalRunStatus(status: WorkflowRunRecord['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'canceled';
 }
