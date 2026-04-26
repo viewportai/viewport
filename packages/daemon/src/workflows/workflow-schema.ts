@@ -46,6 +46,41 @@ const NodePolicySchema = z
   })
   .strict();
 
+const HookRecordSchema = z
+  .object({
+    record: z.boolean().optional(),
+  })
+  .strict();
+
+const PermissionHookDecisionSchema = z
+  .object({
+    behavior: z.enum(['allow', 'deny']),
+    message: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+const PermissionHookRuleSchema = z.union([
+  PermissionHookDecisionSchema,
+  z
+    .object({
+      default: PermissionHookDecisionSchema.optional(),
+      tools: z.record(z.string().trim().min(1), PermissionHookDecisionSchema).optional(),
+    })
+    .strict()
+    .refine((rule) => Boolean(rule.default) || Boolean(rule.tools), {
+      message: 'Set default or tools for PermissionRequest hook rules.',
+    }),
+]);
+
+const HookRulesSchema = z
+  .object({
+    PreToolUse: HookRecordSchema.optional(),
+    PostToolUse: HookRecordSchema.optional(),
+    PostToolUseFailure: HookRecordSchema.optional(),
+    PermissionRequest: PermissionHookRuleSchema.optional(),
+  })
+  .strict();
+
 const GateDefinitionSchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -115,6 +150,7 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   agent: z.string().trim().min(1).optional(),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
+  hooks: HookRulesSchema.optional(),
 }).strict();
 
 const ShellNodeSchema = NodeBaseSchema.extend({

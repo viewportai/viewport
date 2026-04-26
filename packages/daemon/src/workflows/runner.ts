@@ -55,6 +55,9 @@ export class WorkflowRunner {
       (runId, parsed, options) => this.scheduler.run(runId, parsed, options),
       ops.failRun,
     );
+    this.daemon.on('workflow:hook-fired', (event) => {
+      void this.recordWorkflowHookEvent(event).catch(() => undefined);
+    });
   }
 
   async validateFile(filePath: string): Promise<ParsedWorkflow> {
@@ -226,6 +229,37 @@ export class WorkflowRunner {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
+  }
+
+  private async recordWorkflowHookEvent(event: {
+    workflowRunId: string;
+    workflowNodeId: string;
+    sessionId: string;
+    kind: string;
+    adapter: string;
+    response?: {
+      passthrough: boolean;
+      decision?: { behavior: 'allow' | 'deny'; message?: string };
+    };
+    payload: Record<string, unknown>;
+  }): Promise<void> {
+    const run = await this.store.get(event.workflowRunId);
+    if (!run) return;
+    addEvent(
+      run,
+      'hook-fired',
+      `Workflow hook ${event.kind} fired for node ${event.workflowNodeId}`,
+      {
+        kind: event.kind,
+        adapter: event.adapter,
+        sessionId: event.sessionId,
+        response: event.response ?? null,
+        payload: event.payload,
+      },
+      event.workflowNodeId,
+    );
+    run.updatedAt = Date.now();
+    await this.saveAndEmit(run);
   }
 
   private async failRun(runId: string, message: string): Promise<void> {

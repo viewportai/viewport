@@ -185,6 +185,58 @@ nodes:
     expect(parsed.definition.nodes.review?.type).toBe('prompt');
   });
 
+  it('accepts workflow-scoped prompt hook rules', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: hook-rules
+nodes:
+  review:
+    type: prompt
+    agent: codex
+    prompt: Review the diff.
+    hooks:
+      PreToolUse:
+        record: true
+      PostToolUseFailure:
+        record: true
+      PermissionRequest:
+        tools:
+          Bash:
+            behavior: deny
+            message: Bash commands require a different workflow.
+        default:
+          behavior: allow
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const review = parsed.definition.nodes.review;
+    expect(review?.type).toBe('prompt');
+    if (review?.type === 'prompt') {
+      expect(review.hooks?.PermissionRequest).toBeDefined();
+      expect(review.hooks?.PreToolUse?.record).toBe(true);
+    }
+  });
+
+  it('rejects workflow hook rules that cannot make a permission decision', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: bad-hook-rules
+nodes:
+  review:
+    type: prompt
+    prompt: Review the diff.
+    hooks:
+      PermissionRequest: {}
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/Set default or tools/);
+  });
+
   it('accepts check, policy, human review, and schedule gates', () => {
     const parsed = parseWorkflow(
       `

@@ -1,3 +1,10 @@
+import type { WorkflowHookRules } from './hook-types.js';
+export type {
+  WorkflowHookRules,
+  WorkflowPermissionHookDecision,
+  WorkflowPermissionHookRule,
+} from './hook-types.js';
+
 export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop' | 'subflow';
 
 /**
@@ -89,6 +96,7 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   agent?: string;
   provider?: string;
   model?: string;
+  hooks?: WorkflowHookRules;
 }
 
 export interface WorkflowShellNode extends WorkflowNodeBase {
@@ -309,6 +317,7 @@ export interface WorkflowRunEvent {
     | 'session-idle'
     | 'session-ended'
     | 'execution-policy-selected'
+    | 'hook-fired'
     | 'loop-iteration-started'
     | 'loop-iteration-completed'
     | 'loop-iteration-failed'

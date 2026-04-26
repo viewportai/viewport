@@ -37,6 +37,7 @@ export function workflowNodeMetadata(
           agent: node.agent ?? null,
           provider: node.provider ?? null,
           model: node.model ?? null,
+          hooks: node.hooks ?? null,
         }
       : {}),
     ...(node.type === 'gate' ? { gate: node.gate } : {}),

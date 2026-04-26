@@ -5,7 +5,8 @@ import { isFailedSessionReason, waitForPromptSessionComplete } from './session-c
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { defaultWorktreePath } from './prompt-output.js';
-import type { WorkflowRunRecord } from './types.js';
+import type { WorkflowHookRules, WorkflowRunRecord } from './types.js';
+import { workflowHookRegistry } from './hook-registry.js';
 
 export interface WorkflowSessionTarget {
   sessionId?: string;
@@ -27,6 +28,7 @@ export interface WorkflowDaemonSessionRequest {
   prompt: string;
   agent?: string;
   model?: string;
+  hooks?: WorkflowHookRules;
   outputFallback?: () => Promise<string>;
   outputData?: (output: string) => Promise<Record<string, unknown>>;
 }
@@ -67,6 +69,15 @@ export async function runWorkflowDaemonSession(
     target.sessionId = sessionId;
     target.nativeSessionId = nativeSessionId;
     target.worktreePath = worktreePath;
+
+    if (request.hooks) {
+      workflowHookRegistry.register({
+        sessionId,
+        workflowRunId: run.id,
+        workflowNodeId: nodeId,
+        hooks: request.hooks,
+      });
+    }
 
     await context.sessionLinks.upsert({
       sessionId,
@@ -120,6 +131,7 @@ export async function runWorkflowDaemonSession(
 
     return { sessionId, nativeSessionId, worktreePath, output: capturedOutput, reason };
   } finally {
+    if (activeSessionId) workflowHookRegistry.unregister(activeSessionId);
     context.daemon.off('session:message', messageHandler);
   }
 }

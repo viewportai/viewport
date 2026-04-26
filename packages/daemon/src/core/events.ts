@@ -55,6 +55,18 @@ export interface DaemonEvents {
 
   // Workflows
   'workflow:run-updated': { run: WorkflowRunRecord };
+  'workflow:hook-fired': {
+    workflowRunId: string;
+    workflowNodeId: string;
+    sessionId: string;
+    kind: HookEventKind;
+    adapter: string;
+    response?: {
+      passthrough: boolean;
+      decision?: { behavior: 'allow' | 'deny'; message?: string };
+    };
+    payload: Record<string, unknown>;
+  };
 
   // Discovery
   'discovery:updated': Record<string, never>;
