@@ -319,6 +319,66 @@ nodes:
     expect(saved?.nodes.review?.status).toBe('canceled');
   });
 
+  it('cancels running inline agent sessions before the supervisor prompt starts', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: inline-agent-cancel-proof
+requires:
+  agents:
+    - claude
+nodes:
+  supervisor:
+    type: prompt
+    agent: claude
+    prompt: Synthesize the child agent findings.
+    agents:
+      reviewer:
+        title: Reviewer
+        prompt: Review the current diff.
+      tester:
+        title: Tester
+        prompt: Suggest tests.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForRunState(daemon, run.id, (state) => {
+      const agents = state.nodes.supervisor?.inlineAgents;
+      return Boolean(agents?.reviewer?.sessionId && agents.tester?.sessionId);
+    });
+    const reviewer = await waitForSessionWithPrompt(adapter, 'Review the current diff.');
+    const tester = await waitForSessionWithPrompt(adapter, 'Suggest tests.');
+
+    const canceled = await daemon.workflowRunner.cancelRun(run.id, {
+      message: 'User stopped inline agents',
+    });
+
+    expect(reviewer.kill).toHaveBeenCalled();
+    expect(tester.kill).toHaveBeenCalled();
+    expect(canceled.status).toBe('canceled');
+    expect(canceled.nodes.supervisor?.status).toBe('canceled');
+    expect(canceled.nodes.supervisor?.inlineAgents?.reviewer?.status).toBe('canceled');
+    expect(canceled.nodes.supervisor?.inlineAgents?.tester?.status).toBe('canceled');
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const saved = await daemon.workflowRunner.getRun(run.id);
+    expect(saved?.status).toBe('canceled');
+    expect(saved?.nodes.supervisor?.inlineAgents?.reviewer?.status).toBe('canceled');
+    expect(saved?.nodes.supervisor?.inlineAgents?.tester?.status).toBe('canceled');
+  }, 10_000);
+
   it('completes a prompt node when the launched agent session becomes idle', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();
@@ -1456,6 +1516,67 @@ nodes:
     expect(node?.output).toBe(JSON.stringify(['alpha done', 'beta done']));
   });
 
+  it('cancels a running loop prompt iteration and preserves canceled iteration state', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: loop-prompt-cancel-proof
+nodes:
+  list:
+    type: shell
+    command: echo '["alpha","beta"]'
+    outputs:
+      items:
+        type: json
+  process:
+    type: loop
+    needs: [list]
+    foreach: nodes.list.outputs.items
+    maxIterations: 5
+    body:
+      type: prompt
+      agent: claude
+      prompt: 'Review {{ loop.item }} at index {{ loop.index }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const first = await waitForSessionWithPrompt(adapter, 'Review alpha at index 0');
+    await waitForRunState(daemon, run.id, (state) =>
+      Boolean(state.nodes.process?.iterations?.[0]?.sessionId),
+    );
+
+    const canceled = await daemon.workflowRunner.cancelRun(run.id, {
+      message: 'User stopped loop prompt',
+    });
+
+    expect(first.kill).toHaveBeenCalled();
+    expect(canceled.status).toBe('canceled');
+    expect(canceled.nodes.process?.status).toBe('canceled');
+    expect(canceled.nodes.process?.iterations?.[0]).toMatchObject({
+      status: 'canceled',
+      error: 'User stopped loop prompt',
+    });
+
+    first.simulateIdle();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const saved = await daemon.workflowRunner.getRun(run.id);
+    expect(saved?.status).toBe('canceled');
+    expect(saved?.nodes.process?.status).toBe('canceled');
+    expect(saved?.nodes.process?.iterations?.[0]?.status).toBe('canceled');
+  }, 10_000);
+
   it('runs a while loop until its condition turns falsy and respects maxIterations', async () => {
     const daemon = await setup();
     const counterFile = path.join(projectDir, 'counter.txt');
@@ -1632,6 +1753,50 @@ nodes:
     const events = completed?.events ?? [];
     expect(events.filter((event) => event.type === 'subflow-child-started')).toHaveLength(2);
     expect(events.filter((event) => event.type === 'subflow-child-completed')).toHaveLength(2);
+  });
+
+  it('cancels a running subflow shell child and preserves canceled parent state', async () => {
+    const daemon = await setup();
+    const markerFile = path.join(projectDir, 'subflow-marker.txt');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: subflow-cancel-proof
+nodes:
+  validate:
+    type: subflow
+    inline:
+      nodes:
+        slow:
+          type: shell
+          command: 'sleep 10 && printf done > ${markerFile}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForRunState(daemon, run.id, (state) =>
+      state.events.some((event) => event.type === 'subflow-child-started'),
+    );
+    const canceled = await daemon.workflowRunner.cancelRun(run.id, {
+      message: 'User stopped subflow',
+    });
+
+    expect(canceled.status).toBe('canceled');
+    expect(canceled.nodes.validate?.status).toBe('canceled');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await expect(fs.readFile(markerFile, 'utf-8')).rejects.toThrow();
+    const saved = await daemon.workflowRunner.getRun(run.id);
+    expect(saved?.status).toBe('canceled');
+    expect(saved?.nodes.validate?.status).toBe('canceled');
   });
 
   it('resumes a workflow run that was mid-flight when the daemon restarted', async () => {

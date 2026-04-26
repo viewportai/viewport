@@ -1,12 +1,6 @@
 import type { Daemon } from '../core/daemon.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
-import {
-  addEvent,
-  normalizeInputs,
-  renderTemplate,
-  resolveNodeCwd,
-  runShellNode,
-} from './runtime-helpers.js';
+import { addEvent, normalizeInputs } from './runtime-helpers.js';
 import { WorkflowRunPlatformSync } from './platform-sync.js';
 import { WorkflowSessionLinkStore } from './session-links.js';
 import { WorkflowRunStore } from './store.js';
@@ -17,11 +11,10 @@ import { WorkflowRunReconciler } from './runner-reconciler.js';
 import { WorkflowRunCanceler, type WorkflowCancelOptions } from './runner-canceler.js';
 import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
-import { runWorkflowDaemonSession } from './daemon-session.js';
+import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
-  WorkflowApprovalNode,
   WorkflowNodeRunState,
   WorkflowRunRecord,
   WorkflowRunRequest,
@@ -191,7 +184,18 @@ export class WorkflowRunner {
       );
       const rejectingNode = parsedForReject.definition.nodes[nodeId];
       if (rejectingNode?.type === 'approval' && rejectingNode.onReject) {
-        await this.runOnRejectFollowUp(run, nodeId, rejectingNode.onReject, decision.message);
+        await runApprovalOnRejectFollowUp(
+          {
+            daemon: this.daemon,
+            sessionLinks: this.sessionLinks,
+            shellAbortRegistry: this.shellAbortRegistry,
+            saveAndEmit: (nextRun) => this.saveAndEmit(nextRun),
+          },
+          run,
+          nodeId,
+          rejectingNode.onReject,
+          decision.message,
+        );
       }
       state.status = 'failed';
       state.error = decision.message ?? 'Approval denied';
@@ -293,99 +297,6 @@ export class WorkflowRunner {
     run.updatedAt = run.completedAt;
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await this.saveAndEmit(run);
-  }
-
-  /**
-   * Run the approval node's `onReject` shell command after a denial. Output
-   * is recorded as a `node-log` event on the run timeline so reviewers can
-   * see what the follow-up did. Failures are caught and emitted as a
-   * `node-log` so the rejection itself isn't masked by a follow-up error.
-   */
-  private async runOnRejectFollowUp(
-    run: WorkflowRunRecord,
-    nodeId: string,
-    onReject: NonNullable<WorkflowApprovalNode['onReject']>,
-    rejectionMessage: string | undefined,
-  ): Promise<void> {
-    if ('prompt' in onReject) {
-      const state = run.nodes[nodeId];
-      if (!state) return;
-      addEvent(
-        run,
-        'node-log',
-        `Approval ${nodeId} rejected — running onReject prompt`,
-        {
-          prompt: onReject.prompt,
-          ...(onReject.agent ? { agent: onReject.agent } : {}),
-          ...(onReject.model ? { model: onReject.model } : {}),
-        },
-        nodeId,
-      );
-      await this.saveAndEmit(run);
-      try {
-        await runWorkflowDaemonSession(
-          {
-            daemon: this.daemon,
-            sessionLinks: this.sessionLinks,
-            saveAndEmit: (nextRun) => this.saveAndEmit(nextRun),
-          },
-          {
-            run,
-            nodeId,
-            target: state,
-            prompt: await renderTemplate(onReject.prompt, run),
-            ...(onReject.agent ? { agent: onReject.agent } : {}),
-            ...(onReject.model ? { model: onReject.model } : {}),
-          },
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        addEvent(
-          run,
-          'node-log',
-          `onReject prompt for ${nodeId} errored: ${message}`,
-          { error: message },
-          nodeId,
-        );
-      }
-      return;
-    }
-
-    const cwd = resolveNodeCwd(run.directoryPath, onReject.cwd);
-    const abort = this.shellAbortRegistry.create(run.id, `approval-on-reject:${nodeId}`);
-    addEvent(
-      run,
-      'node-log',
-      `Approval ${nodeId} rejected — running onReject command`,
-      { command: onReject.command, cwd },
-      nodeId,
-    );
-    try {
-      const result = await runShellNode(onReject.command, {
-        cwd,
-        timeoutSeconds: onReject.timeoutSeconds,
-        signal: abort.signal,
-        env: rejectionMessage ? { VIEWPORT_REJECT_MESSAGE: rejectionMessage } : undefined,
-      });
-      addEvent(
-        run,
-        'node-log',
-        `onReject for ${nodeId} exited ${result.exitCode}`,
-        { exitCode: result.exitCode, output: result.output },
-        nodeId,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      addEvent(
-        run,
-        'node-log',
-        `onReject for ${nodeId} errored: ${message}`,
-        { error: message },
-        nodeId,
-      );
-    } finally {
-      abort.dispose();
-    }
   }
 
   private async requireRun(runId: string): Promise<WorkflowRunRecord> {

@@ -99,11 +99,12 @@ function cancelIteration(
   if (
     iteration.status === 'failed' ||
     iteration.status === 'completed' ||
-    iteration.status === 'skipped'
+    iteration.status === 'skipped' ||
+    iteration.status === 'canceled'
   ) {
     return;
   }
-  iteration.status = 'failed';
+  iteration.status = 'canceled';
   iteration.error = message;
   iteration.completedAt = timestamp;
 }
@@ -114,7 +115,7 @@ function cancelInlineAgent(
   timestamp: number,
 ): void {
   if (inlineAgent.status === 'queued' || inlineAgent.status === 'running') {
-    inlineAgent.status = 'failed';
+    inlineAgent.status = 'canceled';
     inlineAgent.error = message;
     inlineAgent.completedAt = timestamp;
   }

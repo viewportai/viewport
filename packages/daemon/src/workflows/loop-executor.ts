@@ -63,7 +63,6 @@ export async function executeLoopNode(
     }
 
     const iteration = await runIteration(context, run, nodeId, node, index, item, extras);
-    state.iterations.push(iteration);
 
     if (iteration.status === 'failed') {
       throw new Error(iteration.error ?? `Loop ${nodeId} iteration ${index} failed`);
@@ -96,6 +95,14 @@ async function runIteration(
   extras: LoopExtras,
 ): Promise<WorkflowLoopIterationRecord> {
   const startedAt = Date.now();
+  const state = run.nodes[nodeId];
+  const record: WorkflowLoopIterationRecord = {
+    index,
+    status: 'running',
+    startedAt,
+    ...(item !== undefined ? { item } : {}),
+  };
+  state?.iterations?.push(record);
   addEvent(
     run,
     'loop-iteration-started',
@@ -107,7 +114,7 @@ async function runIteration(
 
   const body = node.body;
   if (body.type === 'prompt') {
-    return await runPromptIteration(context, run, nodeId, body, index, item, extras, startedAt);
+    return await runPromptIteration(context, run, nodeId, body, index, extras, record);
   }
 
   const cwd = resolveNodeCwd(
@@ -133,16 +140,12 @@ async function runIteration(
         void context.saveAndEmit(run);
       },
     });
+    if (record.status === 'canceled') return record;
     const completedAt = Date.now();
-    const record: WorkflowLoopIterationRecord = {
-      index,
-      status: 'completed',
-      startedAt,
-      completedAt,
-      output: result.output,
-      exitCode: result.exitCode,
-      ...(item !== undefined ? { item } : {}),
-    };
+    record.status = 'completed';
+    record.completedAt = completedAt;
+    record.output = result.output;
+    record.exitCode = result.exitCode;
     addEvent(
       run,
       'loop-iteration-completed',
@@ -154,18 +157,14 @@ async function runIteration(
     await context.saveAndEmit(run);
     return record;
   } catch (error) {
+    if (record.status === 'canceled') return record;
     const completedAt = Date.now();
     const message = error instanceof Error ? error.message : String(error);
-    const record: WorkflowLoopIterationRecord = {
-      index,
-      status: 'failed',
-      startedAt,
-      completedAt,
-      output: error instanceof ShellNodeError ? error.output : undefined,
-      exitCode: error instanceof ShellNodeError ? (error.exitCode ?? undefined) : undefined,
-      error: message,
-      ...(item !== undefined ? { item } : {}),
-    };
+    record.status = 'failed';
+    record.completedAt = completedAt;
+    record.output = error instanceof ShellNodeError ? error.output : undefined;
+    record.exitCode = error instanceof ShellNodeError ? (error.exitCode ?? undefined) : undefined;
+    record.error = message;
     addEvent(
       run,
       'loop-iteration-failed',
@@ -187,17 +186,9 @@ async function runPromptIteration(
   nodeId: string,
   body: Extract<WorkflowLoopNode['body'], { type: 'prompt' }>,
   index: number,
-  item: unknown,
   extras: LoopExtras,
-  startedAt: number,
+  record: WorkflowLoopIterationRecord,
 ): Promise<WorkflowLoopIterationRecord> {
-  const record: WorkflowLoopIterationRecord = {
-    index,
-    status: 'completed',
-    startedAt,
-    ...(item !== undefined ? { item } : {}),
-  };
-
   try {
     const result = await runWorkflowDaemonSession(context, {
       run,
@@ -207,6 +198,8 @@ async function runPromptIteration(
       ...(body.agent ? { agent: body.agent } : {}),
       ...(body.model ? { model: body.model } : {}),
     });
+    if (record.status === 'canceled') return record;
+    record.status = 'completed';
     record.completedAt = Date.now();
     record.output = result.output;
     addEvent(
@@ -220,6 +213,7 @@ async function runPromptIteration(
     await context.saveAndEmit(run);
     return record;
   } catch (error) {
+    if (record.status === 'canceled') return record;
     record.status = 'failed';
     record.completedAt = Date.now();
     record.error = error instanceof Error ? error.message : String(error);

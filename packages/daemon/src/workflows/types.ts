@@ -278,7 +278,7 @@ export interface WorkflowNodeRunState {
 
 export interface WorkflowLoopIterationRecord {
   index: number;
-  status: 'completed' | 'failed' | 'skipped';
+  status: 'running' | 'completed' | 'failed' | 'skipped' | 'canceled';
   startedAt: number;
   completedAt?: number;
   sessionId?: string;

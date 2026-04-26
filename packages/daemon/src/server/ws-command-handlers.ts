@@ -8,6 +8,7 @@ import type { IncomingMessage } from './ws-protocol.js';
 import { discoveredWatchKey, removeDiscoveredWatch } from './discovered-watch-key.js';
 import { ErrorCodes } from '../core/error-codes.js';
 import { logger } from '../core/logger.js';
+import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
 const MAX_CLIENT_DISCOVERED_WATCHES = 2048;
@@ -288,79 +289,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       sendAck(client, msg.requestId, 'ok');
     },
 
-    'workflow-run': async (client, msg) => {
-      const run = await daemon.workflowRunner.startRun({
-        workflowPath: msg.workflowPath,
-        workflowYaml: msg.workflowYaml,
-        workflowSourceRef: msg.workflowSourceRef,
-        directoryId: msg.directoryId,
-        inputs: msg.inputs,
-        projectId: msg.projectId,
-        projectMachineBindingId: msg.projectMachineBindingId,
-        platformRunId: msg.platformRunId,
-        executionPolicy: msg.executionPolicy,
-        initiation: 'browser',
-      });
-      client.send(JSON.stringify({ type: 'workflow-run-started', run }));
-      sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id });
-    },
-
-    'workflow-list-runs': async (client, msg) => {
-      const runs = await daemon.workflowRunner.listRuns(msg.limit);
-      client.send(JSON.stringify({ type: 'workflow-runs', runs }));
-      sendAck(client, msg.requestId, 'ok');
-    },
-
-    'workflow-show-run': async (client, msg) => {
-      const run = await daemon.workflowRunner.getRun(msg.runId);
-      if (!run) {
-        sendAck(client, msg.requestId, 'error', `Workflow run not found: ${msg.runId}`, {
-          errorCode: ErrorCodes.INVALID_INPUT,
-        });
-        return;
-      }
-      client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
-      sendAck(client, msg.requestId, 'ok');
-    },
-
-    'workflow-approve': async (client, msg) => {
-      try {
-        const run = await daemon.workflowRunner.decideApproval(msg.runId, msg.nodeId, {
-          approved: msg.approved,
-          ...(msg.message ? { message: msg.message } : {}),
-          ...(msg.actor ? { actor: msg.actor } : {}),
-        });
-        client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
-        sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id, nodeId: msg.nodeId });
-      } catch (error) {
-        sendAck(
-          client,
-          msg.requestId,
-          'error',
-          error instanceof Error ? error.message : 'Failed to resolve workflow approval',
-          { errorCode: ErrorCodes.INVALID_INPUT },
-        );
-      }
-    },
-
-    'workflow-cancel': async (client, msg) => {
-      try {
-        const run = await daemon.workflowRunner.cancelRun(msg.runId, {
-          ...(msg.message ? { message: msg.message } : {}),
-          ...(msg.actor ? { actor: msg.actor } : {}),
-        });
-        client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
-        sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id });
-      } catch (error) {
-        sendAck(
-          client,
-          msg.requestId,
-          'error',
-          error instanceof Error ? error.message : 'Failed to cancel workflow run',
-          { errorCode: ErrorCodes.INVALID_INPUT },
-        );
-      }
-    },
+    ...createWsWorkflowCommandHandlers({ daemon, sendAck }),
 
     supervise: async (client, msg) => {
       if (!supervision) {

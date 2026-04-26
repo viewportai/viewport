@@ -10,7 +10,7 @@ export interface WorkflowInlineAgentRunState {
   title?: string;
   agent?: string;
   model?: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
   startedAt?: number;
   completedAt?: number;
   sessionId?: string;
