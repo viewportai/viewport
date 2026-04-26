@@ -224,7 +224,8 @@ export type WorkflowNodeStatus =
   | 'blocked'
   | 'completed'
   | 'failed'
-  | 'skipped';
+  | 'skipped'
+  | 'canceled';
 
 export interface WorkflowNodeRunState {
   id: string;

@@ -115,10 +115,12 @@ async function runIteration(
     await renderOptionalTemplate(body.cwd, run, extras),
   );
   const command = await renderTemplate(body.command, run, extras);
+  const abort = context.shellAbortRegistry.create(run.id, `loop:${nodeId}:${index}`);
   try {
     const result = await runShellNode(command, {
       cwd,
       timeoutSeconds: body.timeoutSeconds,
+      signal: abort.signal,
       onOutput: ({ source, chunk, output }) => {
         addEvent(
           run,
@@ -174,6 +176,8 @@ async function runIteration(
     run.updatedAt = completedAt;
     await context.saveAndEmit(run);
     return record;
+  } finally {
+    abort.dispose();
   }
 }
 

@@ -67,7 +67,15 @@ export async function executeSubflowNode(
     );
     await context.saveAndEmit(run);
 
-    const result = await runChild(run, child, resolvedInputs, childStates);
+    const result = await runChild(
+      context,
+      run,
+      nodeId,
+      childId,
+      child,
+      resolvedInputs,
+      childStates,
+    );
     childStates.set(childId, result);
 
     if (result.status === 'failed') {
@@ -187,17 +195,22 @@ async function evaluateChildGuards(
 }
 
 async function runChild(
+  context: WorkflowNodeExecutorContext,
   run: WorkflowRunRecord,
+  nodeId: string,
+  childId: string,
   child: WorkflowSubflowChild,
   resolvedInputs: Record<string, unknown>,
   childStates: Map<string, SubflowChildState>,
 ): Promise<SubflowChildState> {
-  const context = buildSubflowContext(resolvedInputs, childStates);
+  const expressionContext = buildSubflowContext(resolvedInputs, childStates);
   let command: string;
   let cwd: string;
   try {
-    command = await renderTemplateString(child.command, context);
-    const cwdRendered = child.cwd ? await renderTemplateString(child.cwd, context) : undefined;
+    command = await renderTemplateString(child.command, expressionContext);
+    const cwdRendered = child.cwd
+      ? await renderTemplateString(child.cwd, expressionContext)
+      : undefined;
     cwd = resolveNodeCwd(run.directoryPath, cwdRendered);
   } catch (error) {
     return {
@@ -206,10 +219,12 @@ async function runChild(
     };
   }
 
+  const abort = context.shellAbortRegistry.create(run.id, `subflow:${nodeId}:${childId}`);
   try {
     const result = await runShellNode(command, {
       cwd,
       timeoutSeconds: child.timeoutSeconds,
+      signal: abort.signal,
     });
     return { status: 'completed', output: result.output, exitCode: result.exitCode };
   } catch (error) {
@@ -225,6 +240,8 @@ async function runChild(
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    abort.dispose();
   }
 }
 

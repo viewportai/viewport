@@ -81,21 +81,28 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       run.directoryPath,
       await renderOptionalTemplate(node.cwd, run),
     );
-    const result = await runShellNode(await renderTemplate(node.command, run), {
-      cwd: artifactCwd,
-      timeoutSeconds: node.timeoutSeconds,
-      onOutput: ({ source, chunk, output }) => {
-        addEvent(
-          run,
-          'node-log',
-          `Node ${nodeId} wrote ${source}`,
-          { source, chunk, output },
-          nodeId,
-        );
-        run.updatedAt = Date.now();
-        void context.saveAndEmit(run);
-      },
-    });
+    const abort = context.shellAbortRegistry.create(run.id, `node:${nodeId}`);
+    let result;
+    try {
+      result = await runShellNode(await renderTemplate(node.command, run), {
+        cwd: artifactCwd,
+        timeoutSeconds: node.timeoutSeconds,
+        signal: abort.signal,
+        onOutput: ({ source, chunk, output }) => {
+          addEvent(
+            run,
+            'node-log',
+            `Node ${nodeId} wrote ${source}`,
+            { source, chunk, output },
+            nodeId,
+          );
+          run.updatedAt = Date.now();
+          void context.saveAndEmit(run);
+        },
+      });
+    } finally {
+      abort.dispose();
+    }
     if (state) {
       state.output = result.output;
       state.exitCode = result.exitCode;

@@ -7,6 +7,7 @@ import {
 import { executeWorkflowNode } from './node-executor.js';
 import { preflightWorkflow } from './preflight.js';
 import { addEvent } from './runtime-helpers.js';
+import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import { captureNodeStructuredOutputs } from './structured-outputs.js';
 import {
   evaluateTriggerRule,
@@ -27,6 +28,7 @@ export class WorkflowLayerScheduler {
   constructor(
     private readonly daemon: Daemon,
     private readonly sessionLinks: WorkflowSessionLinkStore,
+    private readonly shellAbortRegistry: WorkflowShellAbortRegistry,
     private readonly activeRunIds: Set<string>,
     private readonly ops: RunnerOps,
   ) {}
@@ -105,6 +107,7 @@ export class WorkflowLayerScheduler {
               {
                 daemon: this.daemon,
                 sessionLinks: this.sessionLinks,
+                shellAbortRegistry: this.shellAbortRegistry,
                 saveAndEmit: (nextRun) => this.ops.saveAndEmit(nextRun),
               },
               freshRun,

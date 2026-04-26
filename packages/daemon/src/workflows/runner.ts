@@ -14,6 +14,8 @@ import { resolveWorkflowSource } from './workflow-source.js';
 import { WorkflowLayerScheduler } from './runner-scheduler.js';
 import { WorkflowRunResumer } from './runner-resumer.js';
 import { WorkflowRunReconciler } from './runner-reconciler.js';
+import { WorkflowRunCanceler, type WorkflowCancelOptions } from './runner-canceler.js';
+import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import type {
@@ -30,9 +32,11 @@ export class WorkflowRunner {
   private readonly sessionLinks = new WorkflowSessionLinkStore();
   private readonly platformSync: WorkflowRunPlatformSync;
   private readonly activeRunIds = new Set<string>();
+  private readonly shellAbortRegistry = new WorkflowShellAbortRegistry();
   private readonly scheduler: WorkflowLayerScheduler;
   private readonly resumer: WorkflowRunResumer;
   private readonly reconciler: WorkflowRunReconciler;
+  private readonly canceler: WorkflowRunCanceler;
 
   constructor(private readonly daemon: Daemon) {
     this.platformSync = new WorkflowRunPlatformSync(daemon.configManager);
@@ -44,9 +48,16 @@ export class WorkflowRunner {
     };
 
     this.reconciler = new WorkflowRunReconciler(this.daemon, this.activeRunIds, ops.saveAndEmit);
+    this.canceler = new WorkflowRunCanceler(
+      this.daemon,
+      this.activeRunIds,
+      this.shellAbortRegistry,
+      ops,
+    );
     this.scheduler = new WorkflowLayerScheduler(
       this.daemon,
       this.sessionLinks,
+      this.shellAbortRegistry,
       this.activeRunIds,
       ops,
     );
@@ -196,7 +207,7 @@ export class WorkflowRunner {
         { ...decision },
         nodeId,
       );
-      addEvent(run, 'run-failed', `Workflow canceled by approval gate: ${nodeId}`);
+      addEvent(run, 'run-canceled', `Workflow canceled by approval gate: ${nodeId}`);
       await this.saveAndEmit(run);
       return run;
     }
@@ -229,6 +240,10 @@ export class WorkflowRunner {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
+  }
+
+  async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {
+    return this.canceler.cancelRun(runId, options);
   }
 
   private async recordWorkflowHookEvent(event: {
@@ -264,7 +279,14 @@ export class WorkflowRunner {
 
   private async failRun(runId: string, message: string): Promise<void> {
     const run = await this.getRun(runId);
-    if (!run || run.status === 'completed' || run.status === 'failed') return;
+    if (
+      !run ||
+      run.status === 'completed' ||
+      run.status === 'failed' ||
+      run.status === 'canceled'
+    ) {
+      return;
+    }
     run.status = 'failed';
     run.error = message;
     run.completedAt = Date.now();
@@ -330,6 +352,7 @@ export class WorkflowRunner {
     }
 
     const cwd = resolveNodeCwd(run.directoryPath, onReject.cwd);
+    const abort = this.shellAbortRegistry.create(run.id, `approval-on-reject:${nodeId}`);
     addEvent(
       run,
       'node-log',
@@ -341,6 +364,7 @@ export class WorkflowRunner {
       const result = await runShellNode(onReject.command, {
         cwd,
         timeoutSeconds: onReject.timeoutSeconds,
+        signal: abort.signal,
         env: rejectionMessage ? { VIEWPORT_REJECT_MESSAGE: rejectionMessage } : undefined,
       });
       addEvent(
@@ -359,6 +383,8 @@ export class WorkflowRunner {
         { error: message },
         nodeId,
       );
+    } finally {
+      abort.dispose();
     }
   }
 

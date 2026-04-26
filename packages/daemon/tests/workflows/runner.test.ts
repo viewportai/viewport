@@ -95,6 +95,46 @@ nodes:
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
+  it('cancels a running shell workflow and preserves canceled state', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-cancel-proof
+nodes:
+  slow:
+    type: shell
+    command: sleep 10 && printf done
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.nodes.slow?.status === 'running',
+    );
+    const canceled = await daemon.workflowRunner.cancelRun(run.id, {
+      message: 'User stopped shell run',
+    });
+    expect(canceled.status).toBe('canceled');
+    expect(canceled.nodes.slow?.status).toBe('canceled');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const saved = await daemon.workflowRunner.getRun(run.id);
+    expect(saved?.status).toBe('canceled');
+    expect(saved?.nodes.slow?.status).toBe('canceled');
+    expect(saved?.nodes.slow?.output).not.toBe('done');
+  });
+
   it('collects declared shell artifacts inside the workflow directory', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -221,6 +261,62 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.review?.status).toBe('completed');
     expect(completed?.events.map((event) => event.type)).toContain('session-ended');
+  });
+
+  it('cancels a running workflow prompt and preserves canceled state after the session ends', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: cancel-running-prompt-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current directory.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    const running = await daemon.workflowRunner.getRun(run.id);
+    const session = adapter.lastSession;
+
+    expect(session).toBeTruthy();
+    expect(running?.status).toBe('running');
+    expect(running?.nodes.review?.status).toBe('running');
+
+    const canceled = await daemon.workflowRunner.cancelRun(run.id, {
+      message: 'User stopped the workflow',
+    });
+
+    expect(session?.kill).toHaveBeenCalled();
+    expect(canceled.status).toBe('canceled');
+    expect(canceled.nodes.review?.status).toBe('canceled');
+    expect(canceled.events).toContainEqual(
+      expect.objectContaining({
+        type: 'run-canceled',
+        message: 'User stopped the workflow',
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const saved = await daemon.workflowRunner.getRun(run.id);
+    expect(saved?.status).toBe('canceled');
+    expect(saved?.nodes.review?.status).toBe('canceled');
   });
 
   it('completes a prompt node when the launched agent session becomes idle', async () => {

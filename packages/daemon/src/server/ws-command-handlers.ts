@@ -343,6 +343,25 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
     },
 
+    'workflow-cancel': async (client, msg) => {
+      try {
+        const run = await daemon.workflowRunner.cancelRun(msg.runId, {
+          ...(msg.message ? { message: msg.message } : {}),
+          ...(msg.actor ? { actor: msg.actor } : {}),
+        });
+        client.send(JSON.stringify({ type: 'workflow-run-detail', run }));
+        sendAck(client, msg.requestId, 'ok', undefined, { runId: run.id });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Failed to cancel workflow run',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
     supervise: async (client, msg) => {
       if (!supervision) {
         sendAck(client, msg.requestId, 'error', 'Hooks not enabled', {

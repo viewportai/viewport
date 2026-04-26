@@ -127,6 +127,7 @@ function shouldPreserveExistingNode(
   existingNode: WorkflowNodeRunState,
 ): boolean {
   if (!isTerminalNodeStatus(existingNode.status)) return false;
+  if (existingNode.status === 'canceled' && snapshotNode.status !== 'canceled') return true;
   if (!isTerminalNodeStatus(snapshotNode.status)) return true;
   return (existingNode.completedAt ?? 0) > (snapshotNode.completedAt ?? 0);
 }
@@ -136,6 +137,13 @@ function mergeExistingTerminalRun(
   existing: WorkflowRunRecord,
 ): Partial<WorkflowRunRecord> {
   if (!isTerminalRunStatus(existing.status)) return {};
+  if (existing.status === 'canceled' && snapshot.status !== 'canceled') {
+    return {
+      status: existing.status,
+      completedAt: existing.completedAt,
+      error: existing.error,
+    };
+  }
   if (isTerminalRunStatus(snapshot.status)) {
     return (existing.completedAt ?? 0) > (snapshot.completedAt ?? 0)
       ? {
@@ -154,7 +162,9 @@ function mergeExistingTerminalRun(
 }
 
 function isTerminalNodeStatus(status: WorkflowNodeRunState['status']): boolean {
-  return status === 'completed' || status === 'failed' || status === 'skipped';
+  return (
+    status === 'completed' || status === 'failed' || status === 'skipped' || status === 'canceled'
+  );
 }
 
 function isTerminalRunStatus(status: WorkflowRunRecord['status']): boolean {

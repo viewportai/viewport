@@ -139,6 +139,60 @@ describe('workflow run store', () => {
       await fs.rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it('preserves canceled run and node state over later executor saves', async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-run-store-'));
+    try {
+      const store = new WorkflowRunStore(rootDir);
+      const run = makeRun({ id: 'run-1', createdAt: 1 });
+      await store.save({
+        ...run,
+        status: 'canceled',
+        error: 'User canceled',
+        updatedAt: 2,
+        completedAt: 2,
+        nodes: {
+          proof: {
+            id: 'proof',
+            type: 'prompt',
+            status: 'canceled',
+            startedAt: 1,
+            completedAt: 2,
+            error: 'User canceled',
+          },
+        },
+      });
+      await store.save({
+        ...run,
+        status: 'failed',
+        error: 'Session killed',
+        updatedAt: 3,
+        completedAt: 3,
+        nodes: {
+          proof: {
+            id: 'proof',
+            type: 'prompt',
+            status: 'failed',
+            startedAt: 1,
+            completedAt: 3,
+            error: 'Session killed',
+          },
+        },
+      });
+
+      const saved = await store.get(run.id);
+      expect(saved?.status).toBe('canceled');
+      expect(saved?.error).toBe('User canceled');
+      expect(saved?.nodes.proof).toMatchObject({
+        status: 'canceled',
+        error: 'User canceled',
+        completedAt: 2,
+      });
+      expect(saved?.updatedAt).toBe(3);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function makeRun(overrides: { id: string; createdAt: number }): WorkflowRunRecord {

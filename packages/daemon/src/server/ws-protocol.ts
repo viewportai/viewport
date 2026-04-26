@@ -193,6 +193,21 @@ export const WorkflowApproveRunSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const WorkflowCancelRunSchema = z.object({
+  type: z.literal('workflow-cancel'),
+  runId: z.string().min(1).max(256),
+  message: z.string().max(2_000).optional(),
+  actor: z
+    .object({
+      id: z.string().max(255).optional(),
+      name: z.string().max(255).optional(),
+      email: z.string().email().max(255).optional(),
+      source: z.string().max(255).optional(),
+    })
+    .optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Supervision (hook-based remote permission control)
 // ---------------------------------------------------------------------------
@@ -237,6 +252,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   WorkflowListRunsSchema,
   WorkflowShowRunSchema,
   WorkflowApproveRunSchema,
+  WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
 ]);

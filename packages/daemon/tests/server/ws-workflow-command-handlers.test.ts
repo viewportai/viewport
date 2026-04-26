@@ -144,4 +144,46 @@ describe('ws workflow command handlers', () => {
       { errorCode: 'INVALID_INPUT' },
     );
   });
+
+  it('cancels workflow runs and sends the updated run detail', async () => {
+    const { client, sent } = createClient();
+    const run = {
+      id: 'run-1',
+      status: 'canceled',
+      workflowName: 'proof',
+      nodes: {},
+      events: [],
+    };
+    const cancelRun = vi.fn().mockResolvedValue(run);
+    const { handlers, sendAck } = createHandlers({
+      workflowRunner: { cancelRun },
+    });
+
+    await handlers['workflow-cancel'](client, {
+      type: 'workflow-cancel',
+      runId: 'run-1',
+      message: 'Stop this run',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
+      requestId: 'req-cancel',
+    });
+
+    expect(cancelRun).toHaveBeenCalledWith('run-1', {
+      message: 'Stop this run',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
+    });
+    expect(sent).toContainEqual({ type: 'workflow-run-detail', run });
+    expect(sendAck).toHaveBeenCalledWith(client, 'req-cancel', 'ok', undefined, {
+      runId: 'run-1',
+    });
+  });
 });

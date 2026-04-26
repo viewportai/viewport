@@ -140,6 +140,7 @@ export async function runShellNode(
     timeoutSeconds?: number;
     /** Extra environment variables merged with process.env for this child. */
     env?: Record<string, string>;
+    signal?: AbortSignal;
     onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
   },
 ): Promise<ShellNodeResult> {
@@ -148,9 +149,24 @@ export async function runShellNode(
       cwd: options.cwd,
       env: options.env ? { ...process.env, ...options.env } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
     let output = '';
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let aborted = options.signal?.aborted ?? false;
+
+    const killChild = (signal: NodeJS.Signals): void => {
+      if (child.pid && process.platform !== 'win32') {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          // Fall back to killing only the shell below.
+        }
+      }
+      child.kill(signal);
+    };
 
     const append =
       (source: 'stdout' | 'stderr') =>
@@ -169,8 +185,12 @@ export async function runShellNode(
     child.once('error', reject);
     child.once('close', (code) => {
       if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      options.signal?.removeEventListener('abort', abort);
       const trimmedOutput = output.trim();
-      if (code === 0) {
+      if (aborted) {
+        reject(new ShellNodeError('Shell node canceled', trimmedOutput, null));
+      } else if (code === 0) {
         resolve({ output: trimmedOutput, exitCode: 0 });
       } else {
         reject(
@@ -183,9 +203,21 @@ export async function runShellNode(
       }
     });
 
+    const abort = (): void => {
+      if (aborted) return;
+      aborted = true;
+      killChild('SIGTERM');
+      killTimer = setTimeout(() => killChild('SIGKILL'), 2_000);
+    };
+
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+
     if (options.timeoutSeconds) {
       timer = setTimeout(() => {
-        child.kill('SIGTERM');
+        aborted = true;
+        killChild('SIGTERM');
+        killTimer = setTimeout(() => killChild('SIGKILL'), 2_000);
         reject(
           new ShellNodeError(
             `Shell node timed out after ${options.timeoutSeconds}s`,

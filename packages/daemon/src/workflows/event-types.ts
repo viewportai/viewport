@@ -8,6 +8,7 @@ export interface WorkflowRunEvent {
     | 'run-blocked'
     | 'run-completed'
     | 'run-failed'
+    | 'run-canceled'
     | 'node-started'
     | 'node-log'
     | 'node-output'

@@ -16,6 +16,7 @@ import {
   WorkflowListRunsSchema,
   WorkflowShowRunSchema,
   WorkflowApproveRunSchema,
+  WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
   IncomingMessageSchema,
@@ -277,6 +278,22 @@ describe('Workflow schemas', () => {
       nodeId: 'gate',
       approved: true,
       message: 'ship it',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow cancel command', () => {
+    const result = WorkflowCancelRunSchema.safeParse({
+      type: 'workflow-cancel',
+      runId: 'run-1',
+      message: 'Stop this run',
       actor: {
         id: '42',
         name: 'Test User',

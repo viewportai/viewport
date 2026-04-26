@@ -7,11 +7,13 @@ import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
+import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
   daemon: Daemon;
   sessionLinks: WorkflowSessionLinkStore;
+  shellAbortRegistry: WorkflowShellAbortRegistry;
   saveAndEmit: (run: WorkflowRunRecord) => Promise<void>;
 }
 

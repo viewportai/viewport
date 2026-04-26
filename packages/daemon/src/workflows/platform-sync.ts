@@ -139,6 +139,11 @@ function formatEvent(event: WorkflowRunEvent) {
 
 function eventSeverity(event: WorkflowRunEvent): 'debug' | 'info' | 'warning' | 'error' {
   if (event.type.includes('failed') || event.type.includes('error')) return 'error';
-  if (event.type.includes('blocked') || event.type.includes('missing')) return 'warning';
+  if (
+    event.type.includes('blocked') ||
+    event.type.includes('missing') ||
+    event.type.includes('canceled')
+  )
+    return 'warning';
   return 'info';
 }
