@@ -71,12 +71,16 @@ export async function runWorkflowDaemonSession(
     target.worktreePath = worktreePath;
 
     if (request.hooks) {
-      workflowHookRegistry.register({
+      const registration = {
         sessionId,
         workflowRunId: run.id,
         workflowNodeId: nodeId,
         hooks: request.hooks,
-      });
+      };
+      workflowHookRegistry.register(registration);
+      if (nativeSessionId !== sessionId) {
+        workflowHookRegistry.register({ ...registration, sessionId: nativeSessionId });
+      }
     }
 
     await context.sessionLinks.upsert({
@@ -131,7 +135,14 @@ export async function runWorkflowDaemonSession(
 
     return { sessionId, nativeSessionId, worktreePath, output: capturedOutput, reason };
   } finally {
-    if (activeSessionId) workflowHookRegistry.unregister(activeSessionId);
+    if (activeSessionId) {
+      workflowHookRegistry.unregister(activeSessionId);
+      try {
+        workflowHookRegistry.unregister(context.daemon.getSessionNativeId(activeSessionId));
+      } catch {
+        // The active session may already be gone during shutdown/error cleanup.
+      }
+    }
     context.daemon.off('session:message', messageHandler);
   }
 }

@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { HookRouter } from '../../src/hooks/router.js';
+import { SupervisionManager } from '../../src/hooks/supervision.js';
 import type {
   AgentAdapter,
   DiscoveredSession,
@@ -400,6 +402,108 @@ nodes:
       error: expect.stringContaining('failed'),
     });
     expect(completed?.nodes.supervisor?.output).toBe('partial supervisor summary');
+  }, 10_000);
+
+  it('records workflow-scoped tool hooks from a running prompt session', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const hookRouter = new HookRouter(daemon, new SupervisionManager());
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: hook-runtime-proof
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the diff.
+    hooks:
+      PreToolUse:
+        record: true
+      PostToolUse:
+        record: true
+      PostToolUseFailure:
+        record: true
+      PermissionRequest:
+        tools:
+          Bash:
+            behavior: deny
+            message: Bash commands are disabled for this workflow.
+        default:
+          behavior: allow
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    const session = await waitForSessionWithPrompt(adapter, 'Review the diff.');
+
+    await hookRouter.handleEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: session.id,
+      tool_name: 'Read',
+      tool_input: { file_path: 'README.md' },
+    });
+    await hookRouter.handleEvent({
+      hook_event_name: 'PostToolUse',
+      session_id: session.id,
+      tool_name: 'Read',
+      tool_response: 'ok',
+    });
+    await hookRouter.handleEvent({
+      hook_event_name: 'PostToolUseFailure',
+      session_id: session.id,
+      tool_name: 'Bash',
+      error: 'command failed',
+    });
+    const denied = await hookRouter.handleEvent({
+      hook_event_name: 'PermissionRequest',
+      session_id: session.id,
+      tool_name: 'Bash',
+      tool_input: { command: 'git reset --hard' },
+    });
+
+    expect(denied).toEqual({
+      passthrough: false,
+      decision: {
+        behavior: 'deny',
+        message: 'Bash commands are disabled for this workflow.',
+      },
+    });
+
+    session.emitAgentMessage('hook proof output');
+    session.simulateIdle();
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'hook-fired', nodeId: 'review' }),
+        expect.objectContaining({
+          type: 'hook-fired',
+          nodeId: 'review',
+          data: expect.objectContaining({ kind: 'PostToolUse' }),
+        }),
+        expect.objectContaining({
+          type: 'hook-fired',
+          nodeId: 'review',
+          data: expect.objectContaining({
+            kind: 'PermissionRequest',
+            response: expect.objectContaining({
+              decision: expect.objectContaining({ behavior: 'deny' }),
+            }),
+          }),
+        }),
+      ]),
+    );
+    expect(completed?.nodes.review?.output).toBe('hook proof output');
   }, 10_000);
 
   it('stores streamed prompt output once when the adapter emits chunks and a final message', async () => {

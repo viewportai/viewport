@@ -10,9 +10,9 @@ export class WorkflowRunStore {
   constructor(private readonly rootDir = path.join(configDir(), 'runs', 'workflows')) {}
 
   async save(run: WorkflowRunRecord): Promise<void> {
-    const serialized = `${JSON.stringify(run, null, 2)}\n`;
+    const snapshot = JSON.parse(JSON.stringify(run)) as WorkflowRunRecord;
     const previous = this.saveQueues.get(run.id) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.writeRun(run.id, serialized));
+    const next = previous.catch(() => undefined).then(() => this.writeRun(run.id, snapshot));
     this.saveQueues.set(run.id, next);
     try {
       await next;
@@ -23,18 +23,34 @@ export class WorkflowRunStore {
     }
   }
 
-  private async writeRun(runId: string, serialized: string): Promise<void> {
+  private async writeRun(runId: string, snapshot: WorkflowRunRecord): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true });
     const finalPath = this.runPath(runId);
     const tempPath = path.join(
       this.rootDir,
       `.${runId}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`,
     );
-    await fs.writeFile(tempPath, serialized, {
+    const merged = await this.mergeExistingEvents(snapshot);
+    await fs.writeFile(tempPath, `${JSON.stringify(merged, null, 2)}\n`, {
       encoding: 'utf-8',
       mode: 0o600,
     });
     await fs.rename(tempPath, finalPath);
+  }
+
+  private async mergeExistingEvents(snapshot: WorkflowRunRecord): Promise<WorkflowRunRecord> {
+    const existing = await this.get(snapshot.id);
+    if (!existing || existing.events.length === 0) return snapshot;
+
+    const events = new Map(snapshot.events.map((event) => [event.id, event]));
+    for (const event of existing.events) {
+      if (!events.has(event.id)) events.set(event.id, event);
+    }
+    return {
+      ...snapshot,
+      events: [...events.values()].sort((a, b) => a.timestamp - b.timestamp),
+      updatedAt: Math.max(snapshot.updatedAt, existing.updatedAt),
+    };
   }
 
   async appendEvent(runId: string, event: WorkflowRunEvent): Promise<WorkflowRunRecord> {
