@@ -47,6 +47,12 @@ describe('WorkflowRunPlatformSync', () => {
             model: 'gpt-5.4',
             provider: 'openai',
             exitCode: 0,
+            inlineAgents: {
+              reviewer: {
+                status: 'completed',
+                output: 'reviewer output',
+              },
+            },
           },
         },
       ],
@@ -117,6 +123,13 @@ function workflowRun(): WorkflowRunRecord {
           agent: 'codex',
           provider: 'openai',
           model: 'gpt-5.4',
+        },
+        inlineAgents: {
+          reviewer: {
+            id: 'reviewer',
+            status: 'completed',
+            output: 'reviewer output',
+          },
         },
       },
     },

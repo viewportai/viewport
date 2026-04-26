@@ -43,6 +43,7 @@ export class WorkflowRunPlatformSync {
           metadata: {
             ...(node.metadata ?? {}),
             approval: node.approval ?? null,
+            inlineAgents: node.inlineAgents ?? null,
             nativeSessionId: node.nativeSessionId ?? null,
             exitCode: node.exitCode ?? null,
           },
