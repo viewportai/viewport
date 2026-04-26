@@ -270,6 +270,42 @@ nodes:
     );
   });
 
+  it('fails and kills a prompt node when its timeout expires', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-timeout-proof
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    timeoutSeconds: 1
+    prompt: Wait forever.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    const session = await waitForSessionWithPrompt(adapter, 'Wait forever.');
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(session.kill).toHaveBeenCalled();
+    expect(completed?.status).toBe('failed');
+    expect(completed?.nodes.review?.status).toBe('failed');
+    expect(completed?.nodes.review?.error).toContain('timed out after 1s');
+  }, 10_000);
+
   it('fans out inline agents and feeds their outputs to the supervisor prompt', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

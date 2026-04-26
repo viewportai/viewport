@@ -7,6 +7,7 @@ import type { SessionState } from '../core/types.js';
 export async function waitForPromptSessionComplete(
   daemon: Daemon,
   sessionId: string,
+  timeoutMs?: number,
 ): Promise<string> {
   const initial = getSessionState(daemon, sessionId);
   if (isPromptTerminalState(initial)) return initial;
@@ -18,6 +19,7 @@ export async function waitForPromptSessionComplete(
       if (settled) return;
       settled = true;
       clearInterval(timer);
+      if (timeout) clearTimeout(timeout);
       daemon.off('session:ended', endedHandler);
       daemon.off('session:state-changed', stateHandler);
       resolve(reason);
@@ -40,6 +42,8 @@ export async function waitForPromptSessionComplete(
         missingPolls = 0;
       }
     }, 250);
+    const timeout =
+      timeoutMs && timeoutMs > 0 ? setTimeout(() => finish('timeout'), timeoutMs) : null;
     daemon.on('session:ended', endedHandler);
     daemon.on('session:state-changed', stateHandler);
   });

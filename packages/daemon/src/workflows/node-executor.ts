@@ -236,6 +236,7 @@ async function executePromptNode(
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
+    ...(node.timeoutSeconds ? { timeoutSeconds: node.timeoutSeconds } : {}),
     outputFallback: () => readPromptNodeOutput(run, state),
     outputData: async () => {
       const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state);

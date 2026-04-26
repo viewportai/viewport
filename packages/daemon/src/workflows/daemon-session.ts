@@ -29,6 +29,7 @@ export interface WorkflowDaemonSessionRequest {
   agent?: string;
   model?: string;
   hooks?: WorkflowHookRules;
+  timeoutSeconds?: number;
   outputFallback?: () => Promise<string>;
   outputData?: (output: string) => Promise<Record<string, unknown>>;
 }
@@ -105,7 +106,15 @@ export async function runWorkflowDaemonSession(
     run.updatedAt = Date.now();
     await context.saveAndEmit(run);
 
-    const reason = await waitForPromptSessionComplete(context.daemon, sessionId);
+    const reason = await waitForPromptSessionComplete(
+      context.daemon,
+      sessionId,
+      request.timeoutSeconds ? request.timeoutSeconds * 1000 : undefined,
+    );
+    if (reason === 'timeout') {
+      await context.daemon.killSession(sessionId).catch(() => undefined);
+      throw new Error(`Prompt session timed out after ${request.timeoutSeconds}s`);
+    }
     const capturedOutput =
       output.text() || (request.outputFallback ? await request.outputFallback() : '');
     if (capturedOutput && capturedOutput !== target.output) {
