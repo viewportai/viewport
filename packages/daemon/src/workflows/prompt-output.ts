@@ -22,9 +22,12 @@ export async function readPromptNodeOutput(
     : '';
   if (nativePersisted) return nativePersisted;
 
+  const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
+    Boolean(id),
+  );
   const worktreePath = node.worktreePath ?? defaultWorktreePath(run, node.sessionId);
   try {
-    return await readCodexWorktreeSessionOutput(worktreePath);
+    return await readCodexWorktreeSessionOutput(worktreePath, sessionIds);
   } catch {
     return '';
   }
@@ -44,9 +47,12 @@ export async function readPromptNodeTranscriptExcerpt(
     : [];
   if (nativePersisted.length > 0) return nativePersisted;
 
+  const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
+    Boolean(id),
+  );
   const worktreePath = node.worktreePath ?? defaultWorktreePath(run, node.sessionId);
   try {
-    return await readCodexWorktreeSessionTranscriptExcerpt(worktreePath);
+    return await readCodexWorktreeSessionTranscriptExcerpt(worktreePath, sessionIds);
   } catch {
     return [];
   }

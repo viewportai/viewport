@@ -81,18 +81,31 @@ export function readPersistedSessionTranscriptExcerpt(
   return transcriptExcerptFromRichMessages(readPersistedSessionMessagesRich(sessionId));
 }
 
-export async function readCodexWorktreeSessionOutput(worktreePath: string): Promise<string> {
+export async function readCodexWorktreeSessionOutput(
+  worktreePath: string,
+  sessionIds: string[] = [],
+): Promise<string> {
   const sessions = await new CodexDiscovery().discoverSessions(worktreePath);
-  const sourcePath = sessions[0]?.sourcePath;
+  const sourcePath = selectCodexSessionSourcePath(sessions, sessionIds);
   if (!sourcePath) return '';
   return outputFromRichMessages(await readRichSessionMessagesFromFile(sourcePath));
 }
 
 export async function readCodexWorktreeSessionTranscriptExcerpt(
   worktreePath: string,
+  sessionIds: string[] = [],
 ): Promise<TranscriptExcerptMessage[]> {
   const sessions = await new CodexDiscovery().discoverSessions(worktreePath);
-  const sourcePath = sessions[0]?.sourcePath;
+  const sourcePath = selectCodexSessionSourcePath(sessions, sessionIds);
   if (!sourcePath) return [];
   return transcriptExcerptFromRichMessages(await readRichSessionMessagesFromFile(sourcePath));
+}
+
+function selectCodexSessionSourcePath(
+  sessions: Awaited<ReturnType<CodexDiscovery['discoverSessions']>>,
+  sessionIds: string[],
+): string | undefined {
+  const ids = new Set(sessionIds.filter(Boolean));
+  const match = ids.size > 0 ? sessions.find((session) => ids.has(session.sessionId)) : undefined;
+  return match?.sourcePath ?? sessions[0]?.sourcePath;
 }
