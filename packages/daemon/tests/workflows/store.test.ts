@@ -40,6 +40,40 @@ describe('workflow run store', () => {
       await fs.rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it('preserves out-of-band events when a later save uses an older event snapshot', async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-run-store-'));
+    try {
+      const store = new WorkflowRunStore(rootDir);
+      const run = makeRun({ id: 'run-1', createdAt: 1 });
+      await store.save(run);
+
+      const hookEvent: WorkflowRunEvent = {
+        id: 'event-hook',
+        runId: run.id,
+        timestamp: 2,
+        type: 'hook-fired',
+        nodeId: 'proof',
+        message: 'Workflow hook fired',
+      };
+      await store.appendEvent(run.id, hookEvent);
+
+      const staleRunnerSnapshot = {
+        ...run,
+        status: 'completed' as const,
+        updatedAt: 3,
+        completedAt: 3,
+        events: run.events,
+      };
+      await store.save(staleRunnerSnapshot);
+
+      const saved = await store.get(run.id);
+      expect(saved?.events).toContainEqual(hookEvent);
+      expect(saved?.updatedAt).toBe(3);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function makeRun(overrides: { id: string; createdAt: number }): WorkflowRunRecord {
