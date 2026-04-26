@@ -54,6 +54,37 @@ nodes:
     ]);
   });
 
+  it('blocks inline prompt agents that request unavailable agents', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: inline-agent
+nodes:
+  supervisor:
+    type: prompt
+    agent: claude
+    prompt: Synthesize
+    agents:
+      tester:
+        agent: codex
+        prompt: Suggest tests
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => ['claude'],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        kind: 'agent',
+        name: 'codex',
+      }),
+    ]);
+  });
+
   it('accepts approval nodes as executable gates', async () => {
     const workflow = parseWorkflow(
       `

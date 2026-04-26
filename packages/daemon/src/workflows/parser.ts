@@ -156,7 +156,9 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 }
 
 function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
-  if (node.type === 'prompt') return [node.prompt];
+  if (node.type === 'prompt') {
+    return [node.prompt, ...Object.values(node.agents ?? {}).map((agent) => agent.prompt)];
+  }
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
   if (node.type === 'gate') {

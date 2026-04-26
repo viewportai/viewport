@@ -1,9 +1,19 @@
 import type { WorkflowHookRules } from './hook-types.js';
+import type { WorkflowRunEvent } from './event-types.js';
+import type {
+  WorkflowInlineAgentDefinition,
+  WorkflowInlineAgentRunState,
+} from './inline-agent-types.js';
+export type { WorkflowRunEvent } from './event-types.js';
 export type {
   WorkflowHookRules,
   WorkflowPermissionHookDecision,
   WorkflowPermissionHookRule,
 } from './hook-types.js';
+export type {
+  WorkflowInlineAgentDefinition,
+  WorkflowInlineAgentRunState,
+} from './inline-agent-types.js';
 
 export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop' | 'subflow';
 
@@ -97,6 +107,7 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   provider?: string;
   model?: string;
   hooks?: WorkflowHookRules;
+  agents?: Record<string, WorkflowInlineAgentDefinition>;
 }
 
 export interface WorkflowShellNode extends WorkflowNodeBase {
@@ -260,6 +271,7 @@ export interface WorkflowNodeRunState {
    * and at least one transient failure was reclassified as retryable.
    */
   attempts?: number;
+  inlineAgents?: Record<string, WorkflowInlineAgentRunState>;
 }
 
 export interface WorkflowLoopIterationRecord {
@@ -289,46 +301,6 @@ export interface WorkflowRunArtifactRecord {
   sizeBytes?: number;
   createdAt: number;
   metadata?: Record<string, unknown>;
-}
-
-export interface WorkflowRunEvent {
-  id: string;
-  runId: string;
-  timestamp: number;
-  type:
-    | 'run-created'
-    | 'run-started'
-    | 'run-blocked'
-    | 'run-completed'
-    | 'run-failed'
-    | 'node-started'
-    | 'node-log'
-    | 'node-output'
-    | 'node-skipped'
-    | 'artifact-collected'
-    | 'artifact-missing'
-    | 'approval-requested'
-    | 'approval-resolved'
-    | 'gate-blocked'
-    | 'gate-passed'
-    | 'node-completed'
-    | 'node-failed'
-    | 'session-started'
-    | 'session-idle'
-    | 'session-ended'
-    | 'execution-policy-selected'
-    | 'hook-fired'
-    | 'loop-iteration-started'
-    | 'loop-iteration-completed'
-    | 'loop-iteration-failed'
-    | 'node-retry'
-    | 'subflow-child-started'
-    | 'subflow-child-completed'
-    | 'subflow-child-failed'
-    | 'subflow-child-skipped';
-  nodeId?: string;
-  message: string;
-  data?: Record<string, unknown>;
 }
 
 export interface WorkflowRunRecord {

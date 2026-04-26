@@ -81,6 +81,15 @@ const HookRulesSchema = z
   })
   .strict();
 
+const InlineAgentDefinitionSchema = z
+  .object({
+    title: z.string().trim().min(1).optional(),
+    prompt: z.string().trim().min(1),
+    agent: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 const GateDefinitionSchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -151,6 +160,7 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   hooks: HookRulesSchema.optional(),
+  agents: z.record(identifierSchema, InlineAgentDefinitionSchema).optional(),
 }).strict();
 
 const ShellNodeSchema = NodeBaseSchema.extend({

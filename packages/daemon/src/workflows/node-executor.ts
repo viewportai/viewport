@@ -6,6 +6,7 @@ import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-
 import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
+import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowNodeExecutorContext {
@@ -225,12 +226,13 @@ async function executePromptNode(
 ): Promise<void> {
   const state = run.nodes[nodeId];
   if (!state) return;
+  const inlineAgents = await runInlineAgents(context, run, nodeId, node);
 
   await runWorkflowDaemonSession(context, {
     run,
     nodeId,
     target: state,
-    prompt: await renderTemplate(node.prompt, run),
+    prompt: appendInlineAgentResults(await renderTemplate(node.prompt, run), inlineAgents),
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),

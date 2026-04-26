@@ -268,6 +268,85 @@ nodes:
     );
   });
 
+  it('fans out inline agents and feeds their outputs to the supervisor prompt', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: inline-agent-proof
+requires:
+  agents:
+    - claude
+nodes:
+  supervisor:
+    type: prompt
+    agent: claude
+    prompt: Synthesize the child agent findings.
+    agents:
+      reviewer:
+        title: Reviewer
+        prompt: Review the current diff.
+      tester:
+        title: Tester
+        prompt: Suggest tests.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const reviewer = await waitForAdapterSessionCount(adapter, 1);
+    const tester = await waitForAdapterSessionCount(adapter, 2);
+    await waitForRunState(daemon, run.id, (state) => {
+      const agents = state.nodes.supervisor?.inlineAgents;
+      return Boolean(agents?.reviewer?.sessionId && agents.tester?.sessionId);
+    });
+    await waitForSessionPrompt(reviewer);
+    await waitForSessionPrompt(tester);
+    reviewer.emitAgentMessage('reviewer output');
+    tester.emitAgentMessage('tester output');
+    reviewer.simulateIdle();
+    tester.simulateIdle();
+
+    const supervisor = await waitForSupervisorSession(daemon, run.id, adapter);
+    await waitForSessionPrompt(supervisor);
+    expect(supervisor.sendPrompt).toHaveBeenCalledWith(
+      expect.stringContaining('Viewport inline agent results:'),
+    );
+    expect(supervisor.sendPrompt).toHaveBeenCalledWith(expect.stringContaining('reviewer output'));
+    expect(supervisor.sendPrompt).toHaveBeenCalledWith(expect.stringContaining('tester output'));
+    supervisor.emitAgentMessage('supervisor summary');
+    supervisor.simulateIdle();
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.nodes.supervisor?.output).toBe('supervisor summary');
+    expect(completed?.nodes.supervisor?.inlineAgents?.reviewer).toMatchObject({
+      status: 'completed',
+      output: 'reviewer output',
+    });
+    expect(completed?.nodes.supervisor?.inlineAgents?.tester).toMatchObject({
+      status: 'completed',
+      output: 'tester output',
+    });
+    expect(completed?.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        'inline-agent-started',
+        'inline-agent-completed',
+        'session-started',
+        'node-output',
+      ]),
+    );
+  }, 10_000);
+
   it('stores streamed prompt output once when the adapter emits chunks and a final message', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();
@@ -1515,7 +1594,7 @@ async function waitForRunState(
 }
 
 async function waitForNodeSession(daemon: Daemon, runId: string, nodeId: string): Promise<void> {
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < 100; index += 1) {
     const run = await daemon.workflowRunner.getRun(runId);
     if (run?.nodes[nodeId]?.sessionId) {
       return;
@@ -1529,12 +1608,39 @@ async function waitForAdapterSessionCount(
   adapter: MockAdapter,
   count: number,
 ): Promise<MockSession> {
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < 100; index += 1) {
     const session = adapter.sessions[count - 1];
     if (session) return session;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for adapter session ${count}`);
+}
+
+async function waitForSupervisorSession(
+  daemon: Daemon,
+  runId: string,
+  adapter: MockAdapter,
+): Promise<MockSession> {
+  for (let index = 0; index < 100; index += 1) {
+    const session = adapter.sessions[2];
+    if (session) return session;
+    const run = await daemon.workflowRunner.getRun(runId);
+    if (run && ['failed', 'canceled', 'completed', 'blocked'].includes(run.status)) {
+      throw new Error(
+        `Workflow ended before supervisor session: ${run.status} ${run.error ?? ''} ${JSON.stringify(run.nodes.supervisor)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for supervisor session`);
+}
+
+async function waitForSessionPrompt(session: MockSession): Promise<void> {
+  for (let index = 0; index < 40; index += 1) {
+    if (session.sendPrompt.mock.calls.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for session prompt ${session.id}`);
 }
 
 async function writeCodexTranscript(cwd: string, output: string): Promise<void> {

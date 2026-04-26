@@ -237,6 +237,43 @@ nodes:
     ).toThrow(/Set default or tools/);
   });
 
+  it('accepts inline supervisor agent definitions on prompt nodes', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: inline-agents
+nodes:
+  inspect:
+    type: shell
+    command: printf ok
+    outputs:
+      summary:
+        type: string
+  supervisor:
+    type: prompt
+    needs: [inspect]
+    agent: claude
+    prompt: Synthesize the inline agent findings.
+    agents:
+      reviewer:
+        title: Reviewer
+        agent: codex
+        model: gpt-5.4
+        prompt: Review {{ nodes.inspect.outputs.summary }}.
+      tester:
+        prompt: Design tests for {{ nodes.inspect.output }}.
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const supervisor = parsed.definition.nodes.supervisor;
+    expect(supervisor?.type).toBe('prompt');
+    if (supervisor?.type === 'prompt') {
+      expect(Object.keys(supervisor.agents ?? {})).toEqual(['reviewer', 'tester']);
+      expect(supervisor.agents?.reviewer?.agent).toBe('codex');
+    }
+  });
+
   it('accepts check, policy, human review, and schedule gates', () => {
     const parsed = parseWorkflow(
       `

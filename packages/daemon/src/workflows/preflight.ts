@@ -39,6 +39,18 @@ export async function preflightWorkflow(
         message: `Node ${nodeId} requires unavailable agent: ${node.agent}`,
       });
     }
+    if (node.type === 'prompt') {
+      for (const [agentId, inlineAgent] of Object.entries(node.agents ?? {})) {
+        const requiredAgent = inlineAgent.agent ?? node.agent;
+        if (requiredAgent && !availableAgents.has(requiredAgent)) {
+          issues.push({
+            kind: 'agent',
+            name: requiredAgent,
+            message: `Inline agent ${agentId} on node ${nodeId} requires unavailable agent: ${requiredAgent}`,
+          });
+        }
+      }
+    }
   }
 
   for (const tool of definition.requires?.tools ?? []) {
