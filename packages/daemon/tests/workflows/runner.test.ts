@@ -303,21 +303,18 @@ nodes:
       initiation: 'cli',
     });
 
-    const reviewer = await waitForAdapterSessionCount(adapter, 1);
-    const tester = await waitForAdapterSessionCount(adapter, 2);
     await waitForRunState(daemon, run.id, (state) => {
       const agents = state.nodes.supervisor?.inlineAgents;
       return Boolean(agents?.reviewer?.sessionId && agents.tester?.sessionId);
     });
-    await waitForSessionPrompt(reviewer);
-    await waitForSessionPrompt(tester);
+    const reviewer = await waitForSessionWithPrompt(adapter, 'Review the current diff.');
+    const tester = await waitForSessionWithPrompt(adapter, 'Suggest tests.');
     reviewer.emitAgentMessage('reviewer output');
     tester.emitAgentMessage('tester output');
     reviewer.simulateIdle();
     tester.simulateIdle();
 
     const supervisor = await waitForSupervisorSession(daemon, run.id, adapter);
-    await waitForSessionPrompt(supervisor);
     expect(supervisor.sendPrompt).toHaveBeenCalledWith(
       expect.stringContaining('Viewport inline agent results:'),
     );
@@ -345,6 +342,64 @@ nodes:
         'node-output',
       ]),
     );
+  }, 10_000);
+
+  it('can continue a supervisor prompt with partial inline agent failures', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: inline-agent-partial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  supervisor:
+    type: prompt
+    agent: claude
+    inlineAgentFailurePolicy: continue
+    prompt: Synthesize the child agent findings.
+    agents:
+      reviewer:
+        title: Reviewer
+        prompt: Review the current diff.
+      tester:
+        title: Tester
+        prompt: Suggest tests.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const reviewer = await waitForSessionWithPrompt(adapter, 'Review the current diff.');
+    const tester = await waitForSessionWithPrompt(adapter, 'Suggest tests.');
+    reviewer.emitAgentMessage('reviewer output');
+    reviewer.simulateIdle();
+    tester.simulateEnd('failed');
+
+    const supervisor = await waitForSupervisorSession(daemon, run.id, adapter);
+    expect(supervisor.sendPrompt).toHaveBeenCalledWith(expect.stringContaining('reviewer output'));
+    expect(supervisor.sendPrompt).toHaveBeenCalledWith(expect.stringContaining('Status: failed'));
+    supervisor.emitAgentMessage('partial supervisor summary');
+    supervisor.simulateIdle();
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.supervisor?.inlineAgents?.tester).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('failed'),
+    });
+    expect(completed?.nodes.supervisor?.output).toBe('partial supervisor summary');
   }, 10_000);
 
   it('stores streamed prompt output once when the adapter emits chunks and a final message', async () => {
@@ -1622,7 +1677,7 @@ async function waitForSupervisorSession(
   adapter: MockAdapter,
 ): Promise<MockSession> {
   for (let index = 0; index < 100; index += 1) {
-    const session = adapter.sessions[2];
+    const session = findSessionWithPrompt(adapter, 'Synthesize the child agent findings.');
     if (session) return session;
     const run = await daemon.workflowRunner.getRun(runId);
     if (run && ['failed', 'canceled', 'completed', 'blocked'].includes(run.status)) {
@@ -1635,12 +1690,24 @@ async function waitForSupervisorSession(
   throw new Error(`Timed out waiting for supervisor session`);
 }
 
-async function waitForSessionPrompt(session: MockSession): Promise<void> {
+async function waitForSessionWithPrompt(
+  adapter: MockAdapter,
+  promptFragment: string,
+): Promise<MockSession> {
   for (let index = 0; index < 40; index += 1) {
-    if (session.sendPrompt.mock.calls.length > 0) return;
+    const session = findSessionWithPrompt(adapter, promptFragment);
+    if (session) return session;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for session prompt ${session.id}`);
+  throw new Error(`Timed out waiting for session prompt containing ${promptFragment}`);
+}
+
+function findSessionWithPrompt(adapter: MockAdapter, promptFragment: string): MockSession | null {
+  return (
+    adapter.sessions.find((session) =>
+      session.sendPrompt.mock.calls.some(([prompt]) => String(prompt).includes(promptFragment)),
+    ) ?? null
+  );
 }
 
 async function writeCodexTranscript(cwd: string, output: string): Promise<void> {

@@ -32,7 +32,7 @@ export async function runInlineAgents(
   run.updatedAt = Date.now();
   await context.saveAndEmit(run);
 
-  await Promise.all(
+  const results = await Promise.allSettled(
     entries.map(async ([agentId, agent]) => {
       const agentState = state.inlineAgents?.[agentId];
       if (!agentState) return;
@@ -82,13 +82,19 @@ export async function runInlineAgents(
           { agentId, error: message },
           nodeId,
         );
-        throw error;
+        if (node.inlineAgentFailurePolicy !== 'continue') throw error;
       } finally {
         run.updatedAt = Date.now();
         await context.saveAndEmit(run);
       }
     }),
   );
+
+  const failures = results.filter((result) => result.status === 'rejected');
+  if (failures.length > 0 && node.inlineAgentFailurePolicy !== 'continue') {
+    const reason = failures[0]?.reason;
+    throw reason instanceof Error ? reason : new Error(String(reason));
+  }
 
   return state.inlineAgents ?? {};
 }
@@ -97,18 +103,25 @@ export function appendInlineAgentResults(
   prompt: string,
   agents: Record<string, WorkflowInlineAgentRunState>,
 ): string {
-  const completed = Object.values(agents).filter((agent) => agent.status === 'completed');
-  if (completed.length === 0) return prompt;
+  const reportable = Object.values(agents).filter(
+    (agent) => agent.status === 'completed' || agent.status === 'failed',
+  );
+  if (reportable.length === 0) return prompt;
 
   const lines = [
     prompt,
     '',
     'Viewport inline agent results:',
-    ...completed.flatMap((agent) => [
+    ...reportable.flatMap((agent) => [
       '',
       `## ${agent.title ?? agent.id}`,
       `Agent: ${agent.agent ?? 'default'}${agent.model ? ` (${agent.model})` : ''}`,
-      agent.output?.trim() ? agent.output.trim() : 'No output captured.',
+      `Status: ${agent.status}`,
+      agent.status === 'failed'
+        ? `Error: ${agent.error ?? 'Unknown inline agent failure.'}`
+        : agent.output?.trim()
+          ? agent.output.trim()
+          : 'No output captured.',
     ]),
   ];
   return lines.join('\n');

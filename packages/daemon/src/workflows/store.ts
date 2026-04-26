@@ -5,16 +5,32 @@ import { configDir } from '../core/config.js';
 import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 
 export class WorkflowRunStore {
+  private readonly saveQueues = new Map<string, Promise<void>>();
+
   constructor(private readonly rootDir = path.join(configDir(), 'runs', 'workflows')) {}
 
   async save(run: WorkflowRunRecord): Promise<void> {
+    const serialized = `${JSON.stringify(run, null, 2)}\n`;
+    const previous = this.saveQueues.get(run.id) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.writeRun(run.id, serialized));
+    this.saveQueues.set(run.id, next);
+    try {
+      await next;
+    } finally {
+      if (this.saveQueues.get(run.id) === next) {
+        this.saveQueues.delete(run.id);
+      }
+    }
+  }
+
+  private async writeRun(runId: string, serialized: string): Promise<void> {
     await fs.mkdir(this.rootDir, { recursive: true });
-    const finalPath = this.runPath(run.id);
+    const finalPath = this.runPath(runId);
     const tempPath = path.join(
       this.rootDir,
-      `.${run.id}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`,
+      `.${runId}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`,
     );
-    await fs.writeFile(tempPath, `${JSON.stringify(run, null, 2)}\n`, {
+    await fs.writeFile(tempPath, serialized, {
       encoding: 'utf-8',
       mode: 0o600,
     });

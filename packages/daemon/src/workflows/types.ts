@@ -108,6 +108,7 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   model?: string;
   hooks?: WorkflowHookRules;
   agents?: Record<string, WorkflowInlineAgentDefinition>;
+  inlineAgentFailurePolicy?: 'fail' | 'continue';
 }
 
 export interface WorkflowShellNode extends WorkflowNodeBase {

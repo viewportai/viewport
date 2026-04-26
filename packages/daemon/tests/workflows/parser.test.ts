@@ -253,6 +253,7 @@ nodes:
     type: prompt
     needs: [inspect]
     agent: claude
+    inlineAgentFailurePolicy: continue
     prompt: Synthesize the inline agent findings.
     agents:
       reviewer:
@@ -271,6 +272,7 @@ nodes:
     if (supervisor?.type === 'prompt') {
       expect(Object.keys(supervisor.agents ?? {})).toEqual(['reviewer', 'tester']);
       expect(supervisor.agents?.reviewer?.agent).toBe('codex');
+      expect(supervisor.inlineAgentFailurePolicy).toBe('continue');
     }
   });
 

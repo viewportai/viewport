@@ -161,6 +161,7 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   model: z.string().trim().min(1).optional(),
   hooks: HookRulesSchema.optional(),
   agents: z.record(identifierSchema, InlineAgentDefinitionSchema).optional(),
+  inlineAgentFailurePolicy: z.enum(['fail', 'continue']).optional(),
 }).strict();
 
 const ShellNodeSchema = NodeBaseSchema.extend({
