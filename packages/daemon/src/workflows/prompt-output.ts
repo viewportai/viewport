@@ -25,12 +25,16 @@ export async function readPromptNodeOutput(
   const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
     Boolean(id),
   );
-  const worktreePath = node.worktreePath ?? defaultWorktreePath(run, node.sessionId);
-  try {
-    return await readCodexWorktreeSessionOutput(worktreePath, sessionIds);
-  } catch {
-    return '';
+  for (const candidatePath of outputCandidatePaths(run, node)) {
+    try {
+      const output = await readCodexWorktreeSessionOutput(candidatePath, sessionIds);
+      if (output) return output;
+    } catch {
+      // Try the next plausible cwd. Agent adapters are not yet perfectly
+      // consistent about whether transcript cwd is the worktree or parent repo.
+    }
   }
+  return '';
 }
 
 export async function readPromptNodeTranscriptExcerpt(
@@ -50,14 +54,39 @@ export async function readPromptNodeTranscriptExcerpt(
   const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
     Boolean(id),
   );
-  const worktreePath = node.worktreePath ?? defaultWorktreePath(run, node.sessionId);
-  try {
-    return await readCodexWorktreeSessionTranscriptExcerpt(worktreePath, sessionIds);
-  } catch {
-    return [];
+  for (const candidatePath of outputCandidatePaths(run, node)) {
+    try {
+      const excerpt = await readCodexWorktreeSessionTranscriptExcerpt(candidatePath, sessionIds);
+      if (excerpt.length > 0) return excerpt;
+    } catch {
+      // Try the next plausible cwd.
+    }
   }
+  return [];
 }
 
 export function defaultWorktreePath(run: WorkflowRunRecord, sessionId: string): string {
   return path.join(run.directoryPath, '.viewport', 'worktrees', sessionId);
+}
+
+function outputCandidatePaths(run: WorkflowRunRecord, node: WorkflowNodeRunState): string[] {
+  if (!node.sessionId) return [];
+  return uniquePaths([
+    node.worktreePath,
+    defaultWorktreePath(run, node.sessionId),
+    run.directoryPath,
+  ]);
+}
+
+function uniquePaths(paths: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rawPath of paths) {
+    if (!rawPath) continue;
+    const resolvedPath = path.resolve(rawPath);
+    if (seen.has(resolvedPath)) continue;
+    seen.add(resolvedPath);
+    out.push(resolvedPath);
+  }
+  return out;
 }
