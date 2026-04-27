@@ -6,13 +6,16 @@ type Fetcher = typeof transportFetch;
 
 export interface WorkflowRunPlatformSyncOptions {
   retryDelaysMs?: number[];
+  exhaustedRetryDelayMs?: number;
 }
 
 export class WorkflowRunPlatformSync {
   private readonly eventOffsets = new Map<string, number>();
   private readonly latestRuns = new Map<string, WorkflowRunRecord>();
   private readonly workers = new Map<string, Promise<void>>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryDelaysMs: number[];
+  private readonly exhaustedRetryDelayMs: number;
 
   constructor(
     private readonly configManager: ConfigManager,
@@ -20,18 +23,20 @@ export class WorkflowRunPlatformSync {
     options: WorkflowRunPlatformSyncOptions = {},
   ) {
     this.retryDelaysMs = options.retryDelaysMs ?? [1_000, 2_000, 5_000, 10_000, 30_000];
+    this.exhaustedRetryDelayMs = options.exhaustedRetryDelayMs ?? 60_000;
   }
 
   schedule(run: WorkflowRunRecord): void {
     if (!this.targetFor(run)) return;
 
     this.latestRuns.set(run.id, cloneRun(run));
+    const timer = this.retryTimers.get(run.id);
+    if (timer) {
+      clearTimeout(timer);
+      this.retryTimers.delete(run.id);
+    }
     if (this.workers.has(run.id)) return;
-
-    const worker = this.syncLatest(run.id).finally(() => {
-      this.workers.delete(run.id);
-    });
-    this.workers.set(run.id, worker);
+    this.startWorker(run.id);
   }
 
   async flushPending(): Promise<void> {
@@ -115,7 +120,10 @@ export class WorkflowRunPlatformSync {
         await this.sync(run);
       } catch {
         const delayMs = this.retryDelaysMs[attempts];
-        if (delayMs === undefined) return;
+        if (delayMs === undefined) {
+          this.scheduleExhaustedRetry(runId);
+          return;
+        }
         attempts += 1;
         await delay(delayMs);
         continue;
@@ -127,6 +135,24 @@ export class WorkflowRunPlatformSync {
       }
       attempts = 0;
     }
+  }
+
+  private startWorker(runId: string): void {
+    const worker = this.syncLatest(runId).finally(() => {
+      this.workers.delete(runId);
+    });
+    this.workers.set(runId, worker);
+  }
+
+  private scheduleExhaustedRetry(runId: string): void {
+    if (!this.latestRuns.has(runId) || this.retryTimers.has(runId)) return;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(runId);
+      if (!this.latestRuns.has(runId) || this.workers.has(runId)) return;
+      this.startWorker(runId);
+    }, this.exhaustedRetryDelayMs);
+    timer.unref?.();
+    this.retryTimers.set(runId, timer);
   }
 
   private targetFor(run: WorkflowRunRecord): {

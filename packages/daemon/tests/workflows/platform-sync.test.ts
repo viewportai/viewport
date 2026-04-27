@@ -126,6 +126,33 @@ describe('WorkflowRunPlatformSync', () => {
     });
     expect(calls[1]?.['events']).toHaveLength(2);
   });
+
+  it('keeps retrying the latest run after the configured retry list is exhausted', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async (_url, init) => {
+        callCount += 1;
+        calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: 'temporarily unavailable' }), {
+            status: 503,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+      { retryDelaysMs: [], exhaustedRetryDelayMs: 0 },
+    );
+
+    const run = workflowRun();
+    sync.schedule(run);
+
+    await waitForCondition(() => calls.length === 2);
+
+    expect(calls[0]?.['status']).toBe('running');
+    expect(calls[1]?.['status']).toBe('running');
+  });
 });
 
 function configManager(): ConfigManager {
@@ -209,4 +236,12 @@ function workflowRun(): WorkflowRunRecord {
     startedAt: 1_500,
     updatedAt: 1_000,
   };
+}
+
+async function waitForCondition(predicate: () => boolean): Promise<void> {
+  for (let index = 0; index < 200; index += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for condition');
 }

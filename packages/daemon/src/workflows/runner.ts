@@ -78,8 +78,14 @@ export class WorkflowRunner {
     return reconciled;
   }
 
-  async resumePendingRuns(): Promise<{ resumed: number; failed: number }> {
-    return this.resumer.resumePendingRuns();
+  async resumePendingRuns(): Promise<{
+    resumed: number;
+    failed: number;
+    platformSyncScheduled: number;
+  }> {
+    const result = await this.resumer.resumePendingRuns();
+    const platformSyncScheduled = await this.schedulePlatformLinkedRuns();
+    return { ...result, platformSyncScheduled };
   }
 
   async getRun(runId: string): Promise<WorkflowRunRecord | null> {
@@ -311,5 +317,15 @@ export class WorkflowRunner {
     await this.store.save(run);
     this.daemon.emit('workflow:run-updated', { run });
     this.platformSync.schedule(run);
+  }
+
+  private async schedulePlatformLinkedRuns(): Promise<number> {
+    let scheduled = 0;
+    for (const run of await this.store.list(500)) {
+      if (!run.projectId || !run.projectMachineBindingId || !run.platformRunId) continue;
+      this.platformSync.schedule(run);
+      scheduled += 1;
+    }
+    return scheduled;
   }
 }
