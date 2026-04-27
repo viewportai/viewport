@@ -247,6 +247,59 @@ nodes:
     expect(completed.nodes.review?.output).toContain('review acknowledged');
   }, 20_000);
 
+  it('cancels a running workflow from the local CLI', async () => {
+    harness = await FullstackCliHarness.start();
+    const projectPath = await harness.createGitProject();
+    const workflowPath = path.join(projectPath, 'cancel-workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: cancel-proof
+title: Cancel proof
+nodes:
+  review:
+    type: prompt
+    title: Long running review
+    agent: fake
+    prompt: "Wait for cancellation"
+`,
+      'utf-8',
+    );
+
+    const runResult = await runCliCommand(
+      ['workflow', 'run', workflowPath, '--directory', projectPath, '--detach', '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const runId = String((parseJsonLog(runResult.logs) as { run?: { id?: string } }).run?.id);
+
+    await waitFor(async () => {
+      const run = await harness!.daemonInstance.workflowRunner.getRun(runId);
+      return run?.nodes.review?.sessionId ? run : null;
+    });
+
+    const cancelResult = await runCliCommand(
+      ['workflow', 'cancel', runId, '--message', 'Stopped from CLI', '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const cancelPayload = parseJsonLog(cancelResult.logs) as {
+      run?: {
+        id?: string;
+        status?: string;
+        error?: string;
+        nodes?: Record<string, { status?: string; error?: string }>;
+      };
+    };
+
+    expect(cancelPayload.run?.id).toBe(runId);
+    expect(cancelPayload.run?.status).toBe('canceled');
+    expect(cancelPayload.run?.error).toBe('Stopped from CLI');
+    expect(cancelPayload.run?.nodes?.review?.status).toBe('canceled');
+    expect(cancelPayload.run?.nodes?.review?.error).toBe('Stopped from CLI');
+  }, 20_000);
+
   it('routes a branch via when expressions and skips the unselected leg', async () => {
     // Proves the v2 wedge: structured outputs feed JSONata `when:` expressions,
     // matching nodes run, the unmatched branch is `skipped`, and a downstream

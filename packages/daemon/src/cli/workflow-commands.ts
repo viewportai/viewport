@@ -42,7 +42,11 @@ export async function workflow(): Promise<void> {
     await approveWorkflowNode();
     return;
   }
-  throw new Error('Usage: vpd workflow <validate|run|runs|show|approve> ...');
+  if (subcommand === 'cancel') {
+    await cancelWorkflowRun();
+    return;
+  }
+  throw new Error('Usage: vpd workflow <validate|run|runs|show|approve|cancel> ...');
 }
 
 async function validateWorkflow(): Promise<void> {
@@ -143,6 +147,24 @@ async function approveWorkflowNode(): Promise<void> {
 
   if (isJsonMode()) {
     printJson({ command: 'workflow approve', ok: true, ...response });
+    return;
+  }
+  printRun(response.run);
+}
+
+async function cancelWorkflowRun(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const runId = requiredArg(2, 'Usage: vpd workflow cancel <run-id> [--message <text>] [--json]');
+  const response = (await postJson(`/api/workflows/runs/${encodeURIComponent(runId)}/cancel`, {
+    ...(getFlag('message') ? { message: getFlag('message') } : {}),
+    actor: {
+      name: 'Local CLI',
+      source: 'vpd-cli',
+    },
+  })) as WorkflowRunResponse;
+
+  if (isJsonMode()) {
+    printJson({ command: 'workflow cancel', ok: response.run.status === 'canceled', ...response });
     return;
   }
   printRun(response.run);

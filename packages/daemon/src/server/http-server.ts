@@ -99,6 +99,20 @@ const WorkflowApprovalBodySchema = z
       .optional(),
   })
   .strict();
+const WorkflowCancelBodySchema = z
+  .object({
+    message: z.string().trim().min(1).max(2_000).optional(),
+    actor: z
+      .object({
+        id: z.string().trim().min(1).max(255).optional(),
+        name: z.string().trim().min(1).max(255).optional(),
+        email: z.string().email().max(255).optional(),
+        source: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 const PairRedeemBodySchema = z
   .object({
     offerId: z.string().trim().min(1),
@@ -719,6 +733,25 @@ export function registerHttpRoutes(
     } catch (error) {
       return reply.status(400).send({
         error: error instanceof Error ? error.message : 'Failed to resolve workflow approval',
+      });
+    }
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: { message?: string; actor?: { name?: string; source?: string } };
+  }>('/api/workflows/runs/:id/cancel', async (request, reply) => {
+    const parsedBody = WorkflowCancelBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+    }
+
+    try {
+      const run = await daemon.workflowRunner.cancelRun(request.params.id, parsedBody.data);
+      return { run };
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to cancel workflow run',
       });
     }
   });
