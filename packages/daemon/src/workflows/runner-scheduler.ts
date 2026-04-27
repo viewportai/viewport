@@ -41,8 +41,10 @@ export class WorkflowLayerScheduler {
     this.activeRunIds.add(runId);
     try {
       const run = await this.ops.requireRun(runId);
+      const startedAt = Date.now();
       run.status = 'running';
-      run.updatedAt = Date.now();
+      run.startedAt ??= startedAt;
+      run.updatedAt = startedAt;
       addEvent(
         run,
         'run-started',

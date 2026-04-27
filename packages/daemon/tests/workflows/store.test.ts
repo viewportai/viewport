@@ -75,6 +75,35 @@ describe('workflow run store', () => {
     }
   });
 
+  it('preserves the earliest run start time across stale saves', async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-run-store-'));
+    try {
+      const store = new WorkflowRunStore(rootDir);
+      const run = makeRun({ id: 'run-1', createdAt: 1 });
+
+      await store.save({
+        ...run,
+        status: 'running',
+        startedAt: 10,
+        updatedAt: 10,
+        completedAt: undefined,
+      });
+      await store.save({
+        ...run,
+        status: 'running',
+        startedAt: 12,
+        updatedAt: 12,
+        completedAt: undefined,
+      });
+
+      const saved = await store.get(run.id);
+      expect(saved?.startedAt).toBe(10);
+      expect(saved?.updatedAt).toBe(12);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves terminal node state when a later save uses a stale node snapshot', async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-run-store-'));
     try {

@@ -28,6 +28,7 @@ export class WorkflowRunPlatformSync {
         status: run.status,
         output_snapshot: collectOutputs(run),
         error_summary: run.error ?? null,
+        started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
         completed_at: run.completedAt ? new Date(run.completedAt).toISOString() : null,
         nodes: Object.values(run.nodes).map((node) => ({
           node_key: node.id,

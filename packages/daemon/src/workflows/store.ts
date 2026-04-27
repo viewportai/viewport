@@ -52,6 +52,7 @@ export class WorkflowRunStore {
       nodes,
       ...mergeExistingTerminalRun(snapshot, existing),
       events: [...events.values()].sort((a, b) => a.timestamp - b.timestamp),
+      startedAt: mergeStartedAt(snapshot.startedAt, existing.startedAt),
       updatedAt: Math.max(snapshot.updatedAt, existing.updatedAt),
     };
   }
@@ -169,4 +170,13 @@ function isTerminalNodeStatus(status: WorkflowNodeRunState['status']): boolean {
 
 function isTerminalRunStatus(status: WorkflowRunRecord['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'canceled';
+}
+
+function mergeStartedAt(
+  snapshotStartedAt?: number,
+  existingStartedAt?: number,
+): number | undefined {
+  if (snapshotStartedAt === undefined) return existingStartedAt;
+  if (existingStartedAt === undefined) return snapshotStartedAt;
+  return Math.min(snapshotStartedAt, existingStartedAt);
 }

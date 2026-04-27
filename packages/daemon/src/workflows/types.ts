@@ -329,6 +329,7 @@ export interface WorkflowRunRecord {
   artifacts: WorkflowRunArtifactRecord[];
   events: WorkflowRunEvent[];
   createdAt: number;
+  startedAt?: number;
   updatedAt: number;
   completedAt?: number;
   error?: string;

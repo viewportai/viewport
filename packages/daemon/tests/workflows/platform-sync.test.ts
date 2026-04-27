@@ -36,6 +36,7 @@ describe('WorkflowRunPlatformSync', () => {
       project_machine_binding_id: 'binding-1',
       runtime_run_id: 'runtime-run-1',
       status: 'running',
+      started_at: '1970-01-01T00:00:01.500Z',
     });
     expect(calls[0]?.body['events']).toHaveLength(1);
     expect(calls[0]?.body).toMatchObject({
@@ -159,6 +160,7 @@ function workflowRun(): WorkflowRunRecord {
       },
     ],
     createdAt: 1_000,
+    startedAt: 1_500,
     updatedAt: 1_000,
   };
 }
