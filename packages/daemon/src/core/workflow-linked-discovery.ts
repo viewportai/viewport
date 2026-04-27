@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { Logger } from 'pino';
 import { dedupeDiscoveredSessions } from './discovered-sessions.js';
 import type { DiscoveredSession, SessionDiscovery } from './interfaces.js';
@@ -46,30 +47,46 @@ async function discoverLinkSessions(
   const linkedSessions: DiscoveredSession[] = [];
 
   for (const [agentId, discovery] of discoveries) {
-    try {
-      const sessions = await discovery.discoverSessions(link.worktreePath);
-      const linkedIds = new Set(
-        [link.sessionId, link.nativeSessionId].filter((id): id is string => Boolean(id)),
-      );
-      const matches = sessions.filter((session) => linkedIds.has(session.sessionId));
-      linkedSessions.push(
-        ...matches.map((session) => ({
-          ...session,
-          agentId: session.agentId || agentId,
-          parentDirectoryId: link.parentDirectoryId,
-          parentDirectoryPath: link.parentDirectoryPath,
-          worktreePath: link.worktreePath,
-          workflowRunId: link.workflowRunId,
-          workflowNodeId: link.workflowNodeId,
-        })),
-      );
-    } catch (err) {
-      log.warn(
-        { err, agentId, worktreePath: link.worktreePath, workflowRunId: link.workflowRunId },
-        'Workflow-linked session discovery failed',
-      );
+    const sessions: DiscoveredSession[] = [];
+    for (const candidatePath of workflowLinkedCandidatePaths(link)) {
+      try {
+        sessions.push(...(await discovery.discoverSessions(candidatePath)));
+      } catch (err) {
+        log.warn(
+          { err, agentId, candidatePath, workflowRunId: link.workflowRunId },
+          'Workflow-linked session discovery failed',
+        );
+      }
     }
+
+    const linkedIds = new Set(
+      [link.sessionId, link.nativeSessionId].filter((id): id is string => Boolean(id)),
+    );
+    const matches = sessions.filter((session) => linkedIds.has(session.sessionId));
+    linkedSessions.push(
+      ...matches.map((session) => ({
+        ...session,
+        agentId: session.agentId || agentId,
+        parentDirectoryId: link.parentDirectoryId,
+        parentDirectoryPath: link.parentDirectoryPath,
+        worktreePath: link.worktreePath,
+        workflowRunId: link.workflowRunId,
+        workflowNodeId: link.workflowNodeId,
+      })),
+    );
   }
 
   return linkedSessions;
+}
+
+function workflowLinkedCandidatePaths(link: WorkflowSessionLink): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const candidatePath of [link.worktreePath, link.parentDirectoryPath]) {
+    const resolvedPath = path.resolve(candidatePath);
+    if (seen.has(resolvedPath)) continue;
+    seen.add(resolvedPath);
+    out.push(resolvedPath);
+  }
+  return out;
 }
