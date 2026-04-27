@@ -1616,6 +1616,38 @@ nodes:
     ]);
   });
 
+  it('evaluates loop until conditions against the completed iteration', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: loop-until-proof
+nodes:
+  bump:
+    type: loop
+    until: 'loop.last.output = "2"'
+    maxIterations: 10
+    body:
+      type: shell
+      command: 'printf %s {{ loop.index }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.bump?.iterations?.map((iter) => iter.output)).toEqual(['0', '1', '2']);
+  });
+
   it('retries a transient shell failure and succeeds on a later attempt', async () => {
     const daemon = await setup();
     const counterFile = path.join(projectDir, 'attempts.txt');

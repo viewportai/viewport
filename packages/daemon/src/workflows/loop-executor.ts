@@ -69,7 +69,13 @@ export async function executeLoopNode(
     }
 
     if (node.until) {
-      const stop = await evaluateLoopCondition(node.until, run, extras, nodeId, 'until');
+      const stop = await evaluateLoopCondition(
+        node.until,
+        run,
+        { loop: { index, item, last: iteration } },
+        nodeId,
+        'until',
+      );
       if (stop) break;
     }
   }
