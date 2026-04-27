@@ -263,6 +263,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
   await daemon.initialize();
 
   const registry = await loadAgents(daemon);
+  daemon.setModelProvider(() => registry.fetchAllModels());
   await autoRegisterDirectories(daemon, registry);
 
   daemon.setTrackerFactory(

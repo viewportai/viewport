@@ -5,12 +5,14 @@ import type {
   WorkflowPreflightIssue,
   WorkflowPreflightResult,
 } from './types.js';
+import type { ModelInfo } from '../core/agent-registry.js';
 
 const execFileAsync = promisify(execFile);
 const SAFE_TOOL_NAME = /^[A-Za-z0-9._+/-]+$/;
 
 export interface WorkflowCapabilityProvider {
   availableAgents: () => string[];
+  availableModels?: () => ModelInfo[] | Promise<ModelInfo[]>;
   directoryPath?: string;
 }
 
@@ -20,6 +22,7 @@ export async function preflightWorkflow(
 ): Promise<WorkflowPreflightResult> {
   const issues: WorkflowPreflightIssue[] = [];
   const availableAgents = new Set(capabilities.availableAgents());
+  const availableModels = capabilities.availableModels ? await capabilities.availableModels() : [];
 
   for (const agent of definition.requires?.agents ?? []) {
     if (!availableAgents.has(agent)) {
@@ -40,6 +43,12 @@ export async function preflightWorkflow(
       });
     }
     if (node.type === 'prompt') {
+      addModelIssue(issues, availableModels, {
+        nodeId,
+        agent: node.agent,
+        model: node.model,
+        label: `Node ${nodeId}`,
+      });
       for (const [agentId, inlineAgent] of Object.entries(node.agents ?? {})) {
         const requiredAgent = inlineAgent.agent ?? node.agent;
         if (requiredAgent && !availableAgents.has(requiredAgent)) {
@@ -49,7 +58,36 @@ export async function preflightWorkflow(
             message: `Inline agent ${agentId} on node ${nodeId} requires unavailable agent: ${requiredAgent}`,
           });
         }
+        addModelIssue(issues, availableModels, {
+          nodeId,
+          agent: requiredAgent,
+          model: inlineAgent.model,
+          label: `Inline agent ${agentId} on node ${nodeId}`,
+        });
       }
+    }
+
+    if (node.type === 'loop' && node.body.type === 'prompt') {
+      addModelIssue(issues, availableModels, {
+        nodeId,
+        agent: node.body.agent,
+        model: node.body.model,
+        label: `Loop body on node ${nodeId}`,
+      });
+    }
+
+    if (
+      node.type === 'approval' &&
+      'onReject' in node &&
+      node.onReject &&
+      'prompt' in node.onReject
+    ) {
+      addModelIssue(issues, availableModels, {
+        nodeId,
+        agent: node.onReject.agent,
+        model: node.onReject.model,
+        label: `Rejection prompt on node ${nodeId}`,
+      });
     }
   }
 
@@ -74,6 +112,28 @@ export async function preflightWorkflow(
   }
 
   return { ok: issues.length === 0, issues };
+}
+
+function addModelIssue(
+  issues: WorkflowPreflightIssue[],
+  availableModels: ModelInfo[],
+  target: { nodeId: string; agent?: string; model?: string; label: string },
+): void {
+  if (!target.model || availableModels.length === 0) return;
+
+  const isAvailable = availableModels.some((model) => {
+    if (model.value !== target.model) return false;
+    return !target.agent || !model.agentId || model.agentId === target.agent;
+  });
+
+  if (isAvailable) return;
+
+  const agentSuffix = target.agent ? ` for agent ${target.agent}` : '';
+  issues.push({
+    kind: 'node',
+    name: target.nodeId,
+    message: `${target.label} requests unavailable model${agentSuffix}: ${target.model}`,
+  });
 }
 
 async function hasShellTool(tool: string): Promise<boolean> {

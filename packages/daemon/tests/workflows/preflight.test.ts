@@ -85,6 +85,109 @@ nodes:
     ]);
   });
 
+  it('blocks prompt nodes that request unavailable models', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: node-model
+nodes:
+  review:
+    type: prompt
+    agent: codex
+    model: gpt-5.5
+    prompt: Review
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => ['codex'],
+      availableModels: () => [
+        {
+          agentId: 'codex',
+          value: 'gpt-5.4',
+          displayName: 'GPT-5.4',
+          description: 'Available model',
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        kind: 'node',
+        name: 'review',
+        message: 'Node review requests unavailable model for agent codex: gpt-5.5',
+      }),
+    ]);
+  });
+
+  it('accepts models when the model catalog has not loaded yet', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: node-model-no-catalog
+nodes:
+  review:
+    type: prompt
+    agent: codex
+    model: gpt-5.5
+    prompt: Review
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => ['codex'],
+      availableModels: () => [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('blocks inline prompt agents that request unavailable models', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: inline-agent-model
+nodes:
+  supervisor:
+    type: prompt
+    agent: claude
+    prompt: Synthesize
+    agents:
+      tester:
+        agent: codex
+        model: gpt-5.5
+        prompt: Suggest tests
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => ['claude', 'codex'],
+      availableModels: () => [
+        {
+          agentId: 'codex',
+          value: 'gpt-5.4',
+          displayName: 'GPT-5.4',
+          description: 'Available model',
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        kind: 'node',
+        name: 'supervisor',
+        message:
+          'Inline agent tester on node supervisor requests unavailable model for agent codex: gpt-5.5',
+      }),
+    ]);
+  });
+
   it('accepts approval nodes as executable gates', async () => {
     const workflow = parseWorkflow(
       `

@@ -15,6 +15,7 @@ import type {
   RunTrackerFactory,
   SessionDiscovery,
 } from './interfaces.js';
+import type { ModelInfo } from './agent-registry.js';
 import type {
   PendingPermissionRequest,
   SessionAgentMode,
@@ -49,6 +50,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   private adapters = new Map<string, AgentAdapter>();
   private discoveries = new Map<string, SessionDiscovery>();
   private trackerFactory: RunTrackerFactory | null = null;
+  private modelProvider: (() => ModelInfo[] | Promise<ModelInfo[]>) | null = null;
 
   private readonly permissionCoordinator: PermissionCoordinator;
   private readonly sessionManager: SessionManager;
@@ -89,6 +91,11 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   /** Set the factory used to create RunTrackers for new sessions. */
   setTrackerFactory(factory: RunTrackerFactory): void {
     this.trackerFactory = factory;
+  }
+
+  /** Set the provider used to resolve runtime model availability. */
+  setModelProvider(provider: () => ModelInfo[] | Promise<ModelInfo[]>): void {
+    this.modelProvider = provider;
   }
 
   /** Initialize the daemon — loads config from disk. */
@@ -195,6 +202,12 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   /** Get available agent IDs from registered adapters. */
   getAvailableAgents(): string[] {
     return [...this.adapters.keys()];
+  }
+
+  /** Get available model IDs from the registered agent registry, when known. */
+  async getAvailableModels(): Promise<ModelInfo[]> {
+    if (!this.modelProvider) return [];
+    return this.modelProvider();
   }
 
   // ---------------------------------------------------------------------------

@@ -52,6 +52,7 @@ export class WorkflowLayerScheduler {
       );
       run.preflight = await preflightWorkflow(parsed.definition, {
         availableAgents: () => this.daemon.getAvailableAgents(),
+        availableModels: () => this.daemon.getAvailableModels(),
         directoryPath: run.directoryPath,
       });
 
