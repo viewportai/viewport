@@ -80,6 +80,52 @@ describe('WorkflowRunPlatformSync', () => {
 
     expect(calls).toHaveLength(0);
   });
+
+  it('retries queued sync with the latest run snapshot after a transient failure', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    let callCount = 0;
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async (_url, init) => {
+        callCount += 1;
+        calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: 'temporarily unavailable' }), {
+            status: 503,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+      { retryDelaysMs: [0] },
+    );
+
+    const run = workflowRun();
+    sync.schedule(run);
+    run.status = 'completed';
+    run.completedAt = 2_000;
+    run.nodes.inspect.status = 'completed';
+    run.nodes.inspect.output = 'final output';
+    run.events.push({
+      id: 'event-2',
+      runId: run.id,
+      timestamp: 2_000,
+      type: 'node-completed',
+      nodeId: 'inspect',
+      message: 'Inspect completed',
+    });
+    sync.schedule(run);
+
+    await sync.flushPending();
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.['status']).toBe('running');
+    expect(calls[1]).toMatchObject({
+      status: 'completed',
+      completed_at: '1970-01-01T00:00:02.000Z',
+      output_snapshot: { inspect: 'final output' },
+    });
+    expect(calls[1]?.['events']).toHaveLength(2);
+  });
 });
 
 function configManager(): ConfigManager {

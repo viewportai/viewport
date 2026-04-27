@@ -4,13 +4,39 @@ import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 
 type Fetcher = typeof transportFetch;
 
+export interface WorkflowRunPlatformSyncOptions {
+  retryDelaysMs?: number[];
+}
+
 export class WorkflowRunPlatformSync {
   private readonly eventOffsets = new Map<string, number>();
+  private readonly latestRuns = new Map<string, WorkflowRunRecord>();
+  private readonly workers = new Map<string, Promise<void>>();
+  private readonly retryDelaysMs: number[];
 
   constructor(
     private readonly configManager: ConfigManager,
     private readonly fetcher: Fetcher = transportFetch,
-  ) {}
+    options: WorkflowRunPlatformSyncOptions = {},
+  ) {
+    this.retryDelaysMs = options.retryDelaysMs ?? [1_000, 2_000, 5_000, 10_000, 30_000];
+  }
+
+  schedule(run: WorkflowRunRecord): void {
+    if (!this.targetFor(run)) return;
+
+    this.latestRuns.set(run.id, cloneRun(run));
+    if (this.workers.has(run.id)) return;
+
+    const worker = this.syncLatest(run.id).finally(() => {
+      this.workers.delete(run.id);
+    });
+    this.workers.set(run.id, worker);
+  }
+
+  async flushPending(): Promise<void> {
+    await Promise.all([...this.workers.values()]);
+  }
 
   async sync(run: WorkflowRunRecord): Promise<void> {
     const target = this.targetFor(run);
@@ -78,6 +104,31 @@ export class WorkflowRunPlatformSync {
     this.eventOffsets.set(run.id, run.events.length);
   }
 
+  private async syncLatest(runId: string): Promise<void> {
+    let attempts = 0;
+
+    while (true) {
+      const run = this.latestRuns.get(runId);
+      if (!run) return;
+
+      try {
+        await this.sync(run);
+      } catch {
+        const delayMs = this.retryDelaysMs[attempts];
+        if (delayMs === undefined) return;
+        attempts += 1;
+        await delay(delayMs);
+        continue;
+      }
+
+      if (this.latestRuns.get(runId) === run) {
+        this.latestRuns.delete(runId);
+        return;
+      }
+      attempts = 0;
+    }
+  }
+
   private targetFor(run: WorkflowRunRecord): {
     url: string;
     issueToken: string;
@@ -112,6 +163,15 @@ export class WorkflowRunPlatformSync {
       tlsPins: server.tlsPins,
     };
   }
+}
+
+function cloneRun(run: WorkflowRunRecord): WorkflowRunRecord {
+  return JSON.parse(JSON.stringify(run)) as WorkflowRunRecord;
+}
+
+async function delay(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function readString(value: unknown): string | null {

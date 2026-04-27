@@ -310,6 +310,6 @@ export class WorkflowRunner {
   private async saveAndEmit(run: WorkflowRunRecord): Promise<void> {
     await this.store.save(run);
     this.daemon.emit('workflow:run-updated', { run });
-    void this.platformSync.sync(run).catch(() => undefined);
+    this.platformSync.schedule(run);
   }
 }
