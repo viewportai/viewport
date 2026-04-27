@@ -188,6 +188,68 @@ nodes:
     ]);
   });
 
+  it('blocks nested prompt bodies that request unavailable agents or models', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: nested-prompt-preflight
+nodes:
+  loop_review:
+    type: loop
+    foreach: "[1]"
+    maxIterations: 1
+    body:
+      type: prompt
+      agent: codex
+      model: gpt-5.5
+      prompt: Review item
+  approve:
+    type: approval
+    prompt: Approve
+    onReject:
+      agent: claude
+      model: claude-missing
+      prompt: Explain rejection
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => ['codex'],
+      availableModels: () => [
+        {
+          agentId: 'codex',
+          value: 'gpt-5.4',
+          displayName: 'GPT-5.4',
+          description: 'Available model',
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'node',
+          name: 'loop_review',
+          message:
+            'Loop body on node loop_review requests unavailable model for agent codex: gpt-5.5',
+        }),
+        expect.objectContaining({
+          kind: 'agent',
+          name: 'claude',
+          message: 'Rejection prompt on node approve requires unavailable agent: claude',
+        }),
+        expect.objectContaining({
+          kind: 'node',
+          name: 'approve',
+          message:
+            'Rejection prompt on node approve requests unavailable model for agent claude: claude-missing',
+        }),
+      ]),
+    );
+  });
+
   it('accepts approval nodes as executable gates', async () => {
     const workflow = parseWorkflow(
       `

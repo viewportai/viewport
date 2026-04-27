@@ -219,6 +219,48 @@ nodes:
     }
   });
 
+  it('requires explicit dataflow edges for nested prompt templates', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: nested-dataflow
+nodes:
+  inspect:
+    type: shell
+    command: echo ok
+  loop_review:
+    type: loop
+    foreach: "[1]"
+    maxIterations: 1
+    body:
+      type: prompt
+      prompt: Review {{ nodes.inspect.output }}
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/does not depend/);
+
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: reject-dataflow
+nodes:
+  inspect:
+    type: shell
+    command: echo ok
+  approve:
+    type: approval
+    prompt: Approve
+    onReject:
+      prompt: Explain {{ nodes.inspect.output }}
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/does not depend/);
+  });
+
   it('rejects workflow hook rules that cannot make a permission decision', () => {
     expect(() =>
       parseWorkflow(

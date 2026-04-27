@@ -61,13 +61,20 @@ export async function preflightWorkflow(
         addModelIssue(issues, availableModels, {
           nodeId,
           agent: requiredAgent,
-          model: inlineAgent.model,
+          model: inlineAgent.model ?? node.model,
           label: `Inline agent ${agentId} on node ${nodeId}`,
         });
       }
     }
 
     if (node.type === 'loop' && node.body.type === 'prompt') {
+      if (node.body.agent && !availableAgents.has(node.body.agent)) {
+        issues.push({
+          kind: 'agent',
+          name: node.body.agent,
+          message: `Loop body on node ${nodeId} requires unavailable agent: ${node.body.agent}`,
+        });
+      }
       addModelIssue(issues, availableModels, {
         nodeId,
         agent: node.body.agent,
@@ -82,6 +89,13 @@ export async function preflightWorkflow(
       node.onReject &&
       'prompt' in node.onReject
     ) {
+      if (node.onReject.agent && !availableAgents.has(node.onReject.agent)) {
+        issues.push({
+          kind: 'agent',
+          name: node.onReject.agent,
+          message: `Rejection prompt on node ${nodeId} requires unavailable agent: ${node.onReject.agent}`,
+        });
+      }
       addModelIssue(issues, availableModels, {
         nodeId,
         agent: node.onReject.agent,

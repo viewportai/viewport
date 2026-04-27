@@ -161,6 +161,18 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
   }
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
+  if (node.type === 'approval') {
+    const templates = [node.prompt];
+    if (node.onReject) {
+      if ('command' in node.onReject) {
+        templates.push(node.onReject.command);
+        if (node.onReject.cwd) templates.push(node.onReject.cwd);
+      } else {
+        templates.push(node.onReject.prompt);
+      }
+    }
+    return templates;
+  }
   if (node.type === 'gate') {
     if (node.gate.type === 'check' || node.gate.type === 'policy') return [node.gate.expression];
     if (node.gate.type === 'human_review') return [node.gate.prompt];
@@ -174,6 +186,8 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     if (node.body.type === 'shell') {
       templates.push(node.body.command);
       if (node.body.cwd) templates.push(node.body.cwd);
+    } else {
+      templates.push(node.body.prompt);
     }
     return templates;
   }
@@ -188,7 +202,7 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     // at execution time.
     return templates;
   }
-  return [node.prompt];
+  return [];
 }
 
 type WorkflowTemplateReference =
