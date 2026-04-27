@@ -1004,11 +1004,15 @@ nodes:
 schema: viewport.workflow/v1
 name: approval-on-reject-proof
 nodes:
+  inspect:
+    type: shell
+    command: printf "ready"
   gate:
     type: approval
+    needs: [inspect]
     prompt: Approve the deploy.
     onReject:
-      command: 'printf %s "$VIEWPORT_REJECT_MESSAGE" > ${markerFile}'
+      command: 'printf "{{ nodes.inspect.output }}:%s" "$VIEWPORT_REJECT_MESSAGE" > ${markerFile}'
 `,
       'utf-8',
     );
@@ -1031,9 +1035,10 @@ nodes:
 
     const completed = await daemon.workflowRunner.getRun(run.id);
     expect(completed?.status).toBe('canceled');
-    // The follow-up shell wrote the rejection message into the marker file.
+    // The follow-up shell rendered upstream workflow data and wrote the
+    // rejection message into the marker file.
     expect(await fs.readFile(markerFile, 'utf-8')).toBe(
-      'Reverted: shipped without integration test',
+      'ready:Reverted: shipped without integration test',
     );
     const rejectLogs = (completed?.events ?? []).filter(
       (event) => event.type === 'node-log' && event.message.toLowerCase().includes('onreject'),

@@ -80,17 +80,21 @@ async function runShellFollowUp(
   onReject: Extract<NonNullable<WorkflowApprovalNode['onReject']>, { command: string }>,
   rejectionMessage: string | undefined,
 ): Promise<void> {
-  const cwd = resolveNodeCwd(run.directoryPath, onReject.cwd);
+  const command = await renderTemplate(onReject.command, run);
+  const cwd = resolveNodeCwd(
+    run.directoryPath,
+    onReject.cwd ? await renderTemplate(onReject.cwd, run) : undefined,
+  );
   const abort = context.shellAbortRegistry.create(run.id, `approval-on-reject:${nodeId}`);
   addEvent(
     run,
     'node-log',
     `Approval ${nodeId} rejected — running onReject command`,
-    { command: onReject.command, cwd },
+    { command, cwd },
     nodeId,
   );
   try {
-    const result = await runShellNode(onReject.command, {
+    const result = await runShellNode(command, {
       cwd,
       timeoutSeconds: onReject.timeoutSeconds,
       signal: abort.signal,
