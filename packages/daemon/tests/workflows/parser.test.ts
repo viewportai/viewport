@@ -6,6 +6,7 @@ import {
   parseWorkflow,
   parseWorkflowFile,
   validateWorkflowText,
+  WORKFLOW_SCHEMA_VERSION,
   workflowNodeOrder,
 } from '../../src/workflows/parser.js';
 
@@ -42,6 +43,10 @@ describe('workflow parser', () => {
     expect(first.digest).toMatch(/^[a-f0-9]{64}$/);
     expect(first.digest).toBe(second.digest);
     expect(workflowNodeOrder(first.definition)).toEqual(['inspect', 'review']);
+  });
+
+  it('exports the schema version used by workflow documents', () => {
+    expect(WORKFLOW_SCHEMA_VERSION).toBe('viewport.workflow/v1');
   });
 
   it('rejects missing dependency nodes', () => {
@@ -183,6 +188,28 @@ nodes:
 
     expect(parsed.definition.nodes.collect?.outputs?.summary?.type).toBe('string');
     expect(parsed.definition.nodes.review?.type).toBe('prompt');
+  });
+
+  it('accepts integration and secret capability requirements', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: integration-workflow
+requires:
+  integrations:
+    - github
+  secrets:
+    - github/token
+nodes:
+  inspect:
+    type: shell
+    command: git status --short
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.requires?.integrations).toEqual(['github']);
+    expect(parsed.definition.requires?.secrets).toEqual(['github/token']);
   });
 
   it('accepts workflow-scoped prompt hook rules', () => {

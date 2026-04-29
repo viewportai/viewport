@@ -5,9 +5,14 @@ import {
   defineNode,
   definePlugin,
   PluginManifestSchema,
+  WORKFLOW_PLUGIN_CONTRACT_VERSION,
 } from '../src/index.js';
 
 describe('workflow-sdk', () => {
+  it('exports the plugin contract version', () => {
+    expect(WORKFLOW_PLUGIN_CONTRACT_VERSION).toBe('viewport.workflow-plugin/v1');
+  });
+
   describe('defineNode', () => {
     it('returns the definition unchanged when the type is not reserved', () => {
       const definition = defineNode({
@@ -57,6 +62,7 @@ describe('workflow-sdk', () => {
       const plugin = definePlugin({
         name: 'viewport-http',
         version: '1.0.0',
+        contract: WORKFLOW_PLUGIN_CONTRACT_VERSION,
         nodes: [],
       });
       expect(plugin.name).toBe('viewport-http');

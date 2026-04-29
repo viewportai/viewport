@@ -2,8 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
-import { WorkflowDefinitionSchema } from './workflow-schema.js';
+import { WORKFLOW_SCHEMA_VERSION, WorkflowDefinitionSchema } from './workflow-schema.js';
 import type { ParsedWorkflow, WorkflowDefinition } from './types.js';
+
+export { WORKFLOW_SCHEMA_VERSION };
 
 export interface WorkflowValidationIssue {
   path: string;

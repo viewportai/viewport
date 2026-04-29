@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const WORKFLOW_SCHEMA_VERSION = 'viewport.workflow/v1' as const;
+
 const InputDefinitionSchema = z
   .object({
     type: z.enum(['string', 'number', 'boolean']),
@@ -135,6 +137,8 @@ const RequiresSchema = z
   .object({
     agents: z.array(z.string().trim().min(1)).optional(),
     tools: z.array(z.string().trim().min(1)).optional(),
+    integrations: z.array(z.string().trim().min(1)).optional(),
+    secrets: z.array(identifierSchema).optional(),
   })
   .strict();
 
@@ -274,7 +278,7 @@ const WorkflowNodeSchema = z.discriminatedUnion('type', [
 
 export const WorkflowDefinitionSchema = z
   .object({
-    schema: z.literal('viewport.workflow/v1'),
+    schema: z.literal(WORKFLOW_SCHEMA_VERSION),
     name: identifierSchema,
     title: z.string().trim().min(1).optional(),
     description: z.string().optional(),

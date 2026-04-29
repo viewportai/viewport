@@ -36,6 +36,8 @@ export interface WorkflowInputDefinition {
 export interface WorkflowRequires {
   agents?: string[];
   tools?: string[];
+  integrations?: string[];
+  secrets?: string[];
 }
 
 export interface WorkflowOutputDefinition {

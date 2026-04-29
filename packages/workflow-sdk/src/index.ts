@@ -31,6 +31,8 @@
 
 import { z, type ZodTypeAny } from 'zod';
 
+export const WORKFLOW_PLUGIN_CONTRACT_VERSION = 'viewport.workflow-plugin/v1' as const;
+
 /**
  * Lifecycle status a custom node can return from its execute hook. Mirrors
  * the daemon's WorkflowNodeStatus union exactly so the SDK doesn't need to
@@ -189,6 +191,7 @@ export function defineExpression(definition: ExpressionDefinition): ExpressionDe
 export interface WorkflowPlugin {
   name: string;
   version: string;
+  contract?: typeof WORKFLOW_PLUGIN_CONTRACT_VERSION;
   description?: string;
   nodes?: NodeDefinition[];
   expressions?: ExpressionDefinition[];
