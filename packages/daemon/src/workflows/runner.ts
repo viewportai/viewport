@@ -115,6 +115,7 @@ export class WorkflowRunner {
       projectId: request.projectId,
       projectMachineBindingId: request.projectMachineBindingId,
       platformRunId: request.platformRunId,
+      rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,
       machineId: this.daemon.configManager.getMachineId(),
       executionPolicy: request.executionPolicy,
       initiation: request.initiation,
@@ -148,11 +149,35 @@ export class WorkflowRunner {
         { executionPolicy: run.executionPolicy },
       );
     }
+    if (run.rerunOfWorkflowRunId) {
+      addEvent(
+        run,
+        'run-rerun-requested',
+        'Workflow rerun created from an immutable run snapshot',
+        { sourceRunId: run.rerunOfWorkflowRunId },
+      );
+    }
     await this.store.save(run);
     void this.scheduler.run(run.id, parsed).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
+  }
+
+  async rerunRun(sourceRunId: string): Promise<WorkflowRunRecord> {
+    const sourceRun = await this.requireRun(sourceRunId);
+
+    return this.startRun({
+      workflowYaml: sourceRun.yamlSnapshot,
+      workflowSourceRef: sourceRun.sourcePath ?? `viewport://workflow-runs/${sourceRun.id}`,
+      directoryId: sourceRun.directoryId,
+      inputs: sourceRun.inputs,
+      projectId: sourceRun.projectId,
+      projectMachineBindingId: sourceRun.projectMachineBindingId,
+      executionPolicy: sourceRun.executionPolicy,
+      initiation: 'cli',
+      rerunOfWorkflowRunId: sourceRun.id,
+    });
   }
 
   async decideApproval(

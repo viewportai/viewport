@@ -247,6 +247,7 @@ describe('Workflow schemas', () => {
       projectId: 'project-1',
       projectMachineBindingId: 'binding-1',
       platformRunId: 'platform-run-1',
+      rerunOfWorkflowRunId: 'source-run-1',
       executionPolicy: { mode: 'named_branch', branch: 'main' },
       requestId: 'req-1',
     });

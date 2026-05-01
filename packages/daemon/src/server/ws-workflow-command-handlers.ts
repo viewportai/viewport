@@ -34,6 +34,7 @@ export function createWsWorkflowCommandHandlers(ctx: {
         projectId: msg.projectId,
         projectMachineBindingId: msg.projectMachineBindingId,
         platformRunId: msg.platformRunId,
+        rerunOfWorkflowRunId: msg.rerunOfWorkflowRunId,
         executionPolicy: msg.executionPolicy,
         initiation: 'browser',
       });

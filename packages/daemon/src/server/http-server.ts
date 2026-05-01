@@ -70,6 +70,8 @@ const WorkflowRunBodySchema = z
     inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     projectId: z.string().trim().min(1).optional(),
     projectMachineBindingId: z.string().trim().min(1).optional(),
+    platformRunId: z.string().trim().min(1).optional(),
+    rerunOfWorkflowRunId: z.string().trim().min(1).optional(),
     executionPolicy: z
       .object({
         mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
@@ -695,6 +697,8 @@ export function registerHttpRoutes(
         inputs: parsedBody.data.inputs,
         projectId: parsedBody.data.projectId,
         projectMachineBindingId: parsedBody.data.projectMachineBindingId,
+        platformRunId: parsedBody.data.platformRunId,
+        rerunOfWorkflowRunId: parsedBody.data.rerunOfWorkflowRunId,
         executionPolicy: parsedBody.data.executionPolicy,
         initiation: parsedBody.data.initiation ?? 'browser',
       });
@@ -702,6 +706,17 @@ export function registerHttpRoutes(
     } catch (error) {
       return reply.status(400).send({
         error: error instanceof Error ? error.message : 'Failed to start workflow run',
+      });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/api/workflows/runs/:id/rerun', async (request, reply) => {
+    try {
+      const run = await daemon.workflowRunner.rerunRun(request.params.id);
+      return reply.status(201).send({ run });
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to rerun workflow',
       });
     }
   });

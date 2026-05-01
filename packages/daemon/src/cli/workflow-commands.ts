@@ -38,6 +38,10 @@ export async function workflow(): Promise<void> {
     await showWorkflowRun();
     return;
   }
+  if (subcommand === 'rerun') {
+    await rerunWorkflowRun();
+    return;
+  }
   if (subcommand === 'approve') {
     await approveWorkflowNode();
     return;
@@ -46,7 +50,7 @@ export async function workflow(): Promise<void> {
     await cancelWorkflowRun();
     return;
   }
-  throw new Error('Usage: vpd workflow <validate|run|runs|show|approve|cancel> ...');
+  throw new Error('Usage: vpd workflow <validate|run|runs|show|rerun|approve|cancel> ...');
 }
 
 async function validateWorkflow(): Promise<void> {
@@ -121,6 +125,23 @@ async function showWorkflowRun(): Promise<void> {
   }
   const run = (response as WorkflowRunResponse).run;
   printRun(run);
+}
+
+async function rerunWorkflowRun(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const runId = requiredArg(2, 'Usage: vpd workflow rerun <run-id> [--detach] [--json]');
+  const started = (await postJson(
+    `/api/workflows/runs/${encodeURIComponent(runId)}/rerun`,
+    {},
+  )) as WorkflowRunResponse;
+
+  if (hasFlag('detach')) {
+    printRun(started.run);
+    return;
+  }
+
+  const completed = await pollWorkflowRun(started.run.id);
+  printRun(completed.run);
 }
 
 async function approveWorkflowNode(): Promise<void> {

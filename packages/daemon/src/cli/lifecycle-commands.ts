@@ -1313,6 +1313,7 @@ export function showHelp(): void {
   console.log('  workflow run <file> [--directory <path>] [--input k=v] [--json]');
   console.log('  workflow runs [--json]');
   console.log('  workflow show <run-id> [--json]');
+  console.log('  workflow rerun <run-id> [--detach] [--json]');
   console.log('  workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]');
   console.log('  workflow cancel <run-id> [--message <text>] [--json]');
   console.log(

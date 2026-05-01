@@ -321,6 +321,7 @@ export interface WorkflowRunRecord {
   projectId?: string;
   projectMachineBindingId?: string;
   platformRunId?: string;
+  rerunOfWorkflowRunId?: string;
   machineId: string;
   executionPolicy?: WorkflowExecutionPolicy;
   initiation: 'cli' | 'browser' | 'agent_skill';
@@ -357,6 +358,7 @@ export interface WorkflowRunRequest {
   projectId?: string;
   projectMachineBindingId?: string;
   platformRunId?: string;
+  rerunOfWorkflowRunId?: string;
   executionPolicy?: WorkflowExecutionPolicy;
   initiation: WorkflowRunRecord['initiation'];
 }

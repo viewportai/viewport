@@ -247,6 +247,55 @@ nodes:
     expect(completed.nodes.review?.output).toContain('review acknowledged');
   }, 20_000);
 
+  it('reruns a completed local workflow from its immutable run snapshot', async () => {
+    harness = await FullstackCliHarness.start();
+    const projectPath = await harness.createGitProject();
+    const workflowPath = path.join(projectPath, 'rerun-workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: rerun-proof
+title: Rerun proof
+nodes:
+  inspect:
+    type: shell
+    command: "printf rerunnable"
+`,
+      'utf-8',
+    );
+
+    const firstRunResult = await runCliCommand(
+      ['workflow', 'run', workflowPath, '--directory', projectPath, '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const firstRunPayload = parseJsonLog(firstRunResult.logs) as {
+      run?: { id?: string; status?: string };
+    };
+    expect(firstRunPayload.run?.status).toBe('completed');
+    const firstRunId = String(firstRunPayload.run!.id);
+
+    const rerunResult = await runCliCommand(
+      ['workflow', 'rerun', firstRunId, '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const rerunPayload = parseJsonLog(rerunResult.logs) as {
+      run?: { id?: string; status?: string };
+    };
+    expect(rerunPayload.run?.status).toBe('completed');
+    const rerunId = String(rerunPayload.run!.id);
+    expect(rerunId).not.toBe(firstRunId);
+
+    const rerun = await harness.daemonInstance.workflowRunner.getRun(rerunId);
+    expect(rerun?.rerunOfWorkflowRunId).toBe(firstRunId);
+    expect(rerun?.directoryPath).toBe(projectPath);
+    expect(rerun?.yamlSnapshot).toContain('name: rerun-proof');
+    expect(rerun?.nodes.inspect?.output).toBe('rerunnable');
+    expect(rerun?.events.some((event) => event.type === 'run-rerun-requested')).toBe(true);
+  }, 20_000);
+
   it('cancels a running workflow from the local CLI', async () => {
     harness = await FullstackCliHarness.start();
     const projectPath = await harness.createGitProject();

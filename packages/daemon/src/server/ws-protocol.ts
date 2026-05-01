@@ -150,6 +150,7 @@ export const WorkflowRunSchema = z
     projectId: z.string().min(1).max(256).optional(),
     projectMachineBindingId: z.string().min(1).max(256).optional(),
     platformRunId: z.string().min(1).max(256).optional(),
+    rerunOfWorkflowRunId: z.string().min(1).max(256).optional(),
     executionPolicy: z
       .object({
         mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
