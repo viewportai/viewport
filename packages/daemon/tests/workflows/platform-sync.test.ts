@@ -47,6 +47,12 @@ describe('WorkflowRunPlatformSync', () => {
             summary: 'git status',
             changedFiles: 1,
           },
+          transcript_excerpt: [
+            {
+              role: 'assistant',
+              text: 'Inspected the repository.',
+            },
+          ],
           metadata: {
             agent: 'codex',
             model: 'gpt-5.4',
@@ -203,6 +209,12 @@ function workflowRun(): WorkflowRunRecord {
           summary: 'git status',
           changedFiles: 1,
         },
+        transcriptExcerpt: [
+          {
+            role: 'assistant',
+            text: 'Inspected the repository.',
+          },
+        ],
         exitCode: 0,
         metadata: {
           agent: 'codex',

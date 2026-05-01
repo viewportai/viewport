@@ -240,6 +240,7 @@ export interface WorkflowNodeRunState {
   nativeSessionId?: string;
   worktreePath?: string;
   output?: string;
+  transcriptExcerpt?: WorkflowTranscriptExcerptMessage[];
   /**
    * Structured outputs declared by the node, populated after the node runs.
    * Keys correspond to entries in `WorkflowNodeBase.outputs`. Values are
@@ -276,6 +277,11 @@ export interface WorkflowNodeRunState {
    */
   attempts?: number;
   inlineAgents?: Record<string, WorkflowInlineAgentRunState>;
+}
+
+export interface WorkflowTranscriptExcerptMessage {
+  role: 'user' | 'assistant';
+  text: string;
 }
 
 export interface WorkflowLoopIterationRecord {

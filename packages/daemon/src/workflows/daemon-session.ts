@@ -5,7 +5,11 @@ import { isFailedSessionReason, waitForPromptSessionComplete } from './session-c
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { defaultWorktreePath } from './prompt-output.js';
-import type { WorkflowHookRules, WorkflowRunRecord } from './types.js';
+import type {
+  WorkflowHookRules,
+  WorkflowRunRecord,
+  WorkflowTranscriptExcerptMessage,
+} from './types.js';
 import { workflowHookRegistry } from './hook-registry.js';
 
 export interface WorkflowSessionTarget {
@@ -13,6 +17,7 @@ export interface WorkflowSessionTarget {
   nativeSessionId?: string;
   worktreePath?: string;
   output?: string;
+  transcriptExcerpt?: WorkflowTranscriptExcerptMessage[];
 }
 
 export interface WorkflowDaemonSessionContext {
@@ -119,13 +124,18 @@ export async function runWorkflowDaemonSession(
       output.text() || (request.outputFallback ? await request.outputFallback() : '');
     if (capturedOutput && capturedOutput !== target.output) {
       target.output = capturedOutput;
+      const outputData = request.outputData ? await request.outputData(capturedOutput) : {};
+      const transcriptExcerpt = readTranscriptExcerpt(outputData['transcriptExcerpt']);
+      if (transcriptExcerpt) {
+        target.transcriptExcerpt = transcriptExcerpt;
+      }
       addEvent(
         run,
         'node-output',
         `Node ${nodeId} produced prompt output`,
         {
           output: capturedOutput,
-          ...(request.outputData ? await request.outputData(capturedOutput) : {}),
+          ...outputData,
         },
         nodeId,
       );
@@ -162,4 +172,21 @@ function readActiveSessionWorktreePath(daemon: Daemon, sessionId: string): strin
   } catch {
     return undefined;
   }
+}
+
+function readTranscriptExcerpt(value: unknown): WorkflowTranscriptExcerptMessage[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const excerpt = value.flatMap((entry): WorkflowTranscriptExcerptMessage[] => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const record = entry as Record<string, unknown>;
+    const role = record['role'];
+    const text = record['text'];
+    if ((role !== 'user' && role !== 'assistant') || typeof text !== 'string' || !text.trim()) {
+      return [];
+    }
+    return [{ role, text }];
+  });
+
+  return excerpt.length > 0 ? excerpt : null;
 }

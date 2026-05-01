@@ -15,6 +15,8 @@ import type {
   SessionOptions,
 } from '../../src/core/interfaces.js';
 import type { SessionState, Step } from '../../src/core/types.js';
+import { WorkflowRunReconciler } from '../../src/workflows/runner-reconciler.js';
+import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
 let tempHome: string;
 let projectDir: string;
@@ -775,6 +777,68 @@ nodes:
     const completed = await daemon.workflowRunner.getRun(run.id);
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.review?.output).toBe('Recovered transcript output');
+  });
+
+  it('recovers prompt transcript excerpts when a session finishes while the runner is offline', async () => {
+    await setup();
+    const sessionId = crypto.randomUUID();
+    await writeCodexTranscript(projectDir, 'Recovered offline transcript output');
+
+    const now = Date.now();
+    const run: WorkflowRunRecord = {
+      id: crypto.randomUUID(),
+      workflowName: 'offline-transcript-proof',
+      sourceType: 'local_file',
+      sourcePath: path.join(projectDir, 'workflow.yaml'),
+      digest: 'digest',
+      schema: 'viewport.workflow/v1',
+      yamlSnapshot: 'schema: viewport.workflow/v1\nname: offline-transcript-proof\nnodes: {}\n',
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      directoryPath: projectDir,
+      machineId: 'local',
+      initiation: 'cli',
+      status: 'running',
+      inputs: {},
+      preflight: { ok: true, issues: [] },
+      nodes: {
+        review: {
+          id: 'review',
+          type: 'prompt',
+          status: 'running',
+          sessionId,
+          startedAt: now - 1000,
+        },
+      },
+      artifacts: [],
+      events: [],
+      createdAt: now - 1000,
+      updatedAt: now - 1000,
+    };
+    const saveAndEmit = vi.fn().mockResolvedValue(undefined);
+    const daemonWithIdleSession = {
+      getSessionInfo: () => ({ state: 'idle' }),
+    } as unknown as Daemon;
+    const reconciler = new WorkflowRunReconciler(daemonWithIdleSession, new Set(), saveAndEmit);
+
+    const reconciled = await reconciler.reconcile(run);
+
+    expect(reconciled.status).toBe('completed');
+    expect(reconciled.nodes.review?.status).toBe('completed');
+    expect(reconciled.nodes.review?.output).toBe('Recovered offline transcript output');
+    expect(reconciled.nodes.review?.transcriptExcerpt).toEqual([
+      { role: 'assistant', text: 'Recovered offline transcript output' },
+    ]);
+    expect(reconciled.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-output',
+        nodeId: 'review',
+        data: expect.objectContaining({
+          output: 'Recovered offline transcript output',
+          transcriptExcerpt: [{ role: 'assistant', text: 'Recovered offline transcript output' }],
+        }),
+      }),
+    );
+    expect(saveAndEmit).toHaveBeenCalledOnce();
   });
 
   it('reconciles workflow worktree sessions back to the parent directory during discovery', async () => {

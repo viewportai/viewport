@@ -70,6 +70,7 @@ export class WorkflowRunPlatformSync {
           worktree_path: node.worktreePath ?? null,
           output: node.output ?? null,
           output_snapshot: node.outputs ?? null,
+          transcript_excerpt: node.transcriptExcerpt ?? null,
           error: node.error ?? null,
           started_at: node.startedAt ? new Date(node.startedAt).toISOString() : null,
           completed_at: node.completedAt ? new Date(node.completedAt).toISOString() : null,
