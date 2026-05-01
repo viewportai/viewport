@@ -407,6 +407,29 @@ nodes:
     ).toThrow(/undeclared output/);
   });
 
+  it('allows nested reads from declared structured JSON outputs', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: nested-structured-dataflow
+nodes:
+  collect:
+    type: shell
+    command: collect
+    outputs:
+      payload:
+        type: json
+  review:
+    type: prompt
+    needs: [collect]
+    prompt: Review {{ nodes.collect.outputs.payload.repo }} at {{ nodes.collect.outputs.payload.meta.priority }}.
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.nodes.review?.type).toBe('prompt');
+  });
+
   it('rejects env entries that mix literal values and secret references', () => {
     expect(() =>
       parseWorkflow(

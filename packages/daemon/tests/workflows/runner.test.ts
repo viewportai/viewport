@@ -945,6 +945,95 @@ nodes:
     expect(completed?.nodes.second?.output).toBe('upstream-downstream');
   });
 
+  it('passes typed output through prompt, approval, and downstream shell nodes', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: typed-dataflow-proof
+nodes:
+  collect:
+    type: shell
+    command: 'printf ''{"repo":"viewport","verdict":"needs-tests"}'''
+    outputs:
+      payload:
+        type: json
+  review:
+    type: prompt
+    needs: [collect]
+    agent: claude
+    prompt: 'Review {{ nodes.collect.outputs.payload.repo }} with verdict {{ nodes.collect.outputs.payload.verdict }}'
+    outputs:
+      summary:
+        type: string
+  gate:
+    type: approval
+    needs: [review]
+    prompt: 'Approve agent summary: {{ nodes.review.outputs.summary }}'
+    captureResponse: true
+  notify:
+    type: shell
+    needs: [gate]
+    command: 'printf "final={{ nodes.gate.output }}"'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const review = await waitForSessionWithPrompt(
+      adapter,
+      'Review viewport with verdict needs-tests',
+    );
+    review.emitAgentMessage('looks good after adding tests');
+    review.simulateIdle();
+
+    const blocked = await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) =>
+        candidate.status === 'blocked' &&
+        candidate.nodes.gate?.approval?.prompt ===
+          'Approve agent summary: looks good after adding tests',
+    );
+
+    expect(blocked.nodes.collect?.outputs).toEqual({
+      payload: {
+        repo: 'viewport',
+        verdict: 'needs-tests',
+      },
+    });
+    expect(blocked.nodes.review?.outputs).toEqual({
+      summary: 'looks good after adding tests',
+    });
+
+    await daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: true,
+      message: 'ship it',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'unit-test',
+      },
+    });
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.gate?.output).toBe('ship it');
+    expect(completed?.nodes.notify?.output).toBe('final=ship it');
+  });
+
   it('pauses at approval gates and resumes after approval', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

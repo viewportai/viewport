@@ -137,7 +137,7 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 
         if (reference.kind === 'output') {
           const upstream = definition.nodes[reference.nodeId];
-          if (!upstream?.outputs?.[reference.name]) {
+          if (!upstream?.outputs?.[declaredReferenceName(reference.name, upstream.outputs)]) {
             throw new Error(
               `Workflow node ${nodeId} references undeclared output ${reference.nodeId}.${reference.name}`,
             );
@@ -146,7 +146,7 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 
         if (reference.kind === 'artifact') {
           const upstream = definition.nodes[reference.nodeId];
-          if (!upstream?.artifacts?.[reference.name]) {
+          if (!upstream?.artifacts?.[declaredReferenceName(reference.name, upstream.artifacts)]) {
             throw new Error(
               `Workflow node ${nodeId} references undeclared artifact ${reference.nodeId}.${reference.name}`,
             );
@@ -251,6 +251,15 @@ function nodeReferences(template: string): WorkflowTemplateReference[] {
   }
 
   return [...references.values()];
+}
+
+function declaredReferenceName(
+  referenceName: string,
+  declared: Record<string, unknown> | undefined,
+): string {
+  if (!declared) return referenceName;
+  if (Object.hasOwn(declared, referenceName)) return referenceName;
+  return referenceName.split('.')[0] ?? referenceName;
 }
 
 function transitiveDependencies(definition: WorkflowDefinition, nodeId: string): Set<string> {
