@@ -3,7 +3,7 @@ import { captureNodeStructuredOutputs } from '../../src/workflows/structured-out
 import type { WorkflowNode, WorkflowNodeRunState } from '../../src/workflows/types.js';
 
 function makeShellNode(
-  outputs: Record<string, { type: 'string' | 'number' | 'boolean' | 'json' }>,
+  outputs: Record<string, { type: 'string' | 'number' | 'boolean' | 'json'; extract?: string }>,
 ): WorkflowNode {
   return {
     type: 'shell',
@@ -17,45 +17,63 @@ function makeState(output: string): WorkflowNodeRunState {
 }
 
 describe('structured outputs', () => {
-  it('passes through string outputs', () => {
+  it('passes through string outputs', async () => {
     const state = makeState('repo is dirty');
-    captureNodeStructuredOutputs(state, makeShellNode({ summary: { type: 'string' } }));
+    await captureNodeStructuredOutputs(state, makeShellNode({ summary: { type: 'string' } }));
     expect(state.outputs).toEqual({ summary: 'repo is dirty' });
   });
 
-  it('parses JSON outputs and falls back to raw text on failure', () => {
+  it('parses JSON outputs and falls back to raw text on failure', async () => {
     const okState = makeState('{"verdict":"ship","risks":2}');
-    captureNodeStructuredOutputs(okState, makeShellNode({ payload: { type: 'json' } }));
+    await captureNodeStructuredOutputs(okState, makeShellNode({ payload: { type: 'json' } }));
     expect(okState.outputs?.['payload']).toEqual({ verdict: 'ship', risks: 2 });
 
     const fallbackState = makeState('not json {lol}');
-    captureNodeStructuredOutputs(fallbackState, makeShellNode({ payload: { type: 'json' } }));
+    await captureNodeStructuredOutputs(fallbackState, makeShellNode({ payload: { type: 'json' } }));
     expect(fallbackState.outputs?.['payload']).toBe('not json {lol}');
   });
 
-  it('coerces number outputs and yields null when unparseable', () => {
+  it('extracts named values from JSON output before coercion', async () => {
+    const state = makeState('{"summary":"needs tests","count":2,"ok":"yes"}');
+    await captureNodeStructuredOutputs(
+      state,
+      makeShellNode({
+        summary: { type: 'string', extract: 'json.summary' },
+        count: { type: 'number', extract: 'json.count' },
+        ok: { type: 'boolean', extract: 'json.ok' },
+      }),
+    );
+
+    expect(state.outputs).toEqual({
+      summary: 'needs tests',
+      count: 2,
+      ok: true,
+    });
+  });
+
+  it('coerces number outputs and yields null when unparseable', async () => {
     const ok = makeState('42');
-    captureNodeStructuredOutputs(ok, makeShellNode({ count: { type: 'number' } }));
+    await captureNodeStructuredOutputs(ok, makeShellNode({ count: { type: 'number' } }));
     expect(ok.outputs?.['count']).toBe(42);
 
     const bad = makeState('not a number');
-    captureNodeStructuredOutputs(bad, makeShellNode({ count: { type: 'number' } }));
+    await captureNodeStructuredOutputs(bad, makeShellNode({ count: { type: 'number' } }));
     expect(bad.outputs?.['count']).toBeNull();
   });
 
-  it('coerces boolean outputs from common truthy strings', () => {
+  it('coerces boolean outputs from common truthy strings', async () => {
     const truthy = makeState('yes');
-    captureNodeStructuredOutputs(truthy, makeShellNode({ ok: { type: 'boolean' } }));
+    await captureNodeStructuredOutputs(truthy, makeShellNode({ ok: { type: 'boolean' } }));
     expect(truthy.outputs?.['ok']).toBe(true);
 
     const falsy = makeState('no');
-    captureNodeStructuredOutputs(falsy, makeShellNode({ ok: { type: 'boolean' } }));
+    await captureNodeStructuredOutputs(falsy, makeShellNode({ ok: { type: 'boolean' } }));
     expect(falsy.outputs?.['ok']).toBe(false);
   });
 
-  it('does nothing when the node has no declared outputs', () => {
+  it('does nothing when the node has no declared outputs', async () => {
     const state = makeState('output text');
-    captureNodeStructuredOutputs(state, { type: 'shell', command: 'noop' });
+    await captureNodeStructuredOutputs(state, { type: 'shell', command: 'noop' });
     expect(state.outputs).toBeUndefined();
   });
 });

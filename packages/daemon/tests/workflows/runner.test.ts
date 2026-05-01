@@ -960,13 +960,17 @@ nodes:
     type: shell
     command: 'printf ''{"repo":"viewport","verdict":"needs-tests"}'''
     outputs:
-      payload:
-        type: json
+      repo:
+        type: string
+        extract: json.repo
+      verdict:
+        type: string
+        extract: json.verdict
   review:
     type: prompt
     needs: [collect]
     agent: claude
-    prompt: 'Review {{ nodes.collect.outputs.payload.repo }} with verdict {{ nodes.collect.outputs.payload.verdict }}'
+    prompt: 'Review {{ nodes.collect.outputs.repo }} with verdict {{ nodes.collect.outputs.verdict }}'
     outputs:
       summary:
         type: string
@@ -1006,10 +1010,8 @@ nodes:
     );
 
     expect(blocked.nodes.collect?.outputs).toEqual({
-      payload: {
-        repo: 'viewport',
-        verdict: 'needs-tests',
-      },
+      repo: 'viewport',
+      verdict: 'needs-tests',
     });
     expect(blocked.nodes.review?.outputs).toEqual({
       summary: 'looks good after adding tests',

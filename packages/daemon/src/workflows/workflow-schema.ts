@@ -21,6 +21,7 @@ const OutputDefinitionSchema = z
   .object({
     type: z.enum(['string', 'number', 'boolean', 'json', 'file', 'artifact']),
     description: z.string().optional(),
+    extract: z.string().trim().min(1).optional(),
   })
   .strict();
 

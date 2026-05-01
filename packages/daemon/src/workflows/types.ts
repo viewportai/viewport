@@ -43,6 +43,11 @@ export interface WorkflowRequires {
 export interface WorkflowOutputDefinition {
   type: 'string' | 'number' | 'boolean' | 'json' | 'file' | 'artifact';
   description?: string;
+  /**
+   * Optional JSONata expression evaluated against `{ output, json }`, where
+   * `output` is the bulk text and `json` is the parsed bulk output when valid.
+   */
+  extract?: string;
 }
 
 export interface WorkflowArtifactDefinition {

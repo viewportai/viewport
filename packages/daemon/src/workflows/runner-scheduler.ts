@@ -141,7 +141,7 @@ export class WorkflowLayerScheduler {
           const node = parsed.definition.nodes[nodeId];
           const state = updated.nodes[nodeId];
           if (state?.status === 'completed' && node) {
-            captureNodeStructuredOutputs(state, node);
+            await captureNodeStructuredOutputs(state, node);
           }
         }
         await this.ops.saveAndEmit(updated);
