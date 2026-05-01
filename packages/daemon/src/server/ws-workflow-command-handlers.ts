@@ -36,6 +36,7 @@ export function createWsWorkflowCommandHandlers(ctx: {
         platformRunId: msg.platformRunId,
         rerunOfWorkflowRunId: msg.rerunOfWorkflowRunId,
         executionPolicy: msg.executionPolicy,
+        dataCapturePolicy: msg.dataCapturePolicy,
         initiation: 'browser',
       });
       client.send(JSON.stringify({ type: 'workflow-run-started', run }));

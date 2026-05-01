@@ -313,6 +313,22 @@ export interface WorkflowRunArtifactRecord {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowDataCapturePolicy {
+  /**
+   * Controls whether prompt-node transcript previews leave the machine.
+   * Full native agent transcripts are intentionally not part of v1 sync.
+   */
+  transcripts: 'none' | 'excerpt';
+  /**
+   * `metadata` preserves event timing/source without stdout/stderr content.
+   */
+  logs: 'metadata' | 'content';
+  /**
+   * `local_reference` stores local path metadata only; it never uploads bytes.
+   */
+  artifacts: 'metadata' | 'local_reference';
+}
+
 export interface WorkflowRunRecord {
   id: string;
   workflowName: string;
@@ -330,6 +346,7 @@ export interface WorkflowRunRecord {
   rerunOfWorkflowRunId?: string;
   machineId: string;
   executionPolicy?: WorkflowExecutionPolicy;
+  dataCapturePolicy?: WorkflowDataCapturePolicy;
   initiation: 'cli' | 'browser' | 'agent_skill';
   status: WorkflowRunStatus;
   inputs: Record<string, string | number | boolean>;
@@ -366,6 +383,7 @@ export interface WorkflowRunRequest {
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
   executionPolicy?: WorkflowExecutionPolicy;
+  dataCapturePolicy?: WorkflowDataCapturePolicy;
   initiation: WorkflowRunRecord['initiation'];
 }
 

@@ -158,6 +158,14 @@ export const WorkflowRunSchema = z
       })
       .strict()
       .optional(),
+    dataCapturePolicy: z
+      .object({
+        transcripts: z.enum(['none', 'excerpt']),
+        logs: z.enum(['metadata', 'content']),
+        artifacts: z.enum(['metadata', 'local_reference']),
+      })
+      .strict()
+      .optional(),
     requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
   })
   .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {

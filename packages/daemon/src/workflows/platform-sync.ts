@@ -57,6 +57,7 @@ export class WorkflowRunPlatformSync {
         project_machine_binding_id: target.projectMachineBindingId,
         runtime_run_id: run.id,
         status: run.status,
+        data_capture_policy: dataCapturePolicy(run),
         output_snapshot: collectOutputs(run),
         error_summary: run.error ?? null,
         started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
@@ -70,7 +71,8 @@ export class WorkflowRunPlatformSync {
           worktree_path: node.worktreePath ?? null,
           output: node.output ?? null,
           output_snapshot: node.outputs ?? null,
-          transcript_excerpt: node.transcriptExcerpt ?? null,
+          transcript_excerpt:
+            dataCapturePolicy(run).transcripts === 'none' ? null : (node.transcriptExcerpt ?? null),
           error: node.error ?? null,
           started_at: node.startedAt ? new Date(node.startedAt).toISOString() : null,
           completed_at: node.completedAt ? new Date(node.completedAt).toISOString() : null,
@@ -86,7 +88,8 @@ export class WorkflowRunPlatformSync {
           node_key: artifact.nodeId,
           name: artifact.name,
           kind: artifact.kind ?? null,
-          path: artifact.path,
+          path:
+            dataCapturePolicy(run).artifacts === 'local_reference' ? artifact.path : artifact.name,
           uri: null,
           mime_type: null,
           digest: artifact.digest ?? readString(artifact.metadata?.['digest']),
@@ -96,7 +99,9 @@ export class WorkflowRunPlatformSync {
             sizeBytes: artifact.sizeBytes ?? null,
           },
         })),
-        ...(newEvents.length > 0 ? { events: newEvents.map(formatEvent) } : {}),
+        ...(newEvents.length > 0
+          ? { events: newEvents.map((event) => formatEvent(run, event)) }
+          : {}),
       }),
       timeoutMs: 5_000,
       tlsVerify: target.tlsVerify,
@@ -214,16 +219,46 @@ function collectOutputs(run: WorkflowRunRecord): Record<string, string> {
   );
 }
 
-function formatEvent(event: WorkflowRunEvent) {
+function formatEvent(run: WorkflowRunRecord, event: WorkflowRunEvent) {
+  const payload = sanitizeEventPayload(run, event);
   return {
     runtime_event_id: event.id,
     node_key: event.nodeId ?? null,
     type: event.type,
     severity: eventSeverity(event),
-    message: event.message,
-    payload: event.data ?? null,
+    message:
+      event.type === 'node-log' && dataCapturePolicy(run).logs === 'metadata'
+        ? 'Node log content redacted by workflow data capture policy.'
+        : event.message,
+    payload,
     occurred_at: new Date(event.timestamp).toISOString(),
   };
+}
+
+function sanitizeEventPayload(
+  run: WorkflowRunRecord,
+  event: WorkflowRunEvent,
+): Record<string, unknown> | null {
+  if (event.type !== 'node-log' || dataCapturePolicy(run).logs === 'content') {
+    return event.data ?? null;
+  }
+
+  return {
+    source: readString(event.data?.['source']) ?? undefined,
+    stream: readString(event.data?.['stream']) ?? undefined,
+    redacted: true,
+    reason: 'workflow_data_capture_policy',
+  };
+}
+
+function dataCapturePolicy(run: WorkflowRunRecord) {
+  return (
+    run.dataCapturePolicy ?? {
+      transcripts: 'excerpt',
+      logs: 'content',
+      artifacts: 'local_reference',
+    }
+  );
 }
 
 function eventSeverity(event: WorkflowRunEvent): 'debug' | 'info' | 'warning' | 'error' {

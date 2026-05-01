@@ -118,6 +118,11 @@ export class WorkflowRunner {
       rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,
       machineId: this.daemon.configManager.getMachineId(),
       executionPolicy: request.executionPolicy,
+      dataCapturePolicy: request.dataCapturePolicy ?? {
+        transcripts: 'excerpt',
+        logs: 'content',
+        artifacts: 'local_reference',
+      },
       initiation: request.initiation,
       status: 'queued',
       inputs: normalizeInputs(parsed, request.inputs ?? {}),
@@ -175,6 +180,7 @@ export class WorkflowRunner {
       projectId: sourceRun.projectId,
       projectMachineBindingId: sourceRun.projectMachineBindingId,
       executionPolicy: sourceRun.executionPolicy,
+      dataCapturePolicy: sourceRun.dataCapturePolicy,
       initiation: 'cli',
       rerunOfWorkflowRunId: sourceRun.id,
     });
