@@ -20,6 +20,8 @@ const DEFAULT_CONFIG: GitTrackerConfig = {
   worktreeRoot: '.viewport/worktrees',
 };
 
+const GIT_TRACKER_TEST_TIMEOUT_MS = 15_000;
+
 function toolCallUpdate(
   toolName: string,
   status: 'completed' | 'error' = 'completed',
@@ -34,7 +36,7 @@ function toolCallUpdate(
   };
 }
 
-describe('GitTracker', () => {
+describe('GitTracker', { timeout: GIT_TRACKER_TEST_TIMEOUT_MS }, () => {
   let projectDir: string;
   let baseBranch: string;
 
