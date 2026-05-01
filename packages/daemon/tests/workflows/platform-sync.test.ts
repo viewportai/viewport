@@ -43,6 +43,10 @@ describe('WorkflowRunPlatformSync', () => {
       nodes: [
         {
           node_key: 'inspect',
+          output_snapshot: {
+            summary: 'git status',
+            changedFiles: 1,
+          },
           metadata: {
             agent: 'codex',
             model: 'gpt-5.4',
@@ -195,6 +199,10 @@ function workflowRun(): WorkflowRunRecord {
         title: 'Inspect',
         status: 'running',
         output: 'git status',
+        outputs: {
+          summary: 'git status',
+          changedFiles: 1,
+        },
         exitCode: 0,
         metadata: {
           agent: 'codex',

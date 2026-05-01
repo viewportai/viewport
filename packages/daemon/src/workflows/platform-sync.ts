@@ -69,6 +69,7 @@ export class WorkflowRunPlatformSync {
           session_id: node.sessionId ?? null,
           worktree_path: node.worktreePath ?? null,
           output: node.output ?? null,
+          output_snapshot: node.outputs ?? null,
           error: node.error ?? null,
           started_at: node.startedAt ? new Date(node.startedAt).toISOString() : null,
           completed_at: node.completedAt ? new Date(node.completedAt).toISOString() : null,
