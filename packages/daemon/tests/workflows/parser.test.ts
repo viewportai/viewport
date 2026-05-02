@@ -49,6 +49,36 @@ describe('workflow parser', () => {
     expect(WORKFLOW_SCHEMA_VERSION).toBe('viewport.workflow/v1');
   });
 
+  it('accepts json workflow inputs with structured defaults', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: integration-context
+inputs:
+  integration_event:
+    type: json
+    required: true
+    default:
+      provider: github
+      payload:
+        number: 42
+        labels:
+          - needs-review
+nodes:
+  proof:
+    type: shell
+    command: echo ok
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.inputs?.integration_event?.type).toBe('json');
+    expect(parsed.definition.inputs?.integration_event?.default).toMatchObject({
+      provider: 'github',
+      payload: { number: 42, labels: ['needs-review'] },
+    });
+  });
+
   it('rejects missing dependency nodes', () => {
     expect(() =>
       parseWorkflow(

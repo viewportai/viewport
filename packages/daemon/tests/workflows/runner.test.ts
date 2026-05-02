@@ -1518,6 +1518,46 @@ nodes:
     ).rejects.toThrow(/Missing required workflow input/);
   });
 
+  it('resolves declared json input defaults into templates', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: json-input-proof
+inputs:
+  integration_event:
+    type: json
+    default:
+      provider: github
+      payload:
+        number: 42
+nodes:
+  proof:
+    type: shell
+    command: printf '%s:%s' '{{ inputs.integration_event.provider }}' '{{ inputs.integration_event.payload.number }}'
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.inputs.integration_event).toMatchObject({
+      provider: 'github',
+      payload: { number: 42 },
+    });
+    expect(completed?.nodes.proof?.output).toBe('github:42');
+  });
+
   it('runs sibling shell nodes concurrently in the same DAG layer', async () => {
     // Two siblings each sleep before writing a marker. The assertion below
     // proves their execution windows overlap, which is stronger and less

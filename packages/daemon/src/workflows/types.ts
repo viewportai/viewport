@@ -1,5 +1,6 @@
 import type { WorkflowHookRules } from './hook-types.js';
 import type { WorkflowInlineAgentDefinition } from './inline-agent-types.js';
+import type { WorkflowInputValue } from './run-types.js';
 export type { WorkflowRunEvent } from './event-types.js';
 export type {
   WorkflowHookRules,
@@ -39,9 +40,9 @@ export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop'
 export type WorkflowTriggerRule = 'all_success' | 'all_done' | 'one_success';
 
 export interface WorkflowInputDefinition {
-  type: 'string' | 'number' | 'boolean';
+  type: 'string' | 'number' | 'boolean' | 'json';
   required?: boolean;
-  default?: string | number | boolean;
+  default?: WorkflowInputValue;
   description?: string;
 }
 

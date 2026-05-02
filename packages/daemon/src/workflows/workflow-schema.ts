@@ -1,12 +1,24 @@
 import { z } from 'zod';
+import type { WorkflowInputValue } from './run-types.js';
 
 export const WORKFLOW_SCHEMA_VERSION = 'viewport.workflow/v1' as const;
 
+const InputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(InputValueSchema),
+    z.record(z.string(), InputValueSchema),
+  ]),
+);
+
 const InputDefinitionSchema = z
   .object({
-    type: z.enum(['string', 'number', 'boolean']),
+    type: z.enum(['string', 'number', 'boolean', 'json']),
     required: z.boolean().optional(),
-    default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    default: InputValueSchema.optional(),
     description: z.string().optional(),
   })
   .strict();
