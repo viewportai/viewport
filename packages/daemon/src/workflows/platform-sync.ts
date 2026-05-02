@@ -110,7 +110,10 @@ export class WorkflowRunPlatformSync {
     });
 
     if (!res.ok) {
-      throw new Error(`workflow platform sync failed: HTTP ${res.status}`);
+      throw new WorkflowPlatformSyncError(
+        `workflow platform sync failed: HTTP ${res.status}`,
+        isRetryableHttpStatus(res.status),
+      );
     }
 
     this.eventOffsets.set(run.id, run.events.length);
@@ -125,7 +128,11 @@ export class WorkflowRunPlatformSync {
 
       try {
         await this.sync(run);
-      } catch {
+      } catch (error) {
+        if (error instanceof WorkflowPlatformSyncError && !error.retryable) {
+          this.latestRuns.delete(runId);
+          return;
+        }
         const delayMs = this.retryDelaysMs[attempts];
         if (delayMs === undefined) {
           this.scheduleExhaustedRetry(runId);
@@ -196,6 +203,22 @@ export class WorkflowRunPlatformSync {
       tlsPins: server.tlsPins,
     };
   }
+}
+
+class WorkflowPlatformSyncError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'WorkflowPlatformSyncError';
+  }
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+  if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+  if (status >= 500) return true;
+  return false;
 }
 
 function cloneRun(run: WorkflowRunRecord): WorkflowRunRecord {

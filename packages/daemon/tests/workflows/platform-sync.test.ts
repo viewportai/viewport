@@ -209,6 +209,28 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls[0]?.['status']).toBe('running');
     expect(calls[1]?.['status']).toBe('running');
   });
+
+  it('does not keep retrying permanent platform sync rejections', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async (_url, init) => {
+        calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        return new Response(JSON.stringify({ reason: 'PROJECT_MACHINE_BINDING_MISMATCH' }), {
+          status: 403,
+        });
+      },
+      { retryDelaysMs: [0], exhaustedRetryDelayMs: 0 },
+    );
+
+    const run = workflowRun();
+    sync.schedule(run);
+    await sync.flushPending();
+
+    expect(calls).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toHaveLength(1);
+  });
 });
 
 function configManager(): ConfigManager {
