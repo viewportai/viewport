@@ -2053,6 +2053,68 @@ nodes:
     expect(events.some((message) => message.includes('resumed'))).toBe(true);
   });
 
+  it('does not relaunch a running prompt node that already has a session id on boot resume', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const yaml = `
+schema: viewport.workflow/v1
+name: prompt-resume-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current diff.
+`;
+    const runId = crypto.randomUUID();
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    const runsDir = path.join(tempHome, '.viewport', 'runs', 'workflows');
+    await fs.mkdir(runsDir, { recursive: true });
+    const now = Date.now();
+    const record = {
+      id: runId,
+      workflowName: 'prompt-resume-proof',
+      sourceType: 'viewport_snapshot',
+      sourcePath: 'viewport://test-prompt-resume',
+      digest: 'test-digest',
+      schema: 'viewport.workflow/v1',
+      yamlSnapshot: yaml,
+      directoryId,
+      directoryPath: projectDir,
+      machineId: daemon.configManager.getMachineId(),
+      initiation: 'cli',
+      status: 'running',
+      inputs: {},
+      preflight: { ok: true, issues: [] },
+      nodes: {
+        review: {
+          id: 'review',
+          type: 'prompt',
+          status: 'running',
+          sessionId: 'existing-prompt-session',
+        },
+      },
+      artifacts: [],
+      events: [],
+      createdAt: now - 10_000,
+      updatedAt: now - 5_000,
+    };
+    await fs.writeFile(path.join(runsDir, `${runId}.json`), JSON.stringify(record), 'utf-8');
+
+    const result = await daemon.workflowRunner.resumePendingRuns();
+
+    expect(result.resumed).toBeGreaterThan(0);
+    expect(adapter.sessions).toHaveLength(0);
+    const paused = await daemon.workflowRunner.getRun(runId);
+    expect(paused?.status).toBe('running');
+    expect(paused?.nodes.review?.status).toBe('running');
+    expect(paused?.nodes.review?.sessionId).toBe('existing-prompt-session');
+    expect(paused?.events.some((event) => event.type === 'run-resume-paused')).toBe(true);
+  });
+
   it('resyncs platform-linked terminal runs when the daemon starts', async () => {
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-home-'));
     projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-project-'));

@@ -1310,6 +1310,71 @@ describe('relay routing', () => {
     expect((daemonStale as unknown as FakeWs).readyState).toBe(3);
   });
 
+  it('does not mark presence offline when a stale daemon socket closes after replacement', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client'>();
+
+    const daemonStale = new FakeWs() as unknown as WebSocket;
+    const daemonCurrent = new FakeWs() as unknown as WebSocket;
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    registerConnection(context, daemonStale, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
+      e2eeProfile: 'noise-ik',
+      workspaceId: 'workspace_demo',
+      projectMachineBindingId: 'binding_demo',
+      machineId: 'machine_demo',
+    });
+    (daemonStale as unknown as FakeWs).readyState = 3;
+    registerConnection(context, daemonCurrent, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.2', {
+      e2eeProfile: 'noise-ik',
+      workspaceId: 'workspace_demo',
+      projectMachineBindingId: 'binding_demo',
+      machineId: 'machine_demo',
+    });
+
+    (daemonStale as unknown as FakeWs).emit('close');
+    expect(backplane.upsertPresence).toHaveBeenCalledTimes(2);
+    expect(backplane.upsertPresence).not.toHaveBeenCalledWith(
+      'workspace_demo',
+      false,
+      'binding_demo',
+      'machine_demo',
+    );
+
+    (daemonCurrent as unknown as FakeWs).emit('close');
+    expect(backplane.upsertPresence).toHaveBeenCalledWith(
+      'workspace_demo',
+      false,
+      'binding_demo',
+      'machine_demo',
+    );
+  });
+
   it('does not leak ip connection counts when a duplicate daemon is rejected', () => {
     const config = loadConfig({
       RELAY_TLS: '0',

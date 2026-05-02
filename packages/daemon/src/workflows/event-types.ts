@@ -10,6 +10,7 @@ export interface WorkflowRunEvent {
     | 'run-failed'
     | 'run-canceled'
     | 'run-rerun-requested'
+    | 'run-resume-paused'
     | 'node-started'
     | 'node-log'
     | 'node-output'

@@ -10,6 +10,7 @@ export type ExecuteRunFn = (
 ) => Promise<void>;
 
 export type FailRunFn = (runId: string, message: string) => Promise<void>;
+export type ReconcileRunFn = (run: WorkflowRunRecord) => Promise<WorkflowRunRecord>;
 
 /**
  * Resumes runs that were `running` or `queued` when the daemon last shut
@@ -23,6 +24,7 @@ export class WorkflowRunResumer {
     private readonly store: WorkflowRunStore,
     private readonly executeRun: ExecuteRunFn,
     private readonly failRun: FailRunFn,
+    private readonly reconcileRun: ReconcileRunFn,
   ) {}
 
   /**
@@ -51,9 +53,25 @@ export class WorkflowRunResumer {
   }
 
   private async resumeOneRun(run: WorkflowRunRecord): Promise<void> {
-    // Reset any node that was running when we crashed back to queued. The
-    // executor will re-run it; for prompt nodes the existing reconciliation
-    // path already detects completed sessions and short-circuits.
+    run = await this.reconcileRun(run);
+    if (run.status !== 'running' && run.status !== 'queued') {
+      return;
+    }
+
+    if (this.hasInFlightPromptSession(run)) {
+      addEvent(
+        run,
+        'run-resume-paused',
+        'Workflow run resume paused for an in-flight prompt session',
+      );
+      await this.store.save(run);
+      return;
+    }
+
+    // Reset non-prompt work that was running when we crashed back to queued.
+    // Prompt nodes with an existing session are never relaunched here; the
+    // reconciler recovers completed prompt sessions and leaves active ones
+    // attached to the original agent session.
     let dirty = false;
     for (const node of Object.values(run.nodes)) {
       if (node.status === 'running') {
@@ -72,5 +90,11 @@ export class WorkflowRunResumer {
     void this.executeRun(run.id, parsed, { resumed: true }).catch(async (error) => {
       await this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
+  }
+
+  private hasInFlightPromptSession(run: WorkflowRunRecord): boolean {
+    return Object.values(run.nodes).some(
+      (node) => node.status === 'running' && node.type === 'prompt' && Boolean(node.sessionId),
+    );
   }
 }

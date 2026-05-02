@@ -58,6 +58,7 @@ export class WorkflowRunner {
       this.store,
       (runId, parsed, options) => this.scheduler.run(runId, parsed, options),
       ops.failRun,
+      (run) => this.reconciler.reconcile(run),
     );
     this.daemon.on('workflow:hook-fired', (event) => {
       void this.recordWorkflowHookEvent(event).catch(() => undefined);
