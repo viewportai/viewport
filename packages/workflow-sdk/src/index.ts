@@ -46,6 +46,14 @@ export type WorkflowNodeStatus =
   | 'failed'
   | 'skipped';
 
+export type WorkflowInputValue =
+  | string
+  | number
+  | boolean
+  | null
+  | WorkflowInputValue[]
+  | { [key: string]: WorkflowInputValue };
+
 /**
  * Read-only context the runtime hands every node execution. Plugin authors
  * should treat this as the contract — additional fields may be added; never
@@ -57,7 +65,7 @@ export interface WorkflowNodeContext {
   /** Stable run identifier for this execution. Useful for logging / WAL. */
   readonly runId: string;
   /** Resolved workflow inputs (merged defaults + caller-provided values). */
-  readonly inputs: Readonly<Record<string, string | number | boolean>>;
+  readonly inputs: Readonly<Record<string, WorkflowInputValue>>;
   /** Absolute path on disk where the workflow is running (the workspace root). */
   readonly directoryPath: string;
   /** Lookup table of upstream node states this node `needs`. */

@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import type { WorkflowInputValue } from '../workflows/types.js';
 
 const MAX_PROMPT_CHARS = 100_000;
 const MAX_MODEL_CHARS = 200;
@@ -14,6 +15,17 @@ const MAX_THINKING_MODE_CHARS = 32;
 const MAX_REQUEST_ID_CHARS = 128;
 const MAX_IMAGE_BYTES_BASE64_CHARS = 2_000_000;
 const MAX_IMAGE_COUNT = 4;
+
+const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(WorkflowInputValueSchema),
+    z.record(z.string(), WorkflowInputValueSchema),
+  ]),
+);
 const MAX_LIST_SESSIONS_LIMIT = 200;
 
 const ImageSchema = z.object({
@@ -146,7 +158,7 @@ export const WorkflowRunSchema = z
     workflowYaml: z.string().min(1).max(256_000).optional(),
     workflowSourceRef: z.string().min(1).max(4096).optional(),
     directoryId: z.string().min(1).max(512),
-    inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
     projectId: z.string().min(1).max(256).optional(),
     projectMachineBindingId: z.string().min(1).max(256).optional(),
     platformRunId: z.string().min(1).max(256).optional(),

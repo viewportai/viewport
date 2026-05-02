@@ -243,7 +243,13 @@ describe('Workflow schemas', () => {
         'schema: viewport.workflow/v1\nname: proof\nnodes:\n  one:\n    type: shell\n    command: echo ok\n',
       workflowSourceRef: 'viewport://templates/proof',
       directoryId: 'dir-1',
-      inputs: { pr: '123' },
+      inputs: {
+        pr: '123',
+        integration_event: {
+          provider: 'github',
+          payload: { number: 42, labels: ['needs-review'] },
+        },
+      },
       projectId: 'project-1',
       projectMachineBindingId: 'binding-1',
       platformRunId: 'platform-run-1',

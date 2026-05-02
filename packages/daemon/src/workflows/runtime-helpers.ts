@@ -5,7 +5,12 @@ import {
   renderTemplateString,
   WorkflowExpressionError,
 } from './expression.js';
-import type { ParsedWorkflow, WorkflowRunEvent, WorkflowRunRecord } from './types.js';
+import type {
+  ParsedWorkflow,
+  WorkflowInputValue,
+  WorkflowRunEvent,
+  WorkflowRunRecord,
+} from './types.js';
 
 const MAX_OUTPUT_CHARS = 32_000;
 const MAX_LOG_CHUNK_CHARS = 4_000;
@@ -28,9 +33,9 @@ export class ShellNodeError extends Error {
 
 export function normalizeInputs(
   parsed: ParsedWorkflow,
-  provided: Record<string, string | number | boolean>,
-): Record<string, string | number | boolean> {
-  const result: Record<string, string | number | boolean> = {};
+  provided: Record<string, WorkflowInputValue>,
+): Record<string, WorkflowInputValue> {
+  const result: Record<string, WorkflowInputValue> = {};
   for (const [key, definition] of Object.entries(parsed.definition.inputs ?? {})) {
     const value = provided[key] ?? definition.default;
     if (value === undefined) {

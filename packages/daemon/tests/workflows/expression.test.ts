@@ -65,6 +65,25 @@ describe('expression', () => {
     );
   });
 
+  it('exposes structured workflow inputs to JSONata expressions', async () => {
+    const context = buildExpressionContext(
+      makeRun({
+        inputs: {
+          integration_event: {
+            provider: 'github',
+            payload: { number: 42, labels: ['needs-review'] },
+          },
+        },
+      }),
+    );
+
+    expect(await evaluateExpression('inputs.integration_event.provider', context)).toBe('github');
+    expect(await evaluateExpression('inputs.integration_event.payload.number', context)).toBe(42);
+    expect(await evaluateExpression('inputs.integration_event.payload.labels[0]', context)).toBe(
+      'needs-review',
+    );
+  });
+
   it('treats unmatched paths as falsy in conditions', async () => {
     const context = buildExpressionContext(makeRun());
     expect(await evaluateConditionExpression('nodes.missing.outputs.type', context)).toBe(false);

@@ -1,5 +1,5 @@
 import jsonata from 'jsonata';
-import type { WorkflowRunRecord } from './types.js';
+import type { WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 /**
  * The evaluation context exposed to JSONata expressions and `{{ ... }}` template
@@ -15,7 +15,7 @@ import type { WorkflowRunRecord } from './types.js';
  *   provenance for prompt nodes.
  */
 export interface ExpressionContext {
-  inputs: Record<string, string | number | boolean>;
+  inputs: Record<string, WorkflowInputValue>;
   nodes: Record<string, NodeContextEntry>;
 }
 

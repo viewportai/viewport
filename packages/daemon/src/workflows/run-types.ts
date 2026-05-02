@@ -77,6 +77,14 @@ export interface WorkflowTranscriptExcerptMessage {
   text: string;
 }
 
+export type WorkflowInputValue =
+  | string
+  | number
+  | boolean
+  | null
+  | WorkflowInputValue[]
+  | { [key: string]: WorkflowInputValue };
+
 export interface WorkflowLoopIterationRecord {
   index: number;
   status: 'running' | 'completed' | 'failed' | 'skipped' | 'canceled';
@@ -142,7 +150,7 @@ export interface WorkflowRunRecord {
   dataCapturePolicy?: WorkflowDataCapturePolicy;
   initiation: 'cli' | 'browser' | 'agent_skill';
   status: WorkflowRunStatus;
-  inputs: Record<string, string | number | boolean>;
+  inputs: Record<string, WorkflowInputValue>;
   preflight: WorkflowPreflightResult;
   nodes: Record<string, WorkflowNodeRunState>;
   artifacts: WorkflowRunArtifactRecord[];
@@ -170,7 +178,7 @@ export interface WorkflowRunRequest {
   workflowYaml?: string;
   workflowSourceRef?: string;
   directoryId: string;
-  inputs?: Record<string, string | number | boolean>;
+  inputs?: Record<string, WorkflowInputValue>;
   projectId?: string;
   projectMachineBindingId?: string;
   platformRunId?: string;

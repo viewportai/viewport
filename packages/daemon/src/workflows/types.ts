@@ -14,6 +14,7 @@ export type {
   WorkflowApprovalActor,
   WorkflowApprovalDecision,
   WorkflowDataCapturePolicy,
+  WorkflowInputValue,
   WorkflowLoopIterationRecord,
   WorkflowNodeRunState,
   WorkflowNodeStatus,

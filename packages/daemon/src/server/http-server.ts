@@ -23,6 +23,7 @@ import { issuePairingOffer, redeemPairingOffer } from './pairing-offers.js';
 import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './ring-buffer.js';
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
 import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
+import type { WorkflowInputValue } from '../workflows/types.js';
 
 const startTime = Date.now();
 
@@ -61,13 +62,23 @@ const WorkflowValidateBodySchema = z
     message: 'workflowPath or workflowYaml is required',
     path: ['workflowPath'],
   });
+const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(WorkflowInputValueSchema),
+    z.record(z.string(), WorkflowInputValueSchema),
+  ]),
+);
 const WorkflowRunBodySchema = z
   .object({
     workflowPath: z.string().trim().min(1).optional(),
     workflowYaml: z.string().trim().min(1).max(256_000).optional(),
     workflowSourceRef: z.string().trim().min(1).optional(),
     directoryId: z.string().trim().min(1),
-    inputs: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
     projectId: z.string().trim().min(1).optional(),
     projectMachineBindingId: z.string().trim().min(1).optional(),
     platformRunId: z.string().trim().min(1).optional(),
@@ -673,7 +684,7 @@ export function registerHttpRoutes(
       workflowYaml?: string;
       workflowSourceRef?: string;
       directoryId?: string;
-      inputs?: Record<string, string | number | boolean>;
+      inputs?: Record<string, WorkflowInputValue>;
       projectId?: string;
       projectMachineBindingId?: string;
       executionPolicy?: {
