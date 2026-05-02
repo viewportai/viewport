@@ -148,6 +148,89 @@ nodes:
     client.close();
   });
 
+  it('passes structured outputs between nodes for a browser-provided workflow snapshot', async () => {
+    harness = await ProtocolHarness.start();
+    const projectPath = await harness.createProject();
+    const directory = await harness.registerDirectory(projectPath);
+    const client = await harness.connectClient();
+    await client.waitForType('hello');
+
+    client.send({
+      type: 'workflow-run',
+      requestId: 'workflow-run-dataflow',
+      directoryId: directory.id,
+      projectId: 'project-dataflow',
+      projectMachineBindingId: 'binding-dataflow',
+      platformRunId: 'platform-run-dataflow',
+      executionPolicy: { mode: 'current_tree' },
+      workflowSourceRef: 'viewport://tests/protocol-workflow-dataflow',
+      workflowYaml: `
+schema: viewport.workflow/v1
+name: protocol-dataflow-proof
+title: Protocol dataflow proof
+inputs:
+  integration_event:
+    type: json
+    default:
+      provider: gitlab
+      project: viewportai/example
+nodes:
+  collect:
+    type: shell
+    title: Collect structured context
+    command: 'printf ''{"repo":"{{ inputs.integration_event.project }}","verdict":"needs-tests"}'''
+    outputs:
+      repo:
+        type: string
+        extract: json.repo
+      verdict:
+        type: string
+        extract: json.verdict
+  notify:
+    type: shell
+    title: Consume structured context
+    needs: [collect]
+    command: 'printf "route={{ nodes.collect.outputs.repo }}:{{ nodes.collect.outputs.verdict }}"'
+`,
+    });
+
+    const ack = await client.waitForAck('workflow-run-dataflow');
+    expect(ack['status']).toBe('ok');
+    const runId = String(ack['runId']);
+
+    const completed = await client.waitFor((message) => {
+      if (message['type'] !== 'workflow-run-updated') return false;
+      const run = workflowRunFrom(message);
+      return run?.['id'] === runId && run?.['status'] === 'completed';
+    });
+    const completedRun = workflowRunFrom(completed);
+    expect(completedRun?.['projectId']).toBe('project-dataflow');
+    expect(completedRun?.['projectMachineBindingId']).toBe('binding-dataflow');
+    expect(completedRun?.['platformRunId']).toBe('platform-run-dataflow');
+
+    const nodes = completedRun?.['nodes'] as Record<string, Record<string, unknown>>;
+    expect(nodes.collect?.status).toBe('completed');
+    expect(nodes.collect?.outputs).toEqual({
+      repo: 'viewportai/example',
+      verdict: 'needs-tests',
+    });
+    expect(nodes.notify?.status).toBe('completed');
+    expect(nodes.notify?.output).toBe('route=viewportai/example:needs-tests');
+
+    client.send({ type: 'workflow-show-run', requestId: 'workflow-show-dataflow', runId });
+    const detail = await client.waitForType('workflow-run-detail');
+    const detailRun = workflowRunFrom(detail);
+    const detailNodes = detailRun?.['nodes'] as Record<string, Record<string, unknown>>;
+    expect(detailNodes.collect?.outputs).toEqual({
+      repo: 'viewportai/example',
+      verdict: 'needs-tests',
+    });
+    expect(detailNodes.notify?.output).toBe('route=viewportai/example:needs-tests');
+    await client.waitForAck('workflow-show-dataflow');
+
+    client.close();
+  });
+
   it('pauses a browser-provided workflow at an approval gate and resumes through the protocol', async () => {
     harness = await ProtocolHarness.start();
     const projectPath = await harness.createProject();
