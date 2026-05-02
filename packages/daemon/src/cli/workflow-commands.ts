@@ -3,6 +3,7 @@ import path from 'node:path';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
+import type { WorkflowInputValue } from '../workflows/types.js';
 
 interface DirectoryInfo {
   id: string;
@@ -74,7 +75,7 @@ async function runWorkflow(): Promise<void> {
   await ensureDaemonRunningOrThrow();
   const file = requiredArg(
     2,
-    'Usage: vpd workflow run <file> [--directory <path>] [--input k=v] [--json]',
+    'Usage: vpd workflow run <file> [--directory <path>] [--input k=v] [--input-json k=json] [--json]',
   );
   const directoryId = await resolveDirectoryIdFromInput(getFlag('directory'));
   const inputs = parseInputs(getArgs());
@@ -251,19 +252,21 @@ function requiredArg(index: number, usage: string): string {
   return value;
 }
 
-function parseInputs(args: string[]): Record<string, string | number | boolean> {
-  const inputs: Record<string, string | number | boolean> = {};
+function parseInputs(args: string[]): Record<string, WorkflowInputValue> {
+  const inputs: Record<string, WorkflowInputValue> = {};
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] !== '--input') continue;
+    if (args[index] !== '--input' && args[index] !== '--input-json') continue;
     const raw = args[index + 1];
     if (!raw || !raw.includes('=')) {
-      throw new Error('Expected --input key=value');
+      throw new Error(`Expected ${args[index]} key=value`);
     }
     const [key, ...rest] = raw.split('=');
     if (!key) {
-      throw new Error('Expected --input key=value');
+      throw new Error(`Expected ${args[index]} key=value`);
     }
-    inputs[key] = parseInputValue(rest.join('='));
+    const value = rest.join('=');
+    inputs[key] =
+      args[index] === '--input-json' ? parseJsonInputValue(value) : parseInputValue(value);
   }
   return inputs;
 }
@@ -274,6 +277,14 @@ function parseInputValue(value: string): string | number | boolean {
   const numberValue = Number(value);
   if (value.trim() !== '' && Number.isFinite(numberValue)) return numberValue;
   return value;
+}
+
+function parseJsonInputValue(value: string): WorkflowInputValue {
+  try {
+    return JSON.parse(value) as WorkflowInputValue;
+  } catch {
+    throw new Error(`Expected --input-json key=<valid-json>, received: ${value}`);
+  }
 }
 
 async function getJson(urlPath: string): Promise<unknown> {

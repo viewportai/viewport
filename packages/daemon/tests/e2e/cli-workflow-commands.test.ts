@@ -259,6 +259,67 @@ nodes:
     expect(completed.nodes.review?.output).toContain('review acknowledged');
   }, 20_000);
 
+  it('runs a workflow with structured json input from the local CLI', async () => {
+    harness = await FullstackCliHarness.start();
+    const projectPath = await harness.createGitProject();
+    const workflowPath = path.join(projectPath, 'json-input-workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: cli-json-input-proof
+title: CLI JSON input proof
+inputs:
+  integration_event:
+    type: json
+    required: true
+nodes:
+  summarize:
+    type: shell
+    title: Summarize integration event
+    command: "printf '{{ inputs.integration_event.provider }}:{{ inputs.integration_event.payload.issue }}:{{ inputs.integration_event.payload.count }}'"
+`,
+      'utf-8',
+    );
+
+    const jsonInput = JSON.stringify({
+      provider: 'linear',
+      payload: {
+        issue: 'ENG-42',
+        count: 3,
+      },
+    });
+    const runResult = await runCliCommand(
+      [
+        'workflow',
+        'run',
+        workflowPath,
+        '--directory',
+        projectPath,
+        '--input-json',
+        `integration_event=${jsonInput}`,
+        '--json',
+      ],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const runPayload = parseJsonLog(runResult.logs) as { run?: { id?: string; status?: string } };
+    expect(runResult.errors).toEqual([]);
+    expect(runPayload.run?.status).toBe('completed');
+
+    const completed = await harness.daemonInstance.workflowRunner.getRun(
+      String(runPayload.run!.id),
+    );
+    expect(completed?.inputs.integration_event).toEqual({
+      provider: 'linear',
+      payload: {
+        issue: 'ENG-42',
+        count: 3,
+      },
+    });
+    expect(completed?.nodes.summarize?.output).toBe('linear:ENG-42:3');
+  }, 20_000);
+
   it('reruns a completed local workflow from its immutable run snapshot', async () => {
     harness = await FullstackCliHarness.start();
     const projectPath = await harness.createGitProject();
