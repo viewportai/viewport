@@ -119,9 +119,9 @@ export class WorkflowRunner {
       machineId: this.daemon.configManager.getMachineId(),
       executionPolicy: request.executionPolicy,
       dataCapturePolicy: request.dataCapturePolicy ?? {
-        transcripts: 'excerpt',
-        logs: 'content',
-        artifacts: 'local_reference',
+        transcripts: 'none',
+        logs: 'metadata',
+        artifacts: 'metadata',
       },
       initiation: request.initiation,
       status: 'queued',

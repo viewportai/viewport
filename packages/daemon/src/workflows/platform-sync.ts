@@ -277,9 +277,9 @@ function sanitizeEventPayload(
 function dataCapturePolicy(run: WorkflowRunRecord) {
   return (
     run.dataCapturePolicy ?? {
-      transcripts: 'excerpt',
-      logs: 'content',
-      artifacts: 'local_reference',
+      transcripts: 'none',
+      logs: 'metadata',
+      artifacts: 'metadata',
     }
   );
 }

@@ -14,6 +14,11 @@ describe('WorkflowRunPlatformSync', () => {
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     });
     const run = workflowRun();
+    run.dataCapturePolicy = {
+      transcripts: 'excerpt',
+      logs: 'content',
+      artifacts: 'local_reference',
+    };
 
     await sync.sync(run);
     run.events.push({
@@ -103,6 +108,47 @@ describe('WorkflowRunPlatformSync', () => {
       logs: 'metadata',
       artifacts: 'metadata',
     };
+    run.events = [
+      {
+        id: 'event-log',
+        runId: run.id,
+        timestamp: 1_000,
+        type: 'node-log',
+        nodeId: 'inspect',
+        message: 'secret stdout',
+        data: { source: 'shell', stream: 'stdout', chunk: 'secret stdout' },
+      },
+    ];
+
+    await sync.sync(run);
+
+    expect(calls[0]?.['data_capture_policy']).toEqual({
+      transcripts: 'none',
+      logs: 'metadata',
+      artifacts: 'metadata',
+    });
+    expect(
+      (calls[0]?.['nodes'] as Array<Record<string, unknown>>)[0]?.['transcript_excerpt'],
+    ).toBeNull();
+    expect((calls[0]?.['artifacts'] as Array<Record<string, unknown>>)[0]?.['path']).toBe('report');
+    expect((calls[0]?.['events'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      message: 'Node log content redacted by workflow data capture policy.',
+      payload: {
+        source: 'shell',
+        stream: 'stdout',
+        redacted: true,
+        reason: 'workflow_data_capture_policy',
+      },
+    });
+  });
+
+  it('defaults to privacy-first platform sync capture', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
     run.events = [
       {
         id: 'event-log',
