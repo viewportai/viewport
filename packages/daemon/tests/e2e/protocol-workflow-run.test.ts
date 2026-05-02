@@ -147,4 +147,102 @@ nodes:
 
     client.close();
   });
+
+  it('pauses a browser-provided workflow at an approval gate and resumes through the protocol', async () => {
+    harness = await ProtocolHarness.start();
+    const projectPath = await harness.createProject();
+    const directory = await harness.registerDirectory(projectPath);
+    const client = await harness.connectClient();
+    await client.waitForType('hello');
+
+    client.send({
+      type: 'workflow-run',
+      requestId: 'workflow-run-approval',
+      directoryId: directory.id,
+      projectId: 'project-approval',
+      projectMachineBindingId: 'binding-approval',
+      platformRunId: 'platform-run-approval',
+      executionPolicy: { mode: 'current_tree' },
+      workflowSourceRef: 'viewport://tests/protocol-workflow-approval',
+      workflowYaml: `
+schema: viewport.workflow/v1
+name: protocol-approval-proof
+title: Protocol approval proof
+nodes:
+  prepare:
+    type: shell
+    title: Prepare release note
+    command: "printf ready > approval-before.txt"
+  gate:
+    type: approval
+    title: Human release gate
+    needs: [prepare]
+    prompt: "Approve the release?"
+  ship:
+    type: shell
+    title: Continue after approval
+    needs: [gate]
+    command: "printf approved > approval-after.txt"
+`,
+    });
+
+    const ack = await client.waitForAck('workflow-run-approval');
+    expect(ack['status']).toBe('ok');
+    const runId = String(ack['runId']);
+
+    const blocked = await client.waitFor((message) => {
+      if (message['type'] !== 'workflow-run-updated') return false;
+      const run = workflowRunFrom(message);
+      return run?.['id'] === runId && run?.['status'] === 'blocked';
+    });
+    const blockedRun = workflowRunFrom(blocked);
+    const blockedNodes = blockedRun?.['nodes'] as Record<string, Record<string, unknown>>;
+    expect(blockedRun?.['projectMachineBindingId']).toBe('binding-approval');
+    expect(blockedNodes.prepare?.status).toBe('completed');
+    expect(blockedNodes.gate?.status).toBe('blocked');
+    expect(blockedNodes.ship?.status).toBe('queued');
+    expect((blockedNodes.gate?.approval as Record<string, unknown>)?.['prompt']).toBe(
+      'Approve the release?',
+    );
+    await expect(fs.readFile(path.join(projectPath, 'approval-before.txt'), 'utf8')).resolves.toBe(
+      'ready',
+    );
+    await expect(
+      fs.readFile(path.join(projectPath, 'approval-after.txt'), 'utf8'),
+    ).rejects.toThrow();
+
+    client.send({
+      type: 'workflow-approve',
+      requestId: 'workflow-approve-approval',
+      runId,
+      nodeId: 'gate',
+      approved: true,
+      message: 'Approved from protocol e2e',
+      actor: {
+        id: 'user-1',
+        name: 'Viewport Reviewer',
+        email: 'reviewer@example.test',
+        source: 'viewport-web',
+      },
+    });
+
+    const approvalAck = await client.waitForAck('workflow-approve-approval');
+    expect(approvalAck['status']).toBe('ok');
+
+    const completed = await client.waitFor((message) => {
+      if (message['type'] !== 'workflow-run-updated') return false;
+      const run = workflowRunFrom(message);
+      return run?.['id'] === runId && run?.['status'] === 'completed';
+    });
+    const completedRun = workflowRunFrom(completed);
+    const completedNodes = completedRun?.['nodes'] as Record<string, Record<string, unknown>>;
+    expect(completedNodes.gate?.status).toBe('completed');
+    expect((completedNodes.gate?.approval as Record<string, unknown>)?.['approved']).toBe(true);
+    expect(completedNodes.ship?.status).toBe('completed');
+    await expect(fs.readFile(path.join(projectPath, 'approval-after.txt'), 'utf8')).resolves.toBe(
+      'approved',
+    );
+
+    client.close();
+  });
 });
