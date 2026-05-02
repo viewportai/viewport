@@ -98,6 +98,18 @@ nodes:
       'utf-8',
     );
 
+    const validateResult = await runCliCommand(
+      ['workflow', 'validate', workflowPath, '--json'],
+      '../../src/cli/workflow-commands.js',
+      'workflow',
+    );
+    const validatePayload = parseJsonLog(validateResult.logs) as {
+      workflow?: { name?: string; nodeCount?: number };
+    };
+    expect(validateResult.errors).toEqual([]);
+    expect(validatePayload.workflow?.name).toBe('fullstack-workflow-proof');
+    expect(validatePayload.workflow?.nodeCount).toBe(2);
+
     const workflowRunResult = await runCliCommand(
       ['workflow', 'run', workflowPath, '--directory', projectPath, '--detach', '--json'],
       '../../src/cli/workflow-commands.js',
