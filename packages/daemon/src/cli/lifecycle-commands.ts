@@ -886,7 +886,7 @@ async function pairWithCode(
   asJson: boolean,
 ): Promise<void> {
   const relayIdentity = await loadOrCreateRelayIdentity();
-  const name = os.hostname();
+  const name = await resolveDefaultPairingName();
   const server = await resolvePairingServerTransport(explicitServerUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonVersion: resolveDisplayVersion(),
@@ -980,7 +980,7 @@ async function pairWithoutCode(
   asJson: boolean,
 ): Promise<void> {
   const relayIdentity = await loadOrCreateRelayIdentity();
-  const name = os.hostname();
+  const name = await resolveDefaultPairingName();
   const server = await resolvePairingServerTransport(explicitServerUrl);
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
     daemonVersion: resolveDisplayVersion(),
@@ -1130,6 +1130,63 @@ export async function pair(): Promise<void> {
   }
 }
 
+export async function resolveDefaultPairingName(): Promise<string> {
+  const explicitName = sanitizePairingName(process.env['VIEWPORT_MACHINE_NAME']);
+  if (explicitName) return explicitName;
+
+  if (process.platform === 'darwin') {
+    const computerName = sanitizePairingName(
+      await readCommandText('scutil', ['--get', 'ComputerName']),
+    );
+    if (computerName) return computerName;
+
+    const localHostName = sanitizePairingName(
+      await readCommandText('scutil', ['--get', 'LocalHostName']),
+    );
+    if (localHostName) return localHostName;
+  }
+
+  if (process.platform === 'linux') {
+    const prettyName = sanitizePairingName(await readCommandText('hostnamectl', ['--pretty']));
+    if (prettyName) return prettyName;
+  }
+
+  return sanitizePairingName(os.hostname()) ?? 'Viewport machine';
+}
+
+function sanitizePairingName(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 80);
+}
+
+function readCommandText(command: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: process.env,
+    });
+    let output = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, 1_000);
+
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk) => {
+      output += chunk;
+    });
+    child.once('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? output : null);
+    });
+  });
+}
+
 function runCommand(command: string, args: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -1252,6 +1309,18 @@ export function showHelp(): void {
     '  worktree squash <sid> [--target <branch>] [--message <text>] [--json|--format <fmt>]',
   );
   console.log('                               Worktree and git-step operator controls');
+  console.log('  workflow validate <file> [--json]');
+  console.log(
+    '  workflow run <file> [--directory <path>] [--input k=v] [--input-json k=json] [--json]',
+  );
+  console.log('  workflow runs [--json]');
+  console.log('  workflow show <run-id> [--json]');
+  console.log('  workflow rerun <run-id> [--detach] [--json]');
+  console.log('  workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]');
+  console.log('  workflow cancel <run-id> [--message <text>] [--json]');
+  console.log(
+    '                               Validate, run, inspect, approve, and cancel local workflows',
+  );
   console.log('  pair [<code>] [--server <url>] [--app-url <url>] [--json]');
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');

@@ -7,6 +7,7 @@ describe('remote CLI commands', () => {
   const originalArgv = process.argv.slice();
   const originalViewportHome = process.env['VIEWPORT_HOME'];
   const originalFetch = global.fetch;
+  const originalCwd = process.cwd();
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   let homeDir = '';
@@ -16,10 +17,12 @@ describe('remote CLI commands', () => {
     logSpy.mockClear();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-remote-cli-test-'));
     process.env['VIEWPORT_HOME'] = homeDir;
+    process.chdir(homeDir);
   });
 
   afterEach(async () => {
     process.argv = originalArgv;
+    process.chdir(originalCwd);
     if (originalViewportHome) process.env['VIEWPORT_HOME'] = originalViewportHome;
     else delete process.env['VIEWPORT_HOME'];
     global.fetch = originalFetch;

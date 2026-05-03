@@ -261,6 +261,11 @@ export const HelloMessageSchema = z.object({
         lastActivity: z.number(),
         messageCount: z.number(),
         resumable: z.boolean(),
+        workflowRunId: z.string().optional(),
+        workflowNodeId: z.string().optional(),
+        parentDirectoryId: z.string().optional(),
+        parentDirectoryPath: z.string().optional(),
+        worktreePath: z.string().optional(),
       }),
     )
     .optional(),

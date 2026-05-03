@@ -980,8 +980,10 @@ export function registerConnection(
     });
 
     ws.on('close', () => {
-      registry.clearDaemon(scopeKey, ws);
-      void context.backplane.upsertPresence(workspaceId, false, projectMachineBindingId, machineId);
+      const clearedCurrentDaemon = registry.clearDaemon(scopeKey, ws);
+      if (clearedCurrentDaemon) {
+        void context.backplane.upsertPresence(workspaceId, false, projectMachineBindingId, machineId);
+      }
       adjustIpConnectionCount(ip, -1);
       metrics.increment('relay_ws_connections_closed_total');
       logger.info('daemon_disconnected', {
@@ -989,6 +991,7 @@ export function registerConnection(
         projectMachineBindingId,
         machineId,
         ip,
+        clearedCurrentDaemon,
       });
       updateGauges();
     });

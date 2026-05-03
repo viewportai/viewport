@@ -4,6 +4,7 @@ import { SupervisionManager } from '../../src/hooks/supervision.js';
 import { TypedEventEmitter } from '../../src/core/events.js';
 import type { DaemonEvents } from '../../src/core/events.js';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
+import { workflowHookRegistry } from '../../src/workflows/hook-registry.js';
 
 function mockClient(): ConnectedClient {
   return {
@@ -20,6 +21,7 @@ describe('HookRouter', () => {
   let router: HookRouter;
 
   beforeEach(() => {
+    workflowHookRegistry.clear();
     eventBus = new TypedEventEmitter<DaemonEvents>();
     supervision = new SupervisionManager();
     router = new HookRouter(eventBus, supervision);
@@ -207,6 +209,91 @@ describe('HookRouter', () => {
     });
 
     expect(result.passthrough).toBe(true);
+  });
+
+  it('applies workflow-scoped permission decisions before supervision', async () => {
+    const hookEvents: unknown[] = [];
+    eventBus.on('workflow:hook-fired', (data) => hookEvents.push(data));
+
+    workflowHookRegistry.register({
+      sessionId: 's1',
+      workflowRunId: 'run-1',
+      workflowNodeId: 'review',
+      hooks: {
+        PermissionRequest: {
+          tools: {
+            Bash: { behavior: 'deny', message: 'Bash is disabled for this workflow node' },
+          },
+          default: { behavior: 'allow' },
+        },
+      },
+    });
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PermissionRequest',
+      session_id: 's1',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf /tmp/junk' },
+    });
+
+    expect(result).toEqual({
+      passthrough: false,
+      decision: { behavior: 'deny', message: 'Bash is disabled for this workflow node' },
+    });
+    expect(hookEvents).toHaveLength(1);
+    expect(hookEvents[0]).toMatchObject({
+      workflowRunId: 'run-1',
+      workflowNodeId: 'review',
+      sessionId: 's1',
+      kind: 'PermissionRequest',
+      response: {
+        passthrough: false,
+        decision: { behavior: 'deny' },
+      },
+    });
+  });
+
+  it('records workflow-scoped tool hooks without blocking the agent', async () => {
+    const hookEvents: unknown[] = [];
+    eventBus.on('workflow:hook-fired', (data) => hookEvents.push(data));
+
+    workflowHookRegistry.register({
+      sessionId: 's1',
+      workflowRunId: 'run-1',
+      workflowNodeId: 'review',
+      hooks: {
+        PreToolUse: {},
+        PostToolUse: {},
+        PostToolUseFailure: {},
+      },
+    });
+
+    const pre = await router.handleEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Read',
+      tool_input: { file_path: 'README.md' },
+    });
+    const post = await router.handleEvent({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      tool_name: 'Read',
+      tool_response: 'ok',
+    });
+    const failed = await router.handleEvent({
+      hook_event_name: 'PostToolUseFailure',
+      session_id: 's1',
+      tool_name: 'Bash',
+      error: 'command not found',
+    });
+
+    expect(pre).toEqual({ passthrough: false });
+    expect(post).toEqual({ passthrough: false });
+    expect(failed).toEqual({ passthrough: false });
+    expect(hookEvents).toHaveLength(3);
+    expect(hookEvents[0]).toMatchObject({ kind: 'PreToolUse', workflowNodeId: 'review' });
+    expect(hookEvents[1]).toMatchObject({ kind: 'PostToolUse', workflowNodeId: 'review' });
+    expect(hookEvents[2]).toMatchObject({ kind: 'PostToolUseFailure', workflowNodeId: 'review' });
   });
 
   it('blocks and waits for response when supervised', async () => {

@@ -25,6 +25,7 @@ import {
   HookBaseInputSchema,
 } from './types.js';
 import { logger } from '../core/logger.js';
+import { workflowHookRegistry } from '../workflows/hook-registry.js';
 
 const log = logger.child({ module: 'hook-router' });
 const MAX_PENDING_PERMISSION_REQUESTS = 512;
@@ -109,6 +110,11 @@ export class HookRouter {
 
     const sessionId = baseResult.data.session_id;
     const cwd = baseResult.data.cwd;
+    const workflowHook = workflowHookRegistry.resolve(
+      sessionId,
+      kind,
+      parsed.data as Record<string, unknown>,
+    );
 
     // Emit the generic hook:event for any listeners
     this.eventBus.emit('hook:event', {
@@ -118,6 +124,21 @@ export class HookRouter {
       cwd,
       payload: parsed.data as Record<string, unknown>,
     });
+
+    if (workflowHook) {
+      this.eventBus.emit('workflow:hook-fired', {
+        workflowRunId: workflowHook.registration.workflowRunId,
+        workflowNodeId: workflowHook.registration.workflowNodeId,
+        sessionId,
+        kind,
+        adapter,
+        ...(workflowHook.response ? { response: workflowHook.response } : {}),
+        payload: parsed.data as Record<string, unknown>,
+      });
+      if (workflowHook.response) {
+        return workflowHook.response;
+      }
+    }
 
     // Dispatch to specific event handler
     const def = this.definitions.get(kind);

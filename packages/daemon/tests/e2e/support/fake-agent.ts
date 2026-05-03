@@ -79,7 +79,7 @@ export class FakeAdapter implements AgentAdapter {
     const session = new FakeSession(crypto.randomUUID(), this.promptBehavior);
     this.sessions.set(session.id, session);
     this.latestSessionId = session.id;
-    const initialPrompt = options?.initialPrompt?.trim() ?? '';
+    const initialPrompt = options?.deferInitialPrompt ? '' : (options?.initialPrompt?.trim() ?? '');
     if (initialPrompt.length > 0) {
       setTimeout(() => {
         void session.sendPrompt(initialPrompt);
@@ -92,7 +92,7 @@ export class FakeAdapter implements AgentAdapter {
     const session = new FakeSession(sessionId, this.promptBehavior);
     this.sessions.set(session.id, session);
     this.latestSessionId = session.id;
-    const initialPrompt = options?.initialPrompt?.trim() ?? '';
+    const initialPrompt = options?.deferInitialPrompt ? '' : (options?.initialPrompt?.trim() ?? '');
     if (initialPrompt.length > 0) {
       setTimeout(() => {
         void session.sendPrompt(initialPrompt);

@@ -82,15 +82,21 @@ export class ConnectionRegistry {
     state.lastActivityAt = Date.now();
   }
 
-  clearDaemon(workspaceId: string, ws: WebSocket): void {
+  clearDaemon(workspaceId: string, ws: WebSocket): boolean {
     const state = this.workspaces.get(workspaceId);
-    if (!state) return;
+    if (!state) return false;
+    let cleared = false;
     if (state.daemon === ws) {
       state.daemon = null;
+      cleared = true;
     }
-    state.keyExchangeRequests.clear();
-    state.sessionOwners.clear();
-    state.pairingRequests.clear();
+    if (cleared) {
+      state.keyExchangeRequests.clear();
+      state.sessionOwners.clear();
+      state.pairingRequests.clear();
+    }
     state.lastActivityAt = Date.now();
+
+    return cleared;
   }
 }

@@ -11,6 +11,7 @@ import type { AgentAdapter, Session, SessionOptions } from '../core/interfaces.j
 import type { SessionMessage, SessionState } from '../core/types.js';
 import { metrics } from '../core/metrics.js';
 import { importCodexSdkModule } from './codex-sdk-loader.js';
+import { DEFAULT_CODEX_MODEL } from '../agents/codex-defaults.js';
 import {
   extractEventsStream,
   extractStreamError,
@@ -49,7 +50,12 @@ async function defaultClientFactory(apiKey?: string): Promise<CodexClient> {
       'Codex SDK import failed: install @openai/codex-sdk@latest (or @openai/codex@latest)',
     );
   }
-  return new loaded.module.Codex({ apiKey });
+  return new loaded.module.Codex({
+    apiKey,
+    config: {
+      model: DEFAULT_CODEX_MODEL,
+    },
+  });
 }
 
 export class CodexSession extends EventEmitter implements Session {
@@ -230,7 +236,7 @@ export class CodexAdapter implements AgentAdapter {
       cwd,
       model: options?.model,
     });
-    await session.start(options?.initialPrompt ?? '');
+    await session.start(options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? ''));
     return session;
   }
 
@@ -244,7 +250,7 @@ export class CodexAdapter implements AgentAdapter {
       cwd,
       model: options?.model,
     });
-    await session.start(options?.initialPrompt ?? 'Continue.');
+    await session.start(options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? 'Continue.'));
     return session;
   }
 
@@ -297,7 +303,7 @@ export class CodexAdapter implements AgentAdapter {
     cwd: string,
     options?: SessionOptions,
   ): { modern: Record<string, unknown>; legacy: Record<string, unknown> } {
-    const model = options?.model;
+    const model = options?.model ?? DEFAULT_CODEX_MODEL;
     const modern: Record<string, unknown> = {
       workingDirectory: cwd,
       // Daemon sessions run in ephemeral worktrees that may not be pre-trusted by Codex CLI.

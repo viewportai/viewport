@@ -1,4 +1,4 @@
-import { openSync, closeSync, existsSync } from 'node:fs';
+import { openSync, closeSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -20,6 +20,7 @@ import {
 } from './supervisor-protocol.js';
 import { decodeRuntimeConfig, encodeRuntimeConfig } from './supervisor-runtime-config.js';
 import { resolveDaemonSettingsFromSources } from './daemon-settings.js';
+import { resolveLocalTlsState } from './local-tls.js';
 
 const SUPERVISOR_STARTUP_GRACE_MS = 1_500;
 function resolveCliEntry(): string {
@@ -28,38 +29,6 @@ function resolveCliEntry(): string {
     throw new Error('Unable to resolve CLI entry path for supervisor launch');
   }
   return path.resolve(entry);
-}
-
-function resolveConfiguredTlsState(env: NodeJS.ProcessEnv = process.env): {
-  enabled: boolean;
-  host: string;
-  certDir?: string;
-  certPath?: string;
-  keyPath?: string;
-} {
-  const tlsEnv = (env['VIEWPORT_TLS'] ?? 'auto').toLowerCase();
-  const tlsHost = env['VIEWPORT_TLS_HOST'] ?? 'localhost';
-
-  if (tlsEnv === '0' || tlsEnv === 'false' || tlsEnv === 'off') {
-    return { enabled: false, host: tlsHost };
-  }
-
-  const certDir = env['VIEWPORT_TLS_CERT_DIR'] ?? path.join(configDir(), 'certs');
-  const certPath = env['VIEWPORT_TLS_CERT'] ?? path.join(certDir, `${tlsHost}.crt`);
-  const keyPath = env['VIEWPORT_TLS_KEY'] ?? path.join(certDir, `${tlsHost}.key`);
-
-  if (tlsEnv === 'auto') {
-    const enabled = existsSync(certPath) && existsSync(keyPath);
-    return {
-      enabled,
-      host: tlsHost,
-      certDir: enabled ? certDir : undefined,
-      certPath: enabled ? certPath : undefined,
-      keyPath: enabled ? keyPath : undefined,
-    };
-  }
-
-  return { enabled: true, host: tlsHost, certDir, certPath, keyPath };
 }
 
 function buildWorkerEnv(config: RuntimeLaunchConfig): NodeJS.ProcessEnv {
@@ -158,7 +127,7 @@ export async function runSupervisorForeground(config: RuntimeLaunchConfig): Prom
 
 async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Promise<void> {
   const ownerInfo = readProcessInfo(process.pid);
-  const tls = resolveConfiguredTlsState();
+  const tls = resolveLocalTlsState();
   const identity = resolveDaemonRuntimeIdentity({
     daemonConfig: {
       profile: config.profile,

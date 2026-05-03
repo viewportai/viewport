@@ -8,6 +8,7 @@ import type { IncomingMessage } from './ws-protocol.js';
 import { discoveredWatchKey, removeDiscoveredWatch } from './discovered-watch-key.js';
 import { ErrorCodes } from '../core/error-codes.js';
 import { logger } from '../core/logger.js';
+import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
 const MAX_CLIENT_DISCOVERED_WATCHES = 2048;
@@ -287,6 +288,8 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       sendSyncSnapshot(client, daemon, registry);
       sendAck(client, msg.requestId, 'ok');
     },
+
+    ...createWsWorkflowCommandHandlers({ daemon, sendAck }),
 
     supervise: async (client, msg) => {
       if (!supervision) {

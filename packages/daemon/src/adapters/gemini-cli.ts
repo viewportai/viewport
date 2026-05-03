@@ -121,7 +121,7 @@ export class GeminiCliAdapter implements AgentAdapter {
       model: options?.model,
       runCommand: this.runCommand,
     });
-    await session.start(options?.initialPrompt ?? '');
+    await session.start(options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? ''));
     return session;
   }
 
@@ -134,7 +134,7 @@ export class GeminiCliAdapter implements AgentAdapter {
       resumeSessionId: sessionId,
       runCommand: this.runCommand,
     });
-    await session.start(options?.initialPrompt ?? 'Continue.');
+    await session.start(options?.deferInitialPrompt ? '' : (options?.initialPrompt ?? 'Continue.'));
     return session;
   }
 }

@@ -1,7 +1,7 @@
 export const CODEX_SDK_PACKAGE_CANDIDATES = ['@openai/codex-sdk', '@openai/codex'] as const;
 
 export interface CodexSdkModule {
-  Codex?: new (params?: { apiKey?: string }) => {
+  Codex?: new (params?: { apiKey?: string; config?: Record<string, unknown> }) => {
     startThread: (params?: {
       cwd?: string;
       workingDirectory?: string;

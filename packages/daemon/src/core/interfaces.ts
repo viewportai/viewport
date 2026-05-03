@@ -34,6 +34,11 @@ export interface AgentAdapter {
 export interface SessionOptions {
   /** Initial prompt to send to the agent. */
   initialPrompt?: string;
+  /**
+   * Internal daemon option: create the session without dispatching the initial
+   * prompt so SessionManager can wire lifecycle/message listeners first.
+   */
+  deferInitialPrompt?: boolean;
   /** Model override (e.g. 'claude-sonnet-4-6'). */
   model?: string;
   /** Permission handler — called before each tool execution. */
@@ -168,4 +173,14 @@ export interface DiscoveredSession {
   messageCount?: number;
   /** Optional source file backing this discovered session. */
   sourcePath?: string;
+  /** Workflow run that spawned this session, when it came from a workflow node. */
+  workflowRunId?: string;
+  /** Workflow node that spawned this session, when it came from a workflow node. */
+  workflowNodeId?: string;
+  /** Original registered directory that launched a worktree-backed workflow session. */
+  parentDirectoryId?: string;
+  /** Original registered directory path that launched a worktree-backed workflow session. */
+  parentDirectoryPath?: string;
+  /** Working tree path used by the spawned session, when different from the parent directory. */
+  worktreePath?: string;
 }

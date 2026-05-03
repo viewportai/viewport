@@ -15,6 +15,7 @@ import type {
   RunTrackerFactory,
   SessionDiscovery,
 } from './interfaces.js';
+import type { ModelInfo } from './agent-registry.js';
 import type {
   PendingPermissionRequest,
   SessionAgentMode,
@@ -31,6 +32,9 @@ import { SessionManager } from './session-manager.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { logger } from './logger.js';
 import { dedupeDiscoveredSessions } from './discovered-sessions.js';
+import { addWorkflowLinkedDiscoveredSessions } from './workflow-linked-discovery.js';
+import { WorkflowRunner } from '../workflows/runner.js';
+import { WorkflowSessionLinkStore } from '../workflows/session-links.js';
 
 const log = logger.child({ module: 'daemon' });
 
@@ -41,13 +45,16 @@ const log = logger.child({ module: 'daemon' });
 export class Daemon extends TypedEventEmitter<DaemonEvents> {
   readonly configManager: ConfigManager;
   readonly directoryManager: DirectoryManager;
+  readonly workflowRunner: WorkflowRunner;
 
   private adapters = new Map<string, AgentAdapter>();
   private discoveries = new Map<string, SessionDiscovery>();
   private trackerFactory: RunTrackerFactory | null = null;
+  private modelProvider: (() => ModelInfo[] | Promise<ModelInfo[]>) | null = null;
 
   private readonly permissionCoordinator: PermissionCoordinator;
   private readonly sessionManager: SessionManager;
+  private readonly workflowSessionLinks = new WorkflowSessionLinkStore();
 
   /**
    * Discovered sessions from JSONL files, keyed by directoryId.
@@ -68,6 +75,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
       this.adapters,
       () => this.trackerFactory,
     );
+    this.workflowRunner = new WorkflowRunner(this);
   }
 
   /** Register an agent adapter (e.g. ClaudeAdapter). */
@@ -85,9 +93,23 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
     this.trackerFactory = factory;
   }
 
+  /** Set the provider used to resolve runtime model availability. */
+  setModelProvider(provider: () => ModelInfo[] | Promise<ModelInfo[]>): void {
+    this.modelProvider = provider;
+  }
+
   /** Initialize the daemon — loads config from disk. */
   async initialize(): Promise<void> {
     await this.configManager.load();
+    // Load workflow plugins from `~/.viewport/plugins.json` before resuming
+    // pending runs so any custom node types in those runs have an executor
+    // registered when the runner picks them back up.
+    const { loadPlugins } = await import('../workflows/plugin-loader.js');
+    await loadPlugins();
+    // Resume any workflow runs that were running when we last shut down.
+    // Failures during resume are logged onto the run record; never block the
+    // daemon from coming online.
+    void this.workflowRunner.resumePendingRuns().catch(() => undefined);
   }
 
   /**
@@ -144,6 +166,14 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
       }
     }
 
+    await addWorkflowLinkedDiscoveredSessions({
+      discoveredByDirectory: nextDiscovered,
+      directories,
+      discoveries: this.discoveries,
+      links: await this.workflowSessionLinks.list(),
+      log,
+    });
+
     // Replace atomically so stale entries are removed when sessions disappear.
     this.discoveredSessions = nextDiscovered;
     log.debug(
@@ -172,6 +202,12 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   /** Get available agent IDs from registered adapters. */
   getAvailableAgents(): string[] {
     return [...this.adapters.keys()];
+  }
+
+  /** Get available model IDs from the registered agent registry, when known. */
+  async getAvailableModels(): Promise<ModelInfo[]> {
+    if (!this.modelProvider) return [];
+    return this.modelProvider();
   }
 
   // ---------------------------------------------------------------------------
@@ -236,6 +272,18 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
     steps: ReadonlyArray<Step>;
   } {
     return this.sessionManager.getSessionInfo(sessionId);
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessionManager.hasSession(sessionId);
+  }
+
+  getSessionWorktreePath(sessionId: string): string {
+    return this.sessionManager.getSessionWorktreePath(sessionId);
+  }
+
+  getSessionNativeId(sessionId: string): string {
+    return this.sessionManager.getSessionNativeId(sessionId);
   }
 
   listActiveSessions(): Array<{

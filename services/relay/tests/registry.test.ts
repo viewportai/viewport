@@ -26,4 +26,18 @@ describe('connection registry', () => {
     const removed = registry.pruneEmpty(1_000);
     expect(removed).toEqual([]);
   });
+
+  it('only clears the daemon that currently owns the workspace scope', () => {
+    const registry = new ConnectionRegistry();
+    const state = registry.getOrCreate('workspace-a');
+    const stale = {} as never;
+    const current = {} as never;
+
+    state.daemon = current;
+    expect(registry.clearDaemon('workspace-a', stale)).toBe(false);
+    expect(state.daemon).toBe(current);
+
+    expect(registry.clearDaemon('workspace-a', current)).toBe(true);
+    expect(state.daemon).toBeNull();
+  });
 });

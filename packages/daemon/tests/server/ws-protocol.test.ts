@@ -12,6 +12,11 @@ import {
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
+  WorkflowRunSchema,
+  WorkflowListRunsSchema,
+  WorkflowShowRunSchema,
+  WorkflowApproveRunSchema,
+  WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
   IncomingMessageSchema,
@@ -225,6 +230,84 @@ describe('BranchRetrySchema', () => {
       type: 'branch-retry',
       sessionId: 's1',
       fromSha: 'abc1234',
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('Workflow schemas', () => {
+  it('accepts a workflow run command', () => {
+    const result = WorkflowRunSchema.safeParse({
+      type: 'workflow-run',
+      workflowYaml:
+        'schema: viewport.workflow/v1\nname: proof\nnodes:\n  one:\n    type: shell\n    command: echo ok\n',
+      workflowSourceRef: 'viewport://templates/proof',
+      directoryId: 'dir-1',
+      inputs: {
+        pr: '123',
+        integration_event: {
+          provider: 'github',
+          payload: { number: 42, labels: ['needs-review'] },
+        },
+      },
+      projectId: 'project-1',
+      projectMachineBindingId: 'binding-1',
+      platformRunId: 'platform-run-1',
+      rerunOfWorkflowRunId: 'source-run-1',
+      executionPolicy: { mode: 'named_branch', branch: 'main' },
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow list command', () => {
+    const result = WorkflowListRunsSchema.safeParse({
+      type: 'workflow-list-runs',
+      limit: 25,
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow show command', () => {
+    const result = WorkflowShowRunSchema.safeParse({
+      type: 'workflow-show-run',
+      runId: 'run-1',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow approval command', () => {
+    const result = WorkflowApproveRunSchema.safeParse({
+      type: 'workflow-approve',
+      runId: 'run-1',
+      nodeId: 'gate',
+      approved: true,
+      message: 'ship it',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a workflow cancel command', () => {
+    const result = WorkflowCancelRunSchema.safeParse({
+      type: 'workflow-cancel',
+      runId: 'run-1',
+      message: 'Stop this run',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'viewport-web',
+      },
+      requestId: 'req-1',
     });
     expect(result.success).toBe(true);
   });

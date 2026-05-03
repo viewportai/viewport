@@ -110,6 +110,7 @@ export class SessionManager {
     // Start session
     const session = await adapter.startSession(worktreePath, {
       initialPrompt: prompt,
+      deferInitialPrompt: true,
       model: config.model,
       canUseTool,
       config,
@@ -134,6 +135,8 @@ export class SessionManager {
 
     // Emit session started
     this.eventBus.emit('session:started', { sessionId, directoryId, config });
+
+    this.dispatchInitialPrompt(sessionId, prompt);
 
     return sessionId;
   }
@@ -174,6 +177,7 @@ export class SessionManager {
 
     const session = await adapter.resumeSession(originalSessionId, worktreePath, {
       initialPrompt: prompt,
+      deferInitialPrompt: true,
       model: config.model,
       canUseTool,
       config,
@@ -193,6 +197,8 @@ export class SessionManager {
     this.eventBus.adjustMaxListeners(this.sessions.size);
     this.wireSessionEvents(originalSessionId, active);
     this.eventBus.emit('session:started', { sessionId: originalSessionId, directoryId, config });
+
+    this.dispatchInitialPrompt(originalSessionId, prompt);
 
     return originalSessionId;
   }
@@ -236,6 +242,10 @@ export class SessionManager {
       mode: this.getSessionMode(sessionId),
       steps: active.tracker.steps,
     };
+  }
+
+  getSessionNativeId(sessionId: string): string {
+    return this.getActiveSession(sessionId).session.id;
   }
 
   listSessionSummaries(): Array<{
@@ -328,6 +338,10 @@ export class SessionManager {
     return this.sessions.has(sessionId);
   }
 
+  getSessionWorktreePath(sessionId: string): string {
+    return this.getActiveSession(sessionId).worktreePath;
+  }
+
   /** Get the session config (for runtime permission updates). */
   getSessionConfig(sessionId: string): SessionConfig | undefined {
     return this.sessions.get(sessionId)?.config;
@@ -404,6 +418,17 @@ export class SessionManager {
       throw new ViewportError('SESSION_NOT_FOUND', `No active session: ${sessionId}`);
     }
     return active;
+  }
+
+  private dispatchInitialPrompt(sessionId: string, prompt: string | undefined): void {
+    const text = prompt?.trim();
+    if (!text) return;
+
+    setImmediate(() => {
+      void this.sendPrompt(sessionId, text).catch((err) => {
+        log.warn({ sessionId, err }, 'Initial prompt dispatch failed');
+      });
+    });
   }
 
   /**

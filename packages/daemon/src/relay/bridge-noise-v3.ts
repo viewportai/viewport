@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { fromBase64Url, toBase64Url } from './bridge-crypto.js';
+import { fromBase64Url, normalizeP256PrivateKey, toBase64Url } from './bridge-crypto.js';
 import type { DaemonRelayIdentity } from './bridge-key-exchange.js';
 
 export type NoiseV3HandshakeProfile = 'noise-ik' | 'noise-ikpsk2';
@@ -228,7 +228,11 @@ function ecdhSecret(privateKey: Buffer, publicKey: Buffer): Buffer {
 function generateP256Keypair(): { privateKey: Buffer; publicKey: Buffer } {
   const ecdh = crypto.createECDH('prime256v1');
   const publicKey = ecdh.generateKeys();
-  const privateKey = ecdh.getPrivateKey();
+  const privateKey = normalizeP256PrivateKey(ecdh.getPrivateKey());
+  if (!privateKey) {
+    throw new Error('failed to generate p256 keypair');
+  }
+
   return { privateKey, publicKey };
 }
 
@@ -418,8 +422,10 @@ export function deriveNoiseV3SessionFromInit(params: {
 }): { session: NoiseV3DerivedSession; response: RelayKeyExchangeResponseFrameV3 } {
   const daemonPublicKeyRaw = fromBase64Url(params.daemonIdentity.publicKey);
   validatePublicKey(daemonPublicKeyRaw, 'daemon static');
-  const daemonPrivateKeyRaw = fromBase64Url(params.daemonIdentity.privateKey);
-  if (daemonPrivateKeyRaw.length !== 32) {
+  const daemonPrivateKeyRaw = normalizeP256PrivateKey(
+    fromBase64Url(params.daemonIdentity.privateKey),
+  );
+  if (!daemonPrivateKeyRaw) {
     throw new Error('invalid daemon private key');
   }
 

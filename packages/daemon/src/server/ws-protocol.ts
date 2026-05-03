@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import type { WorkflowInputValue } from '../workflows/types.js';
 
 const MAX_PROMPT_CHARS = 100_000;
 const MAX_MODEL_CHARS = 200;
@@ -14,6 +15,17 @@ const MAX_THINKING_MODE_CHARS = 32;
 const MAX_REQUEST_ID_CHARS = 128;
 const MAX_IMAGE_BYTES_BASE64_CHARS = 2_000_000;
 const MAX_IMAGE_COUNT = 4;
+
+const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(WorkflowInputValueSchema),
+    z.record(z.string(), WorkflowInputValueSchema),
+  ]),
+);
 const MAX_LIST_SESSIONS_LIMIT = 200;
 
 const ImageSchema = z.object({
@@ -139,6 +151,84 @@ export const SyncRequestSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const WorkflowRunSchema = z
+  .object({
+    type: z.literal('workflow-run'),
+    workflowPath: z.string().min(1).max(4096).optional(),
+    workflowYaml: z.string().min(1).max(256_000).optional(),
+    workflowSourceRef: z.string().min(1).max(4096).optional(),
+    directoryId: z.string().min(1).max(512),
+    inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
+    projectId: z.string().min(1).max(256).optional(),
+    projectMachineBindingId: z.string().min(1).max(256).optional(),
+    platformRunId: z.string().min(1).max(256).optional(),
+    rerunOfWorkflowRunId: z.string().min(1).max(256).optional(),
+    executionPolicy: z
+      .object({
+        mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
+        branch: z.string().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
+    dataCapturePolicy: z
+      .object({
+        transcripts: z.enum(['none', 'excerpt']),
+        logs: z.enum(['metadata', 'content']),
+        artifacts: z.enum(['metadata', 'local_reference']),
+      })
+      .strict()
+      .optional(),
+    requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+  })
+  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
+    message: 'workflowPath or workflowYaml is required',
+    path: ['workflowPath'],
+  });
+
+export const WorkflowListRunsSchema = z.object({
+  type: z.literal('workflow-list-runs'),
+  limit: z.number().int().positive().max(200).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const WorkflowShowRunSchema = z.object({
+  type: z.literal('workflow-show-run'),
+  runId: z.string().min(1).max(256),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const WorkflowApproveRunSchema = z.object({
+  type: z.literal('workflow-approve'),
+  runId: z.string().min(1).max(256),
+  nodeId: z.string().min(1).max(256),
+  approved: z.boolean(),
+  message: z.string().max(2_000).optional(),
+  actor: z
+    .object({
+      id: z.string().max(255).optional(),
+      name: z.string().max(255).optional(),
+      email: z.string().email().max(255).optional(),
+      source: z.string().max(255).optional(),
+    })
+    .optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const WorkflowCancelRunSchema = z.object({
+  type: z.literal('workflow-cancel'),
+  runId: z.string().min(1).max(256),
+  message: z.string().max(2_000).optional(),
+  actor: z
+    .object({
+      id: z.string().max(255).optional(),
+      name: z.string().max(255).optional(),
+      email: z.string().email().max(255).optional(),
+      source: z.string().max(255).optional(),
+    })
+    .optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Supervision (hook-based remote permission control)
 // ---------------------------------------------------------------------------
@@ -179,6 +269,11 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
   SyncRequestSchema,
+  WorkflowRunSchema,
+  WorkflowListRunsSchema,
+  WorkflowShowRunSchema,
+  WorkflowApproveRunSchema,
+  WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
 ]);

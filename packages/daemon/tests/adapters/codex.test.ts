@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { CodexAdapter } from '../../src/adapters/codex.js';
+import { DEFAULT_CODEX_MODEL } from '../../src/agents/codex-defaults.js';
 import type { SessionMessage } from '../../src/core/types.js';
 
 describe('CodexAdapter', () => {
@@ -66,6 +67,26 @@ describe('CodexAdapter', () => {
     await session.kill();
   });
 
+  it('uses the Viewport Codex model default instead of silently inheriting user Codex config', async () => {
+    const startThread = vi.fn().mockReturnValue({
+      id: 'codex-default-model',
+      run: vi.fn().mockResolvedValue({ finalResponse: 'done' }),
+    });
+    const createClient = vi.fn().mockResolvedValue({
+      startThread,
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    await adapter.startSession('/tmp/project');
+
+    expect(startThread).toHaveBeenCalledWith({
+      workingDirectory: '/tmp/project',
+      model: DEFAULT_CODEX_MODEL,
+      skipGitRepoCheck: true,
+    });
+  });
+
   it('resumeSession defaults prompt to Continue and uses resumeThread when available', async () => {
     const run = vi.fn().mockResolvedValue('continuing');
     const resumeThread = vi.fn().mockReturnValue({ id: 'codex-resume-1', run });
@@ -79,6 +100,7 @@ describe('CodexAdapter', () => {
 
     expect(resumeThread).toHaveBeenCalledWith('codex-resume-1', {
       workingDirectory: '/tmp/project',
+      model: DEFAULT_CODEX_MODEL,
       skipGitRepoCheck: true,
     });
     expect(run).toHaveBeenCalledWith('Continue.');

@@ -481,6 +481,7 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
 
   if (itemType === 'message') {
     const role = normalizeCodexRole(payload.role);
+    if (!role) return [];
     const messageBlocks: RichSessionMessage[] = [];
     const content = payload.content;
     const baseUuid = codexUuid(payload, ts, 'message');
@@ -601,8 +602,10 @@ function timestampFromEntry(
   return new Date().toISOString();
 }
 
-function normalizeCodexRole(value: unknown): 'user' | 'assistant' {
-  return value === 'user' ? 'user' : 'assistant';
+function normalizeCodexRole(value: unknown): 'user' | 'assistant' | null {
+  if (value === 'user') return 'user';
+  if (value === 'assistant') return 'assistant';
+  return null;
 }
 
 function codexToolId(payload: Record<string, unknown>): string {

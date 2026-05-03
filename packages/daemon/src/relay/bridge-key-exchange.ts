@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { fromBase64Url, toBase64Url } from './bridge-crypto.js';
+import { fromBase64Url, normalizeP256PrivateKey, toBase64Url } from './bridge-crypto.js';
 import { type DaemonRelayIdentity } from './bridge-identity-store.js';
 
 export type { DaemonRelayIdentity } from './bridge-identity-store.js';
@@ -217,8 +217,8 @@ export function deriveSessionFromKeyExchange(params: {
     throw new Error('invalid client nonce');
   }
 
-  const daemonPrivate = fromBase64Url(params.daemonIdentity.privateKey);
-  if (daemonPrivate.length !== 32) {
+  const daemonPrivate = normalizeP256PrivateKey(fromBase64Url(params.daemonIdentity.privateKey));
+  if (!daemonPrivate) {
     throw new Error('invalid daemon private key');
   }
   if (params.init.profile === 'noise-ikpsk2' && !params.pairingSecret) {

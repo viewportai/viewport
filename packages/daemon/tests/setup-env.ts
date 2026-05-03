@@ -9,6 +9,8 @@ const originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
 const originalLegacyProjectConfigDir = process.env['VPD_PROJECT_CONFIG_DIR'];
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'viewport-daemon-tests-'));
 const unusedProjectOverride = path.join(tempRoot, '.viewport-project-override');
+fs.mkdirSync(unusedProjectOverride, { recursive: true });
+fs.writeFileSync(path.join(unusedProjectOverride, 'config.json'), '{}\n');
 
 // Keep daemon tests isolated from ambient machine state.
 process.env['HOME'] = tempRoot;

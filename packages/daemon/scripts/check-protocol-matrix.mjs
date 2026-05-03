@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(new URL('..', import.meta.url).pathname);
 const protocolPath = path.join(repoRoot, 'src/server/ws-protocol.ts');
-const handlersPath = path.join(repoRoot, 'src/server/ws-command-handlers.ts');
+const serverPath = path.join(repoRoot, 'src/server');
 const matrixPath = path.join(repoRoot, 'docs/protocol-matrix.json');
 
 function extractSchemaTypes(source) {
@@ -47,9 +47,14 @@ async function pathExists(relPath) {
 }
 
 async function main() {
-  const [protocolSource, handlersSource, matrixRaw] = await Promise.all([
+  const serverFiles = await fs.readdir(serverPath);
+  const handlerPaths = serverFiles
+    .filter((file) => /^ws-.+command-handlers\.ts$/.test(file) || file === 'ws-command-handlers.ts')
+    .map((file) => path.join(serverPath, file));
+
+  const [protocolSource, handlerSources, matrixRaw] = await Promise.all([
     fs.readFile(protocolPath, 'utf-8'),
-    fs.readFile(handlersPath, 'utf-8'),
+    Promise.all(handlerPaths.map((handlerPath) => fs.readFile(handlerPath, 'utf-8'))),
     fs.readFile(matrixPath, 'utf-8'),
   ]);
 
@@ -57,7 +62,7 @@ async function main() {
   const messages = Array.isArray(matrix.messages) ? matrix.messages : [];
   const matrixTypes = new Set(messages.map((entry) => entry.type).filter((entry) => typeof entry === 'string'));
   const schemaTypes = extractSchemaTypes(protocolSource);
-  const handlerTypes = extractHandlerTypes(handlersSource);
+  const handlerTypes = extractHandlerTypes(handlerSources.join('\n'));
 
   const missingInMatrix = diff(schemaTypes, matrixTypes);
   const extraInMatrix = diff(matrixTypes, schemaTypes);

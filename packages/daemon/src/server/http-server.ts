@@ -23,6 +23,7 @@ import { issuePairingOffer, redeemPairingOffer } from './pairing-offers.js';
 import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './ring-buffer.js';
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
 import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
+import type { WorkflowInputValue } from '../workflows/types.js';
 
 const startTime = Date.now();
 
@@ -48,6 +49,81 @@ const DirectoryRegisterBodySchema = z
   .object({
     path: z.string().trim().min(1),
     config: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+const WorkflowValidateBodySchema = z
+  .object({
+    workflowPath: z.string().trim().min(1).optional(),
+    workflowYaml: z.string().trim().min(1).max(256_000).optional(),
+    workflowSourceRef: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
+    message: 'workflowPath or workflowYaml is required',
+    path: ['workflowPath'],
+  });
+const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(WorkflowInputValueSchema),
+    z.record(z.string(), WorkflowInputValueSchema),
+  ]),
+);
+const WorkflowRunBodySchema = z
+  .object({
+    workflowPath: z.string().trim().min(1).optional(),
+    workflowYaml: z.string().trim().min(1).max(256_000).optional(),
+    workflowSourceRef: z.string().trim().min(1).optional(),
+    directoryId: z.string().trim().min(1),
+    inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
+    projectId: z.string().trim().min(1).optional(),
+    projectMachineBindingId: z.string().trim().min(1).optional(),
+    platformRunId: z.string().trim().min(1).optional(),
+    rerunOfWorkflowRunId: z.string().trim().min(1).optional(),
+    executionPolicy: z
+      .object({
+        mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
+        branch: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
+    initiation: z.enum(['cli', 'browser', 'agent_skill']).optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
+    message: 'workflowPath or workflowYaml is required',
+    path: ['workflowPath'],
+  });
+const WorkflowApprovalBodySchema = z
+  .object({
+    approved: z.boolean(),
+    message: z.string().trim().min(1).max(2_000).optional(),
+    actor: z
+      .object({
+        id: z.string().trim().min(1).max(255).optional(),
+        name: z.string().trim().min(1).max(255).optional(),
+        email: z.string().email().max(255).optional(),
+        source: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+const WorkflowCancelBodySchema = z
+  .object({
+    message: z.string().trim().min(1).max(2_000).optional(),
+    actor: z
+      .object({
+        id: z.string().trim().min(1).max(255).optional(),
+        name: z.string().trim().min(1).max(255).optional(),
+        email: z.string().email().max(255).optional(),
+        source: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 const PairRedeemBodySchema = z
@@ -557,6 +633,153 @@ export function registerHttpRoutes(
     await daemon.directoryManager.unregister(request.params.id);
     daemon.emit('directory:unregistered', { directoryId: request.params.id });
     return reply.status(204).send();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Workflows
+  // ---------------------------------------------------------------------------
+
+  app.post<{ Body: { workflowPath?: string } }>(
+    '/api/workflows/validate',
+    async (request, reply) => {
+      const parsedBody = WorkflowValidateBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+      }
+
+      try {
+        const workflow = parsedBody.data.workflowYaml
+          ? daemon.workflowRunner.validateText(
+              parsedBody.data.workflowYaml,
+              parsedBody.data.workflowSourceRef,
+            )
+          : await daemon.workflowRunner.validateFile(parsedBody.data.workflowPath!);
+        return {
+          workflow: {
+            name: workflow.definition.name,
+            title: workflow.definition.title,
+            description: workflow.definition.description,
+            digest: workflow.digest,
+            sourcePath: workflow.sourcePath,
+            nodeCount: Object.keys(workflow.definition.nodes).length,
+          },
+        };
+      } catch (error) {
+        return reply.status(400).send({
+          error: error instanceof Error ? error.message : 'Workflow validation failed',
+        });
+      }
+    },
+  );
+
+  app.get<{ Querystring: { limit?: string } }>('/api/workflows/runs', async (request) => {
+    const limit = Number.parseInt(request.query.limit ?? '50', 10);
+    const runs = await daemon.workflowRunner.listRuns(Number.isFinite(limit) ? limit : 50);
+    return { runs };
+  });
+
+  app.post<{
+    Body: {
+      workflowPath?: string;
+      workflowYaml?: string;
+      workflowSourceRef?: string;
+      directoryId?: string;
+      inputs?: Record<string, WorkflowInputValue>;
+      projectId?: string;
+      projectMachineBindingId?: string;
+      executionPolicy?: {
+        mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
+        branch?: string;
+      };
+      initiation?: 'cli' | 'browser' | 'agent_skill';
+    };
+  }>('/api/workflows/runs', async (request, reply) => {
+    const parsedBody = WorkflowRunBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+    }
+
+    try {
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath: parsedBody.data.workflowPath,
+        workflowYaml: parsedBody.data.workflowYaml,
+        workflowSourceRef: parsedBody.data.workflowSourceRef,
+        directoryId: parsedBody.data.directoryId,
+        inputs: parsedBody.data.inputs,
+        projectId: parsedBody.data.projectId,
+        projectMachineBindingId: parsedBody.data.projectMachineBindingId,
+        platformRunId: parsedBody.data.platformRunId,
+        rerunOfWorkflowRunId: parsedBody.data.rerunOfWorkflowRunId,
+        executionPolicy: parsedBody.data.executionPolicy,
+        initiation: parsedBody.data.initiation ?? 'browser',
+      });
+      return reply.status(201).send({ run });
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to start workflow run',
+      });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/api/workflows/runs/:id/rerun', async (request, reply) => {
+    try {
+      const run = await daemon.workflowRunner.rerunRun(request.params.id);
+      return reply.status(201).send({ run });
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to rerun workflow',
+      });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/api/workflows/runs/:id', async (request, reply) => {
+    const run = await daemon.workflowRunner.getRun(request.params.id);
+    if (!run) {
+      return reply.status(404).send({ error: 'Workflow run not found' });
+    }
+    return { run };
+  });
+
+  app.post<{
+    Params: { id: string; nodeId: string };
+    Body: { approved?: boolean; message?: string };
+  }>('/api/workflows/runs/:id/approvals/:nodeId', async (request, reply) => {
+    const parsedBody = WorkflowApprovalBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+    }
+
+    try {
+      const run = await daemon.workflowRunner.decideApproval(
+        request.params.id,
+        request.params.nodeId,
+        parsedBody.data,
+      );
+      return { run };
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to resolve workflow approval',
+      });
+    }
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: { message?: string; actor?: { name?: string; source?: string } };
+  }>('/api/workflows/runs/:id/cancel', async (request, reply) => {
+    const parsedBody = WorkflowCancelBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: invalidPayloadError(parsedBody.error) });
+    }
+
+    try {
+      const run = await daemon.workflowRunner.cancelRun(request.params.id, parsedBody.data);
+      return { run };
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to cancel workflow run',
+      });
+    }
   });
 
   // ---------------------------------------------------------------------------
