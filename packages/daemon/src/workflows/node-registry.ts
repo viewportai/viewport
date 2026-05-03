@@ -9,6 +9,7 @@ import {
 import { executeSubflowNode } from './subflow-executor.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
+import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
 
 /**
  * Outcome of a per-type executor handler. The orchestrator in
@@ -176,11 +177,11 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       body,
       source: node.source ?? 'workflow',
       sourceRef: sourceRef || `viewport://workflow-runs/${run.id}/nodes/${nodeId}`,
-      metadata: {
+      metadata: sanitizePlanProposalMetadata({
         workflowRunId: run.id,
         workflowNodeId: nodeId,
         projectId: run.projectId ?? null,
-      },
+      }),
     });
     addEvent(
       run,

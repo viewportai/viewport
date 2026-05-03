@@ -176,12 +176,18 @@ nodes:
 
   it('creates a plan proposal node and waits for approval before continuing', async () => {
     const daemon = await setup();
-    const proposals: Array<{ title?: string; body: string; source?: string }> = [];
+    const proposals: Array<{
+      title?: string;
+      body: string;
+      source?: string;
+      metadata?: Record<string, unknown>;
+    }> = [];
     daemon.on('hook:plan-proposed', (event) => {
       proposals.push({
         title: event.title,
         body: event.body,
         source: event.source,
+        metadata: event.metadata,
       });
     });
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -225,7 +231,12 @@ nodes:
     expect(proposals[0]).toMatchObject({
       title: 'Refactor billing boundaries',
       source: 'workflow',
+      metadata: {
+        workflowRunId: run.id,
+        workflowNodeId: 'propose',
+      },
     });
+    expect(proposals[0]?.metadata).not.toHaveProperty('projectId');
     expect(proposals[0]?.body).toContain('Add BillingService');
     expect(blocked.nodes.propose?.approval?.prompt).toBe(
       'Approve plan: Refactor billing boundaries',
