@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -7,16 +6,22 @@ import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
 import { HookRouter } from '../../src/hooks/router.js';
 import { SupervisionManager } from '../../src/hooks/supervision.js';
-import type {
-  AgentAdapter,
-  DiscoveredSession,
-  RunTracker,
-  Session,
-  SessionOptions,
-} from '../../src/core/interfaces.js';
-import type { SessionState, Step } from '../../src/core/types.js';
 import { WorkflowRunReconciler } from '../../src/workflows/runner-reconciler.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
+import {
+  MockAdapter,
+  PathDiscovery,
+  WorktreeTracker,
+  waitForAdapterSessionCount,
+  waitForCompletedRun,
+  waitForCondition,
+  waitForNodeSession,
+  waitForRunState,
+  waitForSessionWithPrompt,
+  waitForSupervisorSession,
+  waitForTerminalRun,
+  writeCodexTranscript,
+} from './support/workflow-runner-support.js';
 
 let tempHome: string;
 let projectDir: string;
@@ -2306,243 +2311,3 @@ nodes:
     expect(completed?.nodes.notify?.output).toBe('notify-reliable');
   });
 });
-
-class MockSession extends EventEmitter implements Session {
-  readonly id = crypto.randomUUID();
-  state: SessionState = 'running';
-
-  sendPrompt = vi.fn().mockResolvedValue(undefined);
-  kill = vi.fn().mockImplementation(async () => {
-    this.simulateEnd('killed');
-  });
-
-  simulateEnd(reason: string): void {
-    this.state = 'completed';
-    this.emit('ended', reason);
-  }
-
-  simulateIdle(): void {
-    this.state = 'idle';
-    this.emit('state-change', 'idle');
-  }
-
-  emitAgentMessage(text: string, messageId = crypto.randomUUID()): void {
-    this.emit('message', {
-      type: 'agent_message',
-      messageId,
-      text,
-      timestamp: Date.now(),
-    });
-  }
-
-  emitAgentMessageChunk(messageId: string, text: string): void {
-    this.emit('message', {
-      type: 'agent_message_chunk',
-      messageId,
-      text,
-      timestamp: Date.now(),
-    });
-  }
-}
-
-class MockAdapter implements AgentAdapter {
-  readonly agentId = 'claude';
-  lastSession: MockSession | null = null;
-  readonly sessions: MockSession[] = [];
-
-  async startSession(_cwd: string, _options?: SessionOptions): Promise<Session> {
-    this.lastSession = new MockSession();
-    this.sessions.push(this.lastSession);
-    return this.lastSession;
-  }
-
-  async resumeSession(
-    _sessionId: string,
-    _cwd: string,
-    _options?: SessionOptions,
-  ): Promise<Session> {
-    this.lastSession = new MockSession();
-    this.sessions.push(this.lastSession);
-    return this.lastSession;
-  }
-}
-
-class PathDiscovery {
-  readonly agentId: string;
-  private readonly sessionsByPath = new Map<string, DiscoveredSession[]>();
-
-  constructor(agentId: string) {
-    this.agentId = agentId;
-  }
-
-  setProjectSessions(projectPath: string, sessions: DiscoveredSession[]): void {
-    this.sessionsByPath.set(path.resolve(projectPath), sessions);
-  }
-
-  async discoverSessions(projectPath: string): Promise<DiscoveredSession[]> {
-    return this.sessionsByPath.get(path.resolve(projectPath)) ?? [];
-  }
-}
-
-class WorktreeTracker implements RunTracker {
-  readonly steps: ReadonlyArray<Step> = [];
-  onStepCommitted?: (step: Step) => void;
-
-  constructor(private readonly worktreePath: string) {}
-
-  async setup(_sessionId: string, _projectPath: string): Promise<string> {
-    await fs.mkdir(this.worktreePath, { recursive: true });
-    return this.worktreePath;
-  }
-
-  onMessage(): void {}
-  async flushPendingCommits(): Promise<void> {}
-  async teardown(): Promise<void> {}
-  async rollback(_toSha: string): Promise<void> {}
-  async branchRetry(_fromSha: string): Promise<string> {
-    return this.worktreePath;
-  }
-  async squashMerge(_targetBranch: string, _commitMessage: string): Promise<void> {}
-  async getDiff(_sha: string): Promise<string> {
-    return '';
-  }
-  async getStepDiffs(): Promise<Array<{ step: number; sha: string; diff: string }>> {
-    return [];
-  }
-  async getSummaryDiff(): Promise<string> {
-    return '';
-  }
-}
-
-async function waitForTerminalRun(daemon: Daemon, runId: string): Promise<void> {
-  for (let index = 0; index < 200; index += 1) {
-    const run = await daemon.workflowRunner.getRun(runId);
-    if (run && ['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for workflow run ${runId}`);
-}
-
-async function waitForCompletedRun(daemon: Daemon, runId: string): Promise<void> {
-  for (let index = 0; index < 200; index += 1) {
-    const run = await daemon.workflowRunner.getRun(runId);
-    if (run?.status === 'completed') return;
-    if (run && ['failed', 'canceled'].includes(run.status)) {
-      throw new Error(`Workflow run ${runId} ended as ${run.status}: ${run.error ?? ''}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for completed workflow run ${runId}`);
-}
-
-async function waitForRunState(
-  daemon: Daemon,
-  runId: string,
-  predicate: (run: NonNullable<Awaited<ReturnType<Daemon['workflowRunner']['getRun']>>>) => boolean,
-): Promise<NonNullable<Awaited<ReturnType<Daemon['workflowRunner']['getRun']>>>> {
-  for (let index = 0; index < 200; index += 1) {
-    const run = await daemon.workflowRunner.getRun(runId);
-    if (run && predicate(run)) return run;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for workflow run ${runId} to match expected state`);
-}
-
-async function waitForCondition(predicate: () => boolean): Promise<void> {
-  for (let index = 0; index < 200; index += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('Timed out waiting for condition');
-}
-
-async function waitForNodeSession(daemon: Daemon, runId: string, nodeId: string): Promise<void> {
-  for (let index = 0; index < 100; index += 1) {
-    const run = await daemon.workflowRunner.getRun(runId);
-    if (run?.nodes[nodeId]?.sessionId) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for workflow node session ${nodeId}`);
-}
-
-async function waitForAdapterSessionCount(
-  adapter: MockAdapter,
-  count: number,
-): Promise<MockSession> {
-  for (let index = 0; index < 100; index += 1) {
-    const session = adapter.sessions[count - 1];
-    if (session) return session;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for adapter session ${count}`);
-}
-
-async function waitForSupervisorSession(
-  daemon: Daemon,
-  runId: string,
-  adapter: MockAdapter,
-): Promise<MockSession> {
-  for (let index = 0; index < 100; index += 1) {
-    const session = findSessionWithPrompt(adapter, 'Synthesize the child agent findings.');
-    if (session) return session;
-    const run = await daemon.workflowRunner.getRun(runId);
-    if (run && ['failed', 'canceled', 'completed', 'blocked'].includes(run.status)) {
-      throw new Error(
-        `Workflow ended before supervisor session: ${run.status} ${run.error ?? ''} ${JSON.stringify(run.nodes.supervisor)}`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for supervisor session`);
-}
-
-async function waitForSessionWithPrompt(
-  adapter: MockAdapter,
-  promptFragment: string,
-): Promise<MockSession> {
-  for (let index = 0; index < 40; index += 1) {
-    const session = findSessionWithPrompt(adapter, promptFragment);
-    if (session) return session;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Timed out waiting for session prompt containing ${promptFragment}`);
-}
-
-function findSessionWithPrompt(adapter: MockAdapter, promptFragment: string): MockSession | null {
-  return (
-    adapter.sessions.find((session) =>
-      session.sendPrompt.mock.calls.some(([prompt]) => String(prompt).includes(promptFragment)),
-    ) ?? null
-  );
-}
-
-async function writeCodexTranscript(cwd: string, output: string): Promise<void> {
-  const root = path.join(process.env['CODEX_HOME'] ?? tempHome, 'sessions', '2026', '04', '24');
-  await fs.mkdir(root, { recursive: true });
-  const filePath = path.join(root, `${crypto.randomUUID()}.jsonl`);
-  const timestamp = new Date().toISOString();
-  const lines = [
-    {
-      timestamp,
-      type: 'session_meta',
-      payload: {
-        id: crypto.randomUUID(),
-        cwd,
-      },
-    },
-    {
-      timestamp,
-      type: 'response_item',
-      payload: {
-        type: 'message',
-        role: 'assistant',
-        content: [{ type: 'output_text', text: output }],
-      },
-    },
-  ];
-  await fs.writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
-}
