@@ -42,6 +42,14 @@ export function workflowNodeMetadata(
         }
       : {}),
     ...(node.type === 'gate' ? { gate: node.gate } : {}),
+    ...(node.type === 'plan'
+      ? {
+          title: node.title,
+          summary: node.summary ?? null,
+          source: node.source ?? 'workflow',
+          waitForApproval: node.waitForApproval ?? true,
+        }
+      : {}),
   };
 }
 

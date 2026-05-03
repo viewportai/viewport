@@ -28,7 +28,14 @@ export type {
   WorkflowTranscriptExcerptMessage,
 } from './run-types.js';
 
-export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop' | 'subflow';
+export type WorkflowNodeType =
+  | 'prompt'
+  | 'shell'
+  | 'approval'
+  | 'gate'
+  | 'loop'
+  | 'subflow'
+  | 'plan';
 
 /**
  * Join semantics when a node has multiple `needs`. Default is `all_success`.
@@ -170,6 +177,16 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
       };
 }
 
+export interface WorkflowPlanNode extends WorkflowNodeBase {
+  type: 'plan';
+  title: string;
+  body: string;
+  summary?: string;
+  source?: string;
+  sourceRef?: string;
+  waitForApproval?: boolean;
+}
+
 export interface WorkflowGateNode extends WorkflowNodeBase {
   type: 'gate';
   gate: WorkflowGateDefinition;
@@ -219,6 +236,7 @@ export type WorkflowNode =
   | WorkflowPromptNode
   | WorkflowShellNode
   | WorkflowApprovalNode
+  | WorkflowPlanNode
   | WorkflowGateNode
   | WorkflowLoopNode
   | WorkflowSubflowNode;

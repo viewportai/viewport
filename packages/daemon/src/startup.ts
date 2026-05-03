@@ -19,6 +19,7 @@ import { GitTracker } from './tracking/git-tracker.js';
 import { registerHttpRoutes } from './server/http-server.js';
 import { registerWsServer } from './server/ws-server.js';
 import { HookRouter, SupervisionManager } from './hooks/index.js';
+import { PlatformPlanHookSync } from './hooks/platform-plan-sync.js';
 import { LocalAuthProvider } from './server/auth.js';
 import type { AuthProvider } from './server/auth.js';
 import type { GitTrackerConfig } from './core/types.js';
@@ -298,6 +299,15 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
   // Hook system — enables remote supervision of terminal-started sessions
   const supervision = new SupervisionManager();
   const hookRouter = new HookRouter(daemon, supervision);
+  const platformPlanHookSync = new PlatformPlanHookSync(daemon.configManager);
+  daemon.on('hook:plan-proposed', (event) => {
+    void platformPlanHookSync.send(event).catch((error) => {
+      logger.warn(
+        '[hooks] failed to sync plan proposal:',
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  });
 
   if (tls) {
     logger.log(`TLS:     enabled (host=${tls.tlsHost})`);

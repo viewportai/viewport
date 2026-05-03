@@ -173,4 +173,78 @@ nodes:
     expect(completed?.nodes.gate?.output).toBe('Human reviewed');
     expect(completed?.nodes.after?.output).toBe('Human reviewed');
   });
+
+  it('creates a plan proposal node and waits for approval before continuing', async () => {
+    const daemon = await setup();
+    const proposals: Array<{ title?: string; body: string; source?: string }> = [];
+    daemon.on('hook:plan-proposed', (event) => {
+      proposals.push({
+        title: event.title,
+        body: event.body,
+        source: event.source,
+      });
+    });
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: plan-node-proof
+nodes:
+  propose:
+    type: plan
+    title: "Refactor billing boundaries"
+    summary: "Move billing orchestration behind a service."
+    body: |
+      ## Plan
+      1. Add BillingService.
+      2. Move controller orchestration.
+      3. Add tests.
+  after:
+    type: shell
+    needs: [propose]
+    command: printf "{{ nodes.propose.output }}"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const blocked = await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) =>
+        candidate.status === 'blocked' && candidate.nodes.propose?.status === 'blocked',
+    );
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      title: 'Refactor billing boundaries',
+      source: 'workflow',
+    });
+    expect(proposals[0]?.body).toContain('Add BillingService');
+    expect(blocked.nodes.propose?.approval?.prompt).toBe(
+      'Approve plan: Refactor billing boundaries',
+    );
+    expect(blocked.nodes.propose?.metadata?.plan).toMatchObject({
+      title: 'Refactor billing boundaries',
+      source: 'workflow',
+    });
+
+    await daemon.workflowRunner.decideApproval(run.id, 'propose', {
+      approved: true,
+      message: 'Approved by reviewer',
+    });
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.propose?.output).toContain('Add BillingService');
+    expect(completed?.nodes.after?.output).toContain('Add BillingService');
+    expect(completed?.events.map((event) => event.type)).toContain('plan-proposed');
+  });
 });

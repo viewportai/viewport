@@ -146,6 +146,55 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     await executeSubflowNode(context, run, nodeId, node);
     return { result: 'completed' };
   },
+
+  plan: async (context, run, nodeId, node, helpers) => {
+    if (node.type !== 'plan') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    const title = await renderTemplate(node.title, run);
+    const body = await renderTemplate(node.body, run);
+    const summary = await renderOptionalTemplate(node.summary, run);
+    const sourceRef = await renderOptionalTemplate(node.sourceRef, run);
+    if (state) {
+      state.output = body;
+      state.metadata = {
+        ...(state.metadata ?? {}),
+        plan: {
+          title,
+          summary,
+          body,
+          source: node.source ?? 'workflow',
+          sourceRef: sourceRef || `viewport://workflow-runs/${run.id}/nodes/${nodeId}`,
+        },
+      };
+    }
+    context.daemon.emit('hook:plan-proposed', {
+      sessionId: `${run.id}:${nodeId}`,
+      adapter: 'viewport-workflow',
+      cwd: run.directoryPath,
+      title,
+      summary,
+      body,
+      source: node.source ?? 'workflow',
+      sourceRef: sourceRef || `viewport://workflow-runs/${run.id}/nodes/${nodeId}`,
+      metadata: {
+        workflowRunId: run.id,
+        workflowNodeId: nodeId,
+        projectId: run.projectId ?? null,
+      },
+    });
+    addEvent(
+      run,
+      'plan-proposed',
+      `Plan node ${nodeId} proposed ${title}`,
+      { title, summary, sourceRef: sourceRef || null },
+      nodeId,
+    );
+    if (node.waitForApproval === false) {
+      return { result: 'completed' };
+    }
+    await helpers.blockForApproval(context, run, nodeId, `Approve plan: ${title}`);
+    return { result: 'blocked' };
+  },
 };
 
 // Seed the mutable registry with built-ins. Plugin entries register at boot.

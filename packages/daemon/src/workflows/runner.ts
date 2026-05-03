@@ -194,7 +194,7 @@ export class WorkflowRunner {
   ): Promise<WorkflowRunRecord> {
     const run = await this.requireRun(runId);
     const state = run.nodes[nodeId];
-    if (!state || (state.type !== 'approval' && state.type !== 'gate')) {
+    if (!state || (state.type !== 'approval' && state.type !== 'gate' && state.type !== 'plan')) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
     if (run.status !== 'blocked' || state.status !== 'blocked') {
@@ -265,7 +265,16 @@ export class WorkflowRunner {
     // expected to be a free-text payload by design.
     const isOptInApproval =
       approvalNode?.type === 'approval' && approvalNode.captureResponse !== true;
-    state.output = isOptInApproval ? 'Approved' : (decision.message ?? 'Approved');
+    const planBody =
+      state.type === 'plan' &&
+      state.metadata &&
+      typeof state.metadata['plan'] === 'object' &&
+      state.metadata['plan'] !== null &&
+      'body' in state.metadata['plan'] &&
+      typeof (state.metadata['plan'] as { body?: unknown }).body === 'string'
+        ? (state.metadata['plan'] as { body: string }).body
+        : null;
+    state.output = planBody ?? (isOptInApproval ? 'Approved' : (decision.message ?? 'Approved'));
     run.status = 'running';
     run.updatedAt = resolvedAt;
     addEvent(

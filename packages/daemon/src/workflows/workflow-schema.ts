@@ -223,6 +223,16 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
   onReject: ApprovalOnRejectSchema.optional(),
 }).strict();
 
+const PlanNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('plan'),
+  title: z.string().trim().min(1),
+  body: z.string().trim().min(1),
+  summary: z.string().trim().min(1).optional(),
+  source: z.string().trim().min(1).optional(),
+  sourceRef: z.string().trim().min(1).optional(),
+  waitForApproval: z.boolean().optional(),
+}).strict();
+
 const GateNodeSchema = NodeBaseSchema.extend({
   type: z.literal('gate'),
   gate: GateDefinitionSchema,
@@ -296,6 +306,7 @@ const WorkflowNodeSchema = z.discriminatedUnion('type', [
   PromptNodeSchema,
   ShellNodeSchema,
   ApprovalNodeSchema,
+  PlanNodeSchema,
   GateNodeSchema,
   LoopNodeSchema,
   SubflowNodeSchema,
