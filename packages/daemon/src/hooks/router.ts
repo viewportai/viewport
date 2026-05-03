@@ -26,7 +26,7 @@ import {
 } from './types.js';
 import { logger } from '../core/logger.js';
 import { workflowHookRegistry } from '../workflows/hook-registry.js';
-import { extractPlanProposalFromText } from './plan-extractor.js';
+import { emitSpecificHookEvent } from './specific-events.js';
 
 const log = logger.child({ module: 'hook-router' });
 const MAX_PENDING_PERMISSION_REQUESTS = 512;
@@ -297,122 +297,6 @@ export class HookRouter {
     data: Record<string, unknown>,
     ctx: { sessionId: string; adapter: string; cwd?: string },
   ): void {
-    switch (kind) {
-      case 'SessionStart':
-        this.eventBus.emit('hook:session-start', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          cwd: data.cwd as string | undefined,
-          source: data.source as string | undefined,
-          agentType: data.agent_type as string | undefined,
-          model: data.model as string | undefined,
-        });
-        break;
-      case 'SessionEnd':
-        this.eventBus.emit('hook:session-end', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          reason: data.reason as string | undefined,
-        });
-        break;
-      case 'Notification':
-        this.eventBus.emit('hook:notification', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          message: (data.message as string) ?? '',
-          title: data.title as string | undefined,
-          notificationType: data.notification_type as string | undefined,
-        });
-        break;
-      case 'PostToolUse':
-        this.eventBus.emit('hook:tool-completed', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          toolName: (data.tool_name as string) ?? '',
-          toolInput: data.tool_input,
-          toolResponse: data.tool_response,
-        });
-        break;
-      case 'PostToolUseFailure':
-        this.eventBus.emit('hook:tool-failed', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          toolName: (data.tool_name as string) ?? '',
-          error: data.error as string | undefined,
-          isInterrupt: data.is_interrupt as boolean | undefined,
-        });
-        break;
-      case 'Stop':
-        this.eventBus.emit('hook:stop', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          lastMessage: data.last_assistant_message as string | undefined,
-        });
-        this.emitExplicitPlanProposalFromStop(data, ctx);
-        break;
-      case 'SubagentStart':
-        this.eventBus.emit('hook:subagent-start', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          agentId: data.agent_id as string | undefined,
-          agentType: data.agent_type as string | undefined,
-        });
-        break;
-      case 'SubagentStop':
-        this.eventBus.emit('hook:subagent-stop', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          agentId: data.agent_id as string | undefined,
-          agentType: data.agent_type as string | undefined,
-          lastMessage: data.last_assistant_message as string | undefined,
-        });
-        break;
-      case 'PlanProposed': {
-        const body =
-          (data.body as string | undefined) ??
-          (data.plan_markdown as string | undefined) ??
-          (data.plan as string | undefined) ??
-          '';
-        this.eventBus.emit('hook:plan-proposed', {
-          sessionId: ctx.sessionId,
-          adapter: ctx.adapter,
-          cwd: data.cwd as string | undefined,
-          title: data.title as string | undefined,
-          summary: data.summary as string | undefined,
-          body,
-          source: data.source as string | undefined,
-          sourceRef: data.source_ref as string | undefined,
-          metadata: data.metadata as Record<string, unknown> | undefined,
-        });
-        break;
-      }
-      default:
-        // Generic events (UserPromptSubmit, TaskCompleted, PreToolUse, PermissionRequest)
-        // are already emitted via hook:event — no specific event needed yet
-        break;
-    }
-  }
-
-  private emitExplicitPlanProposalFromStop(
-    data: Record<string, unknown>,
-    ctx: { sessionId: string; adapter: string; cwd?: string },
-  ): void {
-    const proposal = extractPlanProposalFromText(data.last_assistant_message as string | undefined);
-    if (!proposal) return;
-
-    this.eventBus.emit('hook:plan-proposed', {
-      sessionId: ctx.sessionId,
-      adapter: ctx.adapter,
-      cwd: ctx.cwd,
-      title: proposal.title,
-      summary: proposal.summary,
-      body: proposal.body,
-      source: proposal.source ?? `${ctx.adapter}-stop`,
-      sourceRef: proposal.sourceRef ?? `hook://stop/${ctx.sessionId}`,
-      metadata: {
-        ...(proposal.metadata ?? {}),
-        extractedFrom: 'explicit-marker',
-      },
-    });
+    emitSpecificHookEvent(this.eventBus, kind, data, ctx);
   }
 }
