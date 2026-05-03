@@ -32,7 +32,9 @@ export class WorkflowRunner {
   private readonly canceler: WorkflowRunCanceler;
 
   constructor(private readonly daemon: Daemon) {
-    this.platformSync = new WorkflowRunPlatformSync(daemon.configManager);
+    this.platformSync = new WorkflowRunPlatformSync(daemon.configManager, undefined, {
+      onRuntimeCommand: (command) => this.applyRuntimeCommand(command),
+    });
 
     const ops: RunnerOps = {
       requireRun: (runId) => this.requireRun(runId),
@@ -344,6 +346,36 @@ export class WorkflowRunner {
     run.updatedAt = run.completedAt;
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await this.saveAndEmit(run);
+  }
+
+  private async applyRuntimeCommand(command: {
+    type: 'workflow.approval_decision';
+    workflow_run_id?: string | null;
+    workflow_node_id: string;
+    approved: boolean;
+    message?: string | null;
+    actor?: Record<string, unknown> | null;
+  }): Promise<void> {
+    if (command.type !== 'workflow.approval_decision') return;
+    const actor = command.actor
+      ? Object.fromEntries(
+          Object.entries(command.actor).filter(
+            ([, value]) => ['string', 'number', 'boolean'].includes(typeof value),
+          ),
+        )
+      : undefined;
+    for (const run of await this.store.list(500)) {
+      if (command.workflow_run_id && command.workflow_run_id !== run.id) continue;
+      if (run.status !== 'blocked') continue;
+      const node = run.nodes[command.workflow_node_id];
+      if (!node || node.status !== 'blocked') continue;
+      await this.decideApproval(run.id, command.workflow_node_id, {
+        approved: command.approved,
+        ...(command.message ? { message: command.message } : {}),
+        ...(actor && Object.keys(actor).length > 0 ? { actor } : {}),
+      });
+      return;
+    }
   }
 
   private async requireRun(runId: string): Promise<WorkflowRunRecord> {
