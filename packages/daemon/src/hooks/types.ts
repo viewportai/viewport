@@ -13,6 +13,7 @@
  */
 
 import { z } from 'zod';
+import { PLAN_PROPOSAL_SCHEMA_VERSION } from './plan-extractor.js';
 
 // ---------------------------------------------------------------------------
 // Hook event kinds — add new events here
@@ -137,6 +138,7 @@ export const TaskCompletedInputSchema = HookBaseInputSchema.extend({
 
 export const PlanProposedInputSchema = HookBaseInputSchema.extend({
   hook_event_name: z.literal('PlanProposed'),
+  schema: z.literal(PLAN_PROPOSAL_SCHEMA_VERSION),
   title: z.string().optional(),
   summary: z.string().optional(),
   body: z.string().optional(),
@@ -145,6 +147,20 @@ export const PlanProposedInputSchema = HookBaseInputSchema.extend({
   source: z.string().optional(),
   source_ref: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((value, ctx) => {
+  const bodyFields = ['body', 'plan', 'plan_markdown'] as const;
+  const present = bodyFields.filter((field) => {
+    const candidate = value[field];
+    return typeof candidate === 'string' && candidate.trim().length > 0;
+  });
+
+  if (present.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['body'],
+      message: 'PlanProposed requires exactly one non-empty body, plan, or plan_markdown field.',
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

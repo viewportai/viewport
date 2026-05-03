@@ -60,9 +60,7 @@ function parseJsonPlan(text: string): ExtractedPlanProposal | null {
 
 function parseFrontmatterPlan(text: string): ExtractedPlanProposal | null {
   const separator = text.indexOf('\n---\n');
-  if (separator === -1) {
-    return { body: text, metadata: contractMetadata(undefined, 'plain') };
-  }
+  if (separator === -1) return null;
 
   const header = text.slice(0, separator).trim();
   const body = text.slice(separator + '\n---\n'.length).trim();
@@ -88,7 +86,7 @@ function parseFrontmatterPlan(text: string): ExtractedPlanProposal | null {
 
 function contractMetadata(
   metadata: Record<string, unknown> | undefined,
-  format: 'json' | 'frontmatter' | 'plain',
+  format: 'json' | 'frontmatter',
 ): Record<string, unknown> | undefined {
   return {
     ...(metadata ?? {}),
@@ -100,7 +98,7 @@ function contractMetadata(
 }
 
 function hasSupportedSchema(schema: unknown): boolean {
-  return schema === undefined || schema === null || schema === PLAN_PROPOSAL_SCHEMA_VERSION;
+  return schema === PLAN_PROPOSAL_SCHEMA_VERSION;
 }
 
 function readString(value: unknown): string | undefined {

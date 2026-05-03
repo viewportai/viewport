@@ -5,6 +5,7 @@ import { TypedEventEmitter } from '../../src/core/events.js';
 import type { DaemonEvents } from '../../src/core/events.js';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 import { workflowHookRegistry } from '../../src/workflows/hook-registry.js';
+import { PLAN_PROPOSAL_SCHEMA_VERSION } from '../../src/hooks/plan-extractor.js';
 
 function mockClient(): ConnectedClient {
   return {
@@ -139,6 +140,7 @@ describe('HookRouter', () => {
       last_assistant_message: [
         'Drafted the requested plan.',
         '```viewport-plan',
+        `schema: ${PLAN_PROPOSAL_SCHEMA_VERSION}`,
         'title: Refactor auth callbacks',
         'summary: Move callback handling behind one service.',
         'source: claude-code',
@@ -214,6 +216,7 @@ describe('HookRouter', () => {
 
     const result = await router.handleEvent({
       hook_event_name: 'PlanProposed',
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
       session_id: 's1',
       cwd: '/tmp/project',
       title: 'Refactor auth callbacks',
@@ -234,8 +237,48 @@ describe('HookRouter', () => {
       body: '## Plan\n\n1. Extract service\n2. Add tests',
       source: 'claude-code',
       sourceRef: 'claude://session/s1',
-      metadata: { confidence: 'draft' },
+      metadata: { confidence: 'draft', schema: PLAN_PROPOSAL_SCHEMA_VERSION },
     });
+  });
+
+  it('rejects PlanProposed hooks without the explicit plan contract schema', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PlanProposed',
+      session_id: 's1',
+      body: '## Plan\n\nMissing schema.',
+    });
+
+    expect(result).toEqual({ passthrough: true });
+    expect(events).toHaveLength(0);
+  });
+
+  it('rejects PlanProposed hooks with blank or ambiguous plan bodies', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await expect(
+      router.handleEvent({
+        hook_event_name: 'PlanProposed',
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        session_id: 's1',
+        body: '   ',
+      }),
+    ).resolves.toEqual({ passthrough: true });
+
+    await expect(
+      router.handleEvent({
+        hook_event_name: 'PlanProposed',
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        session_id: 's1',
+        body: 'Plan A',
+        plan_markdown: 'Plan B',
+      }),
+    ).resolves.toEqual({ passthrough: true });
+
+    expect(events).toHaveLength(0);
   });
 
   it('emits generic hook:event for all events', async () => {

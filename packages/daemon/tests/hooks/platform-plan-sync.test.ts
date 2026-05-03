@@ -29,7 +29,11 @@ describe('PlatformPlanHookSync', () => {
         body: '## Plan\n1. Inspect diff\n2. Report risks',
         source: 'claude',
         sourceRef: 'claude://session/session_1',
-        metadata: { projectId: 'workspace_1', workflowRunId: 'run_1' },
+        metadata: {
+          projectId: 'workspace_2',
+          secret: 'do-not-forward',
+          workflowRunId: 'run_1',
+        },
       }),
     ).resolves.toEqual({ synced: true });
 
@@ -48,12 +52,12 @@ describe('PlatformPlanHookSync', () => {
       body: '## Plan\n1. Inspect diff\n2. Report risks',
       source: 'claude',
       source_ref: 'claude://session/session_1',
-      payload: { projectId: 'workspace_1', workflowRunId: 'run_1' },
+      payload: { workflowRunId: 'run_1' },
     });
   });
 
   it('skips sync when no relay issue token or project target is configured', async () => {
-    const fetcher = vi.fn();
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
     const sync = new PlatformPlanHookSync(
       {
         getDaemonConfig: () => ({
@@ -74,8 +78,8 @@ describe('PlatformPlanHookSync', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('does not sync an event for a different project than the active relay binding', async () => {
-    const fetcher = vi.fn();
+  it('routes only to the active relay project, not agent-controlled metadata', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
     const sync = new PlatformPlanHookSync(
       {
         getDaemonConfig: () => ({
@@ -93,7 +97,7 @@ describe('PlatformPlanHookSync', () => {
         body: 'Plan',
         metadata: { projectId: 'workspace_2' },
       }),
-    ).resolves.toEqual({ synced: false, reason: 'missing_platform_target' });
-    expect(fetcher).not.toHaveBeenCalled();
+    ).resolves.toEqual({ synced: true });
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });

@@ -90,7 +90,7 @@ export class HookRouter {
     const baseResult = HookBaseInputSchema.safeParse(input);
     if (!baseResult.success) {
       log.warn(
-        { input, error: baseResult.error.message },
+        { input: safeHookLogInput(input), error: baseResult.error.message },
         'Invalid hook input — missing base fields',
       );
       return { passthrough: true };
@@ -299,4 +299,16 @@ export class HookRouter {
   ): void {
     emitSpecificHookEvent(this.eventBus, kind, data, ctx);
   }
+}
+
+function safeHookLogInput(input: Record<string, unknown>): Record<string, unknown> {
+  return {
+    hook_event_name: typeof input.hook_event_name === 'string' ? input.hook_event_name : undefined,
+    adapter: typeof input.adapter === 'string' ? input.adapter : undefined,
+    has_session_id: typeof input.session_id === 'string' && input.session_id.trim().length > 0,
+    keys: Object.keys(input).filter(
+      (key) =>
+        !['body', 'metadata', 'plan', 'plan_markdown', 'tool_input', 'tool_response'].includes(key),
+    ),
+  };
 }

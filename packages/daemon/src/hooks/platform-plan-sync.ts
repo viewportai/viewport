@@ -18,7 +18,7 @@ export class PlatformPlanHookSync {
   ) {}
 
   async send(event: PlanProposedEvent): Promise<PlatformPlanHookSyncResult> {
-    const target = this.targetFor(event);
+    const target = this.targetFor();
     if (!target) return { synced: false, reason: 'missing_platform_target' };
 
     const res = await this.fetcher(target.url, {
@@ -34,7 +34,7 @@ export class PlatformPlanHookSync {
         body: event.body,
         source: event.source ?? event.adapter,
         source_ref: event.sourceRef ?? null,
-        payload: event.metadata ?? {},
+        payload: sanitizeMetadata(event.metadata),
       }),
       timeoutMs: 5_000,
       tlsVerify: target.tlsVerify,
@@ -49,7 +49,7 @@ export class PlatformPlanHookSync {
     return { synced: true };
   }
 
-  private targetFor(event: PlanProposedEvent): {
+  private targetFor(): {
     url: string;
     issueToken: string;
     tlsVerify?: 'auto' | '0' | '1';
@@ -61,10 +61,9 @@ export class PlatformPlanHookSync {
     const relay = daemonConfig?.relay ?? {};
     const serverUrl = relay.serverUrl ?? server.url;
     const issueToken = relay.issueToken;
-    const projectId = readString(event.metadata?.['projectId']) ?? relay.workspaceId;
+    const projectId = relay.workspaceId;
 
     if (!serverUrl || !issueToken || !projectId) return null;
-    if (relay.workspaceId && relay.workspaceId !== projectId) return null;
 
     return {
       url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(projectId)}/agent-hooks/plans`,
@@ -76,6 +75,25 @@ export class PlatformPlanHookSync {
   }
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+function sanitizeMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!metadata) return {};
+
+  const allowed = new Set([
+    'extractedFrom',
+    'format',
+    'marker',
+    'providerModel',
+    'schema',
+    'workflowNodeId',
+    'workflowRunId',
+  ]);
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!allowed.has(key)) continue;
+    if (['string', 'number', 'boolean'].includes(typeof value) || value === null) {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized;
 }

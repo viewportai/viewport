@@ -1,7 +1,7 @@
 import type { TypedEventEmitter } from '../core/events.js';
 import type { DaemonEvents } from '../core/events.js';
 import type { HookEventKind } from './types.js';
-import { extractPlanProposalFromText } from './plan-extractor.js';
+import { extractPlanProposalFromText, PLAN_PROPOSAL_SCHEMA_VERSION } from './plan-extractor.js';
 
 type SpecificEventContext = {
   sessionId: string;
@@ -95,7 +95,10 @@ export function emitSpecificHookEvent(
         body: planBodyFromData(data),
         source: data.source as string | undefined,
         sourceRef: data.source_ref as string | undefined,
-        metadata: data.metadata as Record<string, unknown> | undefined,
+        metadata: {
+          ...(data.metadata as Record<string, unknown> | undefined),
+          schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        },
       });
       break;
     default:
@@ -104,12 +107,12 @@ export function emitSpecificHookEvent(
 }
 
 function planBodyFromData(data: Record<string, unknown>): string {
-  return (
-    (data.body as string | undefined) ??
-    (data.plan_markdown as string | undefined) ??
-    (data.plan as string | undefined) ??
-    ''
-  );
+  for (const field of ['body', 'plan_markdown', 'plan'] as const) {
+    const value = data[field];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
+
+  return '';
 }
 
 function emitExplicitPlanProposalFromStop(
