@@ -26,6 +26,7 @@ import {
 } from './types.js';
 import { logger } from '../core/logger.js';
 import { workflowHookRegistry } from '../workflows/hook-registry.js';
+import { extractPlanProposalFromText } from './plan-extractor.js';
 
 const log = logger.child({ module: 'hook-router' });
 const MAX_PENDING_PERMISSION_REQUESTS = 512;
@@ -155,6 +156,7 @@ export class HookRouter {
     this.emitSpecificEvent(kind, parsed.data as Record<string, unknown>, {
       sessionId,
       adapter,
+      cwd,
     });
     return { passthrough: false };
   }
@@ -293,7 +295,7 @@ export class HookRouter {
   private emitSpecificEvent(
     kind: HookEventKind,
     data: Record<string, unknown>,
-    ctx: { sessionId: string; adapter: string },
+    ctx: { sessionId: string; adapter: string; cwd?: string },
   ): void {
     switch (kind) {
       case 'SessionStart':
@@ -346,6 +348,7 @@ export class HookRouter {
           adapter: ctx.adapter,
           lastMessage: data.last_assistant_message as string | undefined,
         });
+        this.emitExplicitPlanProposalFromStop(data, ctx);
         break;
       case 'SubagentStart':
         this.eventBus.emit('hook:subagent-start', {
@@ -388,5 +391,28 @@ export class HookRouter {
         // are already emitted via hook:event — no specific event needed yet
         break;
     }
+  }
+
+  private emitExplicitPlanProposalFromStop(
+    data: Record<string, unknown>,
+    ctx: { sessionId: string; adapter: string; cwd?: string },
+  ): void {
+    const proposal = extractPlanProposalFromText(data.last_assistant_message as string | undefined);
+    if (!proposal) return;
+
+    this.eventBus.emit('hook:plan-proposed', {
+      sessionId: ctx.sessionId,
+      adapter: ctx.adapter,
+      cwd: ctx.cwd,
+      title: proposal.title,
+      summary: proposal.summary,
+      body: proposal.body,
+      source: proposal.source ?? `${ctx.adapter}-stop`,
+      sourceRef: proposal.sourceRef ?? `hook://stop/${ctx.sessionId}`,
+      metadata: {
+        ...(proposal.metadata ?? {}),
+        extractedFrom: 'explicit-marker',
+      },
+    });
   }
 }

@@ -128,6 +128,56 @@ describe('HookRouter', () => {
     expect(events[0]).toMatchObject({ lastMessage: 'All done' });
   });
 
+  it('extracts explicit viewport-plan blocks from Stop hooks', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      last_assistant_message: [
+        'Drafted the requested plan.',
+        '```viewport-plan',
+        'title: Refactor auth callbacks',
+        'summary: Move callback handling behind one service.',
+        'source: claude-code',
+        'source_ref: claude://session/s1',
+        '---',
+        '## Plan',
+        '1. Extract callback service.',
+        '2. Add regression tests.',
+        '```',
+      ].join('\n'),
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Refactor auth callbacks',
+      summary: 'Move callback handling behind one service.',
+      body: '## Plan\n1. Extract callback service.\n2. Add regression tests.',
+      source: 'claude-code',
+      sourceRef: 'claude://session/s1',
+      metadata: { extractedFrom: 'explicit-marker' },
+    });
+  });
+
+  it('does not infer plans from unmarked Stop prose', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      last_assistant_message: 'Here is a plan in normal prose, but it is not explicitly marked.',
+    });
+
+    expect(events).toHaveLength(0);
+  });
+
   it('handles SubagentStart — emits hook:subagent-start', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:subagent-start', (data) => events.push(data));
