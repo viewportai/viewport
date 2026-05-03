@@ -88,6 +88,14 @@ export function registerWsDaemonEventBridge(
       client.send(msg);
     }
   };
+  const sendToSessionSubscribers = (sessionId: string, payload: Record<string, unknown>): void => {
+    const msg = JSON.stringify(payload);
+    for (const client of clients) {
+      if (client.subscriptions.has(sessionId)) {
+        client.send(msg);
+      }
+    }
+  };
 
   daemon.on('session:message', ({ sessionId, message }) => {
     broadcastUpdate(sessionId, messageToUpdate(message));
@@ -382,8 +390,12 @@ export function registerWsDaemonEventBridge(
   });
 
   daemon.on('hook:stop', (data) => {
-    const msg = JSON.stringify({ type: 'hook-stop', ...data, timestamp: Date.now() });
-    for (const client of clients) client.send(msg);
+    sendToSessionSubscribers(data.sessionId, {
+      type: 'hook-stop',
+      sessionId: data.sessionId,
+      adapter: data.adapter,
+      timestamp: Date.now(),
+    });
   });
 
   daemon.on('hook:subagent-start', (data) => {
@@ -397,8 +409,11 @@ export function registerWsDaemonEventBridge(
   });
 
   daemon.on('hook:plan-proposed', (data) => {
-    const msg = JSON.stringify({ type: 'hook-plan-proposed', ...data, timestamp: Date.now() });
-    for (const client of clients) client.send(msg);
+    sendToSessionSubscribers(data.sessionId, {
+      type: 'hook-plan-proposed',
+      ...data,
+      timestamp: Date.now(),
+    });
   });
 
   const bufferCleanupInterval = setInterval(() => {
