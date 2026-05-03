@@ -364,6 +364,25 @@ export class HookRouter {
           lastMessage: data.last_assistant_message as string | undefined,
         });
         break;
+      case 'PlanProposed': {
+        const body =
+          (data.body as string | undefined) ??
+          (data.plan_markdown as string | undefined) ??
+          (data.plan as string | undefined) ??
+          '';
+        this.eventBus.emit('hook:plan-proposed', {
+          sessionId: ctx.sessionId,
+          adapter: ctx.adapter,
+          cwd: data.cwd as string | undefined,
+          title: data.title as string | undefined,
+          summary: data.summary as string | undefined,
+          body,
+          source: data.source as string | undefined,
+          sourceRef: data.source_ref as string | undefined,
+          metadata: data.metadata as Record<string, unknown> | undefined,
+        });
+        break;
+      }
       default:
         // Generic events (UserPromptSubmit, TaskCompleted, PreToolUse, PermissionRequest)
         // are already emitted via hook:event — no specific event needed yet

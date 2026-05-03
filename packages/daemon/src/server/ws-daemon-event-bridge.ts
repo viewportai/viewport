@@ -396,6 +396,11 @@ export function registerWsDaemonEventBridge(
     for (const client of clients) client.send(msg);
   });
 
+  daemon.on('hook:plan-proposed', (data) => {
+    const msg = JSON.stringify({ type: 'hook-plan-proposed', ...data, timestamp: Date.now() });
+    for (const client of clients) client.send(msg);
+  });
+
   const bufferCleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [sessionId, endedAt] of sessionEndTimes) {

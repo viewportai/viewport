@@ -31,6 +31,7 @@ export const HOOK_EVENT_KINDS = [
   'SubagentStop',
   'UserPromptSubmit',
   'TaskCompleted',
+  'PlanProposed',
 ] as const;
 
 export type HookEventKind = (typeof HOOK_EVENT_KINDS)[number];
@@ -134,6 +135,18 @@ export const TaskCompletedInputSchema = HookBaseInputSchema.extend({
   task_description: z.string().optional(),
 });
 
+export const PlanProposedInputSchema = HookBaseInputSchema.extend({
+  hook_event_name: z.literal('PlanProposed'),
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  body: z.string().optional(),
+  plan: z.string().optional(),
+  plan_markdown: z.string().optional(),
+  source: z.string().optional(),
+  source_ref: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Schema registry — maps event kind to its Zod schema
 // ---------------------------------------------------------------------------
@@ -151,6 +164,7 @@ export const HOOK_INPUT_SCHEMAS: Record<HookEventKind, z.ZodType> = {
   SubagentStop: SubagentStopInputSchema,
   UserPromptSubmit: UserPromptSubmitInputSchema,
   TaskCompleted: TaskCompletedInputSchema,
+  PlanProposed: PlanProposedInputSchema,
 };
 
 // ---------------------------------------------------------------------------
@@ -200,4 +214,5 @@ export const DEFAULT_EVENT_DEFINITIONS: HookEventDefinition[] = [
   { kind: 'SubagentStop', blocking: false, defaultTimeoutMs: 5_000 },
   { kind: 'UserPromptSubmit', blocking: false, defaultTimeoutMs: 5_000 },
   { kind: 'TaskCompleted', blocking: false, defaultTimeoutMs: 5_000 },
+  { kind: 'PlanProposed', blocking: false, defaultTimeoutMs: 5_000 },
 ];

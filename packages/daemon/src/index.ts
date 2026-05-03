@@ -101,9 +101,12 @@ if (command === 'hook') {
   const subcommand = getArgs()[1];
   if (subcommand === 'notify') {
     hookNotify().catch(() => process.exit(1));
+  } else if (subcommand === 'plan' || subcommand === 'plan-proposed') {
+    hookNotify('PlanProposed').catch(() => process.exit(1));
   } else {
     console.error(`Unknown hook subcommand: ${subcommand}`);
     console.error('Usage: vpd hook notify --event <EventName>');
+    console.error('       vpd hook plan < hook-payload.json');
     process.exit(1);
   }
 } else {

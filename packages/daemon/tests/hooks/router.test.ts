@@ -158,6 +158,36 @@ describe('HookRouter', () => {
     expect(events[0]).toMatchObject({ agentId: 'sub-1', lastMessage: 'Found 3 files' });
   });
 
+  it('handles PlanProposed — emits provider-neutral plan proposal', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PlanProposed',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      title: 'Refactor auth callbacks',
+      summary: 'Move WorkOS callback handling behind one service.',
+      plan_markdown: '## Plan\n\n1. Extract service\n2. Add tests',
+      source: 'claude-code',
+      source_ref: 'claude://session/s1',
+      metadata: { confidence: 'draft' },
+    });
+
+    expect(result).toEqual({ passthrough: false });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Refactor auth callbacks',
+      body: '## Plan\n\n1. Extract service\n2. Add tests',
+      source: 'claude-code',
+      sourceRef: 'claude://session/s1',
+      metadata: { confidence: 'draft' },
+    });
+  });
+
   it('emits generic hook:event for all events', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:event', (data) => events.push(data));

@@ -16,8 +16,8 @@ import { daemonFetch } from './daemon-client.js';
 
 const HOOK_TIMEOUT_MS = 125_000; // slightly > daemon's 120s to let daemon timeout first
 
-export async function hookNotify(): Promise<void> {
-  const event = getFlag('event');
+export async function hookNotify(forcedEvent?: string): Promise<void> {
+  const event = forcedEvent ?? getFlag('event');
   if (!event) {
     process.stderr.write('Usage: vpd hook notify --event <EventName>\n');
     process.exit(1);
