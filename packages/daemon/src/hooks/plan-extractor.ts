@@ -7,6 +7,9 @@ export interface ExtractedPlanProposal {
   metadata?: Record<string, unknown>;
 }
 
+export const PLAN_PROPOSAL_MARKER = 'viewport-plan';
+export const PLAN_PROPOSAL_SCHEMA_VERSION = 'viewport.plan_proposal/v1';
+
 const FENCE_PATTERN = /```viewport-plan\s*\n([\s\S]*?)```/i;
 const COMMENT_PATTERN = /<!--\s*viewport-plan\s*\n([\s\S]*?)-->/i;
 
@@ -26,8 +29,9 @@ export function extractPlanProposalFromText(
   if (!content?.trim()) return null;
 
   const trimmed = content.trim();
-  const json = parseJsonPlan(trimmed);
-  if (json) return json;
+  if (trimmed.startsWith('{')) {
+    return parseJsonPlan(trimmed);
+  }
 
   return parseFrontmatterPlan(trimmed);
 }
@@ -40,13 +44,14 @@ function parseJsonPlan(text: string): ExtractedPlanProposal | null {
     const body =
       readString(record.body) ?? readString(record.plan) ?? readString(record.plan_markdown);
     if (!body) return null;
+    if (!hasSupportedSchema(record.schema)) return null;
     return {
       title: readString(record.title),
       summary: readString(record.summary),
       body,
       source: readString(record.source),
       sourceRef: readString(record.source_ref) ?? readString(record.sourceRef),
-      metadata: readRecord(record.metadata),
+      metadata: contractMetadata(readRecord(record.metadata), 'json'),
     };
   } catch {
     return null;
@@ -56,7 +61,7 @@ function parseJsonPlan(text: string): ExtractedPlanProposal | null {
 function parseFrontmatterPlan(text: string): ExtractedPlanProposal | null {
   const separator = text.indexOf('\n---\n');
   if (separator === -1) {
-    return { body: text };
+    return { body: text, metadata: contractMetadata(undefined, 'plain') };
   }
 
   const header = text.slice(0, separator).trim();
@@ -69,6 +74,7 @@ function parseFrontmatterPlan(text: string): ExtractedPlanProposal | null {
     if (!match?.[1] || !match[2]) continue;
     fields.set(match[1].toLowerCase(), stripQuotes(match[2].trim()));
   }
+  if (!hasSupportedSchema(fields.get('schema'))) return null;
 
   return {
     title: fields.get('title'),
@@ -76,11 +82,25 @@ function parseFrontmatterPlan(text: string): ExtractedPlanProposal | null {
     body,
     source: fields.get('source'),
     sourceRef: fields.get('source_ref') ?? fields.get('sourceref'),
-    metadata: {
-      extractedFrom: 'explicit-marker',
-      marker: 'viewport-plan',
-    },
+    metadata: contractMetadata(undefined, 'frontmatter'),
   };
+}
+
+function contractMetadata(
+  metadata: Record<string, unknown> | undefined,
+  format: 'json' | 'frontmatter' | 'plain',
+): Record<string, unknown> | undefined {
+  return {
+    ...(metadata ?? {}),
+    extractedFrom: 'explicit-marker',
+    marker: PLAN_PROPOSAL_MARKER,
+    schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+    format,
+  };
+}
+
+function hasSupportedSchema(schema: unknown): boolean {
+  return schema === undefined || schema === null || schema === PLAN_PROPOSAL_SCHEMA_VERSION;
 }
 
 function readString(value: unknown): string | undefined {
