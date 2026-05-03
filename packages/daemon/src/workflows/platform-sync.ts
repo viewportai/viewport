@@ -1,6 +1,7 @@
 import type { ConfigManager } from '../core/config.js';
 import { transportFetch } from '../cli/network.js';
 import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
+import { runtimeCommands, type WorkflowRuntimeCommand } from './platform-runtime-command.js';
 
 type Fetcher = typeof transportFetch;
 
@@ -8,18 +9,10 @@ export interface WorkflowRunPlatformSyncOptions {
   retryDelaysMs?: number[];
   exhaustedRetryDelayMs?: number;
   blockedPollDelayMs?: number;
-  onRuntimeCommand?: (command: WorkflowRuntimeCommand) => Promise<void> | void;
-}
-
-export interface WorkflowRuntimeCommand {
-  id: string;
-  type: 'workflow.approval_decision';
-  workflow_run_id?: string | null;
-  workflow_node_id: string;
-  approved: boolean;
-  message?: string | null;
-  actor?: Record<string, unknown> | null;
-  feedback?: Record<string, unknown> | null;
+  onRuntimeCommand?: (
+    command: WorkflowRuntimeCommand,
+    run: WorkflowRunRecord,
+  ) => Promise<boolean | void> | boolean | void;
 }
 
 export class WorkflowRunPlatformSync {
@@ -32,7 +25,10 @@ export class WorkflowRunPlatformSync {
   private readonly retryDelaysMs: number[];
   private readonly exhaustedRetryDelayMs: number;
   private readonly blockedPollDelayMs: number;
-  private readonly onRuntimeCommand?: (command: WorkflowRuntimeCommand) => Promise<void> | void;
+  private readonly onRuntimeCommand?: (
+    command: WorkflowRuntimeCommand,
+    run: WorkflowRunRecord,
+  ) => Promise<boolean | void> | boolean | void;
 
   constructor(
     private readonly configManager: ConfigManager,
@@ -219,7 +215,8 @@ export class WorkflowRunPlatformSync {
     this.processedCommandIds.set(run.id, processed);
     for (const command of commands) {
       if (processed.has(command.id)) continue;
-      await this.onRuntimeCommand(command);
+      const applied = await this.onRuntimeCommand(command, run);
+      if (applied === false) continue;
       processed.add(command.id);
     }
   }
@@ -295,40 +292,6 @@ async function readResponseJson(res: Response): Promise<unknown> {
   } catch {
     return null;
   }
-}
-
-function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
-  if (!body || typeof body !== 'object') return [];
-  const commands = (body as { runtime_commands?: unknown }).runtime_commands;
-  if (!Array.isArray(commands)) return [];
-
-  return commands.flatMap((command): WorkflowRuntimeCommand[] => {
-    if (!command || typeof command !== 'object') return [];
-    const value = command as Record<string, unknown>;
-    if (value['type'] !== 'workflow.approval_decision') return [];
-    const id = readString(value['id']);
-    const workflowNodeId = readString(value['workflow_node_id']);
-    if (!id || !workflowNodeId || typeof value['approved'] !== 'boolean') return [];
-
-    return [
-      {
-        id,
-        type: 'workflow.approval_decision',
-        workflow_run_id: readString(value['workflow_run_id']),
-        workflow_node_id: workflowNodeId,
-        approved: value['approved'],
-        message: readString(value['message']),
-        actor:
-          value['actor'] && typeof value['actor'] === 'object'
-            ? (value['actor'] as Record<string, unknown>)
-            : null,
-        feedback:
-          value['feedback'] && typeof value['feedback'] === 'object'
-            ? (value['feedback'] as Record<string, unknown>)
-            : null,
-      },
-    ];
-  });
 }
 
 function collectOutputs(run: WorkflowRunRecord): Record<string, string> {

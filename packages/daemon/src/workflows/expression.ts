@@ -31,6 +31,7 @@ export interface NodeContextEntry {
     prompt: string;
     message: string | null;
     approved: boolean | null;
+    feedback: Record<string, unknown> | null;
     requestedAt: number;
     resolvedAt: number | null;
   } | null;
@@ -178,6 +179,7 @@ export function buildExpressionContext(run: WorkflowRunRecord): ExpressionContex
             prompt: node.approval.prompt,
             message: node.approval.message ?? null,
             approved: node.approval.approved ?? null,
+            feedback: node.approval.feedback ?? null,
             requestedAt: node.approval.requestedAt,
             resolvedAt: node.approval.resolvedAt ?? null,
           }

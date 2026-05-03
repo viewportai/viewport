@@ -284,8 +284,7 @@ describe('WorkflowRunPlatformSync', () => {
     const run = workflowRun();
     run.status = 'blocked';
     run.nodes.inspect.status = 'blocked';
-    let sync: WorkflowRunPlatformSync;
-    sync = new WorkflowRunPlatformSync(
+    const sync = new WorkflowRunPlatformSync(
       configManager(),
       async (_url, init) => {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
@@ -365,6 +364,48 @@ describe('WorkflowRunPlatformSync', () => {
     await sync.flushPending();
 
     expect(calls.map((call) => call['status'])).toEqual(['blocked', 'blocked', 'running']);
+  });
+
+  it('does not mark runtime commands processed until the runner applies them', async () => {
+    const commands: string[] = [];
+    const run = workflowRun();
+    run.status = 'blocked';
+    run.nodes.inspect.status = 'blocked';
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { id: 'platform-run-1' },
+            runtime_commands: [
+              {
+                id: 'plan-review:pending',
+                type: 'workflow.approval_decision',
+                workflow_node_id: 'inspect',
+                approved: true,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      {
+        blockedPollDelayMs: 0,
+        onRuntimeCommand: async (command) => {
+          commands.push(command.id);
+          if (commands.length === 1) return false;
+          run.status = 'running';
+          run.nodes.inspect.status = 'running';
+          sync.schedule(run);
+          return true;
+        },
+      },
+    );
+
+    sync.schedule(run);
+    await waitForCondition(() => commands.length === 2);
+    await sync.flushPending();
+
+    expect(commands).toEqual(['plan-review:pending', 'plan-review:pending']);
   });
 });
 

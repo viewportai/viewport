@@ -10,6 +10,7 @@ import { WorkflowRunResumer } from './runner-resumer.js';
 import { WorkflowRunReconciler } from './runner-reconciler.js';
 import { WorkflowRunCanceler, type WorkflowCancelOptions } from './runner-canceler.js';
 import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
+import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import type {
@@ -30,10 +31,15 @@ export class WorkflowRunner {
   private readonly resumer: WorkflowRunResumer;
   private readonly reconciler: WorkflowRunReconciler;
   private readonly canceler: WorkflowRunCanceler;
+  private readonly platformCommandApplier: WorkflowRuntimeCommandApplier;
 
   constructor(private readonly daemon: Daemon) {
+    this.platformCommandApplier = new WorkflowRuntimeCommandApplier(
+      this.store,
+      (runId, nodeId, decision) => this.decideApproval(runId, nodeId, decision),
+    );
     this.platformSync = new WorkflowRunPlatformSync(daemon.configManager, undefined, {
-      onRuntimeCommand: (command) => this.applyRuntimeCommand(command),
+      onRuntimeCommand: (command, run) => this.platformCommandApplier.apply(command, run.id),
     });
 
     const ops: RunnerOps = {
@@ -211,6 +217,7 @@ export class WorkflowRunner {
       approved: decision.approved,
       ...(decision.message ? { message: decision.message } : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
+      ...(decision.feedback ? { feedback: decision.feedback } : {}),
     };
 
     if (!decision.approved) {
@@ -346,36 +353,6 @@ export class WorkflowRunner {
     run.updatedAt = run.completedAt;
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await this.saveAndEmit(run);
-  }
-
-  private async applyRuntimeCommand(command: {
-    type: 'workflow.approval_decision';
-    workflow_run_id?: string | null;
-    workflow_node_id: string;
-    approved: boolean;
-    message?: string | null;
-    actor?: Record<string, unknown> | null;
-  }): Promise<void> {
-    if (command.type !== 'workflow.approval_decision') return;
-    const actor = command.actor
-      ? Object.fromEntries(
-          Object.entries(command.actor).filter(
-            ([, value]) => ['string', 'number', 'boolean'].includes(typeof value),
-          ),
-        )
-      : undefined;
-    for (const run of await this.store.list(500)) {
-      if (command.workflow_run_id && command.workflow_run_id !== run.id) continue;
-      if (run.status !== 'blocked') continue;
-      const node = run.nodes[command.workflow_node_id];
-      if (!node || node.status !== 'blocked') continue;
-      await this.decideApproval(run.id, command.workflow_node_id, {
-        approved: command.approved,
-        ...(command.message ? { message: command.message } : {}),
-        ...(actor && Object.keys(actor).length > 0 ? { actor } : {}),
-      });
-      return;
-    }
   }
 
   private async requireRun(runId: string): Promise<WorkflowRunRecord> {

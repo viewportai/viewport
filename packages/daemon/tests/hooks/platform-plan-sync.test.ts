@@ -48,7 +48,6 @@ describe('PlatformPlanHookSync', () => {
       hook_event_name: 'PlanProposed',
       schema: PLAN_PROPOSAL_SCHEMA_VERSION,
       session_id: 'session_1',
-      cwd: '/repo',
       title: 'Review plan',
       summary: 'Inspect the diff',
       body: '## Plan\n1. Inspect diff\n2. Report risks',
@@ -56,6 +55,7 @@ describe('PlatformPlanHookSync', () => {
       source_ref: 'claude://session/session_1',
       payload: { workflowRunId: 'run_1' },
     });
+    expect(JSON.parse(String(requests[0]?.options.body))).not.toHaveProperty('cwd');
   });
 
   it('skips sync when no relay issue token or project target is configured', async () => {

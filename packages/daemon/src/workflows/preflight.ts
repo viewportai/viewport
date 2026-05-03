@@ -9,6 +9,7 @@ import type { ModelInfo } from '../core/agent-registry.js';
 
 const execFileAsync = promisify(execFile);
 const SAFE_TOOL_NAME = /^[A-Za-z0-9._+/-]+$/;
+const TOOL_PREFLIGHT_TIMEOUT_MS = 5_000;
 
 export interface WorkflowCapabilityProvider {
   availableAgents: () => string[];
@@ -152,7 +153,9 @@ function addModelIssue(
 
 async function hasShellTool(tool: string): Promise<boolean> {
   try {
-    await execFileAsync('sh', ['-lc', `command -v ${shellQuote(tool)}`], { timeout: 2_000 });
+    await execFileAsync('sh', ['-lc', `command -v ${shellQuote(tool)}`], {
+      timeout: TOOL_PREFLIGHT_TIMEOUT_MS,
+    });
     return true;
   } catch {
     return false;
@@ -166,7 +169,7 @@ function shellQuote(value: string): string {
 async function isGitWorkTree(directoryPath: string): Promise<boolean> {
   try {
     await execFileAsync('git', ['-C', directoryPath, 'rev-parse', '--is-inside-work-tree'], {
-      timeout: 2_000,
+      timeout: TOOL_PREFLIGHT_TIMEOUT_MS,
     });
     return true;
   } catch {
