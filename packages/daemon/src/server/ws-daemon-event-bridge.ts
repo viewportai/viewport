@@ -411,7 +411,14 @@ export function registerWsDaemonEventBridge(
   daemon.on('hook:plan-proposed', (data) => {
     sendToSessionSubscribers(data.sessionId, {
       type: 'hook-plan-proposed',
-      ...data,
+      sessionId: data.sessionId,
+      adapter: data.adapter,
+      title: data.title,
+      summary: data.summary,
+      body: data.body,
+      source: data.source,
+      sourceRef: data.sourceRef,
+      metadata: data.metadata,
       timestamp: Date.now(),
     });
   });

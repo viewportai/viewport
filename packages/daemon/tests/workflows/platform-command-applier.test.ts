@@ -67,6 +67,34 @@ describe('WorkflowRuntimeCommandApplier', () => {
     expect(decisions).toEqual([{ runId: second.id, nodeId: 'review' }]);
   });
 
+  it('uses the targeted run id instead of a bounded recent-run scan', async () => {
+    const run = blockedRun('older-target-run');
+    const decisions: Array<{ runId: string; nodeId: string }> = [];
+    const applier = new WorkflowRuntimeCommandApplier(
+      {
+        get: async (runId: string) => (runId === run.id ? run : null),
+        list: async () => {
+          throw new Error('approval commands must not scan recent runs');
+        },
+      } as WorkflowRunStore,
+      async (runId, nodeId) => {
+        decisions.push({ runId, nodeId });
+        return run;
+      },
+    );
+
+    const applied = await applier.apply({
+      id: 'plan-review:old-target',
+      type: 'workflow.approval_decision',
+      workflow_run_id: run.id,
+      workflow_node_id: 'review',
+      approved: true,
+    });
+
+    expect(applied).toBe(true);
+    expect(decisions).toEqual([{ runId: run.id, nodeId: 'review' }]);
+  });
+
   it('ignores commands when the run or node is not blocked', async () => {
     const blocked = blockedRun();
     const running = { ...blockedRun('run-running'), status: 'running' as const };
@@ -96,6 +124,7 @@ describe('WorkflowRuntimeCommandApplier', () => {
 
 function storeWith(runs: WorkflowRunRecord[]): WorkflowRunStore {
   return {
+    get: async (runId: string) => runs.find((run) => run.id === runId) ?? null,
     list: async () => runs,
   } as WorkflowRunStore;
 }

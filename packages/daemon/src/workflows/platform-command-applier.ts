@@ -24,23 +24,19 @@ export class WorkflowRuntimeCommandApplier {
     const targetRunId = command.workflow_run_id ?? syncedRunId;
     if (!targetRunId) return false;
 
-    for (const run of await this.store.list(500)) {
-      if (targetRunId !== run.id) continue;
-      if (run.status !== 'blocked') continue;
+    const run = await this.store.get(targetRunId);
+    if (!run || run.status !== 'blocked') return false;
 
-      const node = run.nodes[command.workflow_node_id];
-      if (!node || node.status !== 'blocked') continue;
+    const node = run.nodes[command.workflow_node_id];
+    if (!node || node.status !== 'blocked') return false;
 
-      await this.decideApproval(run.id, command.workflow_node_id, {
-        approved: command.approved,
-        ...(command.message ? { message: command.message } : {}),
-        ...(command.feedback ? { feedback: command.feedback } : {}),
-        ...approvalActor(command.actor),
-      });
-      return true;
-    }
-
-    return false;
+    await this.decideApproval(run.id, command.workflow_node_id, {
+      approved: command.approved,
+      ...(command.message ? { message: command.message } : {}),
+      ...(command.feedback ? { feedback: command.feedback } : {}),
+      ...approvalActor(command.actor),
+    });
+    return true;
   }
 }
 

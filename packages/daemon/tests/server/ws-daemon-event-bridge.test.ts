@@ -64,6 +64,7 @@ describe('registerWsDaemonEventBridge hook privacy', () => {
     bus.emit('hook:plan-proposed', {
       sessionId: 's1',
       adapter: 'claude',
+      cwd: '/Users/alice/private-repo',
       title: 'Review plan',
       body: '## Plan',
       metadata: { providerModel: 'sonnet' },
@@ -76,6 +77,8 @@ describe('registerWsDaemonEventBridge hook privacy', () => {
       title: 'Review plan',
       metadata: { providerModel: 'sonnet' },
     });
+    expect(String(subscribed.send.mock.calls[0]?.[0])).not.toContain('/Users/alice/private-repo');
+    expect(JSON.parse(String(subscribed.send.mock.calls[0]?.[0]))).not.toHaveProperty('cwd');
     expect(other.send).not.toHaveBeenCalled();
 
     cleanup();
