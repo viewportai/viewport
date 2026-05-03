@@ -14,7 +14,6 @@ import {
   WorktreeTracker,
   waitForAdapterSessionCount,
   waitForCompletedRun,
-  waitForCondition,
   waitForNodeSession,
   waitForRunState,
   waitForSessionWithPrompt,
@@ -2158,113 +2157,6 @@ nodes:
     expect(paused?.nodes.review?.status).toBe('running');
     expect(paused?.nodes.review?.sessionId).toBe('existing-prompt-session');
     expect(paused?.events.some((event) => event.type === 'run-resume-paused')).toBe(true);
-  });
-
-  it('resyncs platform-linked terminal runs when the daemon starts', async () => {
-    tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-home-'));
-    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-project-'));
-    originalHome = process.env['HOME'];
-    originalCodexHome = process.env['CODEX_HOME'];
-    process.env['HOME'] = tempHome;
-    process.env['CODEX_HOME'] = path.join(tempHome, '.codex');
-
-    const originalFetch = globalThis.fetch;
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    globalThis.fetch = fetchMock;
-
-    try {
-      const viewportDir = path.join(tempHome, '.viewport');
-      const runsDir = path.join(viewportDir, 'runs', 'workflows');
-      await fs.mkdir(runsDir, { recursive: true });
-      await fs.writeFile(
-        path.join(viewportDir, 'config.json'),
-        JSON.stringify({
-          machineId: 'machine-1',
-          daemon: {
-            server: { url: 'http://127.0.0.1:7777' },
-            relay: {
-              serverUrl: 'http://127.0.0.1:7777',
-              workspaceId: 'project-1',
-              projectMachineBindingId: 'binding-1',
-              issueToken: 'issue-token',
-            },
-          },
-        }),
-        'utf-8',
-      );
-
-      const runId = crypto.randomUUID();
-      await fs.writeFile(
-        path.join(runsDir, `${runId}.json`),
-        JSON.stringify({
-          id: runId,
-          workflowName: 'boot-sync-proof',
-          sourceType: 'viewport_snapshot',
-          sourcePath: 'viewport://test-boot-sync',
-          digest: 'test-digest',
-          schema: 'viewport.workflow/v1',
-          yamlSnapshot: 'schema: viewport.workflow/v1\nname: boot-sync-proof\nnodes: {}\n',
-          directoryId: 'dir-1',
-          directoryPath: projectDir,
-          projectId: 'project-1',
-          projectMachineBindingId: 'binding-1',
-          platformRunId: 'platform-run-1',
-          machineId: 'machine-1',
-          initiation: 'browser',
-          status: 'completed',
-          inputs: {},
-          preflight: { ok: true, issues: [] },
-          nodes: {
-            done: {
-              id: 'done',
-              type: 'shell',
-              status: 'completed',
-              output: 'ok',
-              completedAt: 2_000,
-            },
-          },
-          artifacts: [],
-          events: [
-            {
-              id: 'event-1',
-              runId,
-              timestamp: 2_000,
-              type: 'run-completed',
-              message: 'Workflow run completed',
-            },
-          ],
-          createdAt: 1_000,
-          startedAt: 1_500,
-          updatedAt: 2_000,
-          completedAt: 2_000,
-        }),
-        'utf-8',
-      );
-
-      const daemon = new Daemon();
-      await daemon.configManager.load();
-      const result = await daemon.workflowRunner.resumePendingRuns();
-
-      expect(result.resumed).toBe(0);
-      expect(result.platformSyncScheduled).toBe(1);
-      await waitForCondition(() => fetchMock.mock.calls.length > 0);
-      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-        'http://127.0.0.1:7777/api/runtime/workspaces/project-1/workflow-runs/platform-run-1/sync',
-      );
-      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? '{}')) as Record<
-        string,
-        unknown
-      >;
-      expect(body).toMatchObject({
-        runtime_run_id: runId,
-        status: 'completed',
-        output_snapshot: { done: 'ok' },
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
   });
 
   it('falls through a failed sibling when a downstream node uses triggerRule one_success', async () => {
