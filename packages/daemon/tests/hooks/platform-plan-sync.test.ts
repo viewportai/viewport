@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PlatformPlanHookSync } from '../../src/hooks/platform-plan-sync.js';
 import type { TransportFetchOptions } from '../../src/cli/network.js';
+import { PLAN_PROPOSAL_SCHEMA_VERSION } from '../../src/hooks/plan-extractor.js';
 
 describe('PlatformPlanHookSync', () => {
   it('sends plan proposals to the daemon-authenticated platform ingestion endpoint', async () => {
@@ -45,6 +46,7 @@ describe('PlatformPlanHookSync', () => {
     expect(JSON.parse(String(requests[0]?.options.body))).toMatchObject({
       credential: 'issue-token',
       hook_event_name: 'PlanProposed',
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
       session_id: 'session_1',
       cwd: '/repo',
       title: 'Review plan',

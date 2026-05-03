@@ -107,6 +107,49 @@ describe('extractPlanProposalFromText', () => {
     ).toBeNull();
   });
 
+  it('rejects JSON viewport-plan blocks with ambiguous plan bodies', () => {
+    expect(
+      extractPlanProposalFromText(
+        [
+          '```viewport-plan',
+          JSON.stringify({
+            schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+            body: 'Body A',
+            plan_markdown: 'Body B',
+          }),
+          '```',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+  });
+
+  it('sanitizes JSON viewport-plan metadata before emitting proposals', () => {
+    const proposal = extractPlanProposalFromText(
+      [
+        '```viewport-plan',
+        JSON.stringify({
+          schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+          body: 'Plan body',
+          metadata: {
+            providerModel: 'sonnet',
+            projectId: 'agent-controlled-project',
+            secret: 'do-not-broadcast',
+            nested: { unsafe: true },
+          },
+        }),
+        '```',
+      ].join('\n'),
+    );
+
+    expect(proposal?.metadata).toEqual({
+      providerModel: 'sonnet',
+      extractedFrom: 'explicit-marker',
+      marker: PLAN_PROPOSAL_MARKER,
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+      format: 'json',
+    });
+  });
+
   it('does not infer plan proposals from unmarked prose', () => {
     expect(extractPlanProposalFromText('Here is my plan: do the work.')).toBeNull();
   });

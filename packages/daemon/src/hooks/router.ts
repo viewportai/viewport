@@ -301,7 +301,7 @@ export class HookRouter {
   }
 }
 
-function safeHookLogInput(input: Record<string, unknown>): Record<string, unknown> {
+export function safeHookLogInput(input: Record<string, unknown>): Record<string, unknown> {
   return {
     hook_event_name: typeof input.hook_event_name === 'string' ? input.hook_event_name : undefined,
     adapter: typeof input.adapter === 'string' ? input.adapter : undefined,

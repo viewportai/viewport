@@ -9,6 +9,8 @@ export interface ExtractedPlanProposal {
 
 export const PLAN_PROPOSAL_MARKER = 'viewport-plan';
 export const PLAN_PROPOSAL_SCHEMA_VERSION = 'viewport.plan_proposal/v1';
+const PLAN_BODY_FIELDS = ['body', 'plan', 'plan_markdown'] as const;
+const PLAN_METADATA_ALLOWLIST = new Set(['providerModel', 'workflowNodeId', 'workflowRunId']);
 
 const FENCE_PATTERN = /```viewport-plan\s*\n([\s\S]*?)```/i;
 const COMMENT_PATTERN = /<!--\s*viewport-plan\s*\n([\s\S]*?)-->/i;
@@ -41,8 +43,7 @@ function parseJsonPlan(text: string): ExtractedPlanProposal | null {
     const value = JSON.parse(text) as unknown;
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    const body =
-      readString(record.body) ?? readString(record.plan) ?? readString(record.plan_markdown);
+    const body = readUniquePlanBody(record);
     if (!body) return null;
     if (!hasSupportedSchema(record.schema)) return null;
     return {
@@ -89,7 +90,7 @@ function contractMetadata(
   format: 'json' | 'frontmatter',
 ): Record<string, unknown> | undefined {
   return {
-    ...(metadata ?? {}),
+    ...sanitizePlanProposalMetadata(metadata),
     extractedFrom: 'explicit-marker',
     marker: PLAN_PROPOSAL_MARKER,
     schema: PLAN_PROPOSAL_SCHEMA_VERSION,
@@ -97,12 +98,39 @@ function contractMetadata(
   };
 }
 
+export function sanitizePlanProposalMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!metadata) return {};
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!PLAN_METADATA_ALLOWLIST.has(key)) continue;
+    if (['string', 'number', 'boolean'].includes(typeof value) || value === null) {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized;
+}
+
+function readUniquePlanBody(record: Record<string, unknown>): string | undefined {
+  const present = PLAN_BODY_FIELDS.map((field) => readString(record[field])).filter(
+    (value): value is string => value !== undefined,
+  );
+
+  return present.length === 1 ? present[0] : undefined;
+}
+
 function hasSupportedSchema(schema: unknown): boolean {
   return schema === PLAN_PROPOSAL_SCHEMA_VERSION;
 }
 
 function readString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+
+  return trimmed ? trimmed : undefined;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

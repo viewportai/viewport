@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { HookRouter } from '../../src/hooks/router.js';
+import { HookRouter, safeHookLogInput } from '../../src/hooks/router.js';
 import { SupervisionManager } from '../../src/hooks/supervision.js';
 import { TypedEventEmitter } from '../../src/core/events.js';
 import type { DaemonEvents } from '../../src/core/events.js';
@@ -224,7 +224,7 @@ describe('HookRouter', () => {
       plan_markdown: '## Plan\n\n1. Extract service\n2. Add tests',
       source: 'claude-code',
       source_ref: 'claude://session/s1',
-      metadata: { confidence: 'draft' },
+      metadata: { providerModel: 'sonnet', secret: 'do-not-broadcast' },
     });
 
     expect(result).toEqual({ passthrough: false });
@@ -237,7 +237,27 @@ describe('HookRouter', () => {
       body: '## Plan\n\n1. Extract service\n2. Add tests',
       source: 'claude-code',
       sourceRef: 'claude://session/s1',
-      metadata: { confidence: 'draft', schema: PLAN_PROPOSAL_SCHEMA_VERSION },
+      metadata: { providerModel: 'sonnet', schema: PLAN_PROPOSAL_SCHEMA_VERSION },
+    });
+  });
+
+  it('redacts sensitive hook payloads before invalid base input logging', () => {
+    expect(
+      safeHookLogInput({
+        hook_event_name: 'PlanProposed',
+        body: 'secret plan body',
+        metadata: { secret: 'token' },
+        plan: 'secret alternative body',
+        plan_markdown: 'secret markdown body',
+        tool_input: { token: 'tool-token' },
+        tool_response: { output: 'tool-output' },
+        session_id: 's1',
+      }),
+    ).toEqual({
+      hook_event_name: 'PlanProposed',
+      adapter: undefined,
+      has_session_id: true,
+      keys: ['hook_event_name', 'session_id'],
     });
   });
 

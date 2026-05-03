@@ -1,6 +1,7 @@
 import type { ConfigManager } from '../core/config.js';
 import type { DaemonEvents } from '../core/events.js';
 import { transportFetch } from '../cli/network.js';
+import { PLAN_PROPOSAL_SCHEMA_VERSION, sanitizePlanProposalMetadata } from './plan-extractor.js';
 
 type Fetcher = typeof transportFetch;
 type PlanProposedEvent = DaemonEvents['hook:plan-proposed'];
@@ -27,6 +28,7 @@ export class PlatformPlanHookSync {
       body: JSON.stringify({
         credential: target.issueToken,
         hook_event_name: 'PlanProposed',
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
         session_id: event.sessionId,
         cwd: event.cwd ?? null,
         title: event.title ?? null,
@@ -34,7 +36,7 @@ export class PlatformPlanHookSync {
         body: event.body,
         source: event.source ?? event.adapter,
         source_ref: event.sourceRef ?? null,
-        payload: sanitizeMetadata(event.metadata),
+        payload: sanitizePlanProposalMetadata(event.metadata),
       }),
       timeoutMs: 5_000,
       tlsVerify: target.tlsVerify,
@@ -73,27 +75,4 @@ export class PlatformPlanHookSync {
       tlsPins: server.tlsPins,
     };
   }
-}
-
-function sanitizeMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
-  if (!metadata) return {};
-
-  const allowed = new Set([
-    'extractedFrom',
-    'format',
-    'marker',
-    'providerModel',
-    'schema',
-    'workflowNodeId',
-    'workflowRunId',
-  ]);
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(metadata)) {
-    if (!allowed.has(key)) continue;
-    if (['string', 'number', 'boolean'].includes(typeof value) || value === null) {
-      sanitized[key] = value;
-    }
-  }
-
-  return sanitized;
 }

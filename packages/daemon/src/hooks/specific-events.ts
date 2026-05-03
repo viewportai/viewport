@@ -1,7 +1,11 @@
 import type { TypedEventEmitter } from '../core/events.js';
 import type { DaemonEvents } from '../core/events.js';
 import type { HookEventKind } from './types.js';
-import { extractPlanProposalFromText, PLAN_PROPOSAL_SCHEMA_VERSION } from './plan-extractor.js';
+import {
+  extractPlanProposalFromText,
+  PLAN_PROPOSAL_SCHEMA_VERSION,
+  sanitizePlanProposalMetadata,
+} from './plan-extractor.js';
 
 type SpecificEventContext = {
   sessionId: string;
@@ -96,7 +100,7 @@ export function emitSpecificHookEvent(
         source: data.source as string | undefined,
         sourceRef: data.source_ref as string | undefined,
         metadata: {
-          ...(data.metadata as Record<string, unknown> | undefined),
+          ...sanitizePlanProposalMetadata(readRecord(data.metadata)),
           schema: PLAN_PROPOSAL_SCHEMA_VERSION,
         },
       });
@@ -104,6 +108,12 @@ export function emitSpecificHookEvent(
     default:
       break;
   }
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  return value as Record<string, unknown>;
 }
 
 function planBodyFromData(data: Record<string, unknown>): string {
