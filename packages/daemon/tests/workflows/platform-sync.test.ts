@@ -335,6 +335,7 @@ describe('WorkflowRunPlatformSync', () => {
         approved: true,
         message: 'Approved by reviewer.',
         actor: { id: 1, name: 'Reviewer' },
+        feedback: null,
       },
     ]);
     expect(calls.map((call) => call['status'])).toEqual(['blocked', 'running']);

@@ -19,6 +19,7 @@ export interface WorkflowRuntimeCommand {
   approved: boolean;
   message?: string | null;
   actor?: Record<string, unknown> | null;
+  feedback?: Record<string, unknown> | null;
 }
 
 export class WorkflowRunPlatformSync {
@@ -320,6 +321,10 @@ function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
         actor:
           value['actor'] && typeof value['actor'] === 'object'
             ? (value['actor'] as Record<string, unknown>)
+            : null,
+        feedback:
+          value['feedback'] && typeof value['feedback'] === 'object'
+            ? (value['feedback'] as Record<string, unknown>)
             : null,
       },
     ];
