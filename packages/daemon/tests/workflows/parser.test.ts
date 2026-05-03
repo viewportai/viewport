@@ -79,6 +79,34 @@ nodes:
     });
   });
 
+  it('accepts declarative context handles on workflow documents', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: context-aware-review
+context:
+  - context://team/release-standards
+  - ref: context://project/nonblocking-notes
+    as: notes
+    required: false
+    refresh: before_run
+nodes:
+  proof:
+    type: shell
+    command: echo ok
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.context?.[0]).toBe('context://team/release-standards');
+    expect(parsed.definition.context?.[1]).toMatchObject({
+      ref: 'context://project/nonblocking-notes',
+      as: 'notes',
+      required: false,
+      refresh: 'before_run',
+    });
+  });
+
   it('rejects missing dependency nodes', () => {
     expect(() =>
       parseWorkflow(

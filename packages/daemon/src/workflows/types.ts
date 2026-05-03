@@ -53,6 +53,16 @@ export interface WorkflowRequires {
   secrets?: string[];
 }
 
+export interface WorkflowContextReference {
+  ref: string;
+  as?: string;
+  required?: boolean;
+  description?: string;
+  refresh?: 'manual' | 'before_run' | 'on_demand';
+}
+
+export type WorkflowContext = Array<string | WorkflowContextReference>;
+
 export interface WorkflowOutputDefinition {
   type: 'string' | 'number' | 'boolean' | 'json' | 'file' | 'artifact';
   description?: string;
@@ -219,6 +229,7 @@ export interface WorkflowDefinition {
   title?: string;
   description?: string;
   inputs?: Record<string, WorkflowInputDefinition>;
+  context?: WorkflowContext;
   requires?: WorkflowRequires;
   nodes: Record<string, WorkflowNode>;
 }

@@ -155,6 +155,18 @@ const RequiresSchema = z
   })
   .strict();
 
+const ContextReferenceSchema = z
+  .object({
+    ref: z.string().trim().min(1),
+    as: identifierSchema.optional(),
+    required: z.boolean().optional(),
+    description: z.string().optional(),
+    refresh: z.enum(['manual', 'before_run', 'on_demand']).optional(),
+  })
+  .strict();
+
+const ContextSchema = z.array(z.union([z.string().trim().min(1), ContextReferenceSchema]));
+
 const TriggerRuleSchema = z.enum(['all_success', 'all_done', 'one_success']);
 
 const NodeBaseSchema = z.object({
@@ -296,6 +308,7 @@ export const WorkflowDefinitionSchema = z
     title: z.string().trim().min(1).optional(),
     description: z.string().optional(),
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
+    context: ContextSchema.optional(),
     requires: RequiresSchema.optional(),
     nodes: z.record(z.string().trim().min(1), WorkflowNodeSchema),
   })
