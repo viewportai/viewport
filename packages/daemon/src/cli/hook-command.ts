@@ -11,8 +11,13 @@
  *   1 — daemon not running, not supervised, or timeout → agent falls through to local UI
  */
 
-import { getFlag } from './args.js';
+import { getFlag, hasFlag } from './args.js';
 import { daemonFetch } from './daemon-client.js';
+import {
+  getHookAdapterCapabilities,
+  listHookAdapterCapabilities,
+  type HookAdapterCapabilityProfile,
+} from '../hooks/capabilities.js';
 
 const HOOK_TIMEOUT_MS = 125_000; // slightly > daemon's 120s to let daemon timeout first
 
@@ -85,6 +90,20 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
   }
 }
 
+export async function hookCapabilities(): Promise<void> {
+  const adapter = getFlag('adapter');
+  const profiles = adapter ? [getHookAdapterCapabilities(adapter)] : listHookAdapterCapabilities();
+
+  if (hasFlag('json')) {
+    process.stdout.write(JSON.stringify({ adapters: profiles }, null, 2) + '\n');
+    return;
+  }
+
+  for (const profile of profiles) {
+    printCapabilityProfile(profile);
+  }
+}
+
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
@@ -107,4 +126,14 @@ function readStdin(): Promise<string> {
     });
     process.stdin.resume();
   });
+}
+
+function printCapabilityProfile(profile: HookAdapterCapabilityProfile): void {
+  process.stdout.write(`${profile.displayName} (${profile.adapter})\n`);
+  process.stdout.write(`  Plan boundary: ${profile.planBoundary}\n`);
+  for (const capability of profile.capabilities) {
+    const mark = capability.supported ? 'yes' : 'no';
+    process.stdout.write(`  ${mark.padEnd(3)} ${capability.capability} - ${capability.note}\n`);
+  }
+  process.stdout.write('\n');
 }

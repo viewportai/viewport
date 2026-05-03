@@ -45,7 +45,7 @@ import {
   remote,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
-import { hookNotify } from './cli/hook-command.js';
+import { hookCapabilities, hookNotify } from './cli/hook-command.js';
 import { start, runSupervisorCommand, runWorkerCommand } from './startup.js';
 import { SUPERVISOR_CONFIG_ENV, WORKER_CONFIG_ENV } from './cli/supervisor-protocol.js';
 
@@ -103,10 +103,13 @@ if (command === 'hook') {
     hookNotify().catch(() => process.exit(1));
   } else if (subcommand === 'plan' || subcommand === 'plan-proposed') {
     hookNotify('PlanProposed').catch(() => process.exit(1));
+  } else if (subcommand === 'capabilities') {
+    hookCapabilities().catch(() => process.exit(1));
   } else {
     console.error(`Unknown hook subcommand: ${subcommand}`);
     console.error('Usage: vpd hook notify --event <EventName>');
     console.error('       vpd hook plan < hook-payload.json');
+    console.error('       vpd hook capabilities [--adapter <name>] [--json]');
     process.exit(1);
   }
 } else {
