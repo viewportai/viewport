@@ -1,6 +1,5 @@
 import type { WebSocket as WsType } from 'ws';
 import WebSocket from 'ws';
-import crypto from 'node:crypto';
 import { computeBackoffMs, sleep } from './bridge-backoff.js';
 import {
   CIRCUIT_BREAKER_MS,
@@ -36,10 +35,11 @@ import {
 import { BridgeError, type BridgeErrorCode } from './bridge-errors.js';
 import { closeQuietly, resolveRelayTlsOptions, wsOpen } from './bridge-network.js';
 import {
-  decryptPairingPayload,
-  derivePairingChannelKey,
-  encryptPairingPayload,
-} from './bridge-pairing-channel.js';
+  handleRelayPairingOfferRequest,
+  handleRelayPairingRedeemRequest,
+  pruneRelayPairingChannelKeys,
+  type PairingChannelKey,
+} from './bridge-pairing-control-handler.js';
 import { RelayTokenIssuer } from './bridge-token-issuer.js';
 import {
   isRelayControlFrame,
@@ -50,11 +50,7 @@ import {
   type RelayPairingOfferRequestFrame,
   type RelayPairingRedeemRequestFrame,
 } from './relay-control-frames.js';
-import {
-  issuePairingOffer,
-  redeemPairingOffer,
-  resolveRelayPairingSecret,
-} from '../server/pairing-offers.js';
+import { resolveRelayPairingSecret } from '../server/pairing-offers.js';
 import { ConfigManager } from '../core/config.js';
 import { logger as out } from '../core/output.js';
 import { transportFetch } from '../cli/network.js';
@@ -130,7 +126,7 @@ export class DaemonRelayBridge {
   private requiredProfile: RelayHandshakeProfile = 'noise-ik';
   private readonly relayTokenIssuer: RelayTokenIssuer;
   private readonly relaySessions = new Map<string, RelaySessionState>();
-  private readonly pairingChannelKeys = new Map<string, { key: Buffer; createdAt: number }>();
+  private readonly pairingChannelKeys = new Map<string, PairingChannelKey>();
   private consecutiveIssueFailures = 0;
   private circuitOpenUntilMs = 0;
   private lastErrorCode: BridgeErrorCode | undefined;
@@ -821,177 +817,46 @@ export class DaemonRelayBridge {
     frame: RelayPairingOfferRequestFrame,
     relayWs: RelayWs,
   ): Promise<void> {
-    const requestId = frame.requestId;
     const reply = (payload: Record<string, unknown>): void => {
       if (relayWs.readyState === WebSocket.OPEN) {
         relayWs.send(JSON.stringify(payload));
       }
     };
-
-    try {
-      this.prunePairingChannelKeys();
-      const clientChannelPublicKey = fromBase64Url(frame.clientChannelPublicKey);
-      if (clientChannelPublicKey.length !== 65) {
-        throw new Error('invalid clientChannelPublicKey');
-      }
-      const daemonChannel = crypto.createECDH('prime256v1');
-      daemonChannel.generateKeys();
-      const shared = daemonChannel.computeSecret(clientChannelPublicKey);
-      const channelKey = derivePairingChannelKey(shared, `offer:${frame.requestId}`);
-
-      const daemonUrl = new URL(this.options.daemonWsUrl);
-      const issued = await issuePairingOffer({
-        ttlSeconds: frame.ttlSeconds ?? 600,
-        connection: {
-          host: daemonUrl.hostname || '127.0.0.1',
-          port: daemonUrl.port ? Number(daemonUrl.port) : 7070,
-          listen: `relay:${this.options.workspaceId}`,
-          profile: 'relay',
-        },
-      });
-      this.pairingChannelKeys.set(issued.offerId, { key: channelKey, createdAt: Date.now() });
-      const encryptedOffer = encryptPairingPayload(
-        channelKey,
-        JSON.stringify({
-          offerId: issued.offerId,
-          createdAt: issued.createdAt,
-          expiresAt: issued.expiresAt,
-          redeemSecret: issued.redeemSecret,
-          trustAnchor: issued.trustAnchor,
-          daemonDeviceId: issued.daemonDeviceId,
-          daemonPublicKey: issued.daemonPublicKey,
-        }),
-        `offer:${frame.requestId}`,
-      );
-      reply({
-        type: 'relay_pairing_offer_response',
-        requestId,
-        ok: true,
-        daemonChannelPublicKey: toBase64Url(daemonChannel.getPublicKey()),
-        ...encryptedOffer,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply({
-        type: 'relay_pairing_offer_response',
-        requestId,
-        ok: false,
-        errorCode: 'PAIRING_OFFER_FAILED',
-        error: message,
-      });
-    }
+    await handleRelayPairingOfferRequest({
+      frame,
+      reply,
+      pairingChannelKeys: this.pairingChannelKeys,
+      workspaceId: this.options.workspaceId,
+      daemonWsUrl: this.options.daemonWsUrl,
+      maxAgeMs: this.pairingChannelTtlMs,
+      maxEntries: this.pairingChannelMaxEntries,
+    });
   }
 
   private async handlePairingRedeemRequest(
     frame: RelayPairingRedeemRequestFrame,
     relayWs: RelayWs,
   ): Promise<void> {
-    const requestId = frame.requestId;
     const reply = (payload: Record<string, unknown>): void => {
       if (relayWs.readyState === WebSocket.OPEN) {
         relayWs.send(JSON.stringify(payload));
       }
     };
-
-    try {
-      this.prunePairingChannelKeys();
-      const channel = this.pairingChannelKeys.get(frame.offerId);
-      if (!channel) {
-        throw new Error('pairing channel missing or expired');
-      }
-      const decrypted = decryptPairingPayload(
-        channel.key,
-        {
-          encIv: frame.encIv,
-          encTag: frame.encTag,
-          encCiphertext: frame.encCiphertext,
-        },
-        `redeem:${frame.requestId}:${frame.offerId}`,
-      );
-      const parsed = JSON.parse(decrypted) as {
-        redeemSecret?: string;
-        trustAnchor?: string;
-        clientPublicKey?: string;
-        clientProof?: string;
-      };
-      if (
-        typeof parsed.redeemSecret !== 'string' ||
-        typeof parsed.trustAnchor !== 'string' ||
-        typeof parsed.clientPublicKey !== 'string' ||
-        typeof parsed.clientProof !== 'string' ||
-        parsed.redeemSecret.trim().length === 0 ||
-        parsed.trustAnchor.trim().length === 0 ||
-        parsed.clientPublicKey.trim().length === 0 ||
-        parsed.clientProof.trim().length === 0
-      ) {
-        throw new Error('invalid encrypted pairing payload');
-      }
-      const redeemed = await redeemPairingOffer(
-        frame.offerId,
-        parsed.redeemSecret,
-        parsed.trustAnchor,
-        parsed.clientPublicKey,
-        parsed.clientProof,
-      );
-      if (!redeemed) {
-        reply({
-          type: 'relay_pairing_redeem_response',
-          requestId,
-          ok: false,
-          errorCode: 'PAIRING_REDEEM_FAILED',
-          error: 'offer not found or no longer valid',
-        });
-        return;
-      }
-
-      reply({
-        type: 'relay_pairing_redeem_response',
-        requestId,
-        ok: true,
-        redeemed: {
-          offerId: redeemed.offerId,
-          createdAt: redeemed.createdAt,
-          expiresAt: redeemed.expiresAt,
-          peerId: redeemed.peerId,
-          daemonDeviceId: redeemed.daemonDeviceId,
-          daemonPublicKey: redeemed.daemonPublicKey,
-          relayPairingPeerId: redeemed.relayPairingPeerId,
-          serverSignature: redeemed.serverSignature,
-        },
-      });
-      this.pairingChannelKeys.delete(frame.offerId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply({
-        type: 'relay_pairing_redeem_response',
-        requestId,
-        ok: false,
-        errorCode: 'PAIRING_REDEEM_FAILED',
-        error: message,
-      });
-    }
+    await handleRelayPairingRedeemRequest({
+      frame,
+      reply,
+      pairingChannelKeys: this.pairingChannelKeys,
+      maxAgeMs: this.pairingChannelTtlMs,
+      maxEntries: this.pairingChannelMaxEntries,
+    });
   }
 
-  private prunePairingChannelKeys(
+  prunePairingChannelKeys(
     now = Date.now(),
     maxAgeMs = this.pairingChannelTtlMs,
     maxEntries = this.pairingChannelMaxEntries,
   ): void {
-    for (const [offerId, channel] of this.pairingChannelKeys.entries()) {
-      if (now - channel.createdAt > maxAgeMs) {
-        this.pairingChannelKeys.delete(offerId);
-      }
-    }
-    const overflow = this.pairingChannelKeys.size - maxEntries;
-    if (overflow <= 0) {
-      return;
-    }
-    const oldest = Array.from(this.pairingChannelKeys.entries())
-      .sort((a, b) => a[1].createdAt - b[1].createdAt)
-      .slice(0, overflow);
-    for (const [offerId] of oldest) {
-      this.pairingChannelKeys.delete(offerId);
-    }
+    pruneRelayPairingChannelKeys(this.pairingChannelKeys, now, maxAgeMs, maxEntries);
   }
 
   private flushPendingOutbound(): void {
