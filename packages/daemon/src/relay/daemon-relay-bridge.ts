@@ -24,7 +24,6 @@ import {
   deriveSessionFromKeyExchange,
   type DaemonRelayIdentity,
   loadOrCreateIdentity,
-  parseRelayHandshakeProfile,
   parseRelayKeyExchangeInitFrame,
   type RelayHandshakeProfile,
   type RelayKeyExchangeInitFrame,
@@ -35,13 +34,13 @@ import {
   type RelayKeyExchangeInitFrameV3,
 } from './bridge-noise-v3.js';
 import { BridgeError, type BridgeErrorCode } from './bridge-errors.js';
-import { type RelayTokenClaims, verifyRelayTokenClaims } from './bridge-jwt.js';
 import { closeQuietly, resolveRelayTlsOptions, wsOpen } from './bridge-network.js';
 import {
   decryptPairingPayload,
   derivePairingChannelKey,
   encryptPairingPayload,
 } from './bridge-pairing-channel.js';
+import { RelayTokenIssuer } from './bridge-token-issuer.js';
 import {
   isRelayControlFrame,
   parsePairingOfferRequestFrame,
@@ -59,17 +58,6 @@ import {
 import { ConfigManager } from '../core/config.js';
 import { logger as out } from '../core/output.js';
 import { transportFetch } from '../cli/network.js';
-
-interface RelayTokenResponse {
-  ok: boolean;
-  relayToken?: string;
-  claims?: RelayTokenClaims;
-  reason?: string;
-  error?: string;
-}
-
-type JwksResponse = { keys?: Array<Record<string, unknown>> };
-const MAX_JWKS_KEYS = 64;
 
 export interface DaemonRelayBridgeOptions {
   relayEndpoint: string;
@@ -129,17 +117,6 @@ export interface DaemonRelayBridgeStatus {
   circuitOpenUntil?: number;
 }
 
-async function parseRelayIssueResponse(res: Response): Promise<RelayTokenResponse> {
-  const json = (await res.json().catch(() => null)) as RelayTokenResponse | null;
-  if (!json) {
-    return {
-      ok: false,
-      reason: `relay token endpoint returned non-JSON (${res.status})`,
-    };
-  }
-  return json;
-}
-
 export class DaemonRelayBridge {
   private relayWs: RelayWs | null = null;
   private daemonWs: RelayWs | null = null;
@@ -151,10 +128,7 @@ export class DaemonRelayBridge {
   private daemonIdentity: DaemonRelayIdentity | null = null;
   private daemonIssueToken: string | null;
   private requiredProfile: RelayHandshakeProfile = 'noise-ik';
-  private readonly relayTokenJwksUrl: string | undefined;
-  private readonly relayTokenSigningKeys: Record<string, string>;
-  private jwksCacheExpiresAt = 0;
-  private jwksCacheKeys: Record<string, string> = {};
+  private readonly relayTokenIssuer: RelayTokenIssuer;
   private readonly relaySessions = new Map<string, RelaySessionState>();
   private readonly pairingChannelKeys = new Map<string, { key: Buffer; createdAt: number }>();
   private consecutiveIssueFailures = 0;
@@ -196,8 +170,7 @@ export class DaemonRelayBridge {
         ? options.relaySessionMaxEntries
         : DEFAULT_RELAY_SESSION_MAX_ENTRIES;
     this.daemonIssueToken = options.issueToken ?? null;
-    this.relayTokenJwksUrl = options.relayTokenJwksUrl;
-    this.relayTokenSigningKeys = options.relayTokenSigningKeys ?? {};
+    this.relayTokenIssuer = new RelayTokenIssuer(options, this.daemonIssueToken);
   }
 
   getStatus(): DaemonRelayBridgeStatus {
@@ -299,6 +272,7 @@ export class DaemonRelayBridge {
       );
     }
     this.daemonIssueToken = parsed.daemonIssueToken;
+    this.relayTokenIssuer.setDaemonIssueToken(parsed.daemonIssueToken);
     await this.persistIssueToken(parsed.daemonIssueToken);
   }
 
@@ -1045,161 +1019,11 @@ export class DaemonRelayBridge {
     return resolved;
   }
 
-  private async issueRelayToken(): Promise<{
+  private issueRelayToken(): Promise<{
     relayToken: string;
     profile: RelayHandshakeProfile;
   }> {
-    const url = `${this.options.relayServerUrl.replace(/\/+$/, '')}/api/runtime/relay-token`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
-    let res: Response;
-    if (!this.daemonIssueToken) {
-      throw new BridgeError('TOKEN_ISSUE_FAILED', 'missing daemon issue token');
-    }
-    try {
-      res = await transportFetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          role: 'workspace-daemon',
-          workspaceId: this.options.workspaceId,
-          projectMachineBindingId: this.options.projectMachineBindingId,
-          credential: this.daemonIssueToken,
-        }),
-        signal: controller.signal,
-        tlsVerify: this.options.relayTlsVerify ?? 'auto',
-        caCertPath: this.options.relayCaCertPath,
-        tlsPins: this.options.relayTlsPins,
-      });
-    } catch (error) {
-      clearTimeout(timeout);
-      throw new BridgeError(
-        'TOKEN_ISSUE_FAILED',
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    clearTimeout(timeout);
-    const parsed = await parseRelayIssueResponse(res);
-    if (!res.ok || !parsed.ok || !parsed.relayToken) {
-      const reason = parsed.reason ?? parsed.error ?? `HTTP ${res.status}`;
-      throw new BridgeError('TOKEN_ISSUE_FAILED', `issue relay token failed: ${reason}`);
-    }
-
-    let tokenClaims: RelayTokenClaims;
-    let verificationKeys = await this.resolveRelayTokenVerificationKeys(false);
-    try {
-      tokenClaims = verifyRelayTokenClaims(parsed.relayToken, {
-        issuer: this.options.relayTokenIssuer ?? 'viewport-server',
-        audience: this.options.relayTokenAudience ?? 'viewport-relay',
-        signingKeys: verificationKeys,
-        clockSkewSec: this.options.relayTokenClockSkewSec ?? 30,
-      });
-    } catch (error) {
-      if (
-        this.relayTokenJwksUrl &&
-        error instanceof BridgeError &&
-        error.code === 'TOKEN_RESPONSE_INVALID' &&
-        error.message.includes('is not trusted')
-      ) {
-        verificationKeys = await this.resolveRelayTokenVerificationKeys(true);
-        tokenClaims = verifyRelayTokenClaims(parsed.relayToken, {
-          issuer: this.options.relayTokenIssuer ?? 'viewport-server',
-          audience: this.options.relayTokenAudience ?? 'viewport-relay',
-          signingKeys: verificationKeys,
-          clockSkewSec: this.options.relayTokenClockSkewSec ?? 30,
-        });
-      } else {
-        throw error;
-      }
-    }
-    const profile = parseRelayHandshakeProfile(tokenClaims.e2eeProfile ?? 'noise-ik');
-    if (!profile) {
-      throw new BridgeError('TOKEN_RESPONSE_INVALID', 'missing/invalid e2eeProfile claim');
-    }
-
-    return {
-      relayToken: parsed.relayToken,
-      profile,
-    };
-  }
-
-  private async resolveRelayTokenVerificationKeys(
-    forceRefresh: boolean,
-  ): Promise<Record<string, string>> {
-    if (!this.relayTokenJwksUrl) {
-      return this.relayTokenSigningKeys;
-    }
-    const now = Date.now();
-    if (!forceRefresh && now < this.jwksCacheExpiresAt && Object.keys(this.jwksCacheKeys).length) {
-      return this.jwksCacheKeys;
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
-
-    let res: Response;
-    try {
-      res = await transportFetch(this.relayTokenJwksUrl, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        signal: controller.signal,
-        tlsVerify: this.options.relayTlsVerify ?? 'auto',
-        caCertPath: this.options.relayCaCertPath,
-        tlsPins: this.options.relayTlsPins,
-      });
-    } catch (error) {
-      clearTimeout(timeout);
-      throw new BridgeError(
-        'TOKEN_RESPONSE_INVALID',
-        `failed to fetch JWKS: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      throw new BridgeError('TOKEN_RESPONSE_INVALID', `JWKS endpoint returned HTTP ${res.status}`);
-    }
-
-    const parsed = (await res.json().catch(() => null)) as JwksResponse | null;
-    if (!parsed || !Array.isArray(parsed.keys)) {
-      throw new BridgeError('TOKEN_RESPONSE_INVALID', 'JWKS response missing keys array');
-    }
-    if (parsed.keys.length > MAX_JWKS_KEYS) {
-      throw new BridgeError(
-        'TOKEN_RESPONSE_INVALID',
-        `JWKS response contains too many keys (${parsed.keys.length} > ${MAX_JWKS_KEYS})`,
-      );
-    }
-
-    const keys: Record<string, string> = {};
-    for (const entry of parsed.keys) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-      const kid = typeof entry['kid'] === 'string' ? entry['kid'].trim() : '';
-      const kty = typeof entry['kty'] === 'string' ? entry['kty'] : '';
-      const alg = typeof entry['alg'] === 'string' ? entry['alg'] : '';
-      const n = typeof entry['n'] === 'string' ? entry['n'] : '';
-      const e = typeof entry['e'] === 'string' ? entry['e'] : '';
-      if (!kid || kty !== 'RSA' || !n || !e) continue;
-      if (alg && alg !== 'RS256') continue;
-
-      try {
-        const keyObject = crypto.createPublicKey({
-          key: { kty: 'RSA', n, e },
-          format: 'jwk',
-        });
-        keys[kid] = keyObject.export({ format: 'pem', type: 'spki' }).toString();
-      } catch {
-        continue;
-      }
-    }
-
-    if (Object.keys(keys).length === 0) {
-      throw new BridgeError('TOKEN_RESPONSE_INVALID', 'JWKS contained no usable signing keys');
-    }
-
-    this.jwksCacheKeys = keys;
-    this.jwksCacheExpiresAt = Date.now() + 5 * 60_000;
-    return keys;
+    return this.relayTokenIssuer.issue();
   }
 
   private normalizeError(error: unknown): BridgeError {
