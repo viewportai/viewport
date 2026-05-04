@@ -18,6 +18,8 @@ import {
   parseRelayEnvelope,
   toBase64Url,
 } from './bridge-crypto.js';
+import { logDaemonFrameSummary } from './bridge-frame-logger.js';
+import { isCompatibleProfile } from './bridge-handshake-profile.js';
 import {
   deriveSessionFromKeyExchange,
   type DaemonRelayIdentity,
@@ -35,6 +37,11 @@ import {
 import { BridgeError, type BridgeErrorCode } from './bridge-errors.js';
 import { type RelayTokenClaims, verifyRelayTokenClaims } from './bridge-jwt.js';
 import { closeQuietly, resolveRelayTlsOptions, wsOpen } from './bridge-network.js';
+import {
+  decryptPairingPayload,
+  derivePairingChannelKey,
+  encryptPairingPayload,
+} from './bridge-pairing-channel.js';
 import {
   isRelayControlFrame,
   parsePairingOfferRequestFrame,
@@ -131,101 +138,6 @@ async function parseRelayIssueResponse(res: Response): Promise<RelayTokenRespons
     };
   }
   return json;
-}
-
-function derivePairingChannelKey(sharedSecret: Buffer, saltLabel: string): Buffer {
-  const salt = crypto.createHash('sha256').update(saltLabel, 'utf8').digest();
-  const raw = crypto.hkdfSync(
-    'sha256',
-    sharedSecret,
-    salt,
-    Buffer.from('viewport-relay-pairing-channel-v1', 'utf8'),
-    32,
-  );
-  return Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-}
-
-function encryptPairingPayload(
-  key: Buffer,
-  plaintext: string,
-  aadLabel: string,
-): { encIv: string; encTag: string; encCiphertext: string } {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  cipher.setAAD(Buffer.from(aadLabel, 'utf8'));
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return {
-    encIv: toBase64Url(iv),
-    encTag: toBase64Url(tag),
-    encCiphertext: toBase64Url(ciphertext),
-  };
-}
-
-function decryptPairingPayload(
-  key: Buffer,
-  encrypted: { encIv: string; encTag: string; encCiphertext: string },
-  aadLabel: string,
-): string {
-  const iv = fromBase64Url(encrypted.encIv);
-  const tag = fromBase64Url(encrypted.encTag);
-  const ciphertext = fromBase64Url(encrypted.encCiphertext);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAAD(Buffer.from(aadLabel, 'utf8'));
-  decipher.setAuthTag(tag);
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  return plaintext.toString('utf8');
-}
-
-function logDaemonFrameSummary(source: 'daemon->relay' | 'relay->daemon', payload: string): void {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
-  const frame = parsed as Record<string, unknown>;
-  const type = typeof frame.type === 'string' ? frame.type : '';
-  if (!type) return;
-
-  if (type === 'hello') {
-    const directories = Array.isArray(frame.directories) ? frame.directories.length : 0;
-    const activeSessions = Array.isArray(frame.activeSessions) ? frame.activeSessions.length : 0;
-    const discoveredSessions = Array.isArray(frame.discoveredSessions)
-      ? frame.discoveredSessions.length
-      : 0;
-    out.log(
-      `[relay] ${source} hello dirs=${directories} active=${activeSessions} discovered=${discoveredSessions}`,
-    );
-    return;
-  }
-
-  if (type === 'session-list') {
-    const sessions = Array.isArray(frame.sessions) ? frame.sessions.length : 0;
-    const directoryId = typeof frame.directoryId === 'string' ? frame.directoryId : '<unknown>';
-    const total = typeof frame.total === 'number' ? frame.total : sessions;
-    out.log(
-      `[relay] ${source} session-list directory=${directoryId} returned=${sessions} total=${total}`,
-    );
-    return;
-  }
-
-  if (type === 'discovered-sessions-updated') {
-    const sessions = Array.isArray(frame.sessions) ? frame.sessions.length : 0;
-    out.log(`[relay] ${source} discovered-sessions-updated count=${sessions}`);
-  }
-}
-
-function profileStrength(profile: RelayHandshakeProfile): number {
-  return profile === 'noise-ikpsk2' ? 2 : 1;
-}
-
-function isCompatibleProfile(
-  required: RelayHandshakeProfile,
-  requested: RelayHandshakeProfile,
-): boolean {
-  return profileStrength(requested) >= profileStrength(required);
 }
 
 export class DaemonRelayBridge {
