@@ -7,11 +7,9 @@
 import type { FastifyInstance } from 'fastify';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { z } from 'zod';
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRegistry } from '../core/agent-registry.js';
 import type { HookRouter } from '../hooks/router.js';
-import { HookBaseInputSchema } from '../hooks/types.js';
 import type { AuthProvider } from './auth.js';
 import { extractBearerToken } from './auth.js';
 import type { SecurityProfile } from './security.js';
@@ -24,125 +22,24 @@ import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './rin
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
 import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
+import {
+  DirectoryRegisterBodySchema,
+  HookBodySchema,
+  PairOfferBodySchema,
+  PairRedeemBodySchema,
+  PermissionRespondBodySchema,
+  SessionModeBodySchema,
+  WorkflowApprovalBodySchema,
+  WorkflowCancelBodySchema,
+  WorkflowRunBodySchema,
+  WorkflowValidateBodySchema,
+  WorktreeRetryBodySchema,
+  WorktreeRollbackBodySchema,
+  WorktreeSquashBodySchema,
+  invalidPayloadError,
+} from './http-request-schemas.js';
 
 const startTime = Date.now();
-
-const SessionModeBodySchema = z.object({ mode: z.enum(['detect', 'bypass']) }).strict();
-const WorktreeRollbackBodySchema = z.object({ toSha: z.string().trim().min(1) }).strict();
-const WorktreeRetryBodySchema = z.object({ fromSha: z.string().trim().min(1) }).strict();
-const WorktreeSquashBodySchema = z
-  .object({
-    targetBranch: z.string().trim().min(1).optional(),
-    commitMessage: z.string().trim().min(1).optional(),
-  })
-  .strict();
-const PermissionRespondBodySchema = z
-  .object({
-    sessionId: z.string().trim().min(1),
-    requestId: z.string().trim().min(1),
-    behavior: z.enum(['allow', 'deny']),
-    message: z.string().trim().min(1).optional(),
-    allowAlways: z.boolean().optional(),
-  })
-  .strict();
-const DirectoryRegisterBodySchema = z
-  .object({
-    path: z.string().trim().min(1),
-    config: z.record(z.string(), z.unknown()).optional(),
-  })
-  .strict();
-const WorkflowValidateBodySchema = z
-  .object({
-    workflowPath: z.string().trim().min(1).optional(),
-    workflowYaml: z.string().trim().min(1).max(256_000).optional(),
-    workflowSourceRef: z.string().trim().min(1).optional(),
-  })
-  .strict()
-  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
-    message: 'workflowPath or workflowYaml is required',
-    path: ['workflowPath'],
-  });
-const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(WorkflowInputValueSchema),
-    z.record(z.string(), WorkflowInputValueSchema),
-  ]),
-);
-const WorkflowRunBodySchema = z
-  .object({
-    workflowPath: z.string().trim().min(1).optional(),
-    workflowYaml: z.string().trim().min(1).max(256_000).optional(),
-    workflowSourceRef: z.string().trim().min(1).optional(),
-    directoryId: z.string().trim().min(1),
-    inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
-    projectId: z.string().trim().min(1).optional(),
-    projectMachineBindingId: z.string().trim().min(1).optional(),
-    platformRunId: z.string().trim().min(1).optional(),
-    rerunOfWorkflowRunId: z.string().trim().min(1).optional(),
-    executionPolicy: z
-      .object({
-        mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
-        branch: z.string().trim().min(1).max(255).optional(),
-      })
-      .strict()
-      .optional(),
-    initiation: z.enum(['cli', 'browser', 'agent_skill']).optional(),
-  })
-  .strict()
-  .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
-    message: 'workflowPath or workflowYaml is required',
-    path: ['workflowPath'],
-  });
-const WorkflowApprovalBodySchema = z
-  .object({
-    approved: z.boolean(),
-    message: z.string().trim().min(1).max(2_000).optional(),
-    actor: z
-      .object({
-        id: z.string().trim().min(1).max(255).optional(),
-        name: z.string().trim().min(1).max(255).optional(),
-        email: z.string().email().max(255).optional(),
-        source: z.string().trim().min(1).max(255).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-const WorkflowCancelBodySchema = z
-  .object({
-    message: z.string().trim().min(1).max(2_000).optional(),
-    actor: z
-      .object({
-        id: z.string().trim().min(1).max(255).optional(),
-        name: z.string().trim().min(1).max(255).optional(),
-        email: z.string().email().max(255).optional(),
-        source: z.string().trim().min(1).max(255).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-const PairRedeemBodySchema = z
-  .object({
-    offerId: z.string().trim().min(1),
-    proof: z.string().trim().min(1),
-    trustAnchor: z.string().trim().min(1),
-    clientPublicKey: z.string().trim().min(1),
-    clientProof: z.string().trim().min(1),
-  })
-  .strict();
-const PairOfferBodySchema = z
-  .object({
-    ttlSeconds: z.number().int().min(30).max(3600).optional(),
-  })
-  .strict();
-const HookBodySchema = HookBaseInputSchema.extend({
-  adapter: z.string().trim().min(1).max(64).optional(),
-}).passthrough();
 
 const REDEEM_WINDOW_MS = 60_000;
 const REDEEM_MAX_ATTEMPTS = 12;
@@ -151,13 +48,6 @@ const REDEEM_ATTEMPT_IP_MAP_MAX = 2_048;
 interface RedeemAttemptEntry {
   attempts: number[];
   updatedAt: number;
-}
-
-function invalidPayloadError(error: z.ZodError): string {
-  const first = error.issues[0];
-  if (!first) return 'Invalid payload';
-  const field = first.path.join('.') || '<root>';
-  return `Invalid payload at ${field}: ${first.message}`;
 }
 
 export interface DaemonRuntimeInfo {
