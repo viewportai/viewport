@@ -1,10 +1,8 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
-import { configDir, ConfigManager } from '../core/config.js';
+import { ConfigManager } from '../core/config.js';
 import type { ViewportConfig } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
-import { resolveDaemonEndpoint } from './daemon-client.js';
-import type { DaemonEndpoint } from './daemon-client.js';
 import {
   clearDaemonRuntimeState,
   readDaemonRuntimeState,
@@ -17,12 +15,9 @@ import {
   type DaemonRuntimeState,
 } from './daemon-lifecycle.js';
 import {
-  compareSemver,
-  fetchLatestVersion,
   formatNpmInvocation,
   resolveNpmInvocationFromNode,
   resolvePreferredNodePath,
-  type NpmInvocation,
 } from './runtime-toolchain.js';
 import { startWithLaunchConfig } from '../startup.js';
 import {
@@ -31,7 +26,6 @@ import {
   printJson,
   readDaemonHealth,
   requestLifecycle,
-  shortError,
   waitForDaemonReady,
 } from './command-shared.js';
 import { resolveDaemonSettingsFromSources } from './daemon-settings.js';
@@ -52,189 +46,7 @@ import {
   resolvePackageRoot,
   resolvePackageSourceInfo,
 } from '../core/package-meta.js';
-
-function endpointHealthUrl(endpoint: DaemonEndpoint): string {
-  if (endpoint.type === 'socket') {
-    return `unix://${endpoint.socketPath}:/health`;
-  }
-  return `${endpoint.baseUrl}/health`;
-}
-
-function endpointListenLabel(endpoint: DaemonEndpoint): string {
-  if (endpoint.type === 'socket') {
-    return `unix://${endpoint.socketPath}`;
-  }
-  return `${endpoint.host}:${endpoint.port}`;
-}
-
-export async function status(): Promise<void> {
-  const asJson = isJsonMode();
-  const shouldCheckUpdates = hasFlag('check-updates');
-  const endpoint = await resolveDaemonEndpoint();
-  const url = endpointHealthUrl(endpoint);
-  const state = await readDaemonRuntimeState();
-  const runningByState = !!(state && isPidRunning(state.ownerPid));
-  const health = await readDaemonHealth();
-
-  const statusValue: 'running' | 'stopped' | 'unresponsive' = health
-    ? 'running'
-    : runningByState
-      ? 'unresponsive'
-      : 'stopped';
-
-  const owner =
-    state?.ownerUid !== undefined
-      ? `${state.ownerUid}@${state.ownerHostname ?? 'unknown-host'}`
-      : null;
-  const resolvedNode = resolvePreferredNodePath({
-    daemonPid: state?.ownerPid ?? null,
-    fallbackNodePath: process.execPath,
-  });
-
-  let runtimeNpm = 'unknown';
-  let npmInvocation: NpmInvocation | null = null;
-  try {
-    npmInvocation = resolveNpmInvocationFromNode(resolvedNode.nodePath);
-    runtimeNpm = formatNpmInvocation(npmInvocation);
-  } catch (err) {
-    runtimeNpm = `unresolved (${shortError(err)})`;
-  }
-
-  const manager = new ConfigManager();
-  await manager.load();
-  const cliVersion = resolveDisplayVersion();
-  const cliSource = resolvePackageSourceInfo();
-  const runtimeIdentity = resolveDaemonRuntimeIdentity({
-    daemonConfig: manager.getDaemonConfig(),
-    machineId: manager.getMachineId(),
-    daemonVersion: health?.machine?.daemonVersion ?? state?.version ?? cliVersion,
-  });
-  const configPaths = manager.getConfigPaths();
-  let latestCliVersion = 'skipped';
-  let updateStatus = 'skipped (use --check-updates)';
-  let note: string | undefined;
-  if (npmInvocation && shouldCheckUpdates) {
-    const latest = fetchLatestVersion({ npm: npmInvocation, packageName: resolvePackageName() });
-    if (latest.version) {
-      latestCliVersion = latest.version;
-      const comparison = compareSemver(cliVersion, latest.version);
-      if (comparison === null) {
-        updateStatus = 'unknown (version format not comparable)';
-      } else if (comparison < 0) {
-        updateStatus = `update available (${cliVersion} -> ${latest.version})`;
-      } else {
-        updateStatus = 'up to date';
-      }
-    } else {
-      note = latest.note;
-      updateStatus = latest.note ?? 'unknown';
-    }
-  }
-
-  const payload = {
-    status: statusValue,
-    endpoint: url,
-    home: configDir(),
-    ownerPid: state?.ownerPid ?? null,
-    workerPid: state?.workerPid ?? health?.pid ?? null,
-    owner,
-    listen: state?.listen ?? health?.listen ?? endpointListenLabel(endpoint),
-    socketPath:
-      state?.socketPath ??
-      health?.socketPath ??
-      (endpoint.type === 'socket' ? endpoint.socketPath : null),
-    startedAt: state?.startedAt ?? health?.startedAt ?? null,
-    profile: health?.machine?.profile ?? state?.profile ?? runtimeIdentity.profile ?? null,
-    runtimeKind: health?.machine?.runtimeKind ?? state?.runtimeKind ?? runtimeIdentity.runtimeKind,
-    daemonHome: health?.machine?.daemonHome ?? state?.daemonHome ?? runtimeIdentity.daemonHome,
-    daemonHomeScope:
-      health?.machine?.daemonHomeScope ?? state?.daemonHomeScope ?? runtimeIdentity.daemonHomeScope,
-    serverUrl: health?.machine?.serverUrl ?? state?.serverUrl ?? runtimeIdentity.serverUrl ?? null,
-    relayEndpoint:
-      health?.machine?.relayEndpoint ??
-      state?.relayEndpoint ??
-      runtimeIdentity.relayEndpoint ??
-      null,
-    relayServerUrl:
-      health?.machine?.relayServerUrl ??
-      state?.relayServerUrl ??
-      runtimeIdentity.relayServerUrl ??
-      null,
-    runtimeNode: `${resolvedNode.nodePath} (${resolvedNode.source})`,
-    runtimeNpm,
-    cliVersion,
-    latestCliVersion,
-    updateStatus,
-    health,
-    relayState: health?.relay?.state ?? null,
-    relayReconnectAttempt: health?.relay?.reconnectAttempt ?? null,
-    relayLastErrorCode: health?.relay?.lastErrorCode ?? null,
-    relayLastErrorMessage: health?.relay?.lastErrorMessage ?? null,
-    note,
-    configSource: configPaths.projectOverridePath
-      ? `project override (${configPaths.projectOverridePath})`
-      : `global (${configPaths.globalPath})`,
-    configReason: runtimeIdentity.projectConfigSource
-      ? runtimeIdentity.projectConfigSource === 'explicit'
-        ? 'explicit VIEWPORT_PROJECT_CONFIG_DIR override'
-        : 'nearest ancestor .viewport/config.json'
-      : 'global ~/.viewport/config.json',
-    cliSource:
-      cliSource.kind === 'linked-local-build'
-        ? `linked local build${cliSource.gitRef ? ` (${cliSource.gitRef})` : ''}`
-        : 'installed package',
-  };
-
-  if (asJson) {
-    printJson(payload);
-    return;
-  }
-
-  console.log(`Status:      ${payload.status}`);
-  console.log(
-    `Runtime:     ${formatRuntimeKindLabel(payload.runtimeKind)} (${payload.daemonHomeScope})`,
-  );
-  console.log(`Home:        ${formatDaemonHomeLabel(runtimeIdentity)}`);
-  console.log(`Listen:      ${payload.listen}`);
-  if (payload.socketPath) {
-    console.log(`Socket:      ${payload.socketPath}`);
-  }
-  console.log(`Owner PID:   ${payload.ownerPid ?? '-'}`);
-  console.log(`Worker PID:  ${payload.workerPid ?? '-'}`);
-  console.log(`Owner:       ${payload.owner ?? '-'}`);
-  console.log(
-    `Started:     ${payload.startedAt ? new Date(payload.startedAt).toISOString() : '-'}`,
-  );
-  console.log(`Profile:     ${payload.profile ?? '-'}`);
-  console.log(`Server:      ${payload.serverUrl ?? '-'}`);
-  console.log(`Relay WS:    ${payload.relayEndpoint ?? '-'}`);
-  console.log(`Relay API:   ${payload.relayServerUrl ?? '-'}`);
-  console.log(`Relay state: ${payload.relayState ?? '-'}`);
-  if (payload.relayReconnectAttempt) {
-    console.log(`Relay tries: ${payload.relayReconnectAttempt}`);
-  }
-  if (payload.relayLastErrorCode || payload.relayLastErrorMessage) {
-    console.log(
-      `Relay last:  ${payload.relayLastErrorCode ?? 'UNKNOWN'}${payload.relayLastErrorMessage ? ` — ${payload.relayLastErrorMessage}` : ''}`,
-    );
-  }
-  console.log(`Node:        ${payload.runtimeNode}`);
-  console.log(`npm:         ${payload.runtimeNpm}`);
-  console.log(`CLI:         ${payload.cliVersion}`);
-  console.log(`CLI source:  ${payload.cliSource}`);
-  console.log(`Latest CLI:  ${payload.latestCliVersion}`);
-  console.log(`Update:      ${payload.updateStatus}`);
-  console.log(`Config:      ${payload.configSource}`);
-  console.log(`Reason:      ${payload.configReason}`);
-  if (payload.health) {
-    console.log(`Sessions:    ${payload.health.sessions}`);
-    console.log(`Directories: ${payload.health.directories}`);
-    console.log(`Agents:      ${payload.health.agents}`);
-  }
-  if (payload.note) {
-    console.log(`Note:        ${payload.note}`);
-  }
-}
+export { status } from './lifecycle-status-command.js';
 
 export async function doctor(): Promise<void> {
   const asJson = isJsonMode();
