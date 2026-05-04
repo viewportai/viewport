@@ -36,6 +36,15 @@ import { BridgeError, type BridgeErrorCode } from './bridge-errors.js';
 import { type RelayTokenClaims, verifyRelayTokenClaims } from './bridge-jwt.js';
 import { closeQuietly, resolveRelayTlsOptions, wsOpen } from './bridge-network.js';
 import {
+  isRelayControlFrame,
+  parsePairingOfferRequestFrame,
+  parsePairingRedeemRequestFrame,
+  type RelayControlFrame,
+  type RelayKeyUpdateRequiredFrame,
+  type RelayPairingOfferRequestFrame,
+  type RelayPairingRedeemRequestFrame,
+} from './relay-control-frames.js';
+import {
   issuePairingOffer,
   redeemPairingOffer,
   resolveRelayPairingSecret,
@@ -52,37 +61,6 @@ interface RelayTokenResponse {
   error?: string;
 }
 
-interface RelayStatusFrame {
-  type: 'relay_status';
-  code?: string;
-  message?: string;
-  relayWsBaseUrl?: string;
-}
-
-interface RelayKeyUpdateRequiredFrame {
-  type: 'relay_key_update_required';
-  sessionId: string;
-  nextEpoch: number;
-  reason: 'message_threshold';
-}
-
-interface RelayPairingOfferRequestFrame {
-  type: 'relay_pairing_offer_request';
-  requestId: string;
-  ttlSeconds?: number;
-  clientChannelPublicKey: string;
-}
-
-interface RelayPairingRedeemRequestFrame {
-  type: 'relay_pairing_redeem_request';
-  requestId: string;
-  offerId: string;
-  encIv: string;
-  encTag: string;
-  encCiphertext: string;
-}
-
-type RelayControlFrame = RelayStatusFrame | RelayKeyUpdateRequiredFrame;
 type JwksResponse = { keys?: Array<Record<string, unknown>> };
 const MAX_JWKS_KEYS = 64;
 
@@ -153,77 +131,6 @@ async function parseRelayIssueResponse(res: Response): Promise<RelayTokenRespons
     };
   }
   return json;
-}
-
-function isRelayControlFrame(value: unknown): value is RelayControlFrame {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const frame = value as Record<string, unknown>;
-  if (frame['type'] === 'relay_status') return true;
-  return (
-    frame['type'] === 'relay_key_update_required' &&
-    typeof frame['sessionId'] === 'string' &&
-    typeof frame['nextEpoch'] === 'number'
-  );
-}
-
-function parsePairingOfferRequestFrame(value: unknown): RelayPairingOfferRequestFrame | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const frame = value as Record<string, unknown>;
-  if (frame['type'] !== 'relay_pairing_offer_request') return null;
-  if (typeof frame['requestId'] !== 'string' || frame['requestId'].trim().length === 0) {
-    return null;
-  }
-  const ttlSeconds = frame['ttlSeconds'];
-  if (
-    typeof ttlSeconds !== 'undefined' &&
-    (!Number.isInteger(ttlSeconds) || (ttlSeconds as number) < 30 || (ttlSeconds as number) > 3600)
-  ) {
-    return null;
-  }
-  if (
-    typeof frame['clientChannelPublicKey'] !== 'string' ||
-    frame['clientChannelPublicKey'].trim().length === 0
-  ) {
-    return null;
-  }
-  return {
-    type: 'relay_pairing_offer_request',
-    requestId: frame['requestId'],
-    ttlSeconds: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
-    clientChannelPublicKey: frame['clientChannelPublicKey'],
-  };
-}
-
-function parsePairingRedeemRequestFrame(value: unknown): RelayPairingRedeemRequestFrame | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const frame = value as Record<string, unknown>;
-  if (frame['type'] !== 'relay_pairing_redeem_request') return null;
-  if (
-    typeof frame['requestId'] !== 'string' ||
-    typeof frame['offerId'] !== 'string' ||
-    typeof frame['encIv'] !== 'string' ||
-    typeof frame['encTag'] !== 'string' ||
-    typeof frame['encCiphertext'] !== 'string'
-  ) {
-    return null;
-  }
-  if (
-    frame['requestId'].trim().length === 0 ||
-    frame['offerId'].trim().length === 0 ||
-    frame['encIv'].trim().length === 0 ||
-    frame['encTag'].trim().length === 0 ||
-    frame['encCiphertext'].trim().length === 0
-  ) {
-    return null;
-  }
-  return {
-    type: 'relay_pairing_redeem_request',
-    requestId: frame['requestId'],
-    offerId: frame['offerId'],
-    encIv: frame['encIv'],
-    encTag: frame['encTag'],
-    encCiphertext: frame['encCiphertext'],
-  };
 }
 
 function derivePairingChannelKey(sharedSecret: Buffer, saltLabel: string): Buffer {
