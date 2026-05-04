@@ -1,9 +1,6 @@
 import { z } from 'zod';
 import type { WorkflowInputValue } from './run-types.js';
-import {
-  CapabilityRequestSchema,
-  ExecutorRequirementSchema,
-} from './workflow-executor-schema.js';
+import { CapabilityRequestSchema, ExecutorRequirementSchema } from './workflow-executor-schema.js';
 
 export const WORKFLOW_SCHEMA_VERSION = 'viewport.workflow/v1' as const;
 
