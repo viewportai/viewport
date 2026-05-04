@@ -60,6 +60,38 @@ export interface WorkflowRequires {
   secrets?: string[];
 }
 
+export type WorkflowExecutorTargetKind =
+  | 'local_private'
+  | 'local_sandbox'
+  | 'managed'
+  | 'self_hosted'
+  | 'ci';
+
+export type WorkflowExecutorCapability =
+  | 'agent.prompt'
+  | 'artifacts'
+  | 'cancel'
+  | 'files.read'
+  | 'files.write'
+  | 'network.egress'
+  | 'resume'
+  | 'secrets'
+  | 'shell'
+  | 'worktree';
+
+export interface WorkflowExecutorRequirement {
+  targets?: WorkflowExecutorTargetKind[];
+  defaultTarget?: WorkflowExecutorTargetKind;
+  capabilities?: WorkflowExecutorCapability[];
+}
+
+export type WorkflowCapabilityRequest =
+  | { type: 'secret'; ref: string; reason: string }
+  | { type: 'network_egress'; host: string; reason: string }
+  | { type: 'write_scope'; path: string; reason: string }
+  | { type: 'repo_access'; ref: string; reason: string }
+  | { type: 'context'; ref: string; reason: string };
+
 export interface WorkflowContextReference {
   ref: string;
   as?: string;
@@ -249,6 +281,8 @@ export interface WorkflowDefinition {
   inputs?: Record<string, WorkflowInputDefinition>;
   context?: WorkflowContext;
   requires?: WorkflowRequires;
+  executor?: WorkflowExecutorRequirement;
+  capabilityRequests?: WorkflowCapabilityRequest[];
   nodes: Record<string, WorkflowNode>;
 }
 
