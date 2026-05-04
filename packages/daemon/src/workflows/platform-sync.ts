@@ -2,6 +2,7 @@ import type { ConfigManager } from '../core/config.js';
 import { transportFetch } from '../cli/network.js';
 import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 import { runtimeCommands, type WorkflowRuntimeCommand } from './platform-runtime-command.js';
+import { buildReviewPacket } from './review-packet.js';
 
 type Fetcher = typeof transportFetch;
 
@@ -69,6 +70,7 @@ export class WorkflowRunPlatformSync {
 
     const eventOffset = this.eventOffsets.get(run.id) ?? 0;
     const newEvents = run.events.slice(eventOffset);
+    const reviewPacket = buildReviewPacket(run);
     const res = await this.fetcher(target.url, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -82,6 +84,7 @@ export class WorkflowRunPlatformSync {
         error_summary: run.error ?? null,
         started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
         completed_at: run.completedAt ? new Date(run.completedAt).toISOString() : null,
+        ...(reviewPacket ? { review_packet: reviewPacket } : {}),
         nodes: Object.values(run.nodes).map((node) => ({
           node_key: node.id,
           title: node.title ?? node.id,
