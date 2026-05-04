@@ -156,6 +156,17 @@ export interface DaemonEvents {
     agentType?: string;
     lastMessage?: string;
   };
+  'hook:plan-proposed': {
+    sessionId: string;
+    adapter: string;
+    cwd?: string;
+    title?: string;
+    summary?: string;
+    body: string;
+    source?: string;
+    sourceRef?: string;
+    metadata?: Record<string, unknown>;
+  };
 }
 
 // ---------------------------------------------------------------------------

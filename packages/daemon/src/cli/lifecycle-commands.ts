@@ -1321,6 +1321,9 @@ export function showHelp(): void {
   console.log(
     '                               Validate, run, inspect, approve, and cancel local workflows',
   );
+  console.log('  hook notify --event <EventName>');
+  console.log('  hook plan                    Send a plan proposal hook from stdin');
+  console.log('  hook capabilities [--adapter <name>] [--json]');
   console.log('  pair [<code>] [--server <url>] [--app-url <url>] [--json]');
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { WorkflowInputValue } from './run-types.js';
+import { CapabilityRequestSchema, ExecutorRequirementSchema } from './workflow-executor-schema.js';
 
 export const WORKFLOW_SCHEMA_VERSION = 'viewport.workflow/v1' as const;
 
@@ -223,6 +224,16 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
   onReject: ApprovalOnRejectSchema.optional(),
 }).strict();
 
+const PlanNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('plan'),
+  title: z.string().trim().min(1),
+  body: z.string().trim().min(1),
+  summary: z.string().trim().min(1).optional(),
+  source: z.string().trim().min(1).optional(),
+  sourceRef: z.string().trim().min(1).optional(),
+  waitForApproval: z.boolean().optional(),
+}).strict();
+
 const GateNodeSchema = NodeBaseSchema.extend({
   type: z.literal('gate'),
   gate: GateDefinitionSchema,
@@ -296,6 +307,7 @@ const WorkflowNodeSchema = z.discriminatedUnion('type', [
   PromptNodeSchema,
   ShellNodeSchema,
   ApprovalNodeSchema,
+  PlanNodeSchema,
   GateNodeSchema,
   LoopNodeSchema,
   SubflowNodeSchema,
@@ -310,6 +322,8 @@ export const WorkflowDefinitionSchema = z
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
     context: ContextSchema.optional(),
     requires: RequiresSchema.optional(),
+    executor: ExecutorRequirementSchema.optional(),
+    capabilityRequests: z.array(CapabilityRequestSchema).optional(),
     nodes: z.record(z.string().trim().min(1), WorkflowNodeSchema),
   })
   .strict();

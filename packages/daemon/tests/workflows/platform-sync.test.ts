@@ -96,6 +96,126 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('emits a privacy-preserving review packet for terminal review workflows', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.status = 'completed';
+    run.completedAt = 2_000;
+    run.updatedAt = 2_000;
+    run.nodes.inspect.status = 'completed';
+    run.nodes.inspect.completedAt = 2_000;
+    run.nodes.inspect.output = 'raw private review transcript and local diff details';
+    run.events.push({
+      id: 'event-2',
+      runId: run.id,
+      timestamp: 2_000,
+      type: 'run-completed',
+      message: 'Workflow run completed',
+    });
+
+    await sync.sync(run);
+
+    const packet = calls[0]?.['review_packet'] as Record<string, unknown>;
+    expect(packet).toMatchObject({
+      source_key: 'daemon-workflow-readiness',
+      title: 'Pull request review readiness packet',
+      status: 'published',
+      decision: 'needs_review',
+      risk_level: 'low',
+      published_at: '1970-01-01T00:00:02.000Z',
+    });
+    expect(packet['summary']).toBe('Pull request review completed with 1/1 nodes complete.');
+    expect(packet['checks']).toEqual([
+      {
+        key: 'inspect',
+        title: 'Inspect',
+        type: 'shell',
+        status: 'completed',
+        exitCode: 0,
+      },
+    ]);
+    expect(packet['proof_items']).toEqual([
+      {
+        kind: 'node',
+        node: 'inspect',
+        title: 'Inspect',
+        status: 'completed',
+        completedAt: '1970-01-01T00:00:02.000Z',
+      },
+      {
+        kind: 'artifact',
+        node: 'inspect',
+        name: 'report',
+        type: 'report',
+        digest: 'sha256:report',
+      },
+    ]);
+    expect(JSON.stringify(packet)).not.toContain('raw private review transcript');
+    expect(JSON.stringify(packet)).not.toContain('/repo');
+    expect(JSON.stringify(packet)).not.toContain('/repo/artifacts/report.md');
+    expect(JSON.stringify(packet)).not.toContain('binding-1');
+    expect(JSON.stringify(packet)).not.toContain('machine-1');
+    expect(packet['metadata']).toMatchObject({
+      generatedBy: 'vpd',
+      privacy: {
+        rawTranscriptIncluded: false,
+        rawLogContentIncluded: false,
+        rawArtifactBytesIncluded: false,
+      },
+    });
+  });
+
+  it('redacts failed-node command output from generated review packet findings', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.status = 'failed';
+    run.completedAt = 2_000;
+    run.updatedAt = 2_000;
+    run.nodes.inspect.status = 'failed';
+    run.nodes.inspect.error = 'Command failed with stderr: secret stderr from local command';
+
+    await sync.sync(run);
+
+    const packet = calls[0]?.['review_packet'] as Record<string, unknown>;
+    expect(packet).toMatchObject({
+      status: 'failed',
+      decision: 'changes_requested',
+      risk_level: 'high',
+    });
+    expect(packet['findings']).toEqual([
+      {
+        severity: 'high',
+        node: 'inspect',
+        title: 'Inspect',
+        message: 'Node inspect failed. Inspect the local run for redacted command output.',
+      },
+    ]);
+    expect(JSON.stringify(packet)).not.toContain('secret stderr');
+  });
+
+  it('does not auto-publish review packets for blocked approval polling snapshots', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.status = 'blocked';
+    run.nodes.inspect.status = 'blocked';
+
+    await sync.sync(run);
+
+    expect(calls[0]).not.toHaveProperty('review_packet');
+  });
+
   it('redacts transcript excerpts, log content, and artifact paths when capture policy requires it', async () => {
     const calls: Array<Record<string, unknown>> = [];
     const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
@@ -276,6 +396,136 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(calls).toHaveLength(1);
+  });
+
+  it('applies runtime approval commands returned by platform sync and sends the resumed snapshot', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const commands: unknown[] = [];
+    const run = workflowRun();
+    run.status = 'blocked';
+    run.nodes.inspect.status = 'blocked';
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        calls.push(body);
+        return new Response(
+          JSON.stringify({
+            data: { id: 'platform-run-1' },
+            runtime_commands:
+              body['status'] === 'blocked'
+                ? [
+                    {
+                      id: 'plan-review:plan-1:inspect:1',
+                      type: 'workflow.approval_decision',
+                      workflow_run_id: 'runtime-run-1',
+                      workflow_node_id: 'inspect',
+                      approved: true,
+                      message: 'Approved by reviewer.',
+                      actor: { id: 1, name: 'Reviewer' },
+                    },
+                  ]
+                : [],
+          }),
+          { status: 200 },
+        );
+      },
+      {
+        blockedPollDelayMs: 0,
+        onRuntimeCommand: async (command) => {
+          commands.push(command);
+          run.status = 'running';
+          run.nodes.inspect.status = 'running';
+          sync.schedule(run);
+        },
+      },
+    );
+
+    sync.schedule(run);
+    await waitForCondition(() => calls.length === 2);
+    await sync.flushPending();
+
+    expect(commands).toEqual([
+      {
+        id: 'plan-review:plan-1:inspect:1',
+        type: 'workflow.approval_decision',
+        workflow_run_id: 'runtime-run-1',
+        workflow_node_id: 'inspect',
+        approved: true,
+        message: 'Approved by reviewer.',
+        actor: { id: 1, name: 'Reviewer' },
+        feedback: null,
+      },
+    ]);
+    expect(calls.map((call) => call['status'])).toEqual(['blocked', 'running']);
+  });
+
+  it('polls blocked platform-linked runs while waiting for a review command', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const run = workflowRun();
+    run.status = 'blocked';
+    run.nodes.inspect.status = 'blocked';
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async (_url, init) => {
+        calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        if (calls.length === 2) {
+          run.status = 'running';
+          run.nodes.inspect.status = 'running';
+          sync.schedule(run);
+        }
+        return new Response(JSON.stringify({ data: { id: 'platform-run-1' } }), { status: 200 });
+      },
+      { blockedPollDelayMs: 0 },
+    );
+
+    sync.schedule(run);
+    await waitForCondition(() => calls.length >= 3);
+    await sync.flushPending();
+
+    expect(calls.map((call) => call['status'])).toEqual(['blocked', 'blocked', 'running']);
+  });
+
+  it('does not mark runtime commands processed until the runner applies them', async () => {
+    const commands: string[] = [];
+    const run = workflowRun();
+    run.status = 'blocked';
+    run.nodes.inspect.status = 'blocked';
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { id: 'platform-run-1' },
+            runtime_commands: [
+              {
+                id: 'plan-review:pending',
+                type: 'workflow.approval_decision',
+                workflow_node_id: 'inspect',
+                approved: true,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      {
+        blockedPollDelayMs: 0,
+        onRuntimeCommand: async (command) => {
+          commands.push(command.id);
+          if (commands.length === 1) return false;
+          run.status = 'running';
+          run.nodes.inspect.status = 'running';
+          sync.schedule(run);
+          return true;
+        },
+      },
+    );
+
+    sync.schedule(run);
+    await waitForCondition(() => commands.length === 2);
+    await sync.flushPending();
+
+    expect(commands).toEqual(['plan-review:pending', 'plan-review:pending']);
   });
 });
 

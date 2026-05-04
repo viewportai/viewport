@@ -15,6 +15,7 @@ export interface WorkflowRunEvent {
     | 'node-log'
     | 'node-output'
     | 'node-skipped'
+    | 'plan-proposed'
     | 'artifact-collected'
     | 'artifact-missing'
     | 'approval-requested'

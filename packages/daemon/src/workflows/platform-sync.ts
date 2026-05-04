@@ -1,12 +1,19 @@
 import type { ConfigManager } from '../core/config.js';
 import { transportFetch } from '../cli/network.js';
 import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
+import { runtimeCommands, type WorkflowRuntimeCommand } from './platform-runtime-command.js';
+import { buildReviewPacket } from './review-packet.js';
 
 type Fetcher = typeof transportFetch;
 
 export interface WorkflowRunPlatformSyncOptions {
   retryDelaysMs?: number[];
   exhaustedRetryDelayMs?: number;
+  blockedPollDelayMs?: number;
+  onRuntimeCommand?: (
+    command: WorkflowRuntimeCommand,
+    run: WorkflowRunRecord,
+  ) => Promise<boolean | void> | boolean | void;
 }
 
 export class WorkflowRunPlatformSync {
@@ -14,8 +21,15 @@ export class WorkflowRunPlatformSync {
   private readonly latestRuns = new Map<string, WorkflowRunRecord>();
   private readonly workers = new Map<string, Promise<void>>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly blockedPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly processedCommandIds = new Map<string, Set<string>>();
   private readonly retryDelaysMs: number[];
   private readonly exhaustedRetryDelayMs: number;
+  private readonly blockedPollDelayMs: number;
+  private readonly onRuntimeCommand?: (
+    command: WorkflowRuntimeCommand,
+    run: WorkflowRunRecord,
+  ) => Promise<boolean | void> | boolean | void;
 
   constructor(
     private readonly configManager: ConfigManager,
@@ -24,6 +38,8 @@ export class WorkflowRunPlatformSync {
   ) {
     this.retryDelaysMs = options.retryDelaysMs ?? [1_000, 2_000, 5_000, 10_000, 30_000];
     this.exhaustedRetryDelayMs = options.exhaustedRetryDelayMs ?? 60_000;
+    this.blockedPollDelayMs = options.blockedPollDelayMs ?? 3_000;
+    this.onRuntimeCommand = options.onRuntimeCommand;
   }
 
   schedule(run: WorkflowRunRecord): void {
@@ -34,6 +50,11 @@ export class WorkflowRunPlatformSync {
     if (timer) {
       clearTimeout(timer);
       this.retryTimers.delete(run.id);
+    }
+    const blockedPollTimer = this.blockedPollTimers.get(run.id);
+    if (blockedPollTimer) {
+      clearTimeout(blockedPollTimer);
+      this.blockedPollTimers.delete(run.id);
     }
     if (this.workers.has(run.id)) return;
     this.startWorker(run.id);
@@ -49,6 +70,7 @@ export class WorkflowRunPlatformSync {
 
     const eventOffset = this.eventOffsets.get(run.id) ?? 0;
     const newEvents = run.events.slice(eventOffset);
+    const reviewPacket = buildReviewPacket(run);
     const res = await this.fetcher(target.url, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -62,6 +84,7 @@ export class WorkflowRunPlatformSync {
         error_summary: run.error ?? null,
         started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
         completed_at: run.completedAt ? new Date(run.completedAt).toISOString() : null,
+        ...(reviewPacket ? { review_packet: reviewPacket } : {}),
         nodes: Object.values(run.nodes).map((node) => ({
           node_key: node.id,
           title: node.title ?? node.id,
@@ -116,6 +139,7 @@ export class WorkflowRunPlatformSync {
       );
     }
 
+    await this.applyRuntimeCommands(run, await readResponseJson(res));
     this.eventOffsets.set(run.id, run.events.length);
   }
 
@@ -144,7 +168,12 @@ export class WorkflowRunPlatformSync {
       }
 
       if (this.latestRuns.get(runId) === run) {
+        if (run.status === 'blocked') {
+          this.scheduleBlockedPoll(runId);
+          return;
+        }
         this.latestRuns.delete(runId);
+        this.processedCommandIds.delete(runId);
         return;
       }
       attempts = 0;
@@ -167,6 +196,32 @@ export class WorkflowRunPlatformSync {
     }, this.exhaustedRetryDelayMs);
     timer.unref?.();
     this.retryTimers.set(runId, timer);
+  }
+
+  private scheduleBlockedPoll(runId: string): void {
+    if (!this.latestRuns.has(runId) || this.blockedPollTimers.has(runId)) return;
+    const timer = setTimeout(() => {
+      this.blockedPollTimers.delete(runId);
+      if (!this.latestRuns.has(runId) || this.workers.has(runId)) return;
+      this.startWorker(runId);
+    }, this.blockedPollDelayMs);
+    timer.unref?.();
+    this.blockedPollTimers.set(runId, timer);
+  }
+
+  private async applyRuntimeCommands(run: WorkflowRunRecord, body: unknown): Promise<void> {
+    if (!this.onRuntimeCommand || run.status !== 'blocked') return;
+    const commands = runtimeCommands(body);
+    if (commands.length === 0) return;
+
+    const processed = this.processedCommandIds.get(run.id) ?? new Set<string>();
+    this.processedCommandIds.set(run.id, processed);
+    for (const command of commands) {
+      if (processed.has(command.id)) continue;
+      const applied = await this.onRuntimeCommand(command, run);
+      if (applied === false) continue;
+      processed.add(command.id);
+    }
   }
 
   private targetFor(run: WorkflowRunRecord): {
@@ -232,6 +287,14 @@ async function delay(ms: number): Promise<void> {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+async function readResponseJson(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 function collectOutputs(run: WorkflowRunRecord): Record<string, string> {

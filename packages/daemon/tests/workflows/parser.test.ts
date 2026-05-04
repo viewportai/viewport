@@ -270,6 +270,85 @@ nodes:
     expect(parsed.definition.requires?.secrets).toEqual(['github/token']);
   });
 
+  it('accepts executor requirements and explicit capability requests', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: executor-contract
+executor:
+  targets:
+    - local_private
+    - managed
+  defaultTarget: local_private
+  capabilities:
+    - shell
+    - worktree
+    - agent.prompt
+capabilityRequests:
+  - type: network_egress
+    host: api.github.com
+    reason: Read pull request metadata without embedding credentials in YAML.
+  - type: secret
+    ref: github/token
+    reason: Authenticate GitHub API requests through a runtime secret handle.
+  - type: write_scope
+    path: reports/
+    reason: Persist workflow-generated review summaries.
+nodes:
+  inspect:
+    type: shell
+    command: git status --short
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.executor?.defaultTarget).toBe('local_private');
+    expect(parsed.definition.executor?.capabilities).toContain('agent.prompt');
+    expect(parsed.definition.capabilityRequests?.[0]).toMatchObject({
+      type: 'network_egress',
+      host: 'api.github.com',
+    });
+  });
+
+  it('rejects mismatched executor defaults and secrets embedded in capability requests', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: bad-executor-contract
+executor:
+  targets:
+    - local_private
+  defaultTarget: managed
+nodes:
+  inspect:
+    type: shell
+    command: git status --short
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/defaultTarget/);
+
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: bad-capability-request
+capabilityRequests:
+  - type: secret
+    ref: github/token
+    value: raw-secret
+    reason: This should use a secret handle only.
+nodes:
+  inspect:
+    type: shell
+    command: git status --short
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/Unrecognized key/);
+  });
+
   it('accepts workflow-scoped prompt hook rules', () => {
     const parsed = parseWorkflow(
       `

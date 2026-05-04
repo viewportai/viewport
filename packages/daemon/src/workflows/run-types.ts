@@ -56,6 +56,7 @@ export interface WorkflowNodeRunState {
     approved?: boolean;
     message?: string;
     actor?: WorkflowApprovalActor;
+    feedback?: Record<string, unknown>;
   };
   /**
    * Per-iteration records for `loop` nodes. Each entry captures one body run.
@@ -192,6 +193,7 @@ export interface WorkflowApprovalDecision {
   approved: boolean;
   message?: string;
   actor?: WorkflowApprovalActor;
+  feedback?: Record<string, unknown>;
 }
 
 export interface WorkflowApprovalActor {

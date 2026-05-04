@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { HookRouter } from '../../src/hooks/router.js';
+import { HookRouter, safeHookLogInput } from '../../src/hooks/router.js';
 import { SupervisionManager } from '../../src/hooks/supervision.js';
 import { TypedEventEmitter } from '../../src/core/events.js';
 import type { DaemonEvents } from '../../src/core/events.js';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 import { workflowHookRegistry } from '../../src/workflows/hook-registry.js';
+import { PLAN_PROPOSAL_SCHEMA_VERSION } from '../../src/hooks/plan-extractor.js';
 
 function mockClient(): ConnectedClient {
   return {
@@ -128,6 +129,57 @@ describe('HookRouter', () => {
     expect(events[0]).toMatchObject({ lastMessage: 'All done' });
   });
 
+  it('extracts explicit viewport-plan blocks from Stop hooks', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      last_assistant_message: [
+        'Drafted the requested plan.',
+        '```viewport-plan',
+        `schema: ${PLAN_PROPOSAL_SCHEMA_VERSION}`,
+        'title: Refactor auth callbacks',
+        'summary: Move callback handling behind one service.',
+        'source: claude-code',
+        'source_ref: claude://session/s1',
+        '---',
+        '## Plan',
+        '1. Extract callback service.',
+        '2. Add regression tests.',
+        '```',
+      ].join('\n'),
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Refactor auth callbacks',
+      summary: 'Move callback handling behind one service.',
+      body: '## Plan\n1. Extract callback service.\n2. Add regression tests.',
+      source: 'claude-code',
+      sourceRef: 'claude://session/s1',
+      metadata: { extractedFrom: 'explicit-marker' },
+    });
+  });
+
+  it('does not infer plans from unmarked Stop prose', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      last_assistant_message: 'Here is a plan in normal prose, but it is not explicitly marked.',
+    });
+
+    expect(events).toHaveLength(0);
+  });
+
   it('handles SubagentStart — emits hook:subagent-start', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:subagent-start', (data) => events.push(data));
@@ -156,6 +208,97 @@ describe('HookRouter', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ agentId: 'sub-1', lastMessage: 'Found 3 files' });
+  });
+
+  it('handles PlanProposed — emits provider-neutral plan proposal', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PlanProposed',
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+      session_id: 's1',
+      cwd: '/tmp/project',
+      title: 'Refactor auth callbacks',
+      summary: 'Move WorkOS callback handling behind one service.',
+      plan_markdown: '## Plan\n\n1. Extract service\n2. Add tests',
+      source: 'claude-code',
+      source_ref: 'claude://session/s1',
+      metadata: { providerModel: 'sonnet', secret: 'do-not-broadcast' },
+    });
+
+    expect(result).toEqual({ passthrough: false });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Refactor auth callbacks',
+      body: '## Plan\n\n1. Extract service\n2. Add tests',
+      source: 'claude-code',
+      sourceRef: 'claude://session/s1',
+      metadata: { providerModel: 'sonnet', schema: PLAN_PROPOSAL_SCHEMA_VERSION },
+    });
+  });
+
+  it('redacts sensitive hook payloads before invalid base input logging', () => {
+    expect(
+      safeHookLogInput({
+        hook_event_name: 'PlanProposed',
+        body: 'secret plan body',
+        metadata: { secret: 'token' },
+        plan: 'secret alternative body',
+        plan_markdown: 'secret markdown body',
+        tool_input: { token: 'tool-token' },
+        tool_response: { output: 'tool-output' },
+        session_id: 's1',
+      }),
+    ).toEqual({
+      hook_event_name: 'PlanProposed',
+      adapter: undefined,
+      has_session_id: true,
+      keys: ['hook_event_name', 'session_id'],
+    });
+  });
+
+  it('rejects PlanProposed hooks without the explicit plan contract schema', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PlanProposed',
+      session_id: 's1',
+      body: '## Plan\n\nMissing schema.',
+    });
+
+    expect(result).toEqual({ passthrough: true });
+    expect(events).toHaveLength(0);
+  });
+
+  it('rejects PlanProposed hooks with blank or ambiguous plan bodies', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await expect(
+      router.handleEvent({
+        hook_event_name: 'PlanProposed',
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        session_id: 's1',
+        body: '   ',
+      }),
+    ).resolves.toEqual({ passthrough: true });
+
+    await expect(
+      router.handleEvent({
+        hook_event_name: 'PlanProposed',
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        session_id: 's1',
+        body: 'Plan A',
+        plan_markdown: 'Plan B',
+      }),
+    ).resolves.toEqual({ passthrough: true });
+
+    expect(events).toHaveLength(0);
   });
 
   it('emits generic hook:event for all events', async () => {

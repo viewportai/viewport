@@ -10,6 +10,7 @@ import { WorkflowRunResumer } from './runner-resumer.js';
 import { WorkflowRunReconciler } from './runner-reconciler.js';
 import { WorkflowRunCanceler, type WorkflowCancelOptions } from './runner-canceler.js';
 import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
+import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import type {
@@ -30,9 +31,16 @@ export class WorkflowRunner {
   private readonly resumer: WorkflowRunResumer;
   private readonly reconciler: WorkflowRunReconciler;
   private readonly canceler: WorkflowRunCanceler;
+  private readonly platformCommandApplier: WorkflowRuntimeCommandApplier;
 
   constructor(private readonly daemon: Daemon) {
-    this.platformSync = new WorkflowRunPlatformSync(daemon.configManager);
+    this.platformCommandApplier = new WorkflowRuntimeCommandApplier(
+      this.store,
+      (runId, nodeId, decision) => this.decideApproval(runId, nodeId, decision),
+    );
+    this.platformSync = new WorkflowRunPlatformSync(daemon.configManager, undefined, {
+      onRuntimeCommand: (command, run) => this.platformCommandApplier.apply(command, run.id),
+    });
 
     const ops: RunnerOps = {
       requireRun: (runId) => this.requireRun(runId),
@@ -194,7 +202,7 @@ export class WorkflowRunner {
   ): Promise<WorkflowRunRecord> {
     const run = await this.requireRun(runId);
     const state = run.nodes[nodeId];
-    if (!state || (state.type !== 'approval' && state.type !== 'gate')) {
+    if (!state || (state.type !== 'approval' && state.type !== 'gate' && state.type !== 'plan')) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
     if (run.status !== 'blocked' || state.status !== 'blocked') {
@@ -209,6 +217,7 @@ export class WorkflowRunner {
       approved: decision.approved,
       ...(decision.message ? { message: decision.message } : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
+      ...(decision.feedback ? { feedback: decision.feedback } : {}),
     };
 
     if (!decision.approved) {
@@ -265,7 +274,16 @@ export class WorkflowRunner {
     // expected to be a free-text payload by design.
     const isOptInApproval =
       approvalNode?.type === 'approval' && approvalNode.captureResponse !== true;
-    state.output = isOptInApproval ? 'Approved' : (decision.message ?? 'Approved');
+    const planBody =
+      state.type === 'plan' &&
+      state.metadata &&
+      typeof state.metadata['plan'] === 'object' &&
+      state.metadata['plan'] !== null &&
+      'body' in state.metadata['plan'] &&
+      typeof (state.metadata['plan'] as { body?: unknown }).body === 'string'
+        ? (state.metadata['plan'] as { body: string }).body
+        : null;
+    state.output = planBody ?? (isOptInApproval ? 'Approved' : (decision.message ?? 'Approved'));
     run.status = 'running';
     run.updatedAt = resolvedAt;
     addEvent(

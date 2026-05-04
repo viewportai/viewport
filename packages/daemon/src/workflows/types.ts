@@ -28,7 +28,14 @@ export type {
   WorkflowTranscriptExcerptMessage,
 } from './run-types.js';
 
-export type WorkflowNodeType = 'prompt' | 'shell' | 'approval' | 'gate' | 'loop' | 'subflow';
+export type WorkflowNodeType =
+  | 'prompt'
+  | 'shell'
+  | 'approval'
+  | 'gate'
+  | 'loop'
+  | 'subflow'
+  | 'plan';
 
 /**
  * Join semantics when a node has multiple `needs`. Default is `all_success`.
@@ -52,6 +59,38 @@ export interface WorkflowRequires {
   integrations?: string[];
   secrets?: string[];
 }
+
+export type WorkflowExecutorTargetKind =
+  | 'local_private'
+  | 'local_sandbox'
+  | 'managed'
+  | 'self_hosted'
+  | 'ci';
+
+export type WorkflowExecutorCapability =
+  | 'agent.prompt'
+  | 'artifacts'
+  | 'cancel'
+  | 'files.read'
+  | 'files.write'
+  | 'network.egress'
+  | 'resume'
+  | 'secrets'
+  | 'shell'
+  | 'worktree';
+
+export interface WorkflowExecutorRequirement {
+  targets?: WorkflowExecutorTargetKind[];
+  defaultTarget?: WorkflowExecutorTargetKind;
+  capabilities?: WorkflowExecutorCapability[];
+}
+
+export type WorkflowCapabilityRequest =
+  | { type: 'secret'; ref: string; reason: string }
+  | { type: 'network_egress'; host: string; reason: string }
+  | { type: 'write_scope'; path: string; reason: string }
+  | { type: 'repo_access'; ref: string; reason: string }
+  | { type: 'context'; ref: string; reason: string };
 
 export interface WorkflowContextReference {
   ref: string;
@@ -170,6 +209,16 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
       };
 }
 
+export interface WorkflowPlanNode extends WorkflowNodeBase {
+  type: 'plan';
+  title: string;
+  body: string;
+  summary?: string;
+  source?: string;
+  sourceRef?: string;
+  waitForApproval?: boolean;
+}
+
 export interface WorkflowGateNode extends WorkflowNodeBase {
   type: 'gate';
   gate: WorkflowGateDefinition;
@@ -219,6 +268,7 @@ export type WorkflowNode =
   | WorkflowPromptNode
   | WorkflowShellNode
   | WorkflowApprovalNode
+  | WorkflowPlanNode
   | WorkflowGateNode
   | WorkflowLoopNode
   | WorkflowSubflowNode;
@@ -231,6 +281,8 @@ export interface WorkflowDefinition {
   inputs?: Record<string, WorkflowInputDefinition>;
   context?: WorkflowContext;
   requires?: WorkflowRequires;
+  executor?: WorkflowExecutorRequirement;
+  capabilityRequests?: WorkflowCapabilityRequest[];
   nodes: Record<string, WorkflowNode>;
 }
 
