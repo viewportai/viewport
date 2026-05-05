@@ -3,119 +3,35 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { configDir } from '../core/config.js';
 import { logger } from '../core/logger.js';
+import type {
+  PairingClientIdentity,
+  PairingDaemonIdentityPublic,
+  PairingDaemonIdentityRecord,
+  PairingOfferConnection,
+  PairingOfferIssuedPayload,
+  PairingOfferPublicPayload,
+  PairingOfferRedeemedPayload,
+  PairingOfferStore,
+  PairingOfferStoreRecord,
+  PairingPeerBindingRecord,
+  PairingPeerBindingStore,
+  PairingRedeemProof,
+  PairingTrustAnchorPublic,
+  PairingTrustAnchorRecord,
+} from './pairing-offer-types.js';
 
 const log = logger.child({ module: 'pairing-offers' });
 
-export interface PairingOfferConnection {
-  host: string;
-  port: number;
-  listen: string;
-  socketPath?: string;
-  profile: 'local' | 'lan' | 'relay';
-}
-
-interface PairingOfferStoreRecord {
-  offerId: string;
-  createdAt: number;
-  expiresAt: number;
-  revokedAt?: number;
-  redeemedAt?: number;
-  failedRedeemAttempts?: number;
-  lockedAt?: number;
-  redeemSecretHash: string;
-  trustAnchor: string;
-  daemonDeviceId: string;
-  daemonPublicKey: string;
-  connection: PairingOfferConnection;
-}
-
-interface PairingOfferStore {
-  version: 1;
-  offers: PairingOfferStoreRecord[];
-}
-
-export interface PairingOfferPublicPayload extends PairingOfferConnection {
-  offerId: string;
-  createdAt: number;
-  expiresAt: number;
-  trustAnchor: string;
-  daemonDeviceId: string;
-}
-
-export interface PairingOfferIssuedPayload extends PairingOfferPublicPayload {
-  redeemSecret: string;
-  daemonPublicKey: string;
-}
-
-export interface PairingOfferRedeemedPayload {
-  offerId: string;
-  trustAnchor: string;
-  daemonDeviceId: string;
-  daemonPublicKey: string;
-  peerId: string;
-  relayPairingPeerId: string;
-  serverSignature: string;
-  connection: PairingOfferConnection;
-  expiresAt: number;
-  createdAt: number;
-}
-
-interface PairingTrustAnchorRecord {
-  version: 1;
-  id: string;
-  createdAt: number;
-  secret: string;
-}
-
-export interface PairingTrustAnchorPublic {
-  id: string;
-  createdAt: number;
-  fingerprint: string;
-}
-
-interface PairingDaemonIdentityRecord {
-  version: 1;
-  deviceId: string;
-  createdAt: number;
-  publicKey: string;
-  privateKey: string;
-}
-
-interface PairingPeerBindingRecord {
-  peerId: string;
-  publicKey: string;
-  relayPairingSecretCiphertext?: string;
-  relayPairingSecretIv?: string;
-  relayPairingSecretTag?: string;
-  firstPairedAt: number;
-  lastPairedAt: number;
-  lastOfferId: string;
-  trustAnchor: string;
-}
-
-interface PairingPeerBindingStore {
-  version: 1;
-  peers: PairingPeerBindingRecord[];
-}
-
-export interface PairingDaemonIdentityPublic {
-  deviceId: string;
-  createdAt: number;
-  fingerprint: string;
-  publicKey: string;
-}
-
-export interface PairingClientIdentity {
-  peerId: string;
-  publicKey: string;
-  privateKey: string;
-}
-
-export interface PairingRedeemProof {
-  peerId: string;
-  clientPublicKey: string;
-  clientProof: string;
-}
+export type {
+  PairingClientIdentity,
+  PairingDaemonIdentityPublic,
+  PairingOfferConnection,
+  PairingOfferIssuedPayload,
+  PairingOfferPublicPayload,
+  PairingOfferRedeemedPayload,
+  PairingRedeemProof,
+  PairingTrustAnchorPublic,
+} from './pairing-offer-types.js';
 
 const MAX_STORED_OFFERS = 200;
 const MAX_FAILED_REDEEM_ATTEMPTS = 5;
