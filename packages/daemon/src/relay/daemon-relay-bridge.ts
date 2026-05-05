@@ -1,6 +1,7 @@
 import type { WebSocket as WsType } from 'ws';
 import WebSocket from 'ws';
 import { computeBackoffMs, sleep } from './bridge-backoff.js';
+import { registerDaemonPublicKeyWithControlPlane } from './bridge-daemon-key-registration.js';
 import {
   CIRCUIT_BREAKER_MS,
   DEFAULT_MAX_PENDING_OUTBOUND,
@@ -57,9 +58,7 @@ import {
   type RelayPairingRedeemRequestFrame,
 } from './relay-control-frames.js';
 import { resolveRelayPairingSecret } from '../server/pairing-offers.js';
-import { ConfigManager } from '../core/config.js';
 import { logger as out } from '../core/output.js';
-import { transportFetch } from '../cli/network.js';
 
 export interface DaemonRelayBridgeOptions {
   relayEndpoint: string;
@@ -214,96 +213,15 @@ export class DaemonRelayBridge {
     }
   }
 
-  private async registerDaemonPublicKeyWithIdentity(identity: DaemonRelayIdentity): Promise<void> {
-    if (!identity) {
-      throw new BridgeError('DAEMON_KEY_REGISTER_FAILED', 'daemon identity unavailable');
-    }
-
-    const url =
-      `${this.options.relayServerUrl.replace(/\/+$/, '')}` +
-      `/api/runtime/workspaces/${encodeURIComponent(this.options.workspaceId)}/daemon-key`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
-
-    let res: Response;
-    try {
-      res = await transportFetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          credential: this.daemonIssueToken ?? undefined,
-          daemonPublicKey: identity.publicKey,
-          projectMachineBindingId: this.options.projectMachineBindingId,
-        }),
-        signal: controller.signal,
-        tlsVerify: this.options.relayTlsVerify ?? 'auto',
-        caCertPath: this.options.relayCaCertPath,
-        tlsPins: this.options.relayTlsPins,
-      });
-    } catch (error) {
-      clearTimeout(timeout);
-      throw new BridgeError(
-        'DAEMON_KEY_REGISTER_FAILED',
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    clearTimeout(timeout);
-
-    const parsed = (await res.json().catch(() => null)) as {
-      ok?: boolean;
-      reason?: string;
-      error?: string;
-      daemonIssueToken?: string;
-    } | null;
-
-    if (!res.ok || !parsed?.ok) {
-      const reason = parsed?.reason ?? parsed?.error ?? `HTTP ${res.status}`;
-      throw new BridgeError(
-        'DAEMON_KEY_REGISTER_FAILED',
-        `daemon key registration failed: ${reason}`,
-      );
-    }
-    if (!parsed?.daemonIssueToken || parsed.daemonIssueToken.trim().length === 0) {
-      if (this.daemonIssueToken && this.daemonIssueToken.trim().length > 0) {
-        return;
-      }
-      throw new BridgeError(
-        'DAEMON_KEY_REGISTER_FAILED',
-        'daemon key registration succeeded but daemon issue token was missing',
-      );
-    }
-    this.daemonIssueToken = parsed.daemonIssueToken;
-    this.relayTokenIssuer.setDaemonIssueToken(parsed.daemonIssueToken);
-    await this.persistIssueToken(parsed.daemonIssueToken);
-  }
-
   private async registerDaemonPublicKey(): Promise<void> {
-    if (!this.daemonIdentity) {
-      throw new BridgeError('DAEMON_KEY_REGISTER_FAILED', 'daemon identity unavailable');
-    }
-    await this.registerDaemonPublicKeyWithIdentity(this.daemonIdentity);
-  }
-
-  private async persistIssueToken(issueToken: string): Promise<void> {
-    const normalized = issueToken.trim();
-    if (normalized.length === 0) return;
-    try {
-      const manager = new ConfigManager();
-      await manager.load();
-      const daemonConfig = manager.getDaemonConfig() ?? {};
-      const relayConfig = daemonConfig.relay ?? {};
-      await manager.setDaemonConfig({
-        ...daemonConfig,
-        relay: {
-          ...relayConfig,
-          issueToken: normalized,
-        },
-      });
-    } catch (error) {
-      out.warn(
-        `[relay] failed to persist daemon issue token: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    const issueToken = await registerDaemonPublicKeyWithControlPlane({
+      options: this.options,
+      identity: this.daemonIdentity,
+      daemonIssueToken: this.daemonIssueToken,
+    });
+    if (issueToken && issueToken !== this.daemonIssueToken) {
+      this.daemonIssueToken = issueToken;
+      this.relayTokenIssuer.setDaemonIssueToken(issueToken);
     }
   }
 
