@@ -264,12 +264,30 @@ function profileStrength(profile: 'noise-ik' | 'noise-ikpsk2'): number {
   return profile === 'noise-ikpsk2' ? 2 : 1;
 }
 
-export function relayStatusPayload(workspaceId: string): RelayStatusPayload {
-  return {
+export function relayStatusPayload(
+  workspaceId: string,
+  projectMachineBindingId?: string,
+  machineId?: string,
+): RelayStatusPayload {
+  const payload: RelayStatusPayload = {
     type: 'relay_status',
     code: 'DAEMON_UNAVAILABLE',
     message: 'No machine runtime is connected for this project target',
     workspaceId,
+    retryable: true,
+  };
+  if (projectMachineBindingId) payload.projectMachineBindingId = projectMachineBindingId;
+  if (machineId) payload.machineId = machineId;
+  return payload;
+}
+
+export function missingRuntimeTargetPayload(workspaceId: string): RelayStatusPayload {
+  return {
+    type: 'relay_status',
+    code: 'MISSING_PROJECT_MACHINE_BINDING',
+    message: 'Runtime client must specify a project-machine binding target',
+    workspaceId,
+    retryable: false,
   };
 }
 
@@ -299,6 +317,17 @@ async function routeClientMessageWithoutLocalDaemon(
 ): Promise<void> {
   const { config, safeSend, metrics, logger } = context;
   const { backplane } = context;
+  if (!projectMachineBindingId) {
+    metrics.increment('relay_client_messages_dropped_total');
+    safeSend(ws, JSON.stringify(missingRuntimeTargetPayload(workspaceId)));
+    logger.warn('client_message_dropped', {
+      workspaceId,
+      clientId,
+      reason: 'missing_project_machine_binding',
+    });
+    return;
+  }
+
   const preferred = await backplane.resolvePresence(workspaceId, projectMachineBindingId);
   if (preferred && preferred.daemonConnected && preferred.relayId !== config.relayId) {
     if (config.clientRedirectEnabled) {
@@ -306,15 +335,6 @@ async function routeClientMessageWithoutLocalDaemon(
         ws,
         JSON.stringify(relayRedirectPayload(workspaceId, preferred.relayWsBaseUrl, projectMachineBindingId)),
       );
-    }
-    if (!projectMachineBindingId) {
-      safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId)));
-      logger.warn('client_message_dropped', {
-        workspaceId,
-        clientId,
-        reason: 'missing_project_machine_binding',
-      });
-      return;
     }
     const published = await backplane.publishClientToDaemon(
       workspaceId,
@@ -335,10 +355,12 @@ async function routeClientMessageWithoutLocalDaemon(
   }
 
   metrics.increment('relay_client_messages_dropped_total');
-  safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId)));
+  safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId, projectMachineBindingId, machineId)));
   logger.warn('client_message_dropped', {
     workspaceId,
     clientId,
+    projectMachineBindingId,
+    machineId,
     reason: 'daemon_unavailable',
   });
 }
@@ -837,6 +859,7 @@ export function registerConnection(
       ip,
       reason: 'missing_project_machine_binding_claim',
     });
+    safeSend(ws, JSON.stringify(missingRuntimeTargetPayload(workspaceId)));
     closeWithReason(ws, 4008, 'missing project machine claim');
     return;
   }

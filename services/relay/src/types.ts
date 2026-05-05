@@ -84,5 +84,7 @@ export interface RelayStatusPayload {
   message: string;
   workspaceId: string;
   projectMachineBindingId?: string;
+  machineId?: string;
+  retryable?: boolean;
   relayWsBaseUrl?: string;
 }
