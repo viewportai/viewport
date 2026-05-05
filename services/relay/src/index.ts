@@ -10,7 +10,8 @@ import { createRelayBackplane } from './backplane.js';
 import { loadConfig } from './config.js';
 import { RelayLogger } from './logger.js';
 import { RelayMetrics } from './metrics.js';
-import { registerConnection, relayRedirectPayload, routeBusFrame } from './relay-routing.js';
+import { registerConnection, routeBusFrame } from './relay-routing.js';
+import { relayRedirectPayload } from './relay-status-payloads.js';
 import { ConnectionRegistry } from './registry.js';
 import { resolveUpgradeAuth } from './upgrade-auth.js';
 import {

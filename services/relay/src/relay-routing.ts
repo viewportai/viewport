@@ -19,8 +19,14 @@ import {
   parseFramePayload,
   type FramePayload,
 } from './relay-frame-validation.js';
+import {
+  missingRuntimeTargetPayload,
+  relayRedirectPayload,
+  relayStatusPayload,
+  runtimeScopeKey,
+} from './relay-status-payloads.js';
 import { FixedWindowRateLimiter, TokenBucketRateLimiter } from './security.js';
-import type { AdmissionClaims, RelayRole, RelayStatusPayload } from './types.js';
+import type { AdmissionClaims, RelayRole } from './types.js';
 
 interface RelayRoutingContext {
   config: RelayConfig;
@@ -57,54 +63,8 @@ const controlLimiterCache = new WeakMap<
 >();
 const daemonLimiterCache = new WeakMap<RelayRoutingContext, TokenBucketRateLimiter>();
 
-function runtimeScopeKey(workspaceId: string, projectMachineBindingId?: string): string {
-  return projectMachineBindingId ? `${workspaceId}:${projectMachineBindingId}` : workspaceId;
-}
-
 function profileStrength(profile: 'noise-ik' | 'noise-ikpsk2'): number {
   return profile === 'noise-ikpsk2' ? 2 : 1;
-}
-
-export function relayStatusPayload(
-  workspaceId: string,
-  projectMachineBindingId?: string,
-  machineId?: string,
-): RelayStatusPayload {
-  const payload: RelayStatusPayload = {
-    type: 'relay_status',
-    code: 'DAEMON_UNAVAILABLE',
-    message: 'No machine runtime is connected for this project target',
-    workspaceId,
-    retryable: true,
-  };
-  if (projectMachineBindingId) payload.projectMachineBindingId = projectMachineBindingId;
-  if (machineId) payload.machineId = machineId;
-  return payload;
-}
-
-export function missingRuntimeTargetPayload(workspaceId: string): RelayStatusPayload {
-  return {
-    type: 'relay_status',
-    code: 'MISSING_PROJECT_MACHINE_BINDING',
-    message: 'Runtime client must specify a project-machine binding target',
-    workspaceId,
-    retryable: false,
-  };
-}
-
-export function relayRedirectPayload(
-  workspaceId: string,
-  relayWsBaseUrl: string,
-  projectMachineBindingId?: string,
-): RelayStatusPayload {
-  return {
-    type: 'relay_status',
-    code: 'RELAY_REDIRECT',
-    message: 'Workspace is assigned to a different relay instance',
-    workspaceId,
-    projectMachineBindingId,
-    relayWsBaseUrl,
-  };
 }
 
 async function routeClientMessageWithoutLocalDaemon(
