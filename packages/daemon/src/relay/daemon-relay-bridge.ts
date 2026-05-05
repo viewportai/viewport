@@ -8,8 +8,6 @@ import {
   DEFAULT_MAX_PENDING_OUTBOUND_BYTES,
   ISSUE_FAILURE_THRESHOLD,
   RELAY_KEY_ROTATE_AFTER_MESSAGES,
-  RELAY_REPLAY_WINDOW,
-  RELAY_SESSION_IDLE_TTL_MS,
 } from './bridge-constants.js';
 import {
   decryptEnvelope,
@@ -53,10 +51,16 @@ import {
   parsePairingOfferRequestFrame,
   parsePairingRedeemRequestFrame,
   type RelayControlFrame,
-  type RelayKeyUpdateRequiredFrame,
   type RelayPairingOfferRequestFrame,
   type RelayPairingRedeemRequestFrame,
 } from './relay-control-frames.js';
+import {
+  acceptInboundRelaySeq,
+  createRelaySessionState,
+  enforceRelaySessionCapacity,
+  sendToAllRelaySessions,
+  type RelaySessionState,
+} from './bridge-relay-sessions.js';
 import { resolveRelayPairingSecret } from '../server/pairing-offers.js';
 import { logger as out } from '../core/output.js';
 
@@ -86,18 +90,6 @@ export interface DaemonRelayBridgeOptions {
   pairingChannelTtlMs?: number;
   pairingChannelMaxEntries?: number;
   relaySessionMaxEntries?: number;
-}
-
-interface RelaySessionState {
-  key: Buffer;
-  profile: RelayHandshakeProfile;
-  sessionId: string;
-  epoch: number;
-  txSeq: number;
-  rxHighestSeq: number;
-  rxSeenSeq: Set<number>;
-  lastActivityAt: number;
-  keyRotationRequested: boolean;
 }
 
 type RelayWs = WsType;
@@ -354,7 +346,7 @@ export class DaemonRelayBridge {
       const session = this.relaySessions.get(envelope.sessionId);
       if (!session) return;
       if (session.profile !== envelope.profile || session.epoch !== envelope.epoch) return;
-      if (!this.acceptInboundSeq(session, envelope.seq)) {
+      if (!acceptInboundRelaySeq(session, envelope.seq)) {
         out.warn(`[relay] dropped replay/old frame for session ${session.sessionId}`);
         return;
       }
@@ -394,67 +386,20 @@ export class DaemonRelayBridge {
   }
 
   private sendToAllRelaySessions(relayWs: RelayWs, payload: string): void {
-    this.pruneIdleSessions();
-    for (const session of this.relaySessions.values()) {
-      this.sendToRelaySession(relayWs, session, payload);
-
-      if (!session.keyRotationRequested && session.txSeq >= this.keyRotateAfterMessages) {
-        const rotateNotice: RelayKeyUpdateRequiredFrame = {
-          type: 'relay_key_update_required',
-          sessionId: session.sessionId,
-          nextEpoch: session.epoch + 1,
-          reason: 'message_threshold',
-        };
-        relayWs.send(JSON.stringify(rotateNotice));
-        session.keyRotationRequested = true;
-      }
-    }
-  }
-
-  private sendToRelaySession(relayWs: RelayWs, session: RelaySessionState, payload: string): void {
-    session.txSeq += 1;
-    session.lastActivityAt = Date.now();
-    const envelope = encryptEnvelope(session.key, payload, {
-      profile: session.profile,
-      sessionId: session.sessionId,
-      epoch: session.epoch,
-      seq: session.txSeq,
+    sendToAllRelaySessions({
+      relayWs,
+      sessions: this.relaySessions,
+      payload,
+      keyRotateAfterMessages: this.keyRotateAfterMessages,
     });
-    relayWs.send(envelope);
-  }
-
-  private acceptInboundSeq(session: RelaySessionState, seq: number): boolean {
-    if (seq < 1) return false;
-    if (session.rxSeenSeq.has(seq)) return false;
-    if (seq > session.rxHighestSeq + RELAY_REPLAY_WINDOW) return false;
-    const minimumAllowed = Math.max(1, session.rxHighestSeq - RELAY_REPLAY_WINDOW + 1);
-    if (seq < minimumAllowed) return false;
-
-    session.rxSeenSeq.add(seq);
-    if (seq > session.rxHighestSeq) session.rxHighestSeq = seq;
-
-    const pruneBelow = Math.max(1, session.rxHighestSeq - RELAY_REPLAY_WINDOW + 1);
-    for (const seen of session.rxSeenSeq) {
-      if (seen < pruneBelow) session.rxSeenSeq.delete(seen);
-    }
-    return true;
-  }
-
-  private pruneIdleSessions(): void {
-    const now = Date.now();
-    for (const [sessionId, session] of this.relaySessions.entries()) {
-      if (now - session.lastActivityAt > RELAY_SESSION_IDLE_TTL_MS) {
-        this.relaySessions.delete(sessionId);
-      }
-    }
   }
 
   private enforceRelaySessionCapacity(): void {
-    this.pruneIdleSessions();
-    while (this.relaySessions.size > this.relaySessionMaxEntries) {
-      const oldestSessionId = this.relaySessions.keys().next().value;
-      if (!oldestSessionId) break;
-      this.relaySessions.delete(oldestSessionId);
+    const evicted = enforceRelaySessionCapacity({
+      sessions: this.relaySessions,
+      maxEntries: this.relaySessionMaxEntries,
+    });
+    for (const oldestSessionId of evicted) {
       out.warn(
         `[relay] evicted relay session ${oldestSessionId} due to relay session cap (${this.relaySessionMaxEntries})`,
       );
@@ -603,14 +548,7 @@ export class DaemonRelayBridge {
       if (previous && init.previousSessionId) {
         this.relaySessions.delete(init.previousSessionId);
       }
-      this.relaySessions.set(derived.session.sessionId, {
-        ...derived.session,
-        txSeq: 0,
-        rxHighestSeq: 0,
-        rxSeenSeq: new Set<number>(),
-        lastActivityAt: Date.now(),
-        keyRotationRequested: false,
-      });
+      this.relaySessions.set(derived.session.sessionId, createRelaySessionState(derived.session));
       this.enforceRelaySessionCapacity();
       if (relayWs.readyState === WebSocket.OPEN) {
         relayWs.send(JSON.stringify(derived.response));
@@ -684,15 +622,13 @@ export class DaemonRelayBridge {
       if (previous && init.previousSessionId) {
         this.relaySessions.delete(init.previousSessionId);
       }
-      this.relaySessions.set(derived.session.sessionId, {
-        ...derived.session,
-        profile: derived.session.profile as RelayHandshakeProfile,
-        txSeq: 0,
-        rxHighestSeq: 0,
-        rxSeenSeq: new Set<number>(),
-        lastActivityAt: Date.now(),
-        keyRotationRequested: false,
-      });
+      this.relaySessions.set(
+        derived.session.sessionId,
+        createRelaySessionState({
+          ...derived.session,
+          profile: derived.session.profile as RelayHandshakeProfile,
+        }),
+      );
       this.enforceRelaySessionCapacity();
       if (relayWs.readyState === WebSocket.OPEN) {
         relayWs.send(JSON.stringify(derived.response));

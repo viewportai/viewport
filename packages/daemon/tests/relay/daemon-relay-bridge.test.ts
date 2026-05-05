@@ -21,6 +21,7 @@ import {
   deriveSessionFromKeyExchange,
   parseRelayKeyExchangeInitFrame,
 } from '../../src/relay/bridge-key-exchange.js';
+import { acceptInboundRelaySeq } from '../../src/relay/bridge-relay-sessions.js';
 import { DaemonRelayBridge } from '../../src/relay/daemon-relay-bridge.js';
 import {
   createPairingClientIdentity,
@@ -999,9 +1000,9 @@ describe('daemon relay bridge helpers', () => {
     });
     expect(session.keyRotationRequested).toBe(true);
 
-    expect((bridge as any).acceptInboundSeq(session, 1)).toBe(true);
-    expect((bridge as any).acceptInboundSeq(session, 1)).toBe(false);
-    expect((bridge as any).acceptInboundSeq(session, RELAY_REPLAY_WINDOW + 10)).toBe(false);
+    expect(acceptInboundRelaySeq(session, 1)).toBe(true);
+    expect(acceptInboundRelaySeq(session, 1)).toBe(false);
+    expect(acceptInboundRelaySeq(session, RELAY_REPLAY_WINDOW + 10)).toBe(false);
   });
 
   it('supports overriding key rotation threshold for test harnesses', () => {
