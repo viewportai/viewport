@@ -21,11 +21,10 @@ import {
 } from './relay-frame-validation.js';
 import {
   missingRuntimeTargetPayload,
-  relayRedirectPayload,
-  relayStatusPayload,
   runtimeScopeKey,
 } from './relay-status-payloads.js';
 import { resolveConnectionAdmission } from './relay-connection-admission.js';
+import { routeClientMessageWithoutLocalDaemon } from './relay-runtime-routing.js';
 import { FixedWindowRateLimiter, TokenBucketRateLimiter } from './security.js';
 import type { AdmissionClaims, RelayRole } from './types.js';
 
@@ -66,65 +65,6 @@ const daemonLimiterCache = new WeakMap<RelayRoutingContext, TokenBucketRateLimit
 
 function profileStrength(profile: 'noise-ik' | 'noise-ikpsk2'): number {
   return profile === 'noise-ikpsk2' ? 2 : 1;
-}
-
-async function routeClientMessageWithoutLocalDaemon(
-  context: RelayRoutingContext,
-  ws: WebSocket,
-  workspaceId: string,
-  projectMachineBindingId: string | undefined,
-  machineId: string | undefined,
-  clientId: string,
-  payload: string,
-): Promise<void> {
-  const { config, safeSend, metrics, logger } = context;
-  const { backplane } = context;
-  if (!projectMachineBindingId) {
-    metrics.increment('relay_client_messages_dropped_total');
-    safeSend(ws, JSON.stringify(missingRuntimeTargetPayload(workspaceId)));
-    logger.warn('client_message_dropped', {
-      workspaceId,
-      clientId,
-      reason: 'missing_project_machine_binding',
-    });
-    return;
-  }
-
-  const preferred = await backplane.resolvePresence(workspaceId, projectMachineBindingId);
-  if (preferred && preferred.daemonConnected && preferred.relayId !== config.relayId) {
-    if (config.clientRedirectEnabled) {
-      safeSend(
-        ws,
-        JSON.stringify(relayRedirectPayload(workspaceId, preferred.relayWsBaseUrl, projectMachineBindingId)),
-      );
-    }
-    const published = await backplane.publishClientToDaemon(
-      workspaceId,
-      projectMachineBindingId,
-      machineId,
-      payload,
-      preferred.relayId,
-    );
-    if (published) {
-      metrics.increment('relay_client_messages_routed_bus_total');
-      logger.info('client_message_routed_bus', {
-        workspaceId,
-        clientId,
-        targetRelayId: preferred.relayId,
-      });
-      return;
-    }
-  }
-
-  metrics.increment('relay_client_messages_dropped_total');
-  safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId, projectMachineBindingId, machineId)));
-  logger.warn('client_message_dropped', {
-    workspaceId,
-    clientId,
-    projectMachineBindingId,
-    machineId,
-    reason: 'daemon_unavailable',
-  });
 }
 
 function pruneStalePairingRequests(state: ReturnType<ConnectionRegistry['getOrCreate']>): void {
@@ -890,11 +830,13 @@ export function registerConnection(
       void routeClientMessageWithoutLocalDaemon(
         context,
         ws,
-        workspaceId,
-        projectMachineBindingId,
-        machineId,
-        clientId,
-        text,
+        {
+          workspaceId,
+          projectMachineBindingId,
+          machineId,
+          clientId,
+          payload: text,
+        },
       );
       return;
     }
