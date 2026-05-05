@@ -25,6 +25,7 @@ import {
   relayStatusPayload,
   runtimeScopeKey,
 } from './relay-status-payloads.js';
+import { resolveConnectionAdmission } from './relay-connection-admission.js';
 import { FixedWindowRateLimiter, TokenBucketRateLimiter } from './security.js';
 import type { AdmissionClaims, RelayRole } from './types.js';
 
@@ -559,72 +560,24 @@ export function registerConnection(
     runtimeWorkspaceLimiter,
   } = context;
 
-  const clientScopeClaim = claims?.scope;
-  const claimedWorkspaceId = typeof claims?.workspaceId === 'string' ? claims.workspaceId.trim() : '';
-  if (claimedWorkspaceId === '') {
+  const admission = resolveConnectionAdmission({
+    role,
+    workspaceId,
+    requestedProjectMachineBindingId,
+    ip,
+    claims,
+  });
+  if (!admission.ok) {
     metrics.increment('relay_ws_connections_rejected_total');
-    logger.warn('connection_rejected', {
-      workspaceId,
-      role,
-      ip,
-      reason: 'missing_workspace_claim',
-    });
-    closeWithReason(ws, 4008, 'missing workspace claim');
-    return;
-  }
-  if (claimedWorkspaceId !== workspaceId) {
-    metrics.increment('relay_ws_connections_rejected_total');
-    logger.warn('connection_rejected', {
-      workspaceId,
-      claimedWorkspaceId,
-      role,
-      ip,
-      reason: 'workspace_claim_mismatch',
-    });
-    closeWithReason(ws, 4008, 'workspace claim mismatch');
-    return;
-  }
-  const claimedProjectMachineBindingId =
-    typeof claims?.projectMachineBindingId === 'string' ? claims.projectMachineBindingId.trim() : '';
-  if (requestedProjectMachineBindingId && claimedProjectMachineBindingId !== requestedProjectMachineBindingId) {
-    metrics.increment('relay_ws_connections_rejected_total');
-    logger.warn('connection_rejected', {
-      workspaceId,
-      requestedProjectMachineBindingId,
-      claimedProjectMachineBindingId,
-      role,
-      ip,
-      reason: 'project_machine_binding_claim_mismatch',
-    });
-    closeWithReason(ws, 4008, 'project machine claim mismatch');
-    return;
-  }
-  const projectMachineBindingId = claimedProjectMachineBindingId || requestedProjectMachineBindingId;
-  const machineId = typeof claims?.machineId === 'string' ? claims.machineId.trim() : undefined;
-  if (role === 'client' && clientScopeClaim !== 'runtime' && clientScopeClaim !== 'pairing') {
-    metrics.increment('relay_ws_connections_rejected_total');
-    logger.warn('client_connection_rejected', {
-      workspaceId,
-      ip,
-      reason: 'invalid_scope_claim',
-      scope: clientScopeClaim,
-    });
-    closeWithReason(ws, 4008, 'invalid scope claim');
-    return;
-  }
-  if ((role === 'workspace-daemon' || clientScopeClaim === 'runtime') && !projectMachineBindingId) {
-    metrics.increment('relay_ws_connections_rejected_total');
-    logger.warn('connection_rejected', {
-      workspaceId,
-      role,
-      ip,
-      reason: 'missing_project_machine_binding_claim',
-    });
-    safeSend(ws, JSON.stringify(missingRuntimeTargetPayload(workspaceId)));
-    closeWithReason(ws, 4008, 'missing project machine claim');
+    logger.warn(admission.logEvent, admission.logDetails);
+    if (admission.sendMissingRuntimeTarget) {
+      safeSend(ws, JSON.stringify(missingRuntimeTargetPayload(workspaceId)));
+    }
+    closeWithReason(ws, 4008, admission.closeReason);
     return;
   }
 
+  const { clientScopeClaim, projectMachineBindingId, machineId } = admission;
   const scopeKey = runtimeScopeKey(workspaceId, projectMachineBindingId);
   const state = registry.getOrCreate(scopeKey, {
     workspaceId,
