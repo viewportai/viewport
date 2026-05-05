@@ -12,6 +12,7 @@ import {
 } from '../core/package-meta.js';
 import { isJsonMode, printJson, readDaemonHealth } from './command-shared.js';
 import { readDaemonRuntimeState } from './daemon-lifecycle.js';
+import { relayRecoveryHint } from './relay-diagnostics.js';
 
 export async function doctor(): Promise<void> {
   const asJson = isJsonMode();
@@ -54,6 +55,12 @@ export async function doctor(): Promise<void> {
     relayReconnectAttempt: health?.relay?.reconnectAttempt ?? null,
     relayLastErrorCode: health?.relay?.lastErrorCode ?? null,
     relayLastErrorMessage: health?.relay?.lastErrorMessage ?? null,
+    relayRecoveryHint: relayRecoveryHint({
+      state: health?.relay?.state ?? null,
+      reconnectAttempt: health?.relay?.reconnectAttempt ?? null,
+      lastErrorCode: health?.relay?.lastErrorCode ?? null,
+      lastErrorMessage: health?.relay?.lastErrorMessage ?? null,
+    }),
     configSource: configPaths.projectOverridePath
       ? `project override (${configPaths.projectOverridePath})`
       : `global (${configPaths.globalPath})`,
@@ -103,5 +110,8 @@ export async function doctor(): Promise<void> {
     console.log(
       `Relay last:   ${payload.relayLastErrorCode ?? 'UNKNOWN'}${payload.relayLastErrorMessage ? ` — ${payload.relayLastErrorMessage}` : ''}`,
     );
+  }
+  if (payload.relayRecoveryHint) {
+    console.log(`Relay hint:   ${payload.relayRecoveryHint}`);
   }
 }
