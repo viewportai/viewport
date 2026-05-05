@@ -20,9 +20,11 @@ import { readCodexSessionMessagesRich } from '../discovery/codex.js';
 import { issuePairingOffer, redeemPairingOffer } from './pairing-offers.js';
 import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './ring-buffer.js';
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
-import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
+import { registerHealthRoutes } from './http-health-routes.js';
+import { registerLifecycleRoutes } from './http-lifecycle-routes.js';
 import { registerSessionRoutes } from './http-session-routes.js';
+import type { DaemonRuntimeInfo } from './http-route-types.js';
 import {
   DirectoryRegisterBodySchema,
   HookBodySchema,
@@ -44,17 +46,6 @@ const REDEEM_ATTEMPT_IP_MAP_MAX = 2_048;
 interface RedeemAttemptEntry {
   attempts: number[];
   updatedAt: number;
-}
-
-export interface DaemonRuntimeInfo {
-  pid: number;
-  host: string;
-  port: number;
-  listen?: string;
-  socketPath?: string;
-  startedAt: number;
-  version: string;
-  relayEnabled?: boolean;
 }
 
 export interface HttpServerOptions {
@@ -186,51 +177,10 @@ export function registerHttpRoutes(
   // Health
   // ---------------------------------------------------------------------------
 
-  app.get('/health', async () => {
-    const memory = process.memoryUsage();
-    const relayEnabled = options?.runtime?.relayEnabled ?? false;
-    const relayStatus = options?.getRelayStatus?.() ?? null;
-    const machine = resolveDaemonRuntimeIdentity({
-      daemonConfig: daemon.configManager.getDaemonConfig(),
-      machineId: daemon.configManager.getMachineId(),
-      daemonVersion: runtime?.version ?? 'unknown',
-    });
-    return {
-      status: 'ok',
-      uptime: Math.floor((Date.now() - (runtime?.startedAt ?? startTime)) / 1000),
-      pid: process.pid,
-      startedAt: runtime?.startedAt ?? startTime,
-      now: Date.now(),
-      host: runtime?.host ?? '127.0.0.1',
-      port: runtime?.port ?? Number(process.env['PORT'] ?? 7070),
-      listen: runtime?.listen ?? `${runtime?.host ?? '127.0.0.1'}:${runtime?.port ?? 7070}`,
-      socketPath: runtime?.socketPath,
-      sessions: daemon.getActiveSessions().length,
-      directories: daemon.directoryManager.list().length,
-      agents: daemon.getAvailableAgents().join(', ') || 'none',
-      version: runtime?.version ?? '0.1.0',
-      machine,
-      process: {
-        node: process.version,
-        platform: process.platform,
-        arch: process.arch,
-        memoryRss: memory.rss,
-        memoryHeapUsed: memory.heapUsed,
-        memoryHeapTotal: memory.heapTotal,
-      },
-      relay:
-        relayEnabled || relayStatus
-          ? {
-              enabled: relayEnabled || !!relayStatus,
-              state: relayStatus?.state ?? (relayEnabled ? 'connecting' : 'stopped'),
-              reconnectAttempt: relayStatus?.reconnectAttempt ?? 0,
-              lastErrorCode: relayStatus?.lastErrorCode,
-              lastErrorMessage: relayStatus?.lastErrorMessage,
-              lastErrorAt: relayStatus?.lastErrorAt,
-              circuitOpenUntil: relayStatus?.circuitOpenUntil,
-            }
-          : undefined,
-    };
+  registerHealthRoutes(app, daemon, {
+    getRelayStatus: options?.getRelayStatus,
+    runtime,
+    startedAtFallback: startTime,
   });
 
   // ---------------------------------------------------------------------------
@@ -545,17 +495,6 @@ export function registerHttpRoutes(
   // Metrics / observability
   // ---------------------------------------------------------------------------
 
-  app.get('/api/metrics', async () => {
-    const snapshot = metrics.snapshot();
-
-    // Add live gauges
-    snapshot.gauges['sessions.active'] = daemon.getActiveSessions().length;
-    snapshot.gauges['directories.registered'] = daemon.directoryManager.list().length;
-    snapshot.gauges['uptime.seconds'] = Math.floor((Date.now() - startTime) / 1000);
-
-    return snapshot;
-  });
-
   // ---------------------------------------------------------------------------
   // Config (read-only — layered config for a directory)
   // ---------------------------------------------------------------------------
@@ -576,20 +515,9 @@ export function registerHttpRoutes(
   // Lifecycle control (used by supervisor / CLI)
   // ---------------------------------------------------------------------------
 
-  app.post('/api/lifecycle/shutdown', async (_request, reply) => {
-    if (!options?.onLifecycleShutdown) {
-      return reply.status(404).send({ error: 'Lifecycle control unavailable' });
-    }
-    void options.onLifecycleShutdown();
-    return { status: 'shutdown_requested' };
-  });
-
-  app.post('/api/lifecycle/restart', async (_request, reply) => {
-    if (!options?.onLifecycleRestart) {
-      return reply.status(404).send({ error: 'Lifecycle control unavailable' });
-    }
-    void options.onLifecycleRestart();
-    return { status: 'restart_requested' };
+  registerLifecycleRoutes(app, {
+    onLifecycleRestart: options?.onLifecycleRestart,
+    onLifecycleShutdown: options?.onLifecycleShutdown,
   });
 
   // ---------------------------------------------------------------------------
