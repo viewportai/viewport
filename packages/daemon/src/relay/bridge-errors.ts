@@ -18,3 +18,21 @@ export class BridgeError extends Error {
     this.name = 'BridgeError';
   }
 }
+
+export function normalizeBridgeError(error: unknown): BridgeError {
+  if (error instanceof BridgeError) {
+    return error;
+  }
+  if (error instanceof Error) {
+    return new BridgeError('UNKNOWN', error.message);
+  }
+  return new BridgeError('UNKNOWN', String(error));
+}
+
+export function isControlPlaneBridgeError(code: BridgeErrorCode): boolean {
+  return (
+    code === 'TOKEN_ISSUE_FAILED' ||
+    code === 'TOKEN_RESPONSE_INVALID' ||
+    code === 'DAEMON_KEY_REGISTER_FAILED'
+  );
+}

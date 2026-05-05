@@ -32,7 +32,12 @@ import {
   parseRelayKeyExchangeInitFrameV3,
   type RelayKeyExchangeInitFrameV3,
 } from './bridge-noise-v3.js';
-import { BridgeError, type BridgeErrorCode } from './bridge-errors.js';
+import {
+  BridgeError,
+  isControlPlaneBridgeError,
+  normalizeBridgeError,
+  type BridgeErrorCode,
+} from './bridge-errors.js';
 import { closeQuietly, resolveRelayTlsOptions, wsOpen } from './bridge-network.js';
 import {
   handleRelayPairingOfferRequest,
@@ -385,17 +390,13 @@ export class DaemonRelayBridge {
       this.daemonWs = null;
       this.relaySessions.clear();
 
-      const bridgeError = this.normalizeError(error);
+      const bridgeError = normalizeBridgeError(error);
       this.recordError(bridgeError.code, bridgeError.message);
       out.warn(
         `[relay] daemon bridge connect failed [${bridgeError.code}]: ${bridgeError.message}`,
       );
 
-      if (
-        bridgeError.code === 'TOKEN_ISSUE_FAILED' ||
-        bridgeError.code === 'TOKEN_RESPONSE_INVALID' ||
-        bridgeError.code === 'DAEMON_KEY_REGISTER_FAILED'
-      ) {
+      if (isControlPlaneBridgeError(bridgeError.code)) {
         this.consecutiveIssueFailures += 1;
         if (this.consecutiveIssueFailures >= ISSUE_FAILURE_THRESHOLD) {
           this.circuitOpenUntilMs = Date.now() + CIRCUIT_BREAKER_MS;
@@ -889,16 +890,6 @@ export class DaemonRelayBridge {
     profile: RelayHandshakeProfile;
   }> {
     return this.relayTokenIssuer.issue();
-  }
-
-  private normalizeError(error: unknown): BridgeError {
-    if (error instanceof BridgeError) {
-      return error;
-    }
-    if (error instanceof Error) {
-      return new BridgeError('UNKNOWN', error.message);
-    }
-    return new BridgeError('UNKNOWN', String(error));
   }
 
   private recordError(code: BridgeErrorCode, message: string): void {
