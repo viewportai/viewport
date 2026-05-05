@@ -38,7 +38,8 @@ import {
   normalizeBridgeError,
   type BridgeErrorCode,
 } from './bridge-errors.js';
-import { closeQuietly, resolveRelayTlsOptions, wsOpen } from './bridge-network.js';
+import { openDaemonSocket, openRelayDaemonSocket } from './bridge-connections.js';
+import { closeQuietly } from './bridge-network.js';
 import {
   handleRelayPairingOfferRequest,
   handleRelayPairingRedeemRequest,
@@ -339,43 +340,14 @@ export class DaemonRelayBridge {
       this.consecutiveIssueFailures = 0;
       this.circuitOpenUntilMs = 0;
 
-      const daemonHeaders: Record<string, string> = {};
-      if (this.options.daemonAuthToken) {
-        daemonHeaders.authorization = `Bearer ${this.options.daemonAuthToken}`;
-      }
-      const daemonTlsOptions = resolveRelayTlsOptions(
-        this.options.daemonWsUrl,
-        this.options.daemonTlsVerify ?? 'auto',
-        this.options.daemonCaCertPath,
-        this.options.daemonTlsPins,
-      );
-      const daemonWs = new WebSocket(this.options.daemonWsUrl, {
-        ...daemonTlsOptions,
-        headers: Object.keys(daemonHeaders).length > 0 ? daemonHeaders : undefined,
-      });
-      await wsOpen(daemonWs);
+      const daemonWs = await openDaemonSocket(this.options);
       this.daemonWs = daemonWs;
 
-      const relayUrl =
-        `${this.relayEndpoint}?role=workspace-daemon` +
-        `&workspaceId=${encodeURIComponent(this.options.workspaceId)}` +
-        (this.options.projectMachineBindingId
-          ? `&projectMachineBindingId=${encodeURIComponent(this.options.projectMachineBindingId)}`
-          : '');
-
-      const relayTlsOptions = resolveRelayTlsOptions(
-        relayUrl,
-        this.options.relayTlsVerify ?? 'auto',
-        this.options.relayCaCertPath,
-        this.options.relayTlsPins,
-      );
-      const relayWs = new WebSocket(relayUrl, {
-        ...relayTlsOptions,
-        headers: {
-          authorization: `Bearer ${issue.relayToken}`,
-        },
+      const relayWs = await openRelayDaemonSocket({
+        ...this.options,
+        relayEndpoint: this.relayEndpoint,
+        relayToken: issue.relayToken,
       });
-      await wsOpen(relayWs);
       this.relayWs = relayWs;
 
       out.log('[relay] daemon bridge connected');
