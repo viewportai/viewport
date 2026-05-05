@@ -1,8 +1,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { configDir } from '../core/config.js';
 import { logger } from '../core/logger.js';
+import {
+  appendPairingAudit,
+  authTokenPath,
+  daemonIdentityPath,
+  pairingPeerBindingsMax,
+  pairingSecretStoreKeyPath,
+  pairingStorePath,
+  peerBindingPath,
+  trustAnchorPath,
+} from './pairing-file-store.js';
 import type {
   PairingClientIdentity,
   PairingDaemonIdentityPublic,
@@ -35,12 +44,9 @@ export type {
 
 const MAX_STORED_OFFERS = 200;
 const MAX_FAILED_REDEEM_ATTEMPTS = 5;
-const DEFAULT_MAX_PEER_BINDINGS = 2048;
 const RELAY_PAIRING_INFO_PREFIX = 'viewport-relay-policyc-pair-v1';
-const DEFAULT_PAIRING_AUDIT_MAX_BYTES = 1_048_576;
 const PAIRING_SECRET_STORE_KEY_BYTES = 32;
 let storeMutationLock: Promise<unknown> = Promise.resolve();
-let auditMutationLock: Promise<unknown> = Promise.resolve();
 let cachedSecretStoreKey: Buffer | null = null;
 let cachedSecretStoreKeyPath: string | null = null;
 
@@ -51,64 +57,6 @@ function withStoreMutationLock<T>(operation: () => Promise<T>): Promise<T> {
     () => undefined,
   );
   return run;
-}
-
-function withAuditMutationLock<T>(operation: () => Promise<T>): Promise<T> {
-  const run = auditMutationLock.then(operation, operation);
-  auditMutationLock = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (!value) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return parsed;
-}
-
-function pairingAuditMaxBytes(): number {
-  return parsePositiveInt(
-    process.env['VIEWPORT_PAIRING_AUDIT_MAX_BYTES'],
-    DEFAULT_PAIRING_AUDIT_MAX_BYTES,
-  );
-}
-
-function pairingPeerBindingsMax(): number {
-  return parsePositiveInt(
-    process.env['VIEWPORT_PAIRING_PEER_BINDINGS_MAX'],
-    DEFAULT_MAX_PEER_BINDINGS,
-  );
-}
-
-function pairingStorePath(): string {
-  return path.join(configDir(), 'pairing-offers.json');
-}
-
-function pairingAuditPath(): string {
-  return path.join(configDir(), 'pairing-audit.jsonl');
-}
-
-function authTokenPath(): string {
-  return path.join(configDir(), 'auth-token');
-}
-
-function trustAnchorPath(): string {
-  return path.join(configDir(), 'pairing-trust-anchor.json');
-}
-
-function daemonIdentityPath(): string {
-  return path.join(configDir(), 'pairing-device-identity.json');
-}
-
-function peerBindingPath(): string {
-  return path.join(configDir(), 'pairing-peers.json');
-}
-
-function pairingSecretStoreKeyPath(): string {
-  return path.join(configDir(), 'pairing-secret-store.key');
 }
 
 async function getOrCreateSecretStoreKey(): Promise<Buffer> {
@@ -189,28 +137,6 @@ function compactOffers(offers: PairingOfferStoreRecord[]): PairingOfferStoreReco
   return fresh.slice(fresh.length - MAX_STORED_OFFERS);
 }
 
-async function appendAudit(event: Record<string, unknown>): Promise<void> {
-  return await withAuditMutationLock(async () => {
-    await fs.mkdir(configDir(), { recursive: true });
-    const auditPath = pairingAuditPath();
-    const maxBytes = pairingAuditMaxBytes();
-    try {
-      const stat = await fs.stat(auditPath);
-      if (stat.size >= maxBytes) {
-        const rotated = `${auditPath}.1`;
-        await fs.rm(rotated, { force: true });
-        await fs.rename(auditPath, rotated);
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
-      }
-    }
-    const line = JSON.stringify({ timestamp: Date.now(), ...event });
-    await fs.appendFile(auditPath, `${line}\n`, { encoding: 'utf-8', mode: 0o600 });
-  });
-}
-
 function trustAnchorFingerprint(secret: string): string {
   const digest = crypto.createHash('sha256').update(secret).digest('hex');
   return digest.match(/.{1,4}/g)?.join(':') ?? digest;
@@ -264,7 +190,7 @@ export async function getOrCreateTrustAnchor(): Promise<PairingTrustAnchorPublic
     secret: crypto.randomBytes(32).toString('hex'),
   };
   await writeTrustAnchorRecord(created);
-  await appendAudit({
+  await appendPairingAudit({
     event: 'pair_trust_anchor_created',
     trustAnchorId: created.id,
     trustAnchor: trustAnchorFingerprint(created.secret),
@@ -324,7 +250,7 @@ export async function getOrCreateDaemonIdentity(): Promise<PairingDaemonIdentity
     privateKey,
   };
   await writeDaemonIdentity(created);
-  await appendAudit({
+  await appendPairingAudit({
     event: 'pair_device_identity_created',
     deviceId: created.deviceId,
     fingerprint: keyFingerprint(created.publicKey),
@@ -609,7 +535,7 @@ export async function rotateAuthToken(): Promise<{ token: string; previousTokenE
   const token = crypto.randomBytes(32).toString('hex');
   await fs.mkdir(configDir(), { recursive: true });
   await fs.writeFile(authTokenPath(), `${token}\n`, { mode: 0o600 });
-  await appendAudit({ event: 'auth_token_rotated' });
+  await appendPairingAudit({ event: 'auth_token_rotated' });
   return { token, previousTokenExisted: previous !== null };
 }
 
@@ -642,7 +568,7 @@ export async function issuePairingOffer(input: {
       connection: input.connection,
     });
     await writeStore(store);
-    await appendAudit({
+    await appendPairingAudit({
       event: 'pair_offer_issued',
       offerId,
       createdAt,
@@ -712,7 +638,7 @@ export async function revokePairingOffer(offerId: string): Promise<boolean> {
     if (!offer.revokedAt) {
       offer.revokedAt = Date.now();
       await writeStore(store);
-      await appendAudit({ event: 'pair_offer_revoked', offerId: offer.offerId });
+      await appendPairingAudit({ event: 'pair_offer_revoked', offerId: offer.offerId });
     }
     return true;
   });
@@ -740,7 +666,7 @@ export async function redeemPairingOffer(
       return null;
     }
     if (!clientPublicKey || !clientProof) {
-      await appendAudit({
+      await appendPairingAudit({
         event: 'pair_offer_redeem_failed',
         offerId: offer.offerId,
         reason: 'missing_client_identity_proof',
@@ -748,7 +674,7 @@ export async function redeemPairingOffer(
       return null;
     }
     if (expectedTrustAnchor && offer.trustAnchor !== expectedTrustAnchor) {
-      await appendAudit({
+      await appendPairingAudit({
         event: 'pair_offer_redeem_failed',
         offerId: offer.offerId,
         reason: 'trust_anchor_mismatch',
@@ -771,7 +697,7 @@ export async function redeemPairingOffer(
         Buffer.from(clientProof, 'base64url'),
       );
       if (!verified) {
-        await appendAudit({
+        await appendPairingAudit({
           event: 'pair_offer_redeem_failed',
           offerId: offer.offerId,
           reason: 'client_proof_invalid',
@@ -779,7 +705,7 @@ export async function redeemPairingOffer(
         return null;
       }
     } catch {
-      await appendAudit({
+      await appendPairingAudit({
         event: 'pair_offer_redeem_failed',
         offerId: offer.offerId,
         reason: 'client_proof_invalid',
@@ -789,7 +715,7 @@ export async function redeemPairingOffer(
     if (typeof offer.redeemSecretHash !== 'string' || offer.redeemSecretHash.length === 0) {
       offer.lockedAt = now;
       await writeStore(store);
-      await appendAudit({
+      await appendPairingAudit({
         event: 'pair_offer_redeem_failed',
         offerId: offer.offerId,
         reason: 'missing_redeem_secret_hash',
@@ -804,7 +730,7 @@ export async function redeemPairingOffer(
         offer.lockedAt = now;
       }
       await writeStore(store);
-      await appendAudit({
+      await appendPairingAudit({
         event: 'pair_offer_redeem_failed',
         offerId: offer.offerId,
         attempts: offer.failedRedeemAttempts,
@@ -856,7 +782,7 @@ export async function redeemPairingOffer(
           .toString('base64url')
       : '';
 
-    await appendAudit({
+    await appendPairingAudit({
       event: 'pair_offer_redeemed',
       offerId: offer.offerId,
       peerId,
