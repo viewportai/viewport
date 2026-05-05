@@ -16,9 +16,17 @@ import type {
   PermissionContext,
 } from '../core/interfaces.js';
 import type { SessionState, SessionMessage } from '../core/types.js';
-import { toToolCallDetail } from '../core/types.js';
 import { logger } from '../core/logger.js';
 import { metrics } from '../core/metrics.js';
+import {
+  type SDKRawMessage,
+  normalizeAssistantMessage,
+  normalizeStreamEvent,
+  normalizeSystemMessage,
+  normalizeToolProgressMessage,
+  normalizeUserMessage,
+  resultErrorDetail,
+} from './claude-message-normalizer.js';
 
 const log = logger.child({ module: 'claude' });
 
@@ -31,17 +39,6 @@ interface SDKQuery {
   [Symbol.asyncIterator](): AsyncIterator<SDKRawMessage, void>;
   interrupt(): Promise<void>;
   close(): void;
-}
-
-/**
- * Minimal shape of SDK messages we need to handle.
- * The actual SDK has 22+ message types — we normalize the ones we care about.
- */
-interface SDKRawMessage {
-  type: string;
-  subtype?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK messages are untyped at our boundary
-  [key: string]: any;
 }
 
 /** SDK's canUseTool callback signature. */
@@ -325,58 +322,22 @@ export class ClaudeSession extends EventEmitter implements Session {
 
     switch (msg.type) {
       case 'system':
-        return this.normalizeSystemMessage(msg, now);
+        return normalizeSystemMessage(msg, now, this.id);
 
       case 'assistant':
         return this.normalizeAssistantMessage(msg, now);
 
       case 'user':
-        return this.normalizeUserMessage(msg, now);
+        return normalizeUserMessage(msg, now);
 
       case 'stream_event':
-        return this.normalizeStreamEvent(msg, now);
+        return normalizeStreamEvent(msg, now);
 
       case 'result':
         return this.normalizeResultMessage(msg, now);
 
       case 'tool_progress':
-        return [
-          {
-            type: 'tool_call_update',
-            toolCallId: msg.tool_use_id ?? 'unknown',
-            toolName: msg.tool_name,
-            status: 'completed',
-            title: `Progress: ${msg.elapsed_time_seconds}s`,
-            timestamp: now,
-          },
-        ];
-
-      default:
-        return null;
-    }
-  }
-
-  private normalizeSystemMessage(msg: SDKRawMessage, now: number): SessionMessage[] | null {
-    switch (msg.subtype) {
-      case 'init':
-        return [
-          {
-            type: 'system_status',
-            status: 'initialized',
-            sessionId: msg.session_id ?? this.id,
-            timestamp: now,
-          },
-        ];
-
-      case 'status':
-        return [
-          {
-            type: 'system_status',
-            status: msg.status ?? 'unknown',
-            sessionId: this.id,
-            timestamp: now,
-          },
-        ];
+        return normalizeToolProgressMessage(msg, now);
 
       default:
         return null;
@@ -384,155 +345,20 @@ export class ClaudeSession extends EventEmitter implements Session {
   }
 
   private normalizeAssistantMessage(msg: SDKRawMessage, now: number): SessionMessage[] | null {
-    // Skip replay messages from session history (same as normalizeUserMessage)
-    if (msg.isReplay) return null;
-
-    const betaMessage = msg.message;
-    if (!betaMessage?.content) return null;
-
-    const messages: SessionMessage[] = [];
-
-    for (const block of betaMessage.content) {
-      if (block.type === 'text') {
-        const text = typeof block.text === 'string' ? block.text : '';
-        if (text.length === 0) continue;
-        messages.push({
-          type: 'agent_message',
-          text,
-          messageId: msg.uuid ?? `msg-${now}`,
-          timestamp: now,
-        });
-        if (this.isPoisonedHistoryApiError(text) && !this.endedForPoisonedHistory) {
-          messages.push({
-            type: 'system_status',
-            status: 'error: session history is corrupted (empty text block). Start a new session.',
-            sessionId: this.id,
-            timestamp: now,
-          });
-          queueMicrotask(() => {
-            this.endPoisonedHistorySession();
-          });
-        }
-      } else if (block.type === 'thinking') {
-        messages.push({
-          type: 'agent_thought_chunk',
-          text: block.thinking ?? '',
-          messageId: msg.uuid ?? `thought-${now}`,
-          timestamp: now,
-        });
-      } else if (block.type === 'tool_use') {
-        const input = block.input as Record<string, unknown>;
-        messages.push({
-          type: 'tool_call',
-          toolCallId: block.id,
-          toolName: block.name,
-          title: block.name,
-          input,
-          detail: toToolCallDetail(block.name, input),
-          status: 'in_progress',
-          timestamp: now,
-        });
-      }
+    const result = normalizeAssistantMessage(msg, now);
+    if (!result) return null;
+    if (result.poisonedHistoryDetected && !this.endedForPoisonedHistory) {
+      result.messages.push({
+        type: 'system_status',
+        status: 'error: session history is corrupted (empty text block). Start a new session.',
+        sessionId: this.id,
+        timestamp: now,
+      });
+      queueMicrotask(() => {
+        this.endPoisonedHistorySession();
+      });
     }
-
-    return messages.length > 0 ? messages : null;
-  }
-
-  /**
-   * Normalize SDK 'user' messages — these carry tool results.
-   *
-   * The SDK sends tool execution results as user messages with a
-   * `tool_use_result` field containing the output, and the `message.content`
-   * array contains `tool_result` blocks.
-   */
-  private normalizeUserMessage(msg: SDKRawMessage, now: number): SessionMessage[] | null {
-    // Skip replay messages from session history
-    if (msg.isReplay) return null;
-
-    const messages: SessionMessage[] = [];
-    const content = msg.message?.content;
-
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block.type === 'tool_result') {
-          const output = this.extractToolResultText(block);
-          messages.push({
-            type: 'tool_call_update',
-            toolCallId: block.tool_use_id ?? 'unknown',
-            status: block.is_error ? 'error' : 'completed',
-            output,
-            timestamp: now,
-          });
-        }
-      }
-    }
-
-    return messages.length > 0 ? messages : null;
-  }
-
-  /** Extract human-readable text from a tool_result content block. */
-  private extractToolResultText(block: SDKRawMessage): string {
-    const content = block.content;
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return content
-        .map((c: SDKRawMessage) => {
-          if (c.type === 'text') return c.text ?? '';
-          if (c.type === 'image') return '[image]';
-          return '';
-        })
-        .filter(Boolean)
-        .join('\n');
-    }
-    return '';
-  }
-
-  private normalizeStreamEvent(msg: SDKRawMessage, now: number): SessionMessage[] | null {
-    const event = msg.event;
-    if (!event) return null;
-
-    // Text streaming
-    if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-      return [
-        {
-          type: 'agent_message_chunk',
-          text: event.delta.text,
-          messageId: msg.uuid ?? `chunk-${now}`,
-          timestamp: now,
-        },
-      ];
-    }
-
-    // Thinking streaming
-    if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
-      return [
-        {
-          type: 'agent_thought_chunk',
-          text: event.delta.thinking ?? '',
-          messageId: msg.uuid ?? `thought-${now}`,
-          timestamp: now,
-        },
-      ];
-    }
-
-    // Tool use input streaming — track tool_use block start
-    // Note: input is empty at this point; detail will be enriched on tool_call_update
-    if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-      return [
-        {
-          type: 'tool_call',
-          toolCallId: event.content_block.id,
-          toolName: event.content_block.name,
-          title: event.content_block.name,
-          input: {},
-          detail: toToolCallDetail(event.content_block.name, {}),
-          status: 'in_progress',
-          timestamp: now,
-        },
-      ];
-    }
-
-    return null;
+    return result.messages;
   }
 
   private normalizeResultMessage(msg: SDKRawMessage, now: number): SessionMessage[] | null {
@@ -558,9 +384,7 @@ export class ClaudeSession extends EventEmitter implements Session {
     messages.push({
       type: 'system_status',
       status:
-        msg.subtype === 'success'
-          ? 'completed'
-          : `error: ${this.resultErrorDetail(msg) ?? msg.subtype}`,
+        msg.subtype === 'success' ? 'completed' : `error: ${resultErrorDetail(msg) ?? msg.subtype}`,
       sessionId: msg.session_id ?? this.id,
       timestamp: now,
     });
@@ -576,14 +400,6 @@ export class ClaudeSession extends EventEmitter implements Session {
     return messages;
   }
 
-  private isPoisonedHistoryApiError(text: string): boolean {
-    const normalized = text.toLowerCase();
-    return (
-      normalized.includes('messages: text content blocks must be non-empty') ||
-      normalized.includes('cache_control cannot be set for empty text blocks')
-    );
-  }
-
   private endPoisonedHistorySession(): void {
     if (this.endedForPoisonedHistory) return;
     this.endedForPoisonedHistory = true;
@@ -594,30 +410,6 @@ export class ClaudeSession extends EventEmitter implements Session {
     }
     this.setState('completed');
     this.emit('ended', 'history_poisoned');
-  }
-
-  private resultErrorDetail(msg: SDKRawMessage): string | undefined {
-    if (Array.isArray(msg.errors) && msg.errors.length > 0) {
-      const first = msg.errors[0];
-      if (typeof first === 'string' && first.trim().length > 0) {
-        return first.trim();
-      }
-    }
-    if (typeof msg.result === 'string' && msg.result.trim().length > 0) {
-      return msg.result.trim();
-    }
-    if (typeof msg.error === 'string' && msg.error.trim().length > 0) {
-      return msg.error.trim();
-    }
-    if (msg.error && typeof msg.error === 'object') {
-      try {
-        const serialized = JSON.stringify(msg.error);
-        if (serialized.length > 0) return serialized;
-      } catch {
-        // ignore serialization errors
-      }
-    }
-    return undefined;
   }
 
   private wrapCanUseTool(handler: PermissionHandler): SDKCanUseTool {
