@@ -941,6 +941,71 @@ describe('relay routing', () => {
     expect((daemonB as unknown as FakeWs).sent).not.toContain(init);
   });
 
+  it('returns an explicit unavailable status when the targeted machine is not connected', async () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client'>();
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    const client = new FakeWs() as unknown as WebSocket;
+    registerConnection(context, client, 'client', 'workspace_demo', undefined, '127.0.0.3', {
+      clientId: 'client_a',
+      scope: 'runtime',
+      workspaceId: 'workspace_demo',
+      projectMachineBindingId: 'binding_a',
+      machineId: 'machine_a',
+    });
+
+    (client as unknown as FakeWs).emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          type: 'relay_key_exchange_init',
+          version: 3,
+          profile: 'noise-ik',
+          requestId: 'unavailable-target',
+          clientEphemeralPublicKey: 'ephemeral',
+          encryptedClientStatic: 'cipher',
+        }),
+      ),
+    );
+
+    await Promise.resolve();
+
+    expect((client as unknown as FakeWs).sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: 'relay_status',
+      code: 'DAEMON_UNAVAILABLE',
+      message: 'No machine runtime is connected for this project target',
+      workspaceId: 'workspace_demo',
+    });
+    expect(backplane.resolvePresence).toHaveBeenCalledWith('workspace_demo', 'binding_a');
+    expect(backplane.publishClientToDaemon).not.toHaveBeenCalled();
+  });
+
   it('routes pairing responses only to the requesting client', () => {
     const config = loadConfig({
       RELAY_TLS: '0',
