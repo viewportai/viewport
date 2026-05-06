@@ -17,6 +17,22 @@ export function relayRecoveryHint(input: RelayDiagnosticInput): string | null {
     return 'Pairing reached the server, but daemon key registration failed. Re-pair this daemon, then restart it.';
   }
 
+  if (
+    code === 'PROJECT_MACHINE_BINDING_NOT_FOUND' ||
+    message.includes('project machine binding not found') ||
+    message.includes('machine binding is missing')
+  ) {
+    return 'The selected project machine binding is no longer active. Re-pair this machine or select a live machine in the runtime UI.';
+  }
+
+  if (
+    code === 'PROJECT_MACHINE_BINDING_MISMATCH' ||
+    message.includes('project machine binding mismatch') ||
+    message.includes('different project machine binding')
+  ) {
+    return 'The daemon is connected with a different project machine binding than the browser selected. Re-pair or restart the daemon after selecting the intended project.';
+  }
+
   if (code === 'CIRCUIT_OPEN' || state === 'circuit_open') {
     return 'Relay reconnects are paused after repeated failures. Check relay/server health, then run `vpd restart`.';
   }
