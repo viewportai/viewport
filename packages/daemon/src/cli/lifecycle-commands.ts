@@ -347,6 +347,19 @@ export function showHelp(): void {
   console.log(
     '                               Validate, run, inspect, approve, and cancel local workflows',
   );
+  console.log(
+    '  context init --project <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log('  context status [--project <id>] [--json]');
+  console.log(
+    '  context add --project <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log(
+    '  context resolve --project <id> --query <text> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log(
+    '                               Resolve encrypted local context on this trusted edge',
+  );
   console.log('  hook notify --event <EventName>');
   console.log('  hook plan                    Send a plan proposal hook from stdin');
   console.log('  hook capabilities [--adapter <name>] [--json]');
