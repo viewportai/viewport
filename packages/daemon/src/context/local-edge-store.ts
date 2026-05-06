@@ -13,7 +13,16 @@ import {
   type WrappedKey,
 } from './local-edge-crypto.js';
 
-const SCHEMA_VERSION = 'viewport.context_local_edge/v1';
+/**
+ * First vpd trusted-edge seam.
+ *
+ * This module intentionally proves the local command/API boundary before the
+ * canonical Context Vault engine is moved into the daemon. It is not the stable
+ * Context Vault wire format. Before platform sync or workflow context injection
+ * depends on this surface, replace the internals with the HPKE signed-event
+ * materializer from the standalone Context Vault POC.
+ */
+const SCHEMA_VERSION = 'viewport.context_local_edge/seam-v0';
 const SERVER_SYNC_MODE = 'disabled';
 
 export type ContextScope = 'private' | 'project' | 'team' | 'organization';
