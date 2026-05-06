@@ -44,6 +44,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const raw = await fs.readFile(contextProjectPath('project-alpha', tempHome), 'utf8');
+    expect(raw).not.toContain('Auth convention');
     expect(raw).not.toContain('Use policy classes');
     expect(raw).toContain('ciphertext');
 

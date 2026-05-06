@@ -96,7 +96,7 @@ async function contextAdd(): Promise<void> {
     return;
   }
   console.log(`Context entry added: ${entry.id}`);
-  console.log(`Title: ${entry.title}`);
+  console.log('Title: [encrypted]');
 }
 
 async function contextResolve(): Promise<void> {

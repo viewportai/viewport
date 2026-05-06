@@ -38,7 +38,8 @@ export interface ContextProjectRecord {
 export interface ContextStoredEntry {
   id: string;
   scope: ContextScope;
-  title: string;
+  title: EncryptedPayload;
+  titleDigest: string;
   body: EncryptedPayload;
   bodyDigest: string;
   source: string;
@@ -144,7 +145,8 @@ export async function addContextEntry(options: {
   const entry: ContextStoredEntry = {
     id: `ctx_${cryptoId()}`,
     scope: options.scope ?? 'project',
-    title: options.title,
+    title: encryptText(options.title, projectKey),
+    titleDigest: digestText(options.title),
     body: encryptText(options.body, projectKey),
     bodyDigest: digestText(options.body),
     source: options.source ?? 'manual://vpd-context',
@@ -172,19 +174,21 @@ export async function resolveContextBundle(options: {
   const items = record.entries
     .map((entry) => ({
       ...entry,
+      titleText: decryptText(entry.title, projectKey),
       bodyText: decryptText(entry.body, projectKey),
     }))
     .filter((entry) => {
       if (entry.scope === 'private' && !options.includePrivate) return false;
       if (!query) return true;
       return (
-        entry.title.toLowerCase().includes(query) || entry.bodyText.toLowerCase().includes(query)
+        entry.titleText.toLowerCase().includes(query) ||
+        entry.bodyText.toLowerCase().includes(query)
       );
     })
-    .map(({ bodyText, ...entry }) => ({
+    .map(({ bodyText, titleText, ...entry }) => ({
       id: entry.id,
       scope: entry.scope,
-      title: entry.title,
+      title: titleText,
       body: bodyText,
       source: entry.source,
       trustState: entry.trustState,
