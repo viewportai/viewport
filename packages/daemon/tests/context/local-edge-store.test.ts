@@ -44,6 +44,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const raw = await fs.readFile(contextProjectPath('project-alpha', tempHome), 'utf8');
+    expect(raw).toContain('viewport.context_local_edge/seam-v0');
     expect(raw).not.toContain('Auth convention');
     expect(raw).not.toContain('Use policy classes');
     expect(raw).toContain('ciphertext');
@@ -84,6 +85,7 @@ describe('local trusted-edge context store', () => {
 
     expect(status.projects).toEqual([
       expect.objectContaining({
+        schemaVersion: 'viewport.context_local_edge/seam-v0',
         projectId: 'project-alpha',
         userName: 'alice',
         deviceName: 'alice-laptop',

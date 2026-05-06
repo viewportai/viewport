@@ -68,6 +68,7 @@ describe('HTTP context routes', () => {
     });
     expect(status.statusCode).toBe(200);
     expect(JSON.parse(status.payload).projects[0]).toMatchObject({
+      schemaVersion: 'viewport.context_local_edge/seam-v0',
       projectId: 'project-alpha',
       entryCount: 1,
       serverSync: 'disabled',
