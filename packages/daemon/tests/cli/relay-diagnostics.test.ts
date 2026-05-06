@@ -27,6 +27,26 @@ describe('relayRecoveryHint', () => {
     ).toContain('run `vpd restart`');
   });
 
+  it('explains inactive project machine bindings', () => {
+    expect(
+      relayRecoveryHint({
+        state: 'waiting_retry',
+        lastErrorCode: 'PROJECT_MACHINE_BINDING_NOT_FOUND',
+        lastErrorMessage: 'project machine binding not found',
+      }),
+    ).toContain('Re-pair this machine');
+  });
+
+  it('explains project machine binding mismatches', () => {
+    expect(
+      relayRecoveryHint({
+        state: 'waiting_retry',
+        lastErrorCode: 'PROJECT_MACHINE_BINDING_MISMATCH',
+        lastErrorMessage: 'daemon connected with a different project machine binding',
+      }),
+    ).toContain('different project machine binding');
+  });
+
   it('explains network failures', () => {
     expect(
       relayRecoveryHint({
