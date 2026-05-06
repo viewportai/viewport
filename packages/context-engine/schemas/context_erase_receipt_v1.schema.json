@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:viewport:context_erase_receipt:v1",
+  "title": "Viewport Context Erase Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "repoId",
+    "actorName",
+    "revocationEventId",
+    "erasedAt",
+    "cacheTombstoned",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "viewport.context_erase_receipt/v1" },
+    "id": { "type": "string", "pattern": "^erase_" },
+    "repoId": { "type": "string", "minLength": 1 },
+    "actorName": { "type": "string", "minLength": 1 },
+    "revocationEventId": { "type": "string", "pattern": "^evt_" },
+    "erasedAt": { "type": "string", "minLength": 1 },
+    "cacheTombstoned": { "const": true },
+    "signature": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,90 +1,49 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { configDir } from '../core/config.js';
+import { digestText } from './local-edge-crypto.js';
 import {
-  createProjectKey,
-  decryptText,
-  digestJson,
-  digestText,
-  encryptText,
-  unwrapProjectKey,
-  wrapProjectKey,
-  type EncryptedPayload,
-  type WrappedKey,
-} from './local-edge-crypto.js';
+  assertCredentials,
+  createVault,
+  ensureDevice,
+  ensureRepo,
+  ensureUserAndDevice,
+  isResolverPinMismatch,
+} from './local-edge-engine.js';
+import {
+  countApprovedEntryEvents,
+  readProjectMetadata,
+  readProjectMetadataRecords,
+  toPublicProjectRecord,
+  touchProjectMetadata,
+} from './local-edge-metadata.js';
+import { migrateLegacyProjectIfNeeded } from './local-edge-migration.js';
+import {
+  archivedContextProjectPath,
+  legacyContextProjectPath,
+  repoIdForProject,
+} from './local-edge-paths.js';
+import {
+  CONTEXT_BUNDLE_SCHEMA_VERSION,
+  CONTEXT_EVENT_SCHEMA_VERSION,
+  SERVER_SYNC_MODE,
+  type ContextBundle,
+  type ContextCredentials,
+  type ContextProjectRecord,
+  type ContextScope,
+  type ContextStoredEntry,
+} from './local-edge-types.js';
 
-/**
- * First vpd trusted-edge seam.
- *
- * This module intentionally proves the local command/API boundary before the
- * canonical Context Vault engine is moved into the daemon. It is not the stable
- * Context Vault wire format. Before platform sync or workflow context injection
- * depends on this surface, replace the internals with the HPKE signed-event
- * materializer from the standalone Context Vault POC.
- */
-const SCHEMA_VERSION = 'viewport.context_local_edge/seam-v0';
-const SERVER_SYNC_MODE = 'disabled';
+export type {
+  ContextBundle,
+  ContextCredentials,
+  ContextProjectRecord,
+  ContextScope,
+  ContextStoredEntry,
+} from './local-edge-types.js';
 
-export type ContextScope = 'private' | 'project' | 'team' | 'organization';
-
-export interface ContextCredentials {
-  passphrase: string;
-  recoveryCode: string;
-}
-
-export interface ContextProjectRecord {
-  schemaVersion: typeof SCHEMA_VERSION;
-  projectId: string;
-  userName: string;
-  deviceName: string;
-  serverSync: typeof SERVER_SYNC_MODE;
-  createdAt: string;
-  updatedAt: string;
-  wrappedProjectKey: WrappedKey;
-  entries: ContextStoredEntry[];
-}
-
-export interface ContextStoredEntry {
-  id: string;
-  scope: ContextScope;
-  title: EncryptedPayload;
-  titleDigest: string;
-  body: EncryptedPayload;
-  bodyDigest: string;
-  source: string;
-  trustState: 'approved';
-  actorName: string;
-  createdAt: string;
-}
-
-export interface ContextResolvedItem {
-  id: string;
-  scope: ContextScope;
-  title: string;
-  body: string;
-  source: string;
-  trustState: 'approved';
-  actorName: string;
-  createdAt: string;
-  digest: string;
-}
-
-export interface ContextBundle {
-  manifest: {
-    schemaVersion: 'viewport.context_bundle_manifest/vpd-local-v1';
-    projectId: string;
-    actorName: string;
-    query: string;
-    resolvedAt: string;
-    serverSync: typeof SERVER_SYNC_MODE;
-    itemCount: number;
-    digest: string;
-  };
-  items: ContextResolvedItem[];
-}
+export { archivedContextProjectPath, isResolverPinMismatch };
 
 export function contextProjectPath(projectId: string, home = configDir()): string {
-  return path.join(home, 'context', 'projects', `${safeProjectId(projectId)}.json`);
+  return legacyContextProjectPath(projectId, home);
 }
 
 export async function initContextProject(options: {
@@ -94,47 +53,44 @@ export async function initContextProject(options: {
   credentials: ContextCredentials;
   home?: string;
 }): Promise<ContextProjectRecord> {
-  const now = new Date().toISOString();
-  const projectKey = createProjectKey();
-  const record: ContextProjectRecord = {
-    schemaVersion: SCHEMA_VERSION,
+  const home = options.home ?? configDir();
+  await migrateLegacyProjectIfNeeded({
+    projectId: options.projectId,
+    home,
+    credentials: options.credentials,
+  });
+  const vault = createVault(home);
+  await ensureUserAndDevice(vault, {
+    userName: options.userName,
+    deviceName: options.deviceName,
+    credentials: options.credentials,
+  });
+  await ensureRepo(vault, {
+    repoId: repoIdForProject(options.projectId),
     projectId: options.projectId,
     userName: options.userName,
     deviceName: options.deviceName,
-    serverSync: SERVER_SYNC_MODE,
-    createdAt: now,
-    updatedAt: now,
-    wrappedProjectKey: wrapProjectKey(projectKey, options.credentials),
-    entries: [],
-  };
-
-  await writeProjectRecord(record, options.home);
-  return redactProjectRecord(record);
+    home,
+  });
+  return readProjectMetadata(options.projectId, home);
 }
 
 export async function readContextStatus(options: { projectId?: string; home?: string }): Promise<{
-  projects: Array<
-    Omit<ContextProjectRecord, 'wrappedProjectKey' | 'entries'> & {
-      entryCount: number;
-    }
-  >;
+  projects: Array<ContextProjectRecord & { entryCount: number }>;
 }> {
-  const records = await readProjectRecords(options.home);
+  const home = options.home ?? configDir();
+  const records = await readProjectMetadataRecords(home);
   const filtered = options.projectId
     ? records.filter((record) => record.projectId === options.projectId)
     : records;
 
   return {
-    projects: filtered.map((record) => ({
-      schemaVersion: record.schemaVersion,
-      projectId: record.projectId,
-      userName: record.userName,
-      deviceName: record.deviceName,
-      serverSync: record.serverSync,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-      entryCount: record.entries.length,
-    })),
+    projects: await Promise.all(
+      filtered.map(async (record) => ({
+        ...toPublicProjectRecord(record),
+        entryCount: await countApprovedEntryEvents(record.repoId, home),
+      })),
+    ),
   };
 }
 
@@ -148,25 +104,47 @@ export async function addContextEntry(options: {
   credentials: ContextCredentials;
   home?: string;
 }): Promise<ContextStoredEntry> {
-  const record = await loadProjectRecord(options.projectId, options.home);
-  const projectKey = unwrapProjectKey(record.wrappedProjectKey, options.credentials);
-  const now = new Date().toISOString();
-  const entry: ContextStoredEntry = {
-    id: `ctx_${cryptoId()}`,
-    scope: options.scope ?? 'project',
-    title: encryptText(options.title, projectKey),
+  const home = options.home ?? configDir();
+  await migrateLegacyProjectIfNeeded({
+    projectId: options.projectId,
+    home,
+    credentials: options.credentials,
+  });
+  const metadata = await readProjectMetadata(options.projectId, home);
+  const vault = createVault(home);
+  assertCredentials(vault, metadata.userName, options.credentials);
+  await ensureDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials: options.credentials,
+  });
+
+  const scope = options.scope ?? 'project';
+  const source = options.source ?? 'manual://vpd-context';
+  const event = vault.addEntry({
+    repoId: metadata.repoId,
+    actorName: options.actorName,
+    scope,
+    title: options.title,
+    body: options.body,
+    source,
+    sourceKind: 'human',
+    trustState: 'approved',
+    appliesTo: [],
+  });
+  await touchProjectMetadata(metadata, home);
+
+  return {
+    id: event.id,
+    scope,
     titleDigest: digestText(options.title),
-    body: encryptText(options.body, projectKey),
-    bodyDigest: digestText(options.body),
-    source: options.source ?? 'manual://vpd-context',
+    bodyDigest: event.payloadDigest ?? digestText(options.body),
+    source,
     trustState: 'approved',
     actorName: options.actorName,
-    createdAt: now,
+    createdAt: event.createdAt,
+    schemaVersion: CONTEXT_EVENT_SCHEMA_VERSION,
   };
-  record.entries.push(entry);
-  record.updatedAt = now;
-  await writeProjectRecord(record, options.home);
-  return entry;
 }
 
 export async function resolveContextBundle(options: {
@@ -175,118 +153,78 @@ export async function resolveContextBundle(options: {
   query: string;
   credentials: ContextCredentials;
   includePrivate?: boolean;
+  profile?: string;
+  profilePin?: { path?: string; digest?: string };
   home?: string;
 }): Promise<ContextBundle> {
-  const record = await loadProjectRecord(options.projectId, options.home);
-  const projectKey = unwrapProjectKey(record.wrappedProjectKey, options.credentials);
-  const query = options.query.trim().toLowerCase();
-  const items = record.entries
-    .map((entry) => ({
-      ...entry,
-      titleText: decryptText(entry.title, projectKey),
-      bodyText: decryptText(entry.body, projectKey),
-    }))
-    .filter((entry) => {
-      if (entry.scope === 'private' && !options.includePrivate) return false;
-      if (!query) return true;
-      return (
-        entry.titleText.toLowerCase().includes(query) ||
-        entry.bodyText.toLowerCase().includes(query)
-      );
-    })
-    .map(({ bodyText, titleText, ...entry }) => ({
-      id: entry.id,
-      scope: entry.scope,
-      title: titleText,
-      body: bodyText,
-      source: entry.source,
-      trustState: entry.trustState,
-      actorName: entry.actorName,
-      createdAt: entry.createdAt,
-      digest: entry.bodyDigest,
-    }));
+  const home = options.home ?? configDir();
+  await migrateLegacyProjectIfNeeded({
+    projectId: options.projectId,
+    home,
+    credentials: options.credentials,
+  });
+  const metadata = await readProjectMetadata(options.projectId, home);
+  const vault = createVault(home);
+  assertCredentials(vault, metadata.userName, options.credentials);
+  await ensureDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials: options.credentials,
+  });
 
-  const manifestBase = {
-    schemaVersion: 'viewport.context_bundle_manifest/vpd-local-v1' as const,
-    projectId: record.projectId,
+  const engineBundle = vault.resolveBundle({
+    repoId: metadata.repoId,
     actorName: options.actorName,
+    includePrivate: options.includePrivate ?? false,
     query: options.query,
-    resolvedAt: new Date().toISOString(),
-    serverSync: SERVER_SYNC_MODE as typeof SERVER_SYNC_MODE,
-    itemCount: items.length,
-  };
+    profile: options.profile ?? null,
+    profilePin: options.profilePin ?? null,
+  });
 
   return {
     manifest: {
-      ...manifestBase,
-      digest: digestJson({ ...manifestBase, items: items.map((item) => item.digest) }),
+      schemaVersion: CONTEXT_BUNDLE_SCHEMA_VERSION,
+      apiVersion: CONTEXT_BUNDLE_SCHEMA_VERSION,
+      projectId: metadata.projectId,
+      repoId: metadata.repoId,
+      actorName: options.actorName,
+      query: options.query,
+      resolvedAt: engineBundle.manifest.resolved_at,
+      serverSync: SERVER_SYNC_MODE,
+      itemCount: engineBundle.delivery.items.length,
+      digest: engineBundle.manifest.digest,
+      engineManifest: engineBundle.manifest as unknown as Record<string, unknown>,
     },
-    items,
+    items: engineBundle.delivery.items.map((item) => ({
+      id: item.id,
+      scope: item.scope,
+      title: item.title,
+      body: item.body,
+      trustState: item.trust,
+    })),
   };
 }
 
-async function loadProjectRecord(
-  projectId: string,
-  home = configDir(),
-): Promise<ContextProjectRecord> {
-  const raw = JSON.parse(await fs.readFile(contextProjectPath(projectId, home), 'utf8')) as unknown;
-  if (!isProjectRecord(raw)) {
-    throw new Error(`Invalid local context project record for ${projectId}`);
-  }
-  return raw;
-}
-
-async function readProjectRecords(home = configDir()): Promise<ContextProjectRecord[]> {
-  const dir = path.join(home, 'context', 'projects');
-  try {
-    const names = await fs.readdir(dir);
-    const records = await Promise.all(
-      names
-        .filter((name) => name.endsWith('.json'))
-        .map(
-          async (name) => JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')) as unknown,
-        ),
-    );
-    return records.filter((record): record is ContextProjectRecord => isProjectRecord(record));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-}
-
-async function writeProjectRecord(record: ContextProjectRecord, home = configDir()): Promise<void> {
-  const file = contextProjectPath(record.projectId, home);
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  await fs.writeFile(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-}
-
-function redactProjectRecord(record: ContextProjectRecord): ContextProjectRecord {
-  return {
-    ...record,
-    wrappedProjectKey: {
-      ...record.wrappedProjectKey,
-      ciphertext: '[encrypted]',
-      tag: '[encrypted]',
+export async function writeContextProfile(options: {
+  projectId: string;
+  name: string;
+  packs: string[];
+  query: string;
+  maxItems?: number;
+  credentials: ContextCredentials;
+  home?: string;
+}): Promise<{ path: string; digest: string }> {
+  const home = options.home ?? configDir();
+  const metadata = await readProjectMetadata(options.projectId, home);
+  const vault = createVault(home);
+  assertCredentials(vault, metadata.userName, options.credentials);
+  return vault.writeProfile({
+    repoId: metadata.repoId,
+    name: options.name,
+    profile: {
+      packs: options.packs,
+      query: options.query,
+      maxItems: options.maxItems,
     },
-  };
-}
-
-function isProjectRecord(value: unknown): value is ContextProjectRecord {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Partial<ContextProjectRecord>;
-  return (
-    record.schemaVersion === SCHEMA_VERSION &&
-    typeof record.projectId === 'string' &&
-    record.serverSync === SERVER_SYNC_MODE &&
-    Array.isArray(record.entries) &&
-    typeof record.wrappedProjectKey?.ciphertext === 'string'
-  );
-}
-
-function safeProjectId(projectId: string): string {
-  return projectId.replace(/[^a-zA-Z0-9_.-]/g, '_');
-}
-
-function cryptoId(): string {
-  return globalThis.crypto.randomUUID().replaceAll('-', '');
+  });
 }

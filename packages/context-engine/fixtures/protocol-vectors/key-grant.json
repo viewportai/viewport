@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "viewport.context_key_grant_test_vector/v1",
+  "note": "Synthetic test-only key material for independent decoder validation.",
+  "recipient": {
+    "name": "bob",
+    "encryptionPrivateKey": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VuBCIEIMi+ecpm6YRMTXcHDWs11iPmBhG6bo1cSsgpapylIcVv\n-----END PRIVATE KEY-----\n",
+    "encryptionPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAT67E4n8i4NWKrJ/GFV82l50w7wpSFfbi9+OhLYFPESc=\n-----END PUBLIC KEY-----\n"
+  },
+  "grant": {
+    "version": "viewport.context_key_grant/v1",
+    "recipientName": "bob",
+    "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAAklmjmOHFwx0OcI+CUZZJzXISJodl6sR1F+t2n0AxwM=\n-----END PUBLIC KEY-----\n",
+    "encryptedRepoKey": {
+      "alg": "x25519-hkdf-sha256+a256gcm",
+      "iv": "rc9ruAWOthZ/IqST",
+      "ciphertext": "OtqgEWfOa+iyYAZzcPaxt32iPN5r+jlQin96fg+VjOM=",
+      "tag": "nVQlT/MYdUeLYU2f9A1Vag=="
+    }
+  },
+  "expectedRepoKeyDigest": "sha256:aae82925967d6e95d553eb2c5c1e71ac29de7b4c7208ca8bbdb5f1d32ff1e8c5"
+}

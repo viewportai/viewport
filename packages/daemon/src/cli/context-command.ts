@@ -3,6 +3,7 @@ import { isJsonMode, printJson } from './command-shared.js';
 import {
   addContextEntry,
   initContextProject,
+  isResolverPinMismatch,
   readContextStatus,
   resolveContextBundle,
   type ContextScope,
@@ -101,13 +102,23 @@ async function contextAdd(): Promise<void> {
 
 async function contextResolve(): Promise<void> {
   const projectId = requiredFlag('project', 'vpd context resolve --project <id> --query <text>');
-  const bundle = await resolveContextBundle({
-    projectId,
-    actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
-    query: getFlag('query') ?? '',
-    includePrivate: hasFlag('include-private'),
-    credentials: readCredentials(),
-  });
+  let bundle;
+  try {
+    bundle = await resolveContextBundle({
+      projectId,
+      actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
+      query: getFlag('query') ?? '',
+      includePrivate: hasFlag('include-private'),
+      profile: parseProfileName(getFlag('profile')),
+      profilePin: parseProfilePin(),
+      credentials: readCredentials(),
+    });
+  } catch (error) {
+    if (isResolverPinMismatch(error)) {
+      throw new Error(`Context profile pin mismatch: ${(error as Error).message}`);
+    }
+    throw error;
+  }
 
   if (isJsonMode()) {
     printJson({ command: 'context resolve', ok: true, bundle });
@@ -137,6 +148,20 @@ function parseScope(raw: string | undefined): ContextScope {
     return raw;
   }
   throw new Error(`Unsupported context scope: ${raw}`);
+}
+
+function parseProfileName(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const normalized = raw.replaceAll('\\', '/');
+  const fileName = normalized.split('/').pop() ?? normalized;
+  return fileName.endsWith('.json') ? fileName.slice(0, -'.json'.length) : fileName;
+}
+
+function parseProfilePin(): { path?: string; digest?: string } | undefined {
+  const path = getFlag('profile-path');
+  const digest = getFlag('profile-digest');
+  if (!path && !digest) return undefined;
+  return { path, digest };
 }
 
 function requiredFlag(name: string, usage: string): string {

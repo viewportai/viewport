@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:viewport:context_key_grant:hpke_draft_01",
+  "title": "Viewport Context HPKE Key Grant Draft 01",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "recipientName", "repoId", "keyEpoch", "suite", "enc", "ciphertext", "aadDigest"],
+  "properties": {
+    "version": { "const": "viewport.context_key_grant/hpke-draft-01" },
+    "recipientName": { "type": "string", "minLength": 1 },
+    "repoId": { "type": "string", "minLength": 1 },
+    "keyEpoch": { "type": "integer", "minimum": 1 },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kem", "kdf", "aead"],
+      "properties": {
+        "kem": { "const": "DHKEM_X25519_HKDF_SHA256" },
+        "kdf": { "const": "HKDF_SHA256" },
+        "aead": { "const": "AES_256_GCM" }
+      }
+    },
+    "enc": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$" },
+    "ciphertext": { "type": "string", "pattern": "^[A-Za-z0-9+/]{64}$" },
+    "aadDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

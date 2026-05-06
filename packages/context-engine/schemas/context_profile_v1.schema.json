@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:viewport:context_profile:v1",
+  "title": "Viewport Context Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "path", "profile", "digest", "updatedAt"],
+  "properties": {
+    "schemaVersion": { "const": "viewport.context_profile/v1" },
+    "name": { "type": "string", "minLength": 1 },
+    "path": { "type": "string", "pattern": "^\\.viewport/context/profiles/.+\\.json$" },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "packs": { "type": "array", "items": { "type": "string" } },
+        "query": { "type": ["string", "null"] },
+        "maxItems": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}

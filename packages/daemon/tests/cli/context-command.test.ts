@@ -64,6 +64,20 @@ describe('context CLI command', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"command": "context add"'));
     logSpy.mockClear();
 
+    const { writeContextProfile } = await import('../../src/context/local-edge-store.js');
+    const profile = await writeContextProfile({
+      projectId: 'project-alpha',
+      name: 'code-review',
+      packs: ['project-standards'],
+      query: 'regression',
+      maxItems: 1,
+      credentials: {
+        passphrase: 'alice-passphrase',
+        recoveryCode: 'alice-recovery',
+      },
+      home: tempHome,
+    });
+
     await runContext([
       'context',
       'resolve',
@@ -75,6 +89,12 @@ describe('context CLI command', () => {
       'alice-laptop',
       '--query',
       'regression',
+      '--profile',
+      profile.path,
+      '--profile-path',
+      profile.path,
+      '--profile-digest',
+      profile.digest,
       '--passphrase',
       'alice-passphrase',
       '--recovery-code',
@@ -85,6 +105,8 @@ describe('context CLI command', () => {
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     expect(output).toContain('"command": "context resolve"');
     expect(output).toContain('"serverSync": "disabled"');
+    expect(output).toContain('"viewport.context_bundle_manifest/v1"');
+    expect(output).toContain(profile.digest);
     expect(output).toContain('Every bug fix needs a regression test.');
   });
 

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:viewport:context_key_grant:v1",
+  "title": "Viewport Context Key Grant v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "recipientName", "ephemeralPublicKey", "encryptedRepoKey"],
+  "properties": {
+    "version": { "const": "viewport.context_key_grant/v1" },
+    "recipientName": { "type": "string", "minLength": 1 },
+    "ephemeralPublicKey": { "type": "string", "minLength": 1 },
+    "encryptedRepoKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "iv", "ciphertext", "tag"],
+      "properties": {
+        "alg": { "const": "x25519-hkdf-sha256+a256gcm" },
+        "iv": { "type": "string", "minLength": 1 },
+        "ciphertext": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

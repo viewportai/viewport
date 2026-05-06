@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Daemon } from '../../src/core/daemon.js';
-import { contextProjectPath } from '../../src/context/local-edge-store.js';
 import { registerHttpRoutes } from '../../src/server/http-server.js';
 
 describe('HTTP context routes', () => {
@@ -58,7 +57,8 @@ describe('HTTP context routes', () => {
     });
     expect(add.statusCode).toBe(201);
 
-    const raw = await fs.readFile(contextProjectPath('project-alpha', tempHome), 'utf8');
+    const raw = await readTree(tempHome);
+    expect(raw).toContain('viewport.context_event/v1');
     expect(raw).not.toContain('Review standard');
     expect(raw).not.toContain('Every risky change');
 
@@ -68,7 +68,7 @@ describe('HTTP context routes', () => {
     });
     expect(status.statusCode).toBe(200);
     expect(JSON.parse(status.payload).projects[0]).toMatchObject({
-      schemaVersion: 'viewport.context_local_edge/seam-v0',
+      schemaVersion: 'viewport.context_event/v1',
       projectId: 'project-alpha',
       entryCount: 1,
       serverSync: 'disabled',
@@ -86,6 +86,7 @@ describe('HTTP context routes', () => {
     expect(resolved.statusCode).toBe(200);
     const body = JSON.parse(resolved.payload);
     expect(body.bundle.manifest.serverSync).toBe('disabled');
+    expect(body.bundle.manifest.schemaVersion).toBe('viewport.context_bundle_manifest/v1');
     expect(body.bundle.items[0]).toMatchObject({
       title: 'Review standard',
       body: 'Every risky change needs regression proof.',
@@ -103,5 +104,18 @@ describe('HTTP context routes', () => {
       passphrase: 'alice-passphrase',
       recoveryCode: 'alice-recovery',
     };
+  }
+
+  async function readTree(dir: string): Promise<string> {
+    let output = '';
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        output += await readTree(fullPath);
+      } else {
+        output += await fs.readFile(fullPath, 'utf8');
+      }
+    }
+    return output;
   }
 });

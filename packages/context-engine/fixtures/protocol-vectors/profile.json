@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "viewport.context_profile/v1",
+  "name": "code-review",
+  "path": ".viewport/context/profiles/code-review.json",
+  "profile": {
+    "packs": ["project-standards", "review-rules"],
+    "query": "What auth regression proof is needed for review?",
+    "maxItems": 2
+  },
+  "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "updatedAt": "2026-05-06T12:00:00.000Z"
+}

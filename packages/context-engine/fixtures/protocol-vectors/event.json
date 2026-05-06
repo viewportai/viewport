@@ -1,0 +1,29 @@
+{
+  "id": "evt_00000000-0000-4000-8000-000000000001",
+  "repoId": "project-api",
+  "type": "member.granted",
+  "actorName": "alice",
+  "keyEpoch": 1,
+  "visibility": "shared",
+  "createdAt": "2026-05-06T12:00:00.000Z",
+  "parentIds": [],
+  "encrypted": null,
+  "grant": {
+    "recipientName": "bob",
+    "keyEpoch": 1,
+    "wrappedRepoKeyEnvelope": {
+      "version": "viewport.context_key_grant/v1",
+      "recipientName": "bob",
+      "ephemeralPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEAAklmjmOHFwx0OcI+CUZZJzXISJodl6sR1F+t2n0AxwM=\n-----END PUBLIC KEY-----\n",
+      "encryptedRepoKey": {
+        "alg": "x25519-hkdf-sha256+a256gcm",
+        "iv": "rc9ruAWOthZ/IqST",
+        "ciphertext": "OtqgEWfOa+iyYAZzcPaxt32iPN5r+jlQin96fg+VjOM=",
+        "tag": "nVQlT/MYdUeLYU2f9A1Vag=="
+      }
+    }
+  },
+  "payloadDigest": null,
+  "schemaVersion": "viewport.context_event/v1",
+  "signature": "test-signature"
+}
