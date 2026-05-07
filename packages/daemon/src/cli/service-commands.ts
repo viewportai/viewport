@@ -171,6 +171,14 @@ export function resolveServiceSubcommand(args = getArgs()): ServiceSubcommand {
   throw new Error('Usage: vpd service <install|uninstall|status>');
 }
 
+function serviceUsage(): string {
+  return 'Usage: vpd service <install|uninstall|status>';
+}
+
+function showServiceHelp(): void {
+  console.log(serviceUsage());
+}
+
 async function installService(platform: ServicePlatform): Promise<Record<string, unknown>> {
   const files = serviceFiles(platform);
   const spec = serviceSpec();
@@ -289,6 +297,15 @@ export async function userServiceStatus(): Promise<Record<string, unknown>> {
 }
 
 export async function service(): Promise<void> {
+  const args = getArgs();
+  if (
+    (args[0] === 'service' && !args[1]) ||
+    (args[0] === 'daemon' && args[1] === 'service' && !args[2])
+  ) {
+    showServiceHelp();
+    return;
+  }
+
   const asJson = isJsonMode();
   const platform = supportedPlatform();
   if (!platform) {

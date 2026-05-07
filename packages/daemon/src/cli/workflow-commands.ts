@@ -23,6 +23,10 @@ interface WorkflowRunResponse {
 
 export async function workflow(): Promise<void> {
   const subcommand = getArgs()[1];
+  if (!subcommand) {
+    showWorkflowHelp();
+    return;
+  }
   if (subcommand === 'validate') {
     await validateWorkflow();
     return;
@@ -51,7 +55,15 @@ export async function workflow(): Promise<void> {
     await cancelWorkflowRun();
     return;
   }
-  throw new Error('Usage: vpd workflow <validate|run|runs|show|rerun|approve|cancel> ...');
+  throw new Error(workflowUsage());
+}
+
+function workflowUsage(): string {
+  return 'Usage: vpd workflow <validate|run|runs|show|rerun|approve|cancel> ...';
+}
+
+function showWorkflowHelp(): void {
+  console.log(workflowUsage());
 }
 
 async function validateWorkflow(): Promise<void> {

@@ -52,9 +52,17 @@ function parseSessionId(): string {
   const args = getArgs();
   const sessionId = args[2];
   if (!sessionId || sessionId.startsWith('--')) {
-    throw new Error('Usage: vpd session stop <session-id> [--json]');
+    throw new Error(sessionUsage());
   }
   return sessionId;
+}
+
+function sessionUsage(): string {
+  return 'Usage: vpd session <stop> ...';
+}
+
+export function showSessionHelp(): void {
+  console.log(sessionUsage());
 }
 
 function sessionTableRows(sessions: SessionListEntry[]): Array<Record<string, unknown>> {

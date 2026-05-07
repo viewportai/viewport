@@ -26,6 +26,10 @@ export { resolveDefaultPairingName };
 export { status } from './lifecycle-status-command.js';
 export { update } from './lifecycle-update-command.js';
 
+export function showDaemonHelp(): void {
+  console.log('Usage: vpd daemon <start|doctor|status|stop|restart|pair|update|service|setup> ...');
+}
+
 export async function stop(options?: {
   exitOnNotRunning?: boolean;
   silent?: boolean;

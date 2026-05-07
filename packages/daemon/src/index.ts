@@ -34,8 +34,10 @@ import {
   attach,
   pair,
   update,
+  showDaemonHelp,
   showHelp,
   ls,
+  showSessionHelp,
   stopSession,
   permit,
   agent,
@@ -47,7 +49,7 @@ import {
   remote,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
-import { hookCapabilities, hookNotify } from './cli/hook-command.js';
+import { hookCapabilities, hookNotify, showHookHelp } from './cli/hook-command.js';
 import { start, runSupervisorCommand, runWorkerCommand } from './startup.js';
 import { SUPERVISOR_CONFIG_ENV, WORKER_CONFIG_ENV } from './cli/supervisor-protocol.js';
 
@@ -102,7 +104,10 @@ if (command !== '__supervisor' && command !== '__worker') {
 // Sub-command: vpd hook notify --event <EventName>
 if (command === 'hook') {
   const subcommand = getArgs()[1];
-  if (subcommand === 'notify') {
+  if (!subcommand) {
+    showHookHelp();
+    process.exit(0);
+  } else if (subcommand === 'notify') {
     hookNotify().catch(() => process.exit(1));
   } else if (subcommand === 'plan' || subcommand === 'plan-proposed') {
     hookNotify('PlanProposed').catch(() => process.exit(1));
@@ -129,7 +134,11 @@ if (command === 'hook') {
   } else {
     let handler = commands[command];
     if (command === 'daemon') {
-      const subcommand = getArgs()[1] ?? 'status';
+      const subcommand = getArgs()[1];
+      if (!subcommand) {
+        showDaemonHelp();
+        process.exit(0);
+      }
       if (subcommand === 'start') handler = start;
       if (subcommand === 'doctor') handler = doctor;
       if (subcommand === 'status') handler = status;
@@ -141,6 +150,10 @@ if (command === 'hook') {
       if (subcommand === 'setup') handler = setup;
     } else if (command === 'session') {
       const subcommand = getArgs()[1];
+      if (!subcommand) {
+        showSessionHelp();
+        process.exit(0);
+      }
       if (subcommand === 'stop') handler = stopSession;
     } else if (command === 'permit') {
       handler = permit;

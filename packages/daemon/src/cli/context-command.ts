@@ -27,6 +27,10 @@ import {
 
 export async function context(): Promise<void> {
   const subcommand = getArgs()[1];
+  if (!subcommand) {
+    showContextHelp();
+    return;
+  }
   if (subcommand === 'init') {
     await initContext();
     return;
@@ -91,9 +95,15 @@ export async function context(): Promise<void> {
     await contextGrant();
     return;
   }
-  throw new Error(
-    'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
-  );
+  throw new Error(contextUsage());
+}
+
+function contextUsage(): string {
+  return 'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+}
+
+function showContextHelp(): void {
+  console.log(contextUsage());
 }
 
 async function initContext(): Promise<void> {

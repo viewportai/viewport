@@ -294,15 +294,26 @@ async function squashWorktree(): Promise<void> {
 }
 
 export async function worktree(): Promise<void> {
+  const action = getArgs()[1];
+  if (!action) {
+    showWorktreeHelp();
+    return;
+  }
+
   await ensureDaemonRunningOrThrow();
-  const action = getArgs()[1] ?? 'ls';
   if (action === 'ls') return listWorktrees();
   if (action === 'diffs') return diffsWorktree();
   if (action === 'summary') return summaryWorktree();
   if (action === 'rollback') return rollbackWorktree();
   if (action === 'retry') return retryWorktree();
   if (action === 'squash') return squashWorktree();
-  throw new Error(
-    'Usage: vpd worktree <ls|diffs|summary|rollback|retry|squash> ... [--json|--format <fmt>]',
-  );
+  throw new Error(worktreeUsage());
+}
+
+function worktreeUsage(): string {
+  return 'Usage: vpd worktree <ls|diffs|summary|rollback|retry|squash> ... [--json|--format <fmt>]';
+}
+
+function showWorktreeHelp(): void {
+  console.log(worktreeUsage());
 }
