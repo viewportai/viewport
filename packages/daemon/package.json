@@ -22,6 +22,9 @@
     "README.md",
     "docs"
   ],
+  "bundledDependencies": [
+    "@viewportai/context-engine"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -33,7 +36,8 @@
     "dev:daemon": "tsx watch src/index.ts start --foreground",
     "build": "tsc",
     "start:foreground": "npm run build && node dist/index.js start --foreground",
-    "prepack": "npm run build",
+    "prepack": "npm run build && node ./scripts/vendor-context-engine.mjs prepare",
+    "postpack": "node ./scripts/vendor-context-engine.mjs clean",
     "typecheck": "tsc --noEmit",
     "test": "bash ./scripts/test.sh",
     "test:unit": "vitest run --pool=forks",
@@ -65,7 +69,11 @@
     "@fastify/cors": "^10.0.1",
     "@fastify/websocket": "^11.0.1",
     "@openai/codex-sdk": "^0.107.0",
+    "@hpke/core": "^1.9.0",
+    "@hpke/dhkem-x25519": "^1.8.0",
     "@viewportai/context-engine": "^0.0.1",
+    "ajv": "^8.20.0",
+    "better-sqlite3": "^11.10.0",
     "fastify": "^5.2.1",
     "jsonata": "^2.1.0",
     "pino": "^9.6.0",
