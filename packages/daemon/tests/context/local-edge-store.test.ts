@@ -1,16 +1,24 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addContextEntry,
   archivedContextProjectPath,
+  acceptContextDeviceApproval,
+  approveContextDeviceRequest,
+  createContextDeviceRequest,
+  exportContextIdentity,
   contextProjectPath,
+  importContextIdentity,
   initContextProject,
+  joinContextProject,
   readContextStatus,
   resolveContextBundle,
   writeContextProfile,
 } from '../../src/context/local-edge-store.js';
+import { proposeContextEntry } from '../../src/context/local-edge-candidates.js';
 import { pullContextEvents, pushContextEvents } from '../../src/context/local-edge-sync.js';
 import {
   createProjectKey,
@@ -328,6 +336,424 @@ describe('local trusted-edge context store', () => {
     });
   });
 
+  it('applies platform context candidate approvals at the trusted edge for future bundles', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Auth review candidate',
+      body: 'Agent runs touching auth must include session rotation proof.',
+      source: 'workflow://pr-review',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    const decision = signedDecision({
+      schema_version: 'viewport.context_candidate_decision/v1',
+      id: 'ctxd_inbox_1',
+      inbox_item_id: 'inbox_1',
+      repo_id: 'project-alpha',
+      candidate_event_id: candidate.id,
+      payload_digest: candidate.bodyDigest,
+      decision: 'approved',
+      message: 'Promote from Inbox review.',
+      decided_at: '2026-05-07T16:00:00.000Z',
+      decided_by_user_id: '42',
+    });
+
+    const pull = await pullContextEvents({
+      projectId: 'project-alpha',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      actorName: 'alice-laptop',
+      credentials,
+      trustedDecisionKeys: pinnedKeysFor(decision),
+      fetchImpl: async () =>
+        jsonResponse({
+          data: [],
+          candidate_decisions: [decision],
+        }),
+      home: tempHome,
+    });
+
+    expect(pull.pulled).toBe(0);
+    expect(pull.appliedCandidateDecisions).toBe(1);
+    expect(pull.pendingCandidateDecisions).toBe(0);
+
+    const bundle = await resolveContextBundle({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      query: 'session rotation proof',
+      credentials,
+      home: tempHome,
+    });
+
+    expect(bundle.items).toEqual([
+      expect.objectContaining({
+        title: 'Auth review candidate',
+        body: 'Agent runs touching auth must include session rotation proof.',
+      }),
+    ]);
+
+    const raw = await readTree(path.join(tempHome, 'repos', 'project-alpha', 'events'));
+    expect(raw).toContain('candidate.approved');
+    expect(raw).toContain('entry.approved');
+    expect(raw).not.toContain('Agent runs touching auth');
+
+    let pushedAfterApproval = '';
+    const push = await pushContextEvents({
+      projectId: 'project-alpha',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      fetchImpl: async (_url, init) => {
+        pushedAfterApproval = String(init?.body ?? '');
+        const body = JSON.parse(pushedAfterApproval);
+        return jsonResponse({ ok: true, accepted: body.events.length }, 202);
+      },
+      home: tempHome,
+    });
+
+    expect(push.accepted).toBeGreaterThan(0);
+    expect(pushedAfterApproval).toContain('candidate.approved');
+    expect(pushedAfterApproval).toContain('entry.approved');
+    expect(pushedAfterApproval).toContain('candidate_decision_applications');
+    expect(pushedAfterApproval).toContain('ctxd_inbox_1');
+    expect(pushedAfterApproval).not.toContain('Agent runs touching auth');
+  });
+
+  it('rejects unsigned platform candidate decisions before they can become engine events', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Unsigned candidate',
+      body: 'Unsigned decisions must not promote context.',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    await expect(
+      pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        trustedDecisionKeys: { 'platform-v1': crypto.randomBytes(32).toString('base64') },
+        fetchImpl: async () =>
+          jsonResponse({
+            data: [],
+            candidate_decisions: [
+              {
+                schema_version: 'viewport.context_candidate_decision/v1',
+                id: 'ctxd_unsigned',
+                repo_id: 'project-alpha',
+                candidate_event_id: candidate.id,
+                payload_digest: candidate.bodyDigest,
+                decision: 'approved',
+              },
+            ],
+          }),
+        home: tempHome,
+      }),
+    ).rejects.toThrow(/missing a platform signature/i);
+  });
+
+  it('rejects tampered platform candidate decision signatures', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Tampered candidate',
+      body: 'Tampered decisions must not promote context.',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    const decision = signedDecision({
+      schema_version: 'viewport.context_candidate_decision/v1',
+      id: 'ctxd_tampered',
+      inbox_item_id: 'inbox_tampered',
+      repo_id: 'project-alpha',
+      candidate_event_id: candidate.id,
+      payload_digest: candidate.bodyDigest,
+      decision: 'approved',
+      decided_at: '2026-05-07T16:00:00.000Z',
+      decided_by_user_id: '42',
+    });
+    decision.decision = 'rejected';
+
+    await expect(
+      pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        trustedDecisionKeys: pinnedKeysFor(decision),
+        fetchImpl: async () => jsonResponse({ data: [], candidate_decisions: [decision] }),
+        home: tempHome,
+      }),
+    ).rejects.toThrow(/digest mismatch|signature/i);
+  });
+
+  it('rejects candidate decisions signed by an unpinned platform key', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Self-signed candidate',
+      body: 'Self-signed decisions must not promote context.',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    const decision = signedDecision({
+      schema_version: 'viewport.context_candidate_decision/v1',
+      id: 'ctxd_self_signed',
+      inbox_item_id: 'inbox_self_signed',
+      repo_id: 'project-alpha',
+      candidate_event_id: candidate.id,
+      payload_digest: candidate.bodyDigest,
+      decision: 'approved',
+      decided_at: '2026-05-07T16:00:00.000Z',
+      decided_by_user_id: '42',
+    });
+
+    await expect(
+      pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        trustedDecisionKeys: {
+          [decision.platform_signature.kid]: crypto.randomBytes(32).toString('base64'),
+        },
+        fetchImpl: async () => jsonResponse({ data: [], candidate_decisions: [decision] }),
+        home: tempHome,
+      }),
+    ).rejects.toThrow(/did not match the pinned key/i);
+  });
+
+  it('converges when two trusted edges apply the same signed candidate decision', async () => {
+    const desktopHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-desktop-'));
+    try {
+      await initContextProject({
+        projectId: 'project-alpha',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        credentials,
+        keyStore: 'file',
+        home: tempHome,
+      });
+      const candidate = await proposeContextEntry({
+        projectId: 'project-alpha',
+        actorName: 'alice-laptop',
+        title: 'Race-safe candidate',
+        body: 'Concurrent trusted edges should not duplicate approved context.',
+        sourceKind: 'workflow',
+        credentials,
+        home: tempHome,
+      });
+
+      let platformEvents: unknown[] = [];
+      await pushContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        fetchImpl: async (_url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}'));
+          platformEvents = body.events as unknown[];
+          return jsonResponse({ ok: true, accepted: platformEvents.length }, 202);
+        },
+        home: tempHome,
+      });
+
+      const request = createContextDeviceRequest({
+        deviceName: 'alice-desktop',
+        code: '123456',
+        keyStore: 'file',
+        home: desktopHome,
+      });
+      const approval = await approveContextDeviceRequest({
+        userName: 'alice',
+        request,
+        code: '123456',
+        credentials,
+        home: tempHome,
+      });
+      await acceptContextDeviceApproval({
+        userName: 'alice',
+        deviceName: 'alice-desktop',
+        approval,
+        code: '123456',
+        keyStore: 'file',
+        home: desktopHome,
+      });
+      await joinContextProject({
+        projectId: 'project-alpha',
+        userName: 'alice',
+        deviceName: 'alice-desktop',
+        credentials,
+        keyStore: 'file',
+        home: desktopHome,
+      });
+      importContextIdentity({
+        identity: exportContextIdentity({ name: 'alice-laptop', home: tempHome }),
+        home: desktopHome,
+      });
+      importContextIdentity({
+        identity: exportContextIdentity({ name: 'alice-desktop', home: desktopHome }),
+        home: tempHome,
+      });
+
+      await pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-desktop',
+        credentials,
+        fetchImpl: async () =>
+          jsonResponse({
+            data: platformEvents.map((event, index) => ({
+              received_at: `2026-05-07T16:10:0${index}.000Z`,
+              signed_event: event,
+            })),
+          }),
+        home: desktopHome,
+      });
+
+      const decision = signedDecision({
+        schema_version: 'viewport.context_candidate_decision/v1',
+        id: 'ctxd_multi_edge',
+        inbox_item_id: 'inbox_multi_edge',
+        repo_id: 'project-alpha',
+        candidate_event_id: candidate.id,
+        payload_digest: candidate.bodyDigest,
+        decision: 'approved',
+        decided_at: '2026-05-07T16:15:00.000Z',
+        decided_by_user_id: '42',
+      });
+      const trustedDecisionKeys = pinnedKeysFor(decision);
+
+      const laptopDecision = await pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        trustedDecisionKeys,
+        fetchImpl: async () => jsonResponse({ data: [], candidate_decisions: [decision] }),
+        home: tempHome,
+      });
+      const desktopDecision = await pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-desktop',
+        credentials,
+        trustedDecisionKeys,
+        fetchImpl: async () => jsonResponse({ data: [], candidate_decisions: [decision] }),
+        home: desktopHome,
+      });
+
+      expect(laptopDecision.appliedCandidateDecisions).toBe(1);
+      expect(desktopDecision.appliedCandidateDecisions).toBe(1);
+
+      const approvedEvents: unknown[] = [];
+      await pushContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        fetchImpl: async (_url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}'));
+          approvedEvents.push(...(body.events as unknown[]));
+          return jsonResponse({ ok: true, accepted: body.events.length }, 202);
+        },
+        home: tempHome,
+      });
+      await pushContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        fetchImpl: async (_url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}'));
+          approvedEvents.push(...(body.events as unknown[]));
+          return jsonResponse({ ok: true, accepted: body.events.length }, 202);
+        },
+        home: desktopHome,
+      });
+      await pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        trustedDecisionKeys,
+        fetchImpl: async () =>
+          jsonResponse({
+            data: approvedEvents.map((event, index) => ({
+              received_at: `2026-05-07T16:20:${String(index).padStart(2, '0')}.000Z`,
+              signed_event: event,
+            })),
+          }),
+        home: tempHome,
+      });
+
+      const bundle = await resolveContextBundle({
+        projectId: 'project-alpha',
+        actorName: 'alice-laptop',
+        query: 'Concurrent trusted edges',
+        credentials,
+        home: tempHome,
+      });
+
+      expect(bundle.items).toHaveLength(1);
+      expect(bundle.items[0]?.body).toBe(
+        'Concurrent trusted edges should not duplicate approved context.',
+      );
+    } finally {
+      await fs.rm(desktopHome, { recursive: true, force: true });
+    }
+  });
+
   it.skip('used seam-v0 as the local context record schema before the canonical engine landed', () => {
     // Historical guard for PR #43 before the canonical Context Vault engine replaced
     // the seam internals. New records must assert viewport.context_event/v1 instead.
@@ -351,5 +777,63 @@ describe('local trusted-edge context store', () => {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  }
+
+  function signedDecision<T extends Record<string, unknown>>(
+    record: T,
+  ): T & {
+    platform_signature: {
+      algorithm: 'Ed25519';
+      kid: string;
+      public_key: string;
+      signature: string;
+      signed_payload_digest: string;
+    };
+  } {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const publicDer = publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    const rawPublicKey = publicDer.subarray(-32);
+    const payload = canonicalJson({
+      schema_version: record.schema_version,
+      id: record.id,
+      inbox_item_id: record.inbox_item_id ?? null,
+      repo_id: record.repo_id,
+      candidate_event_id: record.candidate_event_id,
+      payload_digest: record.payload_digest ?? null,
+      decision: record.decision,
+      message: record.message ?? null,
+      decided_at: record.decided_at ?? null,
+      decided_by_user_id: record.decided_by_user_id ?? null,
+    });
+    return {
+      ...record,
+      platform_signature: {
+        algorithm: 'Ed25519',
+        kid: 'platform-v1',
+        public_key: rawPublicKey.toString('base64'),
+        signature: crypto.sign(null, Buffer.from(payload), privateKey).toString('base64'),
+        signed_payload_digest: `sha256:${crypto.createHash('sha256').update(payload).digest('hex')}`,
+      },
+    };
+  }
+
+  function pinnedKeysFor(record: {
+    platform_signature: { kid: string; public_key: string };
+  }): Record<string, string> {
+    return { [record.platform_signature.kid]: record.platform_signature.public_key };
+  }
+
+  function canonicalJson(value: unknown): string {
+    return JSON.stringify(sortKeys(value));
+  }
+
+  function sortKeys(value: unknown): unknown {
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(sortKeys);
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, item]) => [key, sortKeys(item)]),
+    );
   }
 });

@@ -43,7 +43,10 @@ function proposeEntry(vault, options) {
   });
 }
 
-function approveCandidate(vault, { repoId, actorName, candidateId, title, body, source }) {
+function approveCandidate(
+  vault,
+  { repoId, actorName, candidateId, title, body, source, review = null },
+) {
   const approved = vault.appendSharedEvent({
     repoId,
     actorName,
@@ -52,10 +55,12 @@ function approveCandidate(vault, { repoId, actorName, candidateId, title, body, 
       id: candidateId,
       reviewedBy: actorName,
       reviewedAt: new Date().toISOString(),
+      review,
     },
   });
 
   const entry = vault.addEntry({
+    id: `ctxe_from_${candidateId}`,
     repoId,
     actorName,
     scope: 'project',
@@ -64,12 +69,16 @@ function approveCandidate(vault, { repoId, actorName, candidateId, title, body, 
     source: source ?? `candidate://${candidateId}`,
     sourceKind: 'human',
     trustState: 'approved',
+    review,
   });
 
   return { approved, entry };
 }
 
-function assignCandidate(vault, { repoId, actorName, candidateId, reviewerName }) {
+function assignCandidate(
+  vault,
+  { repoId, actorName, candidateId, reviewerName },
+) {
   return vault.appendSharedEvent({
     repoId,
     actorName,
@@ -110,34 +119,52 @@ function tombstoneCandidate(vault, { repoId, actorName, candidateId, reason }) {
   });
 }
 
-function batchAssignCandidates(vault, { repoId, actorName, candidateIds, reviewerName }) {
-  return candidateIds.map((candidateId) => assignCandidate(vault, {
-    repoId,
-    actorName,
-    candidateId,
-    reviewerName,
-  }));
+function batchAssignCandidates(
+  vault,
+  { repoId, actorName, candidateIds, reviewerName },
+) {
+  return candidateIds.map((candidateId) =>
+    assignCandidate(vault, {
+      repoId,
+      actorName,
+      candidateId,
+      reviewerName,
+    }),
+  );
 }
 
-function batchRejectCandidates(vault, { repoId, actorName, candidateIds, reason }) {
-  return candidateIds.map((candidateId) => rejectCandidate(vault, {
-    repoId,
-    actorName,
-    candidateId,
-    reason,
-  }));
+function batchRejectCandidates(
+  vault,
+  { repoId, actorName, candidateIds, reason },
+) {
+  return candidateIds.map((candidateId) =>
+    rejectCandidate(vault, {
+      repoId,
+      actorName,
+      candidateId,
+      reason,
+    }),
+  );
 }
 
-function batchTombstoneCandidates(vault, { repoId, actorName, candidateIds, reason }) {
-  return candidateIds.map((candidateId) => tombstoneCandidate(vault, {
-    repoId,
-    actorName,
-    candidateId,
-    reason,
-  }));
+function batchTombstoneCandidates(
+  vault,
+  { repoId, actorName, candidateIds, reason },
+) {
+  return candidateIds.map((candidateId) =>
+    tombstoneCandidate(vault, {
+      repoId,
+      actorName,
+      candidateId,
+      reason,
+    }),
+  );
 }
 
-function decayCandidates(vault, { repoId, actorName, staleAfterDays = 14, now = new Date() }) {
+function decayCandidates(
+  vault,
+  { repoId, actorName, staleAfterDays = 14, now = new Date() },
+) {
   const candidates = vault.allCandidates({ repoId, actorName });
   const cutoffMs = now.getTime() - staleAfterDays * 24 * 60 * 60 * 1000;
   const staleCandidateIds = candidates

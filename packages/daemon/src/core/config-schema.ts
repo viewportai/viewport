@@ -62,6 +62,7 @@ export const ViewportConfigSchema = z
             tlsVerify: z.enum(['auto', '0', '1']).optional(),
             caCertPath: z.string().optional(),
             tlsPins: z.array(z.string()).optional(),
+            contextCandidateDecisionKeys: z.record(z.string(), z.string()).optional(),
           })
           .strict()
           .optional(),

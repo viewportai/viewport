@@ -9,6 +9,8 @@ import {
   type ContextKeyStore,
   type ContextScope,
 } from '../context/local-edge-store.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
@@ -37,6 +39,10 @@ export async function context(): Promise<void> {
     await contextAdd();
     return;
   }
+  if (subcommand === 'propose') {
+    await contextPropose();
+    return;
+  }
   if (subcommand === 'resolve') {
     await contextResolve();
     return;
@@ -47,6 +53,10 @@ export async function context(): Promise<void> {
   }
   if (subcommand === 'sync-pull') {
     await contextSyncPull();
+    return;
+  }
+  if (subcommand === 'decisions') {
+    await contextDecisions();
     return;
   }
   if (subcommand === 'user-init') {
@@ -82,7 +92,7 @@ export async function context(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: vpd context <init|status|add|resolve|sync-push|sync-pull|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
+    'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
   );
 }
 
@@ -157,6 +167,31 @@ async function contextAdd(): Promise<void> {
   console.log('Title: [encrypted]');
 }
 
+async function contextPropose(): Promise<void> {
+  const projectId = requiredFlag(
+    'project',
+    'vpd context propose --project <id> --title <text> --body <text>',
+  );
+  const candidate = await proposeContextEntry({
+    projectId,
+    actorName:
+      getFlag('actor') ??
+      requiredFlag('device', 'vpd context propose --project <id> --device <name>'),
+    title: requiredFlag('title', 'vpd context propose --project <id> --title <text> --body <text>'),
+    body: requiredFlag('body', 'vpd context propose --project <id> --title <text> --body <text>'),
+    source: getFlag('source'),
+    sourceKind: parseSourceKind(getFlag('source-kind')),
+    credentials: readCredentials(),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context propose', ok: true, candidate });
+    return;
+  }
+  console.log(`Context candidate proposed: ${candidate.id}`);
+  console.log('Title: [encrypted]');
+}
+
 async function contextResolve(): Promise<void> {
   const projectId = requiredFlag('project', 'vpd context resolve --project <id> --query <text>');
   let bundle;
@@ -217,6 +252,7 @@ async function contextSyncPull(): Promise<void> {
     credential: target.credential,
     actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
     credentials: readCredentials(),
+    trustedDecisionKeys: target.decisionSigningKeys,
     limit: parseLimit(getFlag('limit')),
   });
 
@@ -227,6 +263,31 @@ async function contextSyncPull(): Promise<void> {
 
   console.log(`Context events pulled: ${result.imported}/${result.pulled}`);
   console.log(`Repo: ${result.repoId}`);
+}
+
+async function contextDecisions(): Promise<void> {
+  const since = parseSince(getFlag('since'));
+  const applications = await readCandidateDecisionApplications({
+    projectId: getFlag('project'),
+    since,
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context decisions', ok: true, applications });
+    return;
+  }
+
+  if (applications.length === 0) {
+    console.log('No context candidate decisions applied locally.');
+    return;
+  }
+  for (const application of applications) {
+    const reason = application.reason ? ` (${application.reason})` : '';
+    console.log(
+      `${application.applied_at}  ${application.status}  ${application.decision}  ${application.actor_name}${reason}`,
+    );
+  }
 }
 
 function readCredentials(): { passphrase: string; recoveryCode: string } {
@@ -258,6 +319,14 @@ function parseProfilePin(): { path?: string; digest?: string } | undefined {
   return { path, digest };
 }
 
+function parseSourceKind(raw: string | undefined): 'workflow' | 'plan' | 'integration' | undefined {
+  if (!raw) return undefined;
+  if (raw === 'workflow' || raw === 'plan' || raw === 'integration') {
+    return raw;
+  }
+  throw new Error(`Unsupported context candidate source kind: ${raw}`);
+}
+
 function parseKeyStore(raw: string | undefined): ContextKeyStore {
   return resolveContextKeyStore(raw);
 }
@@ -269,6 +338,19 @@ function parseLimit(raw: string | undefined): number | undefined {
     throw new Error(`Unsupported context sync limit: ${raw}`);
   }
   return value;
+}
+
+function parseSince(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const relativeHours = raw.match(/^(\d+)h$/i);
+  if (relativeHours) {
+    return new Date(Date.now() - Number(relativeHours[1]) * 60 * 60 * 1000).toISOString();
+  }
+  const since = new Date(raw);
+  if (Number.isNaN(since.getTime())) {
+    throw new Error(`Unsupported context decisions --since value: ${raw}`);
+  }
+  return since.toISOString();
 }
 
 function requiredFlag(name: string, usage: string): string {

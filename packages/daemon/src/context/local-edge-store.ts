@@ -38,6 +38,7 @@ import {
 
 export type {
   ContextBundle,
+  ContextCandidateProposal,
   ContextCredentials,
   ContextProjectRecord,
   ContextKeyStore,

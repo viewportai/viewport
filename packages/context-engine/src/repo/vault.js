@@ -164,6 +164,7 @@ class ContextVault {
       sourceKind = 'human',
       trustState = 'approved',
       appliesTo = [],
+      review = null,
     } = options;
 
     if (trustState !== 'approved' && trustState !== 'canonical') {
@@ -185,6 +186,7 @@ class ContextVault {
       sourceKind,
       trustState,
       appliesTo,
+      review,
       createdAt: now,
     };
 
@@ -203,8 +205,8 @@ class ContextVault {
     return candidates.proposeEntry(this, options);
   }
 
-  approveCandidate({ repoId, actorName, candidateId, title, body, source }) {
-    return candidates.approveCandidate(this, { repoId, actorName, candidateId, title, body, source });
+  approveCandidate({ repoId, actorName, candidateId, title, body, source, review }) {
+    return candidates.approveCandidate(this, { repoId, actorName, candidateId, title, body, source, review });
   }
 
   assignCandidate({ repoId, actorName, candidateId, reviewerName }) {

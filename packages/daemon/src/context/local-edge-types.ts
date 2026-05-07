@@ -43,6 +43,43 @@ export interface ContextSyncPullRecord {
   receivedAt?: string;
 }
 
+export interface ContextCandidateDecisionPullRecord {
+  schema_version: 'viewport.context_candidate_decision/v1';
+  id: string;
+  inbox_item_id?: string;
+  repo_id: string;
+  candidate_event_id: string;
+  payload_digest?: string | null;
+  decision: 'approved' | 'rejected';
+  message?: string | null;
+  decided_at?: string;
+  decided_by_user_id?: string | null;
+  platform_signature: {
+    algorithm: 'Ed25519';
+    kid: string;
+    public_key: string;
+    signature: string;
+    signed_payload_digest: string;
+  };
+}
+
+export interface ContextCandidateDecisionApplication {
+  schema_version: 'viewport.context_candidate_application/v1';
+  decision_id: string;
+  inbox_item_id?: string | null;
+  repo_id: string;
+  candidate_event_id: string;
+  payload_digest?: string | null;
+  decision: 'approved' | 'rejected';
+  status: 'applied' | 'skipped';
+  reason?: string;
+  actor_name: string;
+  candidate_id?: string;
+  emitted: number;
+  applied_at: string;
+  platform_signature_digest: string;
+}
+
 export interface ContextProjectMetadata extends ContextProjectRecord {
   engine: '@viewportai/context-engine';
 }
@@ -81,6 +118,17 @@ export interface ContextStoredEntry {
   bodyDigest: string;
   source: string;
   trustState: 'approved' | 'canonical';
+  actorName: string;
+  createdAt: string;
+  schemaVersion: typeof CONTEXT_EVENT_SCHEMA_VERSION;
+}
+
+export interface ContextCandidateProposal {
+  id: string;
+  titleDigest: string;
+  bodyDigest: string;
+  source: string;
+  trustState: 'candidate';
   actorName: string;
   createdAt: string;
   schemaVersion: typeof CONTEXT_EVENT_SCHEMA_VERSION;
@@ -151,6 +199,7 @@ export interface ContextVaultInstance {
     options: { actorName: string },
   ): Promise<{ createdAt?: string }>;
   addEntry(options: {
+    id?: string;
     repoId: string;
     actorName: string;
     scope: ContextScope;
@@ -161,11 +210,43 @@ export interface ContextVaultInstance {
     trustState: 'approved';
     appliesTo: string[];
   }): { id: string; createdAt: string; payloadDigest?: string; schemaVersion: string };
+  proposeEntry(options: {
+    repoId: string;
+    actorName: string;
+    title: string;
+    body: string;
+    source: string;
+    sourceKind: 'workflow' | 'plan' | 'integration';
+  }): { id: string; createdAt: string; payloadDigest?: string; schemaVersion: string };
   grantRepoHpke(options: {
     repoId: string;
     actorName: string;
     recipientName: string;
   }): Promise<unknown>;
+  allCandidates(options: { repoId: string; actorName?: string }): Array<{
+    id: string;
+    proposal_event_id?: string | null;
+    payload_digest?: string | null;
+    title: string;
+    body: string;
+    source?: string;
+    status: string;
+  }>;
+  approveCandidate(options: {
+    repoId: string;
+    actorName: string;
+    candidateId: string;
+    title: string;
+    body: string;
+    source?: string;
+    review?: Record<string, unknown>;
+  }): { approved: ContextSyncEvent; entry: ContextSyncEvent };
+  rejectCandidate(options: {
+    repoId: string;
+    actorName: string;
+    candidateId: string;
+    reason?: string;
+  }): ContextSyncEvent;
   resolveBundle(options: {
     repoId: string;
     actorName: string;

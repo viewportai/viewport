@@ -52,7 +52,7 @@ function redact(token: string | undefined): string | undefined {
 
 function usage(): never {
   throw new Error(
-    'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1]',
+    'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1] [--context-decision-key kid:base64-public-key]',
   );
 }
 
@@ -184,6 +184,9 @@ export async function remote(): Promise<void> {
       | '0'
       | '1';
     const relayCaCertPath = getFlag('relay-ca-cert') ?? relayConfig.caCertPath;
+    const contextCandidateDecisionKeys =
+      parseDecisionSigningKeys(getFlag('context-decision-key')) ??
+      daemonConfig.server?.contextCandidateDecisionKeys;
     const enableNow = hasFlag('enable') || !boolLike(getFlag('no-enable'));
     const nextIssueToken = preserveIssuedInstall ? relayConfig.issueToken : undefined;
     const nextInstallId = preserveIssuedInstall ? relayConfig.installId : undefined;
@@ -196,6 +199,7 @@ export async function remote(): Promise<void> {
       server: {
         ...(daemonConfig.server ?? {}),
         url: serverUrl,
+        ...(contextCandidateDecisionKeys ? { contextCandidateDecisionKeys } : {}),
       },
       relay: {
         ...relayConfig,
@@ -228,6 +232,9 @@ export async function remote(): Promise<void> {
         caCertPath: relayCaCertPath,
       },
       capabilities: resolveInstallMetadata(serverUrl, relayEndpoint, manager),
+      contextCandidateDecisionKeyIds: contextCandidateDecisionKeys
+        ? Object.keys(contextCandidateDecisionKeys)
+        : [],
       next: 'Run `vpd restart` to apply relay runtime changes.',
     };
 
@@ -242,9 +249,41 @@ export async function remote(): Promise<void> {
     console.log(`- workspace: ${workspaceId}`);
     console.log(`- token:     provided`);
     console.log(`- enabled:   ${enableNow ? 'yes' : 'no'}`);
+    if (contextCandidateDecisionKeys && Object.keys(contextCandidateDecisionKeys).length > 0) {
+      console.log(
+        `- context decision keys: ${Object.keys(contextCandidateDecisionKeys).join(', ')}`,
+      );
+    }
     console.log('Run `vpd restart` to apply relay runtime changes.');
     return;
   }
 
   usage();
+}
+
+function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+
+  if (trimmed.startsWith('{')) {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Context candidate decision key JSON must be an object');
+    }
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).flatMap(([kid, key]) =>
+        typeof key === 'string' && key.length > 0 ? [[kid, key]] : [],
+      ),
+    );
+  }
+
+  const separator = trimmed.indexOf(':');
+  if (separator <= 0 || separator === trimmed.length - 1) {
+    throw new Error('Context candidate decision key must use kid:base64-public-key format');
+  }
+
+  return {
+    [trimmed.slice(0, separator)]: trimmed.slice(separator + 1),
+  };
 }

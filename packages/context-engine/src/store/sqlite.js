@@ -22,6 +22,8 @@ function openStore(dbPath) {
 
     CREATE TABLE IF NOT EXISTS context_candidates (
       id TEXT PRIMARY KEY,
+      proposal_event_id TEXT,
+      payload_digest TEXT,
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       source_kind TEXT NOT NULL,
