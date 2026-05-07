@@ -23,6 +23,7 @@ export { permit } from './permission-commands.js';
 export { agent } from './agent-commands.js';
 export { worktree } from './worktree-commands.js';
 export { workflow } from './workflow-commands.js';
+export { context } from './context-command.js';
 export { service } from './service-commands.js';
 export { setup } from './setup-command.js';
 export { remote } from './remote-commands.js';

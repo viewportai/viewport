@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:viewport:context_bundle_manifest:v1",
+  "title": "Viewport Context Bundle Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "bundle_id",
+    "resolved_at",
+    "resolver",
+    "index",
+    "request",
+    "profile",
+    "retrieval",
+    "offline",
+    "items",
+    "digest"
+  ],
+  "properties": {
+    "apiVersion": { "const": "viewport.context_bundle_manifest/v1" },
+    "bundle_id": { "type": "string", "pattern": "^ctxb_" },
+    "resolved_at": { "type": "string", "minLength": 1 },
+    "resolver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "version"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "embedding_model_id", "embedding_model_digest"],
+      "properties": {
+        "engine": { "type": "string", "minLength": 1 },
+        "embedding_model_id": { "type": "string", "minLength": 1 },
+        "embedding_model_digest": { "type": "string", "pattern": "^sha256:.+" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packs", "target", "include_private", "pins", "query", "max_items"],
+      "properties": {
+        "packs": { "type": "array", "items": { "type": "string" } },
+        "target": { "type": "object" },
+        "include_private": { "type": "boolean" },
+        "pins": { "type": "object" },
+        "query": { "type": ["string", "null"] },
+        "max_items": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "profile": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "path", "digest", "schemaVersion"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "pattern": "^\\.viewport/context/profiles/.+\\.json$" },
+            "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+            "schemaVersion": { "const": "viewport.context_profile/v1" }
+          }
+        }
+      ]
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "local_only", "remote_plaintext_calls"],
+      "properties": {
+        "mode": { "enum": ["all-approved", "local-semantic"] },
+        "local_only": { "const": true },
+        "remote_plaintext_calls": { "const": 0 }
+      }
+    },
+    "offline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "last_sync_at"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "last_sync_at": { "type": ["string", "null"] }
+      }
+    },
+    "override": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "actor_name", "created_at", "mismatches"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "actor_name": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "minLength": 1 },
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "expected", "actual"],
+            "properties": {
+              "field": { "type": "string", "minLength": 1 },
+              "expected": {},
+              "actual": {}
+            }
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry_id", "version_id", "source", "trust", "scope", "body_mode", "title"],
+        "properties": {
+          "entry_id": { "type": "string", "pattern": "^ctxe_" },
+          "version_id": { "type": "string", "pattern": "^ctxev_" },
+          "source": { "type": "string", "minLength": 1 },
+          "trust": { "enum": ["approved", "canonical"] },
+          "scope": { "enum": ["private", "project", "team", "organization"] },
+          "body_mode": { "enum": ["included", "redacted"] },
+          "title": { "type": "string", "minLength": 1 },
+          "retrieval_score": { "type": ["number", "null"] }
+        }
+      }
+    },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}
