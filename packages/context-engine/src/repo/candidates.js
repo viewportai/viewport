@@ -43,7 +43,7 @@ function proposeEntry(vault, options) {
   });
 }
 
-function approveCandidate(vault, { repoId, actorName, candidateId, title, body, source }) {
+function approveCandidate(vault, { repoId, actorName, candidateId, title, body, source, review = null }) {
   const approved = vault.appendSharedEvent({
     repoId,
     actorName,
@@ -52,6 +52,7 @@ function approveCandidate(vault, { repoId, actorName, candidateId, title, body, 
       id: candidateId,
       reviewedBy: actorName,
       reviewedAt: new Date().toISOString(),
+      review,
     },
   });
 
@@ -64,6 +65,7 @@ function approveCandidate(vault, { repoId, actorName, candidateId, title, body, 
     source: source ?? `candidate://${candidateId}`,
     sourceKind: 'human',
     trustState: 'approved',
+    review,
   });
 
   return { approved, entry };

@@ -54,6 +54,30 @@ export interface ContextCandidateDecisionPullRecord {
   message?: string | null;
   decided_at?: string;
   decided_by_user_id?: string | null;
+  platform_signature: {
+    algorithm: 'Ed25519';
+    kid: string;
+    public_key: string;
+    signature: string;
+    signed_payload_digest: string;
+  };
+}
+
+export interface ContextCandidateDecisionApplication {
+  schema_version: 'viewport.context_candidate_application/v1';
+  decision_id: string;
+  inbox_item_id?: string | null;
+  repo_id: string;
+  candidate_event_id: string;
+  payload_digest?: string | null;
+  decision: 'approved' | 'rejected';
+  status: 'applied' | 'skipped';
+  reason?: string;
+  actor_name: string;
+  candidate_id?: string;
+  emitted: number;
+  applied_at: string;
+  platform_signature_digest: string;
 }
 
 export interface ContextProjectMetadata extends ContextProjectRecord {
@@ -214,6 +238,7 @@ export interface ContextVaultInstance {
     title: string;
     body: string;
     source?: string;
+    review?: Record<string, unknown>;
   }): { approved: ContextSyncEvent; entry: ContextSyncEvent };
   rejectCandidate(options: {
     repoId: string;

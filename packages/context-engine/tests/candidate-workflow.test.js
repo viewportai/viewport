@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
+const { decryptJson } = require('../src/crypto/envelope');
 const { pairedVaults, tempHome } = require('./helpers');
 
 test('candidate workflow supports assignment batch rejection tombstone and edit-before-approve', () => {
@@ -95,4 +97,49 @@ test('candidate workflow supports assignment batch rejection tombstone and edit-
     bobVault.search({ repoId, actorName: 'bob', query: 'Disable tests forever' }).length,
     0,
   );
+});
+
+test('candidate approval events preserve the platform decision audit chain inside encrypted payloads', () => {
+  const { aliceVault } = pairedVaults();
+  const repoId = 'project-api';
+
+  aliceVault.proposeEntry({
+    repoId,
+    actorName: 'alice',
+    id: 'ctxc_audit_chain',
+    title: 'Audit chain candidate',
+    body: 'Approved context should point back to the human Inbox decision.',
+    source: 'workflow://audit-chain',
+    sourceKind: 'workflow',
+  });
+
+  const review = {
+    platformDecisionId: 'ctxd_inbox_123',
+    platformInboxItemId: 'inbox_123',
+    decidedByUserId: '42',
+    decidedAt: '2026-05-07T16:00:00.000Z',
+    platformSignatureDigest: 'sha256:decision-signature-digest',
+  };
+  const result = aliceVault.approveCandidate({
+    repoId,
+    actorName: 'alice',
+    candidateId: 'ctxc_audit_chain',
+    title: 'Audit chain candidate',
+    body: 'Approved context should point back to the human Inbox decision.',
+    source: 'workflow://audit-chain',
+    review,
+  });
+
+  const repoKey = aliceVault.getRepoKey(repoId, result.entry.keyEpoch);
+  const entryPayload = decryptJson(result.entry.encrypted, repoKey);
+  const approvalPayload = decryptJson(result.approved.encrypted, repoKey);
+
+  assert.deepEqual(entryPayload.review, review);
+  assert.deepEqual(approvalPayload.review, review);
+
+  const eventsDir = path.join(aliceVault.home, 'repos', repoId, 'events');
+  const latestEvent = fs.readdirSync(eventsDir).sort().at(-1);
+  const rawEvents = fs.readFileSync(path.join(eventsDir, latestEvent), 'utf8');
+  assert.equal(rawEvents.includes('Approved context should point back'), false);
+  assert.equal(rawEvents.includes('ctxd_inbox_123'), false);
 });

@@ -5,6 +5,8 @@ import {
   ensureUserOrApprovedDevice,
 } from './local-edge-engine.js';
 import { applyContextCandidateDecision } from './local-edge-candidates.js';
+import { readCandidateDecisionApplications } from './local-edge-decision-applications.js';
+import { verifyContextCandidateDecision } from './local-edge-decision-signature.js';
 import { readProjectMetadata, touchProjectMetadata } from './local-edge-metadata.js';
 import type {
   ContextCandidateDecisionPullRecord,
@@ -24,7 +26,11 @@ export async function pushContextEvents(options: {
   const metadata = await readProjectMetadata(options.projectId, home);
   const vault = createVault(home, metadata.keyStore);
   const events = vault.listSyncEvents({ repoId: metadata.repoId });
-  if (events.length === 0) {
+  const candidateDecisionApplications = await readCandidateDecisionApplications({
+    home,
+    projectId: options.projectId,
+  });
+  if (events.length === 0 && candidateDecisionApplications.length === 0) {
     return { accepted: 0, pushed: 0, repoId: metadata.repoId };
   }
 
@@ -34,6 +40,9 @@ export async function pushContextEvents(options: {
     {
       credential: options.credential,
       events,
+      ...(candidateDecisionApplications.length > 0
+        ? { candidate_decision_applications: candidateDecisionApplications }
+        : {}),
     },
   );
 
@@ -223,6 +232,8 @@ function extractPulledCandidateDecisions(response: unknown): ContextCandidateDec
     if (!record.repo_id || !record.candidate_event_id) {
       throw new Error(`Context sync pull decision ${index} was missing candidate identity`);
     }
+    verifyContextCandidateDecision(record as ContextCandidateDecisionPullRecord);
+
     return record as ContextCandidateDecisionPullRecord;
   });
 }

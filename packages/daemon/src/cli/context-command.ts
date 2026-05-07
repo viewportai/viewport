@@ -10,6 +10,7 @@ import {
   type ContextScope,
 } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
@@ -54,6 +55,10 @@ export async function context(): Promise<void> {
     await contextSyncPull();
     return;
   }
+  if (subcommand === 'decisions') {
+    await contextDecisions();
+    return;
+  }
   if (subcommand === 'user-init') {
     await contextUserInit();
     return;
@@ -87,7 +92,7 @@ export async function context(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
+    'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
   );
 }
 
@@ -259,6 +264,31 @@ async function contextSyncPull(): Promise<void> {
   console.log(`Repo: ${result.repoId}`);
 }
 
+async function contextDecisions(): Promise<void> {
+  const since = parseSince(getFlag('since'));
+  const applications = await readCandidateDecisionApplications({
+    projectId: getFlag('project'),
+    since,
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context decisions', ok: true, applications });
+    return;
+  }
+
+  if (applications.length === 0) {
+    console.log('No context candidate decisions applied locally.');
+    return;
+  }
+  for (const application of applications) {
+    const reason = application.reason ? ` (${application.reason})` : '';
+    console.log(
+      `${application.applied_at}  ${application.status}  ${application.decision}  ${application.actor_name}${reason}`,
+    );
+  }
+}
+
 function readCredentials(): { passphrase: string; recoveryCode: string } {
   return {
     passphrase: requiredFlag('passphrase', 'Missing --passphrase'),
@@ -307,6 +337,19 @@ function parseLimit(raw: string | undefined): number | undefined {
     throw new Error(`Unsupported context sync limit: ${raw}`);
   }
   return value;
+}
+
+function parseSince(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const relativeHours = raw.match(/^(\d+)h$/i);
+  if (relativeHours) {
+    return new Date(Date.now() - Number(relativeHours[1]) * 60 * 60 * 1000).toISOString();
+  }
+  const since = new Date(raw);
+  if (Number.isNaN(since.getTime())) {
+    throw new Error(`Unsupported context decisions --since value: ${raw}`);
+  }
+  return since.toISOString();
 }
 
 function requiredFlag(name: string, usage: string): string {

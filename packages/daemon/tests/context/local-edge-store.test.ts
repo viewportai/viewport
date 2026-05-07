@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -360,16 +361,18 @@ describe('local trusted-edge context store', () => {
         jsonResponse({
           data: [],
           candidate_decisions: [
-            {
+            signedDecision({
               schema_version: 'viewport.context_candidate_decision/v1',
               id: 'ctxd_inbox_1',
+              inbox_item_id: 'inbox_1',
               repo_id: 'project-alpha',
               candidate_event_id: candidate.id,
               payload_digest: candidate.bodyDigest,
               decision: 'approved',
               message: 'Promote from Inbox review.',
               decided_at: '2026-05-07T16:00:00.000Z',
-            },
+              decided_by_user_id: '42',
+            }),
           ],
         }),
       home: tempHome,
@@ -406,10 +409,8 @@ describe('local trusted-edge context store', () => {
       credential: 'runtime-token',
       fetchImpl: async (_url, init) => {
         pushedAfterApproval = String(init?.body ?? '');
-        return jsonResponse(
-          { ok: true, accepted: JSON.parse(pushedAfterApproval).events.length },
-          202,
-        );
+        const body = JSON.parse(pushedAfterApproval);
+        return jsonResponse({ ok: true, accepted: body.events.length }, 202);
       },
       home: tempHome,
     });
@@ -417,7 +418,101 @@ describe('local trusted-edge context store', () => {
     expect(push.accepted).toBeGreaterThan(0);
     expect(pushedAfterApproval).toContain('candidate.approved');
     expect(pushedAfterApproval).toContain('entry.approved');
+    expect(pushedAfterApproval).toContain('candidate_decision_applications');
+    expect(pushedAfterApproval).toContain('ctxd_inbox_1');
     expect(pushedAfterApproval).not.toContain('Agent runs touching auth');
+  });
+
+  it('rejects unsigned platform candidate decisions before they can become engine events', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Unsigned candidate',
+      body: 'Unsigned decisions must not promote context.',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    await expect(
+      pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        fetchImpl: async () =>
+          jsonResponse({
+            data: [],
+            candidate_decisions: [
+              {
+                schema_version: 'viewport.context_candidate_decision/v1',
+                id: 'ctxd_unsigned',
+                repo_id: 'project-alpha',
+                candidate_event_id: candidate.id,
+                payload_digest: candidate.bodyDigest,
+                decision: 'approved',
+              },
+            ],
+          }),
+        home: tempHome,
+      }),
+    ).rejects.toThrow(/missing a platform signature/i);
+  });
+
+  it('rejects tampered platform candidate decision signatures', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Tampered candidate',
+      body: 'Tampered decisions must not promote context.',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    const decision = signedDecision({
+      schema_version: 'viewport.context_candidate_decision/v1',
+      id: 'ctxd_tampered',
+      inbox_item_id: 'inbox_tampered',
+      repo_id: 'project-alpha',
+      candidate_event_id: candidate.id,
+      payload_digest: candidate.bodyDigest,
+      decision: 'approved',
+      decided_at: '2026-05-07T16:00:00.000Z',
+      decided_by_user_id: '42',
+    });
+    decision.decision = 'rejected';
+
+    await expect(
+      pullContextEvents({
+        projectId: 'project-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        fetchImpl: async () => jsonResponse({ data: [], candidate_decisions: [decision] }),
+        home: tempHome,
+      }),
+    ).rejects.toThrow(/digest mismatch|signature/i);
   });
 
   it.skip('used seam-v0 as the local context record schema before the canonical engine landed', () => {
@@ -443,5 +538,57 @@ describe('local trusted-edge context store', () => {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  }
+
+  function signedDecision<T extends Record<string, unknown>>(
+    record: T,
+  ): T & {
+    platform_signature: {
+      algorithm: 'Ed25519';
+      kid: string;
+      public_key: string;
+      signature: string;
+      signed_payload_digest: string;
+    };
+  } {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const publicDer = publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    const rawPublicKey = publicDer.subarray(-32);
+    const payload = canonicalJson({
+      schema_version: record.schema_version,
+      id: record.id,
+      inbox_item_id: record.inbox_item_id ?? null,
+      repo_id: record.repo_id,
+      candidate_event_id: record.candidate_event_id,
+      payload_digest: record.payload_digest ?? null,
+      decision: record.decision,
+      message: record.message ?? null,
+      decided_at: record.decided_at ?? null,
+      decided_by_user_id: record.decided_by_user_id ?? null,
+    });
+    return {
+      ...record,
+      platform_signature: {
+        algorithm: 'Ed25519',
+        kid: 'test-v1',
+        public_key: rawPublicKey.toString('base64'),
+        signature: crypto.sign(null, Buffer.from(payload), privateKey).toString('base64'),
+        signed_payload_digest: `sha256:${crypto.createHash('sha256').update(payload).digest('hex')}`,
+      },
+    };
+  }
+
+  function canonicalJson(value: unknown): string {
+    return JSON.stringify(sortKeys(value));
+  }
+
+  function sortKeys(value: unknown): unknown {
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(sortKeys);
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, item]) => [key, sortKeys(item)]),
+    );
   }
 });

@@ -183,6 +183,47 @@ describe('context CLI command', () => {
     expect(output).not.toContain('Candidate-only notes must wait for Inbox review.');
   });
 
+  it('lists recent context candidate decision applications from the trusted edge journal', async () => {
+    const { recordCandidateDecisionApplication } =
+      await import('../../src/context/local-edge-decision-applications.js');
+    await recordCandidateDecisionApplication({
+      home: tempHome,
+      projectId: 'project-alpha',
+      application: {
+        schema_version: 'viewport.context_candidate_application/v1',
+        decision_id: 'ctxd_inbox_1',
+        inbox_item_id: 'inbox_1',
+        repo_id: 'project-alpha',
+        candidate_event_id: 'ctxc_event_1',
+        payload_digest: 'sha256:test',
+        decision: 'approved',
+        status: 'applied',
+        actor_name: 'alice-laptop',
+        candidate_id: 'ctxc_1',
+        emitted: 2,
+        applied_at: new Date().toISOString(),
+        platform_signature_digest: 'sha256:decision',
+      },
+    });
+
+    await runContext([
+      'context',
+      'decisions',
+      '--home',
+      tempHome,
+      '--project',
+      'project-alpha',
+      '--since',
+      '24h',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context decisions"');
+    expect(output).toContain('"decision_id": "ctxd_inbox_1"');
+    expect(output).toContain('"status": "applied"');
+  });
+
   it('pushes and pulls canonical encrypted context events using saved relay config', async () => {
     await runContext([
       'context',
