@@ -21,12 +21,20 @@ interface PendingResponse {
   count: number;
 }
 
+function permitUsage(): string {
+  return 'Usage: vpd permit <ls|allow|deny> ...';
+}
+
+function showPermitHelp(): void {
+  console.log(permitUsage());
+}
+
 function parsePermitAction(): 'ls' | 'allow' | 'deny' {
   const action = getArgs()[1];
   if (action === 'ls' || action === 'allow' || action === 'deny') {
     return action;
   }
-  throw new Error('Usage: vpd permit <ls|allow|deny> ...');
+  throw new Error(permitUsage());
 }
 
 function parsePermitTargets(action: 'allow' | 'deny'): { sessionId: string; requestId: string } {
@@ -85,6 +93,11 @@ function emitPermitList(format: OutputFormat, payload: PendingResponse): boolean
 }
 
 export async function permit(): Promise<void> {
+  if (!getArgs()[1]) {
+    showPermitHelp();
+    return;
+  }
+
   if (!(await isDaemonRunning())) {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }

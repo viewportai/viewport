@@ -10,7 +10,16 @@
 
 export { install } from './install-command.js';
 export { addDirectory, removeDirectory, list } from './directory-commands.js';
-export { status, doctor, stop, restart, pair, update, showHelp } from './lifecycle-commands.js';
+export {
+  status,
+  doctor,
+  stop,
+  restart,
+  pair,
+  update,
+  showDaemonHelp,
+  showHelp,
+} from './lifecycle-commands.js';
 export {
   runSession as run,
   sendPromptCommand as send,
@@ -18,7 +27,7 @@ export {
   waitCommand as wait,
   attachCommand as attach,
 } from './orchestration-commands.js';
-export { listSessions as ls, stopSession } from './session-commands.js';
+export { listSessions as ls, showSessionHelp, stopSession } from './session-commands.js';
 export { permit } from './permission-commands.js';
 export { agent } from './agent-commands.js';
 export { worktree } from './worktree-commands.js';

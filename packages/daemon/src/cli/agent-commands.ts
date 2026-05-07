@@ -6,12 +6,12 @@ function parseAgentModeInput(): { sessionId: string; mode?: 'detect' | 'bypass' 
   const args = getArgs();
   const action = args[1];
   if (action !== 'mode') {
-    throw new Error('Usage: vpd agent mode <session-id> [detect|bypass] [--json|--format <fmt>]');
+    throw new Error(agentUsage());
   }
   const sessionId = args[2];
   const rawMode = args[3];
   if (!sessionId || sessionId.startsWith('--')) {
-    throw new Error('Usage: vpd agent mode <session-id> [detect|bypass] [--json|--format <fmt>]');
+    throw new Error(agentUsage());
   }
   if (!rawMode || rawMode.startsWith('--')) {
     return { sessionId };
@@ -22,7 +22,20 @@ function parseAgentModeInput(): { sessionId: string; mode?: 'detect' | 'bypass' 
   return { sessionId, mode: rawMode };
 }
 
+function agentUsage(): string {
+  return 'Usage: vpd agent mode <session-id> [detect|bypass] [--json|--format <fmt>]';
+}
+
+function showAgentHelp(): void {
+  console.log(agentUsage());
+}
+
 export async function agent(): Promise<void> {
+  if (!getArgs()[1]) {
+    showAgentHelp();
+    return;
+  }
+
   const format = resolveOutputFormat({ allowTable: true });
   if (!(await isDaemonRunning())) {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');

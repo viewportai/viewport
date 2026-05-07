@@ -21,6 +21,18 @@ import {
 
 const HOOK_TIMEOUT_MS = 125_000; // slightly > daemon's 120s to let daemon timeout first
 
+export function showHookHelp(): void {
+  process.stdout.write(
+    [
+      'Usage: vpd hook <notify|plan|plan-proposed|capabilities> ...',
+      '       vpd hook notify --event <EventName>',
+      '       vpd hook plan < hook-payload.json',
+      '       vpd hook capabilities [--adapter <name>] [--json]',
+      '',
+    ].join('\n'),
+  );
+}
+
 export async function hookNotify(forcedEvent?: string): Promise<void> {
   const event = forcedEvent ?? getFlag('event');
   if (!event) {

@@ -50,10 +50,12 @@ function redact(token: string | undefined): string | undefined {
   return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
-function usage(): never {
-  throw new Error(
-    'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1] [--context-decision-key kid:base64-public-key]',
-  );
+function usage(): string {
+  return 'Usage: vpd remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>] [--relay-endpoint <ws(s)://.../ws>] [--relay-tls-verify auto|0|1] [--context-decision-key kid:base64-public-key]';
+}
+
+function showRemoteHelp(): void {
+  console.log(usage());
 }
 
 function resolveInstallMetadata(serverUrl: string, relayEndpoint: string, manager: ConfigManager) {
@@ -72,7 +74,10 @@ function resolveInstallMetadata(serverUrl: string, relayEndpoint: string, manage
 export async function remote(): Promise<void> {
   const args = getArgs();
   const subcommand = args[1];
-  if (!subcommand) usage();
+  if (!subcommand) {
+    showRemoteHelp();
+    return;
+  }
 
   const manager = new ConfigManager();
   await manager.load();
@@ -166,7 +171,7 @@ export async function remote(): Promise<void> {
         : undefined);
 
     if (!serverUrl || !workspaceId) {
-      usage();
+      throw new Error(usage());
     }
     if (!issueToken) {
       throw new Error(
@@ -258,7 +263,7 @@ export async function remote(): Promise<void> {
     return;
   }
 
-  usage();
+  throw new Error(usage());
 }
 
 function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {
