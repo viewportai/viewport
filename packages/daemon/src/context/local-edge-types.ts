@@ -199,6 +199,7 @@ export interface ContextVaultInstance {
     options: { actorName: string },
   ): Promise<{ createdAt?: string }>;
   addEntry(options: {
+    id?: string;
     repoId: string;
     actorName: string;
     scope: ContextScope;

@@ -3,7 +3,10 @@ import type { ContextCandidateDecisionPullRecord } from './local-edge-types.js';
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
-export function verifyContextCandidateDecision(record: ContextCandidateDecisionPullRecord): void {
+export function verifyContextCandidateDecision(
+  record: ContextCandidateDecisionPullRecord,
+  trustedPublicKeys: Record<string, string> | undefined,
+): void {
   const signature = record.platform_signature;
   if (!signature) {
     throw new Error(`Context candidate decision ${record.id} is missing a platform signature`);
@@ -12,10 +15,22 @@ export function verifyContextCandidateDecision(record: ContextCandidateDecisionP
     throw new Error(`Context candidate decision ${record.id} used unsupported signature algorithm`);
   }
 
+  const trustedPublicKey = trustedPublicKeys?.[signature.kid];
+  if (!trustedPublicKey) {
+    throw new Error(
+      `Context candidate decision ${record.id} used unpinned platform signature key ${signature.kid}`,
+    );
+  }
+
   const publicKeyRaw = Buffer.from(signature.public_key, 'base64');
   const signatureRaw = Buffer.from(signature.signature, 'base64');
   if (publicKeyRaw.length !== 32) {
     throw new Error(`Context candidate decision ${record.id} had an invalid platform public key`);
+  }
+  if (signature.public_key !== trustedPublicKey) {
+    throw new Error(
+      `Context candidate decision ${record.id} platform public key did not match the pinned key`,
+    );
   }
   if (signatureRaw.length !== 64) {
     throw new Error(`Context candidate decision ${record.id} had an invalid platform signature`);

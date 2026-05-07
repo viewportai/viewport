@@ -172,6 +172,7 @@ export interface ViewportConfig {
       tlsVerify?: 'auto' | '0' | '1';
       caCertPath?: string;
       tlsPins?: string[];
+      contextCandidateDecisionKeys?: Record<string, string>;
     };
     relay?: {
       enabled?: boolean;
@@ -483,6 +484,7 @@ export class ConfigManager {
           tlsVerify?: 'auto' | '0' | '1';
           caCertPath?: string;
           tlsPins?: string[];
+          contextCandidateDecisionKeys?: Record<string, string>;
         };
         relay?: {
           enabled?: boolean;

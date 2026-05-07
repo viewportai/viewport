@@ -19,14 +19,21 @@ function assertValidEvent(event) {
     const validLegacyGrant = protocol.validateKeyGrant(grant);
     const validHpkeGrant = protocol.validateKeyGrantHpkeDraft(grant);
     if (!validLegacyGrant && !validHpkeGrant) {
-      throw new Error(`Invalid context key grant schema: ${event.id ?? 'unknown'}`);
+      throw new Error(
+        `Invalid context key grant schema: ${event.id ?? 'unknown'}`,
+      );
     }
   }
 }
 
 function unwrapSupportedGrant(wrappedRepoKeyEnvelope, identity) {
-  if (wrappedRepoKeyEnvelope.version === 'viewport.context_key_grant/hpke-draft-01') {
-    throw new Error('HPKE key grant materialization is not wired into the synchronous POC store yet');
+  if (
+    wrappedRepoKeyEnvelope.version ===
+    'viewport.context_key_grant/hpke-draft-01'
+  ) {
+    throw new Error(
+      'HPKE key grant materialization is not wired into the synchronous POC store yet',
+    );
   }
 
   return unwrapKeyForIdentity(wrappedRepoKeyEnvelope, identity);
@@ -40,13 +47,21 @@ function grantRecipientIdentity(identity, actorName) {
   return {
     ...identity,
     name: grantRecipientNameFor(identity, actorName),
-    encryptionPrivateKey: identity.grantEncryptionPrivateKey ?? identity.encryptionPrivateKey,
+    encryptionPrivateKey:
+      identity.grantEncryptionPrivateKey ?? identity.encryptionPrivateKey,
     hpkePrivateKey: identity.grantHpkePrivateKey ?? identity.hpkePrivateKey,
   };
 }
 
-async function unwrapSupportedGrantAsync(wrappedRepoKeyEnvelope, identity, { repoId, keyEpoch }) {
-  if (wrappedRepoKeyEnvelope.version === 'viewport.context_key_grant/hpke-draft-01') {
+async function unwrapSupportedGrantAsync(
+  wrappedRepoKeyEnvelope,
+  identity,
+  { repoId, keyEpoch },
+) {
+  if (
+    wrappedRepoKeyEnvelope.version ===
+    'viewport.context_key_grant/hpke-draft-01'
+  ) {
     return unwrapRepoKeyWithHpke(wrappedRepoKeyEnvelope, identity, {
       expectedRepoId: repoId,
       expectedKeyEpoch: keyEpoch,
@@ -62,7 +77,10 @@ function decryptEventPayload(event, identity, keys) {
       throw new Error('Private event does not belong to actor');
     }
 
-    return decryptJson(event.encrypted, Buffer.from(identity.personalKey, 'base64'));
+    return decryptJson(
+      event.encrypted,
+      Buffer.from(identity.personalKey, 'base64'),
+    );
   }
 
   const key = keys.epochs[String(event.keyEpoch)];
@@ -84,6 +102,9 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
   `);
   const insertFts = db.prepare(`
     INSERT INTO context_entries_fts (id, title, body) VALUES (?, ?, ?)
+  `);
+  const deleteFts = db.prepare(`
+    DELETE FROM context_entries_fts WHERE id = ?
   `);
   const insertCandidate = db.prepare(`
     INSERT OR REPLACE INTO context_candidates
@@ -128,11 +149,23 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
         throw new Error(`Invalid event signature: ${event.id}`);
       }
 
-      if (event.type === 'repo.created' || event.type === 'member.granted' || event.type === 'key.rotated') {
-        if (event.grant?.recipientName === grantRecipientNameFor(identity, actorName)) {
-          if (event.grant.wrappedRepoKeyEnvelope.version === 'viewport.context_key_grant/hpke-draft-01') {
+      if (
+        event.type === 'repo.created' ||
+        event.type === 'member.granted' ||
+        event.type === 'key.rotated'
+      ) {
+        if (
+          event.grant?.recipientName ===
+          grantRecipientNameFor(identity, actorName)
+        ) {
+          if (
+            event.grant.wrappedRepoKeyEnvelope.version ===
+            'viewport.context_key_grant/hpke-draft-01'
+          ) {
             if (!keys.epochs[String(event.grant.keyEpoch)]) {
-              throw new Error('HPKE key grant requires async materialization before synchronous projection');
+              throw new Error(
+                'HPKE key grant requires async materialization before synchronous projection',
+              );
             }
           } else {
             try {
@@ -151,7 +184,11 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
     for (const file of eventFiles) {
       const event = readJson(file);
 
-      if (event.type === 'repo.created' || event.type === 'member.granted' || event.type === 'key.rotated') {
+      if (
+        event.type === 'repo.created' ||
+        event.type === 'member.granted' ||
+        event.type === 'key.rotated'
+      ) {
         continue;
       }
 
@@ -165,6 +202,7 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
       if (event.type === 'entry.approved') {
         const row = { ...payload, supersededBy: null };
         insertEntry.run(row);
+        deleteFts.run(row.id);
         insertFts.run(row.id, row.title, row.body);
         for (const target of payload.appliesTo ?? []) {
           insertEdge.run(row.id, 'applies_to', target);
@@ -213,7 +251,12 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
   return result;
 }
 
-async function materializeRepoAsync({ paths, actorName, identity, publicKeys }) {
+async function materializeRepoAsync({
+  paths,
+  actorName,
+  identity,
+  publicKeys,
+}) {
   const eventFiles = listJsonFiles(paths.eventsDir);
   const keys = readJson(paths.keys, { epochs: {} });
 
@@ -225,14 +268,23 @@ async function materializeRepoAsync({ paths, actorName, identity, publicKeys }) 
       throw new Error(`Invalid event signature: ${event.id}`);
     }
 
-    if (event.type === 'repo.created' || event.type === 'member.granted' || event.type === 'key.rotated') {
-      if (event.grant?.recipientName === grantRecipientNameFor(identity, actorName)) {
+    if (
+      event.type === 'repo.created' ||
+      event.type === 'member.granted' ||
+      event.type === 'key.rotated'
+    ) {
+      if (
+        event.grant?.recipientName ===
+        grantRecipientNameFor(identity, actorName)
+      ) {
         try {
-          keys.epochs[String(event.grant.keyEpoch)] = (await unwrapSupportedGrantAsync(
-            event.grant.wrappedRepoKeyEnvelope,
-            grantRecipientIdentity(identity, actorName),
-            { repoId: event.repoId, keyEpoch: event.grant.keyEpoch },
-          )).toString('base64');
+          keys.epochs[String(event.grant.keyEpoch)] = (
+            await unwrapSupportedGrantAsync(
+              event.grant.wrappedRepoKeyEnvelope,
+              grantRecipientIdentity(identity, actorName),
+              { repoId: event.repoId, keyEpoch: event.grant.keyEpoch },
+            )
+          ).toString('base64');
         } catch {
           continue;
         }

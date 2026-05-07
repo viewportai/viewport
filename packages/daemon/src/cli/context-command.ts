@@ -252,6 +252,7 @@ async function contextSyncPull(): Promise<void> {
     credential: target.credential,
     actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
     credentials: readCredentials(),
+    trustedDecisionKeys: target.decisionSigningKeys,
     limit: parseLimit(getFlag('limit')),
   });
 

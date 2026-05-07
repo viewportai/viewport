@@ -59,6 +59,7 @@ export async function pullContextEvents(options: {
   credential: string;
   actorName: string;
   credentials: ContextCredentials;
+  trustedDecisionKeys?: Record<string, string>;
   limit?: number;
   home?: string;
   fetchImpl?: typeof fetch;
@@ -102,8 +103,9 @@ export async function pullContextEvents(options: {
     events,
     actorName: options.actorName,
   });
+  const candidateDecisions = extractPulledCandidateDecisions(response, options.trustedDecisionKeys);
   const candidateDecisionResults = [];
-  for (const decision of extractPulledCandidateDecisions(response)) {
+  for (const decision of candidateDecisions) {
     candidateDecisionResults.push(
       await applyContextCandidateDecision({
         projectId: options.projectId,
@@ -128,7 +130,7 @@ export async function pullContextEvents(options: {
           records,
           candidateDecisionResults.some((result) => result.reason === 'candidate_not_found')
             ? []
-            : extractPulledCandidateDecisions(response),
+            : candidateDecisions,
         ) ?? metadata.lastServerPullReceivedAt,
     },
     home,
@@ -209,7 +211,10 @@ function extractPulledRecords(response: unknown): ContextSyncPullRecord[] {
   });
 }
 
-function extractPulledCandidateDecisions(response: unknown): ContextCandidateDecisionPullRecord[] {
+function extractPulledCandidateDecisions(
+  response: unknown,
+  trustedDecisionKeys?: Record<string, string>,
+): ContextCandidateDecisionPullRecord[] {
   if (
     !response ||
     typeof response !== 'object' ||
@@ -232,7 +237,10 @@ function extractPulledCandidateDecisions(response: unknown): ContextCandidateDec
     if (!record.repo_id || !record.candidate_event_id) {
       throw new Error(`Context sync pull decision ${index} was missing candidate identity`);
     }
-    verifyContextCandidateDecision(record as ContextCandidateDecisionPullRecord);
+    verifyContextCandidateDecision(
+      record as ContextCandidateDecisionPullRecord,
+      trustedDecisionKeys,
+    );
 
     return record as ContextCandidateDecisionPullRecord;
   });
