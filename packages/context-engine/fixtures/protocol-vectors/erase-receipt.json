@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "viewport.context_erase_receipt/v1",
+  "id": "erase_00000000-0000-4000-8000-000000000001",
+  "repoId": "project-api",
+  "actorName": "bob",
+  "revocationEventId": "evt_00000000-0000-4000-8000-000000000099",
+  "erasedAt": "2026-05-06T12:00:00.000Z",
+  "cacheTombstoned": true,
+  "signature": "test-signature"
+}

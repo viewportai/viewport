@@ -13,6 +13,7 @@
  *   vpd stop                  Stop the daemon
  *   vpd restart               Restart the daemon
  *   vpd worktree ...          Worktree operator commands
+ *   vpd context ...           Local trusted-edge context commands
  */
 
 import { getCommand, getArgs } from './cli/args.js';
@@ -40,6 +41,7 @@ import {
   agent,
   worktree,
   workflow,
+  context,
   service,
   setup,
   remote,
@@ -84,6 +86,7 @@ const commands: Record<string, () => Promise<void>> = {
   agent,
   worktree,
   workflow,
+  context,
   service,
   setup,
   remote,
@@ -147,6 +150,8 @@ if (command === 'hook') {
       handler = worktree;
     } else if (command === 'workflow') {
       handler = workflow;
+    } else if (command === 'context') {
+      handler = context;
     } else if (command === 'remote') {
       handler = remote;
     }

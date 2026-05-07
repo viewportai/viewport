@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:viewport:context_event:v1",
+  "title": "Viewport Context Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "repoId",
+    "type",
+    "actorName",
+    "keyEpoch",
+    "visibility",
+    "createdAt",
+    "parentIds",
+    "encrypted",
+    "grant",
+    "payloadDigest",
+    "schemaVersion",
+    "signature"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^evt_" },
+    "repoId": { "type": "string", "minLength": 1 },
+    "type": {
+      "enum": [
+        "repo.created",
+        "member.granted",
+        "member.revoked",
+        "key.rotated",
+        "entry.approved",
+        "entry.proposed",
+        "entry.superseded",
+        "candidate.assigned",
+        "candidate.approved",
+        "candidate.rejected",
+        "candidate.tombstoned"
+      ]
+    },
+    "actorName": { "type": "string", "minLength": 1 },
+    "keyEpoch": { "type": "integer", "minimum": 0 },
+    "visibility": { "enum": ["private", "shared"] },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "parentIds": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^evt_" }
+    },
+    "encrypted": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["alg", "iv", "ciphertext", "tag"],
+          "properties": {
+            "alg": { "const": "aes-256-gcm" },
+            "iv": { "type": "string", "minLength": 1 },
+            "ciphertext": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "grant": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["recipientName", "keyEpoch", "wrappedRepoKeyEnvelope"],
+          "properties": {
+            "recipientName": { "type": "string", "minLength": 1 },
+            "keyEpoch": { "type": "integer", "minimum": 1 },
+            "wrappedRepoKeyEnvelope": {
+              "oneOf": [
+                { "$ref": "urn:viewport:context_key_grant:v1" },
+                { "$ref": "urn:viewport:context_key_grant:hpke_draft_01" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["revokedName", "nextKeyEpoch"],
+          "properties": {
+            "revokedName": { "type": "string", "minLength": 1 },
+            "nextKeyEpoch": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "payloadDigest": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      ]
+    },
+    "schemaVersion": { "const": "viewport.context_event/v1" },
+    "signature": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "visibility": { "const": "private" } } },
+      "then": {
+        "properties": {
+          "keyEpoch": { "const": 0 },
+          "encrypted": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alg", "iv", "ciphertext", "tag"],
+            "properties": {
+              "alg": { "const": "aes-256-gcm" },
+              "iv": { "type": "string", "minLength": 1 },
+              "ciphertext": { "type": "string", "minLength": 1 },
+              "tag": { "type": "string", "minLength": 1 }
+            }
+          },
+          "grant": { "type": "null" },
+          "payloadDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": ["repo.created", "member.granted", "key.rotated"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "visibility": { "const": "shared" },
+          "encrypted": { "type": "null" },
+          "payloadDigest": { "type": "null" },
+          "grant": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["recipientName", "keyEpoch", "wrappedRepoKeyEnvelope"],
+            "properties": {
+              "recipientName": { "type": "string", "minLength": 1 },
+              "keyEpoch": { "type": "integer", "minimum": 1 },
+              "wrappedRepoKeyEnvelope": {
+                "oneOf": [
+                  { "$ref": "urn:viewport:context_key_grant:v1" },
+                  { "$ref": "urn:viewport:context_key_grant:hpke_draft_01" }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": { "const": "member.revoked" }
+        }
+      },
+      "then": {
+        "properties": {
+          "visibility": { "const": "shared" },
+          "encrypted": { "type": "null" },
+          "payloadDigest": { "type": "null" },
+          "grant": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revokedName", "nextKeyEpoch"],
+            "properties": {
+              "revokedName": { "type": "string", "minLength": 1 },
+              "nextKeyEpoch": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "entry.approved",
+              "entry.proposed",
+              "entry.superseded",
+              "candidate.assigned",
+              "candidate.approved",
+              "candidate.rejected",
+              "candidate.tombstoned"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "encrypted": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["alg", "iv", "ciphertext", "tag"],
+            "properties": {
+              "alg": { "const": "aes-256-gcm" },
+              "iv": { "type": "string", "minLength": 1 },
+              "ciphertext": { "type": "string", "minLength": 1 },
+              "tag": { "type": "string", "minLength": 1 }
+            }
+          },
+          "grant": { "type": "null" },
+          "payloadDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        }
+      }
+    }
+  ]
+}

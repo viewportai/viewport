@@ -20,6 +20,7 @@ import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './rin
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
 import { registerHealthRoutes } from './http-health-routes.js';
+import { registerContextRoutes } from './http-context-routes.js';
 import { registerLifecycleRoutes } from './http-lifecycle-routes.js';
 import { registerPairingRoutes } from './http-pairing-routes.js';
 import { registerSessionRoutes } from './http-session-routes.js';
@@ -149,6 +150,7 @@ export function registerHttpRoutes(
   // ---------------------------------------------------------------------------
 
   registerSessionRoutes(app, daemon);
+  registerContextRoutes(app);
 
   app.post<{ Body: { path: string; config?: Record<string, unknown> } }>(
     '/api/directories',

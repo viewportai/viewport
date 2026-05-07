@@ -1,0 +1,50 @@
+{
+  "apiVersion": "viewport.context_bundle_manifest/v1",
+  "bundle_id": "ctxb_00000000-0000-4000-8000-000000000001",
+  "resolved_at": "2026-05-06T12:00:00.000Z",
+  "resolver": {
+    "kind": "context-vault-poc",
+    "version": "0.0.1"
+  },
+  "index": {
+    "engine": "sqlite-fts5+local-hash-embeddings",
+    "embedding_model_id": "viewport-local-hash-embed-v0",
+    "embedding_model_digest": "sha256:local-hash-embed-v0"
+  },
+  "request": {
+    "packs": ["project-standards"],
+    "target": { "type": "pull_request", "ref": "123" },
+    "include_private": false,
+    "pins": { "resolverVersion": "0.0.1" },
+    "query": "auth proof",
+    "max_items": 2
+  },
+  "profile": {
+    "name": "code-review",
+    "path": ".viewport/context/profiles/code-review.json",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "schemaVersion": "viewport.context_profile/v1"
+  },
+  "retrieval": {
+    "mode": "local-semantic",
+    "local_only": true,
+    "remote_plaintext_calls": 0
+  },
+  "offline": {
+    "active": false,
+    "last_sync_at": null
+  },
+  "items": [
+    {
+      "entry_id": "ctxe_00000000-0000-4000-8000-000000000001",
+      "version_id": "ctxev_00000000-0000-4000-8000-000000000001",
+      "source": "git://api/AGENTS.md#auth",
+      "trust": "approved",
+      "scope": "project",
+      "body_mode": "included",
+      "title": "Auth review standard",
+      "retrieval_score": 3
+    }
+  ],
+  "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+}
