@@ -754,11 +754,6 @@ describe('local trusted-edge context store', () => {
     }
   });
 
-  it.skip('used seam-v0 as the local context record schema before the canonical engine landed', () => {
-    // Historical guard for PR #43 before the canonical Context Vault engine replaced
-    // the seam internals. New records must assert viewport.context_event/v1 instead.
-  });
-
   async function readTree(dir: string): Promise<string> {
     let output = '';
     for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
