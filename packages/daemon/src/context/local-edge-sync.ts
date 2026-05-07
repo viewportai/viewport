@@ -4,8 +4,10 @@ import {
   createVault,
   ensureUserOrApprovedDevice,
 } from './local-edge-engine.js';
+import { applyContextCandidateDecision } from './local-edge-candidates.js';
 import { readProjectMetadata, touchProjectMetadata } from './local-edge-metadata.js';
 import type {
+  ContextCandidateDecisionPullRecord,
   ContextCredentials,
   ContextSyncEvent,
   ContextSyncPullRecord,
@@ -51,7 +53,13 @@ export async function pullContextEvents(options: {
   limit?: number;
   home?: string;
   fetchImpl?: typeof fetch;
-}): Promise<{ imported: number; pulled: number; repoId: string }> {
+}): Promise<{
+  appliedCandidateDecisions: number;
+  imported: number;
+  pendingCandidateDecisions: number;
+  pulled: number;
+  repoId: string;
+}> {
   const home = options.home ?? configDir();
   const metadata = await readProjectMetadata(options.projectId, home);
   const vault = createVault(home, metadata.keyStore);
@@ -85,16 +93,42 @@ export async function pullContextEvents(options: {
     events,
     actorName: options.actorName,
   });
+  const candidateDecisionResults = [];
+  for (const decision of extractPulledCandidateDecisions(response)) {
+    candidateDecisionResults.push(
+      await applyContextCandidateDecision({
+        projectId: options.projectId,
+        actorName: options.actorName,
+        credentials: options.credentials,
+        home,
+        decision,
+      }),
+    );
+  }
+  const appliedCandidateDecisions = candidateDecisionResults.filter(
+    (result) => result.applied,
+  ).length;
+  const pendingCandidateDecisions = candidateDecisionResults.filter(
+    (result) => result.reason === 'candidate_not_found',
+  ).length;
   await touchProjectMetadata(
     {
       ...metadata,
-      lastServerPullReceivedAt: latestReceivedAt(records) ?? metadata.lastServerPullReceivedAt,
+      lastServerPullReceivedAt:
+        latestReceivedAt(
+          records,
+          candidateDecisionResults.some((result) => result.reason === 'candidate_not_found')
+            ? []
+            : extractPulledCandidateDecisions(response),
+        ) ?? metadata.lastServerPullReceivedAt,
     },
     home,
   );
 
   return {
+    appliedCandidateDecisions,
     imported: imported.imported.length,
+    pendingCandidateDecisions,
     pulled: events.length,
     repoId: metadata.repoId,
   };
@@ -166,10 +200,45 @@ function extractPulledRecords(response: unknown): ContextSyncPullRecord[] {
   });
 }
 
-function latestReceivedAt(records: ContextSyncPullRecord[]): string | undefined {
-  return records
-    .map((record) => record.receivedAt)
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+function extractPulledCandidateDecisions(response: unknown): ContextCandidateDecisionPullRecord[] {
+  if (
+    !response ||
+    typeof response !== 'object' ||
+    !Array.isArray((response as { candidate_decisions?: unknown }).candidate_decisions)
+  ) {
+    return [];
+  }
+
+  return (response as { candidate_decisions: unknown[] }).candidate_decisions.map((item, index) => {
+    if (!item || typeof item !== 'object') {
+      throw new Error(`Context sync pull decision ${index} was not an object`);
+    }
+    const record = item as Partial<ContextCandidateDecisionPullRecord>;
+    if (record.schema_version !== 'viewport.context_candidate_decision/v1') {
+      throw new Error(`Context sync pull decision ${index} had an unsupported schema`);
+    }
+    if (record.decision !== 'approved' && record.decision !== 'rejected') {
+      throw new Error(`Context sync pull decision ${index} had an unsupported decision`);
+    }
+    if (!record.repo_id || !record.candidate_event_id) {
+      throw new Error(`Context sync pull decision ${index} was missing candidate identity`);
+    }
+    return record as ContextCandidateDecisionPullRecord;
+  });
+}
+
+function latestReceivedAt(
+  records: ContextSyncPullRecord[],
+  decisions: ContextCandidateDecisionPullRecord[] = [],
+): string | undefined {
+  return [
+    ...records
+      .map((record) => record.receivedAt)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    ...decisions
+      .map((record) => record.decided_at)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+  ]
     .sort()
     .at(-1);
 }

@@ -117,6 +117,72 @@ describe('context CLI command', () => {
     expect(output).toContain('Every bug fix needs a regression test.');
   });
 
+  it('proposes candidate context through vpd arguments without resolving it before review', async () => {
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--project',
+      'project-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'propose',
+      '--home',
+      tempHome,
+      '--project',
+      'project-alpha',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Candidate testing policy',
+      '--body',
+      'Candidate-only notes must wait for Inbox review.',
+      '--source-kind',
+      'workflow',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    await runContext([
+      'context',
+      'resolve',
+      '--home',
+      tempHome,
+      '--project',
+      'project-alpha',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'Inbox review',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context propose"');
+    expect(output).toContain('"trustState": "candidate"');
+    expect(output).not.toContain('Candidate-only notes must wait for Inbox review.');
+  });
+
   it('pushes and pulls canonical encrypted context events using saved relay config', async () => {
     await runContext([
       'context',

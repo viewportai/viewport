@@ -11,6 +11,7 @@ import {
   resolveContextBundle,
   writeContextProfile,
 } from '../../src/context/local-edge-store.js';
+import { proposeContextEntry } from '../../src/context/local-edge-candidates.js';
 import { pullContextEvents, pushContextEvents } from '../../src/context/local-edge-sync.js';
 import {
   createProjectKey,
@@ -326,6 +327,97 @@ describe('local trusted-edge context store', () => {
     expect(pullBodies[1]).toMatchObject({
       after_received_at: `2026-05-06T21:00:0${pushedEvents.length - 1}.000Z`,
     });
+  });
+
+  it('applies platform context candidate approvals at the trusted edge for future bundles', async () => {
+    await initContextProject({
+      projectId: 'project-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      title: 'Auth review candidate',
+      body: 'Agent runs touching auth must include session rotation proof.',
+      source: 'workflow://pr-review',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    const pull = await pullContextEvents({
+      projectId: 'project-alpha',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      actorName: 'alice-laptop',
+      credentials,
+      fetchImpl: async () =>
+        jsonResponse({
+          data: [],
+          candidate_decisions: [
+            {
+              schema_version: 'viewport.context_candidate_decision/v1',
+              id: 'ctxd_inbox_1',
+              repo_id: 'project-alpha',
+              candidate_event_id: candidate.id,
+              payload_digest: candidate.bodyDigest,
+              decision: 'approved',
+              message: 'Promote from Inbox review.',
+              decided_at: '2026-05-07T16:00:00.000Z',
+            },
+          ],
+        }),
+      home: tempHome,
+    });
+
+    expect(pull.pulled).toBe(0);
+    expect(pull.appliedCandidateDecisions).toBe(1);
+    expect(pull.pendingCandidateDecisions).toBe(0);
+
+    const bundle = await resolveContextBundle({
+      projectId: 'project-alpha',
+      actorName: 'alice-laptop',
+      query: 'session rotation proof',
+      credentials,
+      home: tempHome,
+    });
+
+    expect(bundle.items).toEqual([
+      expect.objectContaining({
+        title: 'Auth review candidate',
+        body: 'Agent runs touching auth must include session rotation proof.',
+      }),
+    ]);
+
+    const raw = await readTree(path.join(tempHome, 'repos', 'project-alpha', 'events'));
+    expect(raw).toContain('candidate.approved');
+    expect(raw).toContain('entry.approved');
+    expect(raw).not.toContain('Agent runs touching auth');
+
+    let pushedAfterApproval = '';
+    const push = await pushContextEvents({
+      projectId: 'project-alpha',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      fetchImpl: async (_url, init) => {
+        pushedAfterApproval = String(init?.body ?? '');
+        return jsonResponse(
+          { ok: true, accepted: JSON.parse(pushedAfterApproval).events.length },
+          202,
+        );
+      },
+      home: tempHome,
+    });
+
+    expect(push.accepted).toBeGreaterThan(0);
+    expect(pushedAfterApproval).toContain('candidate.approved');
+    expect(pushedAfterApproval).toContain('entry.approved');
+    expect(pushedAfterApproval).not.toContain('Agent runs touching auth');
   });
 
   it.skip('used seam-v0 as the local context record schema before the canonical engine landed', () => {

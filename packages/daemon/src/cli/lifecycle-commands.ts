@@ -364,6 +364,9 @@ export function showHelp(): void {
     '  context add --project <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
+    '  context propose --project <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log(
     '  context resolve --project <id> --query <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(

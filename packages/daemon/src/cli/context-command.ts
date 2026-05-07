@@ -9,6 +9,7 @@ import {
   type ContextKeyStore,
   type ContextScope,
 } from '../context/local-edge-store.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
@@ -35,6 +36,10 @@ export async function context(): Promise<void> {
   }
   if (subcommand === 'add') {
     await contextAdd();
+    return;
+  }
+  if (subcommand === 'propose') {
+    await contextPropose();
     return;
   }
   if (subcommand === 'resolve') {
@@ -82,7 +87,7 @@ export async function context(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: vpd context <init|status|add|resolve|sync-push|sync-pull|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
+    'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...',
   );
 }
 
@@ -154,6 +159,31 @@ async function contextAdd(): Promise<void> {
     return;
   }
   console.log(`Context entry added: ${entry.id}`);
+  console.log('Title: [encrypted]');
+}
+
+async function contextPropose(): Promise<void> {
+  const projectId = requiredFlag(
+    'project',
+    'vpd context propose --project <id> --title <text> --body <text>',
+  );
+  const candidate = await proposeContextEntry({
+    projectId,
+    actorName:
+      getFlag('actor') ??
+      requiredFlag('device', 'vpd context propose --project <id> --device <name>'),
+    title: requiredFlag('title', 'vpd context propose --project <id> --title <text> --body <text>'),
+    body: requiredFlag('body', 'vpd context propose --project <id> --title <text> --body <text>'),
+    source: getFlag('source'),
+    sourceKind: parseSourceKind(getFlag('source-kind')),
+    credentials: readCredentials(),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context propose', ok: true, candidate });
+    return;
+  }
+  console.log(`Context candidate proposed: ${candidate.id}`);
   console.log('Title: [encrypted]');
 }
 
@@ -256,6 +286,14 @@ function parseProfilePin(): { path?: string; digest?: string } | undefined {
   const digest = getFlag('profile-digest');
   if (!path && !digest) return undefined;
   return { path, digest };
+}
+
+function parseSourceKind(raw: string | undefined): 'workflow' | 'plan' | 'integration' | undefined {
+  if (!raw) return undefined;
+  if (raw === 'workflow' || raw === 'plan' || raw === 'integration') {
+    return raw;
+  }
+  throw new Error(`Unsupported context candidate source kind: ${raw}`);
 }
 
 function parseKeyStore(raw: string | undefined): ContextKeyStore {

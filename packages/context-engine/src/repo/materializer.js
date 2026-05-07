@@ -87,8 +87,8 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
   `);
   const insertCandidate = db.prepare(`
     INSERT OR REPLACE INTO context_candidates
-    (id, title, body, source_kind, trust_state, source, created_at, status, priority_score)
-    VALUES (@id, @title, @body, @sourceKind, @trustState, @source, @createdAt, @status, @priorityScore)
+    (id, proposal_event_id, payload_digest, title, body, source_kind, trust_state, source, created_at, status, priority_score)
+    VALUES (@id, @proposalEventId, @payloadDigest, @title, @body, @sourceKind, @trustState, @source, @createdAt, @status, @priorityScore)
   `);
   const assignCandidate = db.prepare(`
     UPDATE context_candidates
@@ -172,7 +172,11 @@ function materializeRepo({ paths, actorName, identity, publicKeys }) {
       }
 
       if (event.type === 'entry.proposed') {
-        insertCandidate.run(payload);
+        insertCandidate.run({
+          ...payload,
+          proposalEventId: event.id,
+          payloadDigest: event.payloadDigest,
+        });
       }
 
       if (event.type === 'candidate.assigned') {
