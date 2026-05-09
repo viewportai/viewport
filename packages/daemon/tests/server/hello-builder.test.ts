@@ -94,6 +94,44 @@ describe('daemon snapshot builder', () => {
     expect(msg.models[0].displayName).toBe('Sonnet 4');
   });
 
+  it('uses the paired runtime target as the canonical snapshot machine id', async () => {
+    const isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-hello-runtime-home-'));
+    const previousHome = process.env['HOME']!;
+    process.env['HOME'] = isolatedHome;
+
+    const isolatedDaemon = new Daemon();
+    await isolatedDaemon.initialize();
+
+    try {
+      await isolatedDaemon.configManager.setDaemonConfig({
+        profile: 'local',
+        relay: {
+          enabled: true,
+          endpoint: 'ws://127.0.0.1:7781/ws',
+          tlsVerify: 'auto',
+          workspaceId: 'workspace-1',
+          runtimeTargetId: 'runtime-target-1',
+          machineId: 'mutable-hostname',
+          machineName: "Mehr's MacBook Pro",
+          signingKeys: {
+            k1: 'b'.repeat(32),
+          },
+        },
+      });
+
+      const payload = buildSnapshotPayload(isolatedDaemon);
+
+      expect(payload.machine).toMatchObject({
+        id: 'runtime-target-1',
+        name: "Mehr's MacBook Pro",
+      });
+    } finally {
+      await isolatedDaemon.shutdown();
+      process.env['HOME'] = previousHome;
+      await fs.rm(isolatedHome, { recursive: true, force: true });
+    }
+  });
+
   it('dedupes discovered sessions with the same id within a directory', async () => {
     const isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-hello-dedupe-home-'));
     const isolatedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-hello-dedupe-dir-'));
