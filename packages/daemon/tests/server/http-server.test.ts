@@ -647,17 +647,37 @@ describe('HTTP Server', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/api/directories/${dir.id}/sessions/codex-session-1/messages`,
+      url: `/api/directories/${dir.id}/sessions/codex-session-1/messages?limit=1&offset=0`,
     });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.payload) as { messages: Array<{ kind: string; text?: string }> };
-    expect(body.messages.length).toBeGreaterThan(0);
-    expect(body.messages.some((msg) => msg.kind === 'text' && msg.text === 'hello codex')).toBe(
-      true,
-    );
-    expect(body.messages.some((msg) => msg.kind === 'text' && msg.text === 'hello user')).toBe(
-      true,
-    );
+    const body = JSON.parse(res.payload) as {
+      messages: Array<{ kind: string; text?: string }>;
+      nextOffset?: number;
+      hasMoreBefore?: boolean;
+    };
+    expect(body).toMatchObject({
+      nextOffset: 1,
+      hasMoreBefore: true,
+    });
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0]).toMatchObject({ kind: 'text', text: 'hello user' });
+
+    const older = await app.inject({
+      method: 'GET',
+      url: `/api/directories/${dir.id}/sessions/codex-session-1/messages?limit=1&offset=1`,
+    });
+    expect(older.statusCode).toBe(200);
+    const olderBody = JSON.parse(older.payload) as {
+      messages: Array<{ kind: string; text?: string }>;
+      nextOffset?: number;
+      hasMoreBefore?: boolean;
+    };
+    expect(olderBody).toMatchObject({
+      nextOffset: 2,
+      hasMoreBefore: false,
+    });
+    expect(olderBody.messages).toHaveLength(1);
+    expect(olderBody.messages[0]).toMatchObject({ kind: 'text', text: 'hello codex' });
   });
 
   // ---------------------------------------------------------------------------

@@ -192,6 +192,7 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
     machineId: daemon.configManager.getMachineId(),
     daemonVersion: resolveDisplayVersion(),
   });
+  const relayRuntimeTargetId = daemon.configManager.getDaemonConfig()?.relay?.runtimeTargetId;
   const machineName = resolveMachineDisplayName(
     daemon.configManager.getDaemonConfig()?.relay?.machineName,
   );
@@ -199,7 +200,7 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
   return {
     protocolVersion: 2,
     machine: {
-      id: machine.machineId ?? daemon.configManager.getMachineId(),
+      id: relayRuntimeTargetId ?? machine.machineId ?? daemon.configManager.getMachineId(),
       name: machineName,
       daemonVersion: machine.daemonVersion,
       runtimeKind: machine.runtimeKind,
