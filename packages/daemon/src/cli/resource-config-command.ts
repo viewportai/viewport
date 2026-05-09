@@ -1,5 +1,10 @@
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
+import {
+  printAuthorization,
+  requestAuthorization,
+  resolveAuthorizationTarget,
+} from './contract-authorization.js';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 
 type ResolvedManifest = ReturnType<typeof resolveSessionResourceManifestSync>;
@@ -46,6 +51,10 @@ export async function contract(): Promise<void> {
     await contractResolve();
     return;
   }
+  if (subcommand === 'authorize') {
+    await contractAuthorize();
+    return;
+  }
   throw new Error(contractUsage());
 }
 
@@ -71,7 +80,13 @@ function configUsage(): string {
 }
 
 function contractUsage(): string {
-  return 'Usage: vpd contract resolve [--path <path>|--cwd <path>] [--json]';
+  return [
+    'Usage: vpd contract <command>',
+    '',
+    'Commands:',
+    '  resolve [--path <path>|--cwd <path>] [--json]',
+    '  authorize [--path <path>|--cwd <path>] [--workspace <id>] [--server-url <url>] [--credential <token>] [--json]',
+  ].join('\n');
 }
 
 function showConfigHelp(): void {
@@ -92,6 +107,34 @@ async function contractResolve(): Promise<void> {
   }
 
   printManifest('Viewport contract manifest', manifest);
+}
+
+async function contractAuthorize(): Promise<void> {
+  const workingDirectory = getPathFlag();
+  const manifest = resolveSessionResourceManifestSync({ workingDirectory });
+  const target = await resolveAuthorizationTarget();
+  const authorization = await requestAuthorization(target, manifest);
+  const denied = authorization.summary?.denied ?? 0;
+  const ok = denied === 0;
+
+  if (isJsonMode()) {
+    printJson({
+      command: 'contract authorize',
+      ok,
+      target: {
+        serverUrl: target.serverUrl,
+        workspaceId: target.workspaceId,
+      },
+      manifest,
+      authorization,
+    });
+  } else {
+    printAuthorization(manifest, authorization, target.workspaceId);
+  }
+
+  if (!ok) {
+    throw new Error(`Viewport contract authorization denied ${denied} item(s)`);
+  }
 }
 
 async function configResolve(): Promise<void> {
