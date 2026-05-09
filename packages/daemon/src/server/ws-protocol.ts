@@ -27,6 +27,7 @@ const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
   ]),
 );
 const MAX_LIST_SESSIONS_LIMIT = 200;
+export const MAX_READ_SESSION_MESSAGES_LIMIT = 200;
 
 const ImageSchema = z.object({
   data: z.string().max(MAX_IMAGE_BYTES_BASE64_CHARS),
@@ -130,7 +131,7 @@ export const ReadSessionMessagesSchema = z.object({
   type: z.literal('read-session-messages'),
   directoryId: z.string().min(1).max(512),
   sessionId: z.string().min(1).max(256),
-  limit: z.number().int().positive().max(2_000).optional(),
+  limit: z.number().int().positive().max(MAX_READ_SESSION_MESSAGES_LIMIT).optional(),
   offset: z.number().int().nonnegative().optional(),
   delivery: z.enum(['ack', 'event-stream']).optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),

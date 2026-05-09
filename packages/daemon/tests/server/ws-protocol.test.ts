@@ -385,7 +385,7 @@ describe('ReadSessionMessagesSchema', () => {
       type: 'read-session-messages',
       directoryId: 'dir-1',
       sessionId: 's1',
-      limit: 500,
+      limit: 100,
       delivery: 'event-stream',
     });
     expect(result.success).toBe(true);
@@ -396,7 +396,7 @@ describe('ReadSessionMessagesSchema', () => {
       type: 'read-session-messages',
       directoryId: 'dir-1',
       sessionId: 's1',
-      limit: 5000,
+      limit: 201,
     });
     expect(result.success).toBe(false);
   });
