@@ -67,7 +67,7 @@ export async function doctor(): Promise<void> {
     configReason: identity.resourceOverrideConfigSource
       ? identity.resourceOverrideConfigSource === 'explicit'
         ? 'explicit VIEWPORT_RESOURCE_OVERRIDE_DIR override'
-        : 'nearest ancestor .viewport/config.json'
+        : 'nearest ancestor .viewport/config.yaml'
       : 'global ~/.viewport/config.json',
     cliVersion,
     cliSource:

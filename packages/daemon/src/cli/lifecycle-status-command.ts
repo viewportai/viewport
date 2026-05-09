@@ -154,7 +154,7 @@ export async function status(): Promise<void> {
     configReason: runtimeIdentity.resourceOverrideConfigSource
       ? runtimeIdentity.resourceOverrideConfigSource === 'explicit'
         ? 'explicit VIEWPORT_RESOURCE_OVERRIDE_DIR override'
-        : 'nearest ancestor .viewport/config.json'
+        : 'nearest ancestor .viewport/config.yaml'
       : 'global ~/.viewport/config.json',
     cliSource:
       cliSource.kind === 'linked-local-build'

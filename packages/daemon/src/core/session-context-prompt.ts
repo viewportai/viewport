@@ -1,4 +1,5 @@
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
+import { resolveRepoDocsProvider } from '../context-providers/repo-docs-provider.js';
 import { readContextStatus, resolveContextBundle } from '../context/local-edge-store.js';
 import { logger } from './logger.js';
 
@@ -14,10 +15,25 @@ export async function buildSessionPromptWithContext(options: {
   const manifest = resolveSessionResourceManifestSync({
     workingDirectory: options.workingDirectory,
   });
-  const requestedContexts = manifest.resources.contexts;
-  if (requestedContexts.length === 0) return text;
-
   const sections: string[] = [];
+
+  for (const provider of manifest.contract.contextProviders) {
+    if (provider.provider !== 'repo-docs') continue;
+    const items = await resolveRepoDocsProvider({
+      provider,
+      query: text,
+      sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
+    });
+    if (items.length === 0) continue;
+    sections.push(
+      [
+        `## ${provider.id} (${provider.provider})`,
+        ...items.map((item) => [`### ${item.title}`, item.body].join('\n')),
+      ].join('\n\n'),
+    );
+  }
+
+  const requestedContexts = manifest.resources.contexts;
   for (const context of requestedContexts) {
     try {
       const status = await readContextStatus({ contextResourceId: context.id });
@@ -72,7 +88,7 @@ export async function buildSessionPromptWithContext(options: {
 
   return [
     '<viewport_context>',
-    'The following approved Context Vault entries were resolved locally for this run. Treat them as repo/resource-specific operating context and cite them when relevant.',
+    'The following context was resolved locally for this run from the repo contract. Treat it as repo/resource-specific operating context and cite it when relevant.',
     '',
     sections.join('\n\n'),
     '</viewport_context>',

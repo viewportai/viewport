@@ -1,4 +1,5 @@
 import type { WorkflowRunEvent } from './event-types.js';
+import type { SessionResourceManifest } from '../config-resolution/index.js';
 import type { WorkflowInlineAgentRunState } from './inline-agent-types.js';
 import type {
   WorkflowArtifactDefinition,
@@ -143,6 +144,7 @@ export interface WorkflowRunRecord {
   directoryId: string;
   directoryPath: string;
   resourceId?: string;
+  resourceManifest?: SessionResourceManifest;
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;

@@ -4,16 +4,25 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { discoverViewportConfigPaths, discoverViewportConfigPathsSync } from './discovery.js';
 import { ViewportConfigSchema, type ViewportConfigInput } from './schema.js';
+import YAML from 'yaml';
 import {
   SESSION_RESOURCE_MANIFEST_SCHEMA,
   type ParsedViewportConfig,
+  type SessionContextProviderManifest,
   type SessionResourceConflict,
   type SessionResourceManifest,
   type SessionResourceManifestResource,
   type SessionResourceWarning,
+  type SessionWorkflowManifest,
+  type ViewportContextProviderCapability,
+  type ViewportContextProviderKind,
+  type ViewportContextProviderPrivacy,
+  type ViewportContextProviderRef,
+  type ViewportContextResolution,
   type ViewportConfigDefaults,
   type ViewportResourceKind,
   type ViewportResourceRef,
+  type ViewportWorkflowRef,
 } from './types.js';
 
 const RESOURCE_KINDS: ViewportResourceKind[] = ['contexts', 'workflows', 'plans', 'agentProfiles'];
@@ -94,14 +103,14 @@ export function resolveSessionResourceManifestSync(
 export async function parseViewportConfig(configPath: string): Promise<ParsedViewportConfig> {
   const absolutePath = path.resolve(configPath);
   const raw = await fs.readFile(absolutePath, 'utf8');
-  const parsed = ViewportConfigSchema.parse(JSON.parse(raw));
+  const parsed = ViewportConfigSchema.parse(parseConfig(raw, absolutePath));
   return normalizeViewportConfig(absolutePath, raw, parsed);
 }
 
 export function parseViewportConfigSync(configPath: string): ParsedViewportConfig {
   const absolutePath = path.resolve(configPath);
   const raw = fsSync.readFileSync(absolutePath, 'utf8');
-  const parsed = ViewportConfigSchema.parse(JSON.parse(raw));
+  const parsed = ViewportConfigSchema.parse(parseConfig(raw, absolutePath));
   return normalizeViewportConfig(absolutePath, raw, parsed);
 }
 
@@ -123,6 +132,25 @@ export function buildSessionResourceManifest(input: {
         });
       }
     }
+    for (const provider of config.contract.contextProviders) {
+      if (provider.provider !== 'viewport-vault' || !provider.vault) continue;
+      if (resources.contexts.some((existing) => existing.id === provider.vault)) continue;
+      resources.contexts.push({
+        id: provider.vault,
+        required: provider.required,
+        sourceConfigPath: provider.sourceConfigPath,
+        resolution: 'requested_unverified',
+      });
+    }
+    for (const workflow of config.contract.workflows) {
+      if (resources.workflows.some((existing) => existing.id === workflow.id)) continue;
+      resources.workflows.push({
+        id: workflow.id,
+        required: workflow.required,
+        sourceConfigPath: workflow.sourceConfigPath,
+        resolution: 'requested_unverified',
+      });
+    }
   }
 
   const manifestWithoutDigest = {
@@ -135,6 +163,11 @@ export function buildSessionResourceManifest(input: {
       ...(config.name ? { name: config.name } : {}),
     })),
     resources,
+    contract: {
+      contextProviders: manifestContextProviders(input.configs),
+      contextResolution: mergeContextResolution(input.configs),
+      workflows: manifestWorkflows(input.configs),
+    },
     conflicts: detectConflicts(input.configs),
     warnings: input.warnings ?? [],
   };
@@ -163,9 +196,19 @@ function normalizeViewportConfig(
     version: config.version,
     ...(config.name ? { name: config.name } : {}),
     resources,
+    contract: {
+      contextProviders: normalizeContextProviders(configPath, config.context?.providers ?? []),
+      contextResolution: normalizeContextResolution(config.context?.resolution),
+      workflows: normalizeWorkflowRefs(configPath, config.workflows ?? {}),
+    },
     defaults: config.defaults ?? {},
     scope: config.scope ?? {},
   };
+}
+
+function parseConfig(raw: string, configPath: string): unknown {
+  if (configPath.endsWith('.json')) return JSON.parse(raw);
+  return YAML.parse(raw);
 }
 
 function normalizeResourceRef(
@@ -176,6 +219,131 @@ function normalizeResourceRef(
     return { id: ref, required: false, sourceConfigPath };
   }
   return { id: ref.id, required: ref.required ?? false, sourceConfigPath };
+}
+
+function normalizeContextProviders(
+  sourceConfigPath: string,
+  providers: NonNullable<ViewportConfigInput['context']>['providers'],
+): ViewportContextProviderRef[] {
+  return (providers ?? []).map((provider) => {
+    const kind = provider.provider as ViewportContextProviderKind;
+    return {
+      id: provider.id,
+      provider: kind,
+      required: provider.required ?? false,
+      privacy: provider.privacy ?? defaultPrivacy(kind),
+      capabilities: provider.capabilities?.length
+        ? (provider.capabilities as ViewportContextProviderCapability[])
+        : defaultCapabilities(kind),
+      sourceConfigPath,
+      ...(provider.vault ? { vault: provider.vault } : {}),
+      ...(provider.paths ? { paths: provider.paths } : {}),
+      ...(provider.notebook ? { notebook: provider.notebook } : {}),
+      ...(provider.command ? { command: provider.command } : {}),
+    };
+  });
+}
+
+function normalizeContextResolution(
+  resolution: NonNullable<ViewportConfigInput['context']>['resolution'],
+): ViewportContextResolution {
+  if (!resolution) return {};
+  const sizeBudget = resolution.size_budget ?? resolution.size_budget_bytes;
+  return {
+    ...(resolution.order ? { order: resolution.order } : {}),
+    ...(sizeBudget ? { sizeBudgetBytes: parseSizeBudget(sizeBudget) } : {}),
+    ...(resolution.strategy ? { strategy: resolution.strategy } : {}),
+  };
+}
+
+function parseSizeBudget(value: number | string): number {
+  if (typeof value === 'number') return value;
+  const match = value
+    .trim()
+    .toLowerCase()
+    .match(/^(\d+)(b|kb|mb)?$/);
+  if (!match) throw new Error(`Invalid context resolution size budget: ${value}`);
+  const amount = Number.parseInt(match[1] ?? '0', 10);
+  const unit = match[2] ?? 'b';
+  const bytes = unit === 'mb' ? amount * 1024 * 1024 : unit === 'kb' ? amount * 1024 : amount;
+  if (bytes < 1024 || bytes > 1_000_000) {
+    throw new Error(`Context resolution size budget must be between 1024 and 1000000 bytes.`);
+  }
+  return bytes;
+}
+
+function normalizeWorkflowRefs(
+  sourceConfigPath: string,
+  workflows: NonNullable<ViewportConfigInput['workflows']>,
+): ViewportWorkflowRef[] {
+  return Object.entries(workflows).map(([id, workflow]) => {
+    if (typeof workflow === 'string') {
+      return {
+        id,
+        required: true,
+        sourceConfigPath,
+        path: workflow,
+      };
+    }
+    return {
+      id,
+      required: workflow.required ?? true,
+      sourceConfigPath,
+      ...(workflow.path ? { path: workflow.path } : {}),
+      ...(workflow.resource ? { resource: workflow.resource } : {}),
+      ...(workflow.version ? { version: workflow.version } : {}),
+      ...(workflow.digest ? { digest: workflow.digest } : {}),
+    };
+  });
+}
+
+function defaultPrivacy(kind: ViewportContextProviderKind): ViewportContextProviderPrivacy {
+  if (kind === 'repo-docs') return 'local_only';
+  if (kind === 'viewport-vault') return 'control_plane_blind';
+  if (kind === 'custom-cli' || kind === 'custom-mcp') return 'unknown';
+  return 'third_party_terms';
+}
+
+function defaultCapabilities(
+  kind: ViewportContextProviderKind,
+): ViewportContextProviderCapability[] {
+  if (kind === 'repo-docs') return ['search', 'get'];
+  if (kind === 'viewport-vault') return ['search', 'get', 'propose', 'write_approved'];
+  if (kind === 'custom-cli' || kind === 'custom-mcp') return ['search'];
+  return ['search', 'get'];
+}
+
+function manifestContextProviders(
+  configs: ParsedViewportConfig[],
+): SessionContextProviderManifest[] {
+  const providers: SessionContextProviderManifest[] = [];
+  for (const config of configs) {
+    for (const provider of config.contract.contextProviders) {
+      if (providers.some((existing) => existing.id === provider.id)) continue;
+      providers.push({ ...provider, resolution: 'requested_unverified' });
+    }
+  }
+  return providers;
+}
+
+function manifestWorkflows(configs: ParsedViewportConfig[]): SessionWorkflowManifest[] {
+  const workflows: SessionWorkflowManifest[] = [];
+  for (const config of configs) {
+    for (const workflow of config.contract.workflows) {
+      if (workflows.some((existing) => existing.id === workflow.id)) continue;
+      workflows.push({ ...workflow, resolution: 'requested_unverified' });
+    }
+  }
+  return workflows;
+}
+
+function mergeContextResolution(configs: ParsedViewportConfig[]): ViewportContextResolution {
+  for (const config of configs) {
+    if (Object.keys(config.contract.contextResolution).length > 0) {
+      return config.contract.contextResolution;
+    }
+  }
+  return {};
 }
 
 function detectConflicts(configs: ParsedViewportConfig[]): SessionResourceConflict[] {

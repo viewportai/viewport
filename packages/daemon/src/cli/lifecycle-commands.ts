@@ -374,7 +374,11 @@ export function showHelp(): void {
     '                               Validate, run, inspect, approve, and cancel local workflows',
   );
   console.log('  config resolve [--cwd <path>] [--json]');
-  console.log('                               Resolve repo-local .viewport/config.json resources');
+  console.log('                               Resolve repo-local .viewport/config resources');
+  console.log('  validate [--path <path>] [--json]');
+  console.log('                               Validate repo-local .viewport/config.yaml contract');
+  console.log('  contract resolve [--path <path>] [--json]');
+  console.log('                               Resolve repo-local contract manifest');
   console.log(
     '  context init --context <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
   );

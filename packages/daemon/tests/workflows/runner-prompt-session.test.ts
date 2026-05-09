@@ -239,6 +239,94 @@ nodes:
     const completed = await daemon.workflowRunner.getRun(run.id);
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.review?.output).toBe('context used');
+    expect(completed?.resourceManifest?.resources.contexts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'ctx-workflow-launch' })]),
+    );
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-manifest-resolved',
+        data: expect.objectContaining({
+          manifestDigest: completed?.resourceManifest?.manifestDigest,
+          configSourceCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it('injects repo-docs provider context into workflow prompt sessions and records provenance', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+
+    await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(projectDir, 'docs'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, 'docs', 'review.md'),
+      'Run the local reviewer before touching billing code.',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(projectDir, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: repo_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-repo-docs-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review billing changes.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    const session = await waitForSessionWithPrompt(adapter, 'Review billing changes.');
+    const sentPrompt = String(session.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(sentPrompt).toContain('<viewport_context>');
+    expect(sentPrompt).toContain('## repo_docs (repo-docs)');
+    expect(sentPrompt).toContain('### docs/review.md');
+    expect(sentPrompt).toContain('Run the local reviewer before touching billing code.');
+
+    session.emitAgentMessage('repo docs used');
+    session.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.resourceManifest?.contract.contextProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'repo_docs',
+          provider: 'repo-docs',
+          privacy: 'local_only',
+        }),
+      ]),
+    );
   });
 
   it('fails and kills a prompt node when its timeout expires', async () => {
