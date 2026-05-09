@@ -76,6 +76,7 @@ export const ViewportConfigSchema = z
             installId: z.string().optional(),
             runtimeTargetId: z.string().optional(),
             machineId: z.string().optional(),
+            machineName: z.string().max(80).optional(),
             issueToken: z.string().optional(),
             tlsVerify: z.enum(['auto', '0', '1']).optional(),
             caCertPath: z.string().optional(),

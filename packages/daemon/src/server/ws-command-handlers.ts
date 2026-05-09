@@ -5,24 +5,17 @@ import type { SupervisionManager } from '../hooks/supervision.js';
 import { sendSyncSnapshot, type ConnectedClient } from './hello-builder.js';
 import type { RingBuffer } from './ring-buffer.js';
 import type { IncomingMessage } from './ws-protocol.js';
-import { discoveredWatchKey, removeDiscoveredWatch } from './discovered-watch-key.js';
 import { ErrorCodes } from '../core/error-codes.js';
-import { logger } from '../core/logger.js';
 import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
+import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
 import {
   resolveSessionResourceManifestSync,
   type SessionResourceManifest,
 } from '../config-resolution/index.js';
-import {
-  createGitMetadataResolver,
-  type GitRepositoryMetadata,
-} from '../session-enrichment/git.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
-const MAX_CLIENT_DISCOVERED_WATCHES = 2048;
-const log = logger.child({ module: 'ws-command-handlers' });
 
-function addBoundedSetEntry(set: Set<string>, value: string, maxEntries: number): void {
+export function addBoundedSetEntry(set: Set<string>, value: string, maxEntries: number): void {
   if (set.has(value)) return;
   while (set.size >= maxEntries) {
     const oldest = set.values().next();
@@ -33,41 +26,6 @@ function addBoundedSetEntry(set: Set<string>, value: string, maxEntries: number)
 }
 
 type IncomingByType<T extends IncomingMessage['type']> = Extract<IncomingMessage, { type: T }>;
-
-interface SessionListSource {
-  sessionId: string;
-  agentId: string;
-  summary: string;
-  lastModified: number;
-  messageCount?: number;
-  resumable: boolean;
-  cwd?: string;
-  worktreePath?: string;
-}
-
-function toSessionListEntry(
-  session: SessionListSource,
-  directoryId: string,
-  workingDirectory: string | null,
-  gitMetadataFor: (directoryPath?: string | null) => GitRepositoryMetadata,
-): Record<string, unknown> {
-  const git = gitMetadataFor(workingDirectory);
-  return {
-    id: session.sessionId,
-    agentId: session.agentId,
-    directoryId,
-    summary: session.summary,
-    lastActivity: session.lastModified,
-    messageCount: session.messageCount ?? 0,
-    resumable: session.resumable,
-    workingDirectory,
-    repoRoot: git.repoRoot,
-    repoRemoteUrl: git.repoRemoteUrl,
-    repoBranch: git.repoBranch,
-    repoSha: git.repoSha,
-    resourceManifest: resolveManifest(workingDirectory),
-  };
-}
 
 export interface AckSender {
   (
@@ -230,107 +188,12 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       sendAck(client, msg.requestId, 'ok');
     },
 
-    'list-sessions': async (client, msg) => {
-      const discovered = daemon.getDiscoveredSessions(msg.directoryId);
-      const sessions = discovered.get(msg.directoryId) ?? [];
-      const offset = Math.max(0, msg.offset ?? 0);
-      const limit = Math.min(200, Math.max(1, msg.limit ?? 50));
-      const sliced = sessions.slice(offset, offset + limit);
-      const dir = daemon.directoryManager?.get?.(msg.directoryId);
-      const workingDirectoryFallback = dir?.path ?? null;
-      const gitMetadataFor = createGitMetadataResolver();
-
-      log.debug(
-        {
-          directoryId: msg.directoryId,
-          total: sessions.length,
-          offset,
-          limit,
-          returned: sliced.length,
-        },
-        'Listing discovered sessions',
-      );
-
-      client.send(
-        JSON.stringify({
-          type: 'session-list',
-          directoryId: msg.directoryId,
-          sessions: sliced.map((s) => ({
-            ...toSessionListEntry(
-              s,
-              msg.directoryId,
-              s.cwd ?? s.worktreePath ?? workingDirectoryFallback,
-              gitMetadataFor,
-            ),
-          })),
-          total: sessions.length,
-          hasMore: offset + limit < sessions.length,
-        }),
-      );
-      sendAck(client, msg.requestId, 'ok');
-    },
-
-    resume: async (client, msg) => {
-      const resumeDir = daemon.directoryManager.get(msg.directoryId);
-      if (!resumeDir) {
-        sendAck(client, msg.requestId, 'error', `Directory not found: ${msg.directoryId}`, {
-          errorCode: ErrorCodes.DIRECTORY_NOT_FOUND,
-        });
-        return;
-      }
-
-      const discovered = daemon.getDiscoveredSessions(msg.directoryId);
-      const discoveredList = discovered.get(msg.directoryId) ?? [];
-      const discoveredMatch = discoveredList.find((s) => s.sessionId === msg.sessionId);
-      if (!discoveredMatch) {
-        sendAck(client, msg.requestId, 'error', `Discovered session not found: ${msg.sessionId}`, {
-          errorCode: ErrorCodes.DISCOVERED_SESSION_NOT_FOUND,
-        });
-        return;
-      }
-      const resourceId = msg.resourceId;
-      const overrides = {
-        ...(msg.model ? { model: msg.model } : {}),
-        ...(resourceId ? { resourceId } : {}),
-        agent: discoveredMatch.agentId,
-      };
-      const initialPrompt = msg.prompt?.trim() ?? '';
-      const resumeSessionId = await daemon.resumeSession(
-        msg.sessionId,
-        msg.directoryId,
-        initialPrompt,
-        overrides,
-      );
-      addBoundedSetEntry(client.subscriptions, resumeSessionId, MAX_CLIENT_SUBSCRIPTIONS);
-      client.send(
-        JSON.stringify({
-          type: 'session-started',
-          sessionId: resumeSessionId,
-          directoryId: msg.directoryId,
-          cwd: resumeDir.path,
-          agent: discoveredMatch.agentId,
-          resourceId,
-          summary: discoveredMatch?.summary,
-          resourceManifest: resolveManifest(resumeDir.path),
-        }),
-      );
-      sendBufferedReplay(client, resumeSessionId);
-      sendAck(client, msg.requestId, 'ok');
-    },
-
-    'watch-discovered-session': async (client, msg) => {
-      addBoundedSetEntry(
-        client.watchedDiscoveredSessions,
-        discoveredWatchKey(msg.sessionId, msg.directoryId),
-        MAX_CLIENT_DISCOVERED_WATCHES,
-      );
-      sendAck(client, msg.requestId, 'ok');
-    },
-
-    'unwatch-discovered-session': async (client, msg) => {
-      removeDiscoveredWatch(client.watchedDiscoveredSessions, msg.sessionId, msg.directoryId);
-      sendAck(client, msg.requestId, 'ok');
-    },
+    ...createWsSessionCommandHandlers({
+      daemon,
+      sendAck,
+      getOrCreateBuffer,
+      addBoundedSetEntry,
+    }),
 
     'sync-request': async (client, msg) => {
       sendSyncSnapshot(client, daemon, registry);

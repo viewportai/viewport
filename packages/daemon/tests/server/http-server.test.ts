@@ -212,6 +212,56 @@ describe('HTTP Server', () => {
     ]);
   });
 
+  it('GET /api/directories/:directoryId/sessions/:sessionId/messages preserves full history unless a limit is requested', async () => {
+    const directory = await daemon.directoryManager.register(testDir);
+    const buffer = new RingBuffer({ sessionId: 'long-active-history-session' });
+    buffer.setDirectoryId(directory.id);
+    for (let i = 0; i < 125; i++) {
+      buffer.push('long-active-history-session', {
+        updateType: 'agent-message',
+        messageId: `active-agent-${i}`,
+        text: `reply ${i}`,
+        timestamp: Date.now() + i,
+      });
+    }
+    await buffer.flushPersistence();
+
+    const full = await app.inject({
+      method: 'GET',
+      url: `/api/directories/${directory.id}/sessions/long-active-history-session/messages`,
+    });
+    const limited = await app.inject({
+      method: 'GET',
+      url: `/api/directories/${directory.id}/sessions/long-active-history-session/messages?limit=10`,
+    });
+
+    expect(full.statusCode).toBe(200);
+    expect(limited.statusCode).toBe(200);
+    expect((JSON.parse(full.payload) as { messages: unknown[] }).messages).toHaveLength(125);
+    expect((JSON.parse(limited.payload) as { messages: unknown[] }).messages).toHaveLength(10);
+  });
+
+  it('GET /api/directories/:directoryId/sessions/:sessionId/messages distinguishes missing directory and session errors', async () => {
+    const missingDirectory = await app.inject({
+      method: 'GET',
+      url: '/api/directories/missing-dir/sessions/session-1/messages',
+    });
+    expect(missingDirectory.statusCode).toBe(404);
+    expect(JSON.parse(missingDirectory.payload)).toMatchObject({
+      errorCode: 'DIRECTORY_NOT_FOUND',
+    });
+
+    const directory = await daemon.directoryManager.register(testDir);
+    const missingSession = await app.inject({
+      method: 'GET',
+      url: `/api/directories/${directory.id}/sessions/missing-session/messages`,
+    });
+    expect(missingSession.statusCode).toBe(404);
+    expect(JSON.parse(missingSession.payload)).toMatchObject({
+      errorCode: 'DISCOVERED_SESSION_NOT_FOUND',
+    });
+  });
+
   it('POST /api/sessions/:id/stop stops active session', async () => {
     (daemon as unknown as { killSession: (id: string) => Promise<void> }).killSession = vi
       .fn()

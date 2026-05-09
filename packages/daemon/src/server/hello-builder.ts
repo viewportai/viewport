@@ -6,9 +6,12 @@
  * changes such as reconnect or relay key exchange.
  */
 
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRegistry } from '../core/agent-registry.js';
 import { logger } from '../core/logger.js';
+import { sanitizeMachineDisplayName } from '../core/machine-name.js';
 import { resolveDisplayVersion } from '../core/package-meta.js';
 import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
 import {
@@ -20,6 +23,7 @@ import { isRecentlyDiscoveredSession } from './discovered-session-window.js';
 
 const MAX_DISCOVERED_HELLO_SESSIONS = 1_000;
 const log = logger.child({ module: 'hello-builder' });
+let cachedMachineDisplayName: string | undefined;
 
 // ---------------------------------------------------------------------------
 // Connected client interface (shared with ws-server)
@@ -37,6 +41,7 @@ export interface SnapshotPayload {
   protocolVersion: 2;
   machine: {
     id: string;
+    name?: string;
     daemonVersion: string;
     runtimeKind: 'managed' | 'local-dev' | 'self-hosted';
     daemonHomeScope: 'global' | 'resource-override';
@@ -187,11 +192,15 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
     machineId: daemon.configManager.getMachineId(),
     daemonVersion: resolveDisplayVersion(),
   });
+  const machineName = resolveMachineDisplayName(
+    daemon.configManager.getDaemonConfig()?.relay?.machineName,
+  );
 
   return {
     protocolVersion: 2,
     machine: {
       id: machine.machineId ?? daemon.configManager.getMachineId(),
+      name: machineName,
       daemonVersion: machine.daemonVersion,
       runtimeKind: machine.runtimeKind,
       daemonHomeScope: machine.daemonHomeScope,
@@ -208,6 +217,34 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
     agents,
     models,
   };
+}
+
+function resolveMachineDisplayName(configuredName: string | undefined): string | undefined {
+  const fromConfig = sanitizeMachineDisplayName(configuredName);
+  if (fromConfig) return fromConfig;
+  const fromEnv = sanitizeMachineDisplayName(process.env['VIEWPORT_MACHINE_NAME']);
+  if (fromEnv) return fromEnv;
+  if (cachedMachineDisplayName !== undefined) return cachedMachineDisplayName || undefined;
+
+  if (process.platform === 'darwin') {
+    try {
+      const computerName = execFileSync('scutil', ['--get', 'ComputerName'], {
+        encoding: 'utf-8',
+        timeout: 500,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const sanitized = sanitizeMachineDisplayName(computerName);
+      if (sanitized) {
+        cachedMachineDisplayName = sanitized;
+        return cachedMachineDisplayName;
+      }
+    } catch {
+      // Fall through to hostname.
+    }
+  }
+
+  cachedMachineDisplayName = sanitizeMachineDisplayName(os.hostname()) ?? '';
+  return cachedMachineDisplayName || undefined;
 }
 
 function resolveManifest(workingDirectory: string | null | undefined): SessionResourceManifest {

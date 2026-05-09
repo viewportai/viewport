@@ -208,8 +208,6 @@ function applyRuntimeTlsEnvironment(
     'VIEWPORT_TLS_CERT_DIR',
     'VIEWPORT_TLS_CERT',
     'VIEWPORT_TLS_KEY',
-    'VIEWPORT_RESOURCE_OVERRIDE_DIR',
-    'VPD_RESOURCE_OVERRIDE_DIR',
   ];
   const previous = new Map<string, string | undefined>();
   for (const key of keys) {
@@ -243,10 +241,33 @@ function applyRuntimeTlsEnvironment(
     setEnv('VIEWPORT_TLS_CERT', undefined);
     setEnv('VIEWPORT_TLS_KEY', undefined);
   }
+  return () => {
+    for (const [key, value] of previous.entries()) {
+      setEnv(key, value);
+    }
+  };
+}
+
+function applyRuntimeResourceOverrideEnvironment(
+  runtimeState: Awaited<ReturnType<typeof readDaemonRuntimeState>>,
+): () => void {
+  const keys = ['VIEWPORT_RESOURCE_OVERRIDE_DIR', 'VPD_RESOURCE_OVERRIDE_DIR'];
+  const previous = new Map<string, string | undefined>();
+  for (const key of keys) {
+    previous.set(key, process.env[key]);
+  }
+
+  const setEnv = (key: string, value: string | undefined) => {
+    if (value === undefined || value === '') {
+      delete process.env[key];
+      return;
+    }
+    process.env[key] = value;
+  };
 
   if (runtimeState?.resourceOverrideConfigDir) {
     setEnv('VIEWPORT_RESOURCE_OVERRIDE_DIR', runtimeState.resourceOverrideConfigDir);
-    setEnv('VPD_RESOURCE_OVERRIDE_DIR', runtimeState.resourceOverrideConfigDir);
+    setEnv('VPD_RESOURCE_OVERRIDE_DIR', undefined);
   }
 
   return () => {
@@ -269,10 +290,12 @@ async function hardRestartFromRuntimeState(runtimeState: DaemonRuntimeState | nu
   const resolved = await resolveDaemonSettingsFromSources();
   const launch = applyRuntimeOverrides(resolved.launch, runtimeState);
   const restoreEnv = applyRuntimeTlsEnvironment(runtimeState);
+  const restoreResourceOverrideEnv = applyRuntimeResourceOverrideEnvironment(runtimeState);
   try {
     await startWithLaunchConfig(launch, { silent: true });
     await waitForDaemonReady({ requireRelayConnected: false, timeoutMs: 45_000 });
   } finally {
+    restoreResourceOverrideEnv();
     restoreEnv();
   }
 }

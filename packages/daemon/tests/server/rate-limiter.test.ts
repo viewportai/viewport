@@ -61,6 +61,12 @@ describe('RateLimiter', () => {
       }
     });
 
+    it('allows session history hydration across many registered directories', () => {
+      for (let i = 0; i < 14; i++) {
+        expect(limiter.check('client-1', 'list-sessions')).toBe(true);
+      }
+    });
+
     it('refills tokens over time', () => {
       const config = DEFAULT_LIMITS['prompt']!;
 
@@ -166,6 +172,7 @@ describe('RateLimiter', () => {
       expect(DEFAULT_LIMITS['prompt']).toBeDefined();
       expect(DEFAULT_LIMITS['respond-permission']).toBeDefined();
       expect(DEFAULT_LIMITS['list-sessions']).toBeDefined();
+      expect(DEFAULT_LIMITS['read-session-messages']).toBeDefined();
       expect(DEFAULT_LIMITS['resume']).toBeDefined();
       expect(DEFAULT_LIMITS['subscribe']).toBeDefined();
       expect(DEFAULT_LIMITS['watch-discovered-session']).toBeDefined();

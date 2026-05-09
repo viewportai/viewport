@@ -11,6 +11,7 @@ import {
   resolveResourceOverrideConfig,
   saveConfig,
 } from '../../src/core/config.js';
+import { sanitizeMachineDisplayName } from '../../src/core/machine-name.js';
 import { AgentRegistry } from '../../src/core/agent-registry.js';
 import { claudeAgent } from '../../src/agents/claude.js';
 import type { GitTrackerConfig } from '../../src/core/types.js';
@@ -78,6 +79,14 @@ describe('deepMerge', () => {
     const nested = result['nested'] as Record<string, unknown>;
     expect(nested['value']).toBe(3);
     expect(nested['safe']).toBeUndefined();
+  });
+});
+
+describe('sanitizeMachineDisplayName', () => {
+  it('trims whitespace, removes control characters, and bounds display names', () => {
+    expect(sanitizeMachineDisplayName('  Mehr\u0000\n MacBook\t Pro  ')).toBe('Mehr MacBook Pro');
+    expect(sanitizeMachineDisplayName('x'.repeat(120))).toHaveLength(80);
+    expect(sanitizeMachineDisplayName(' \n\t ')).toBeNull();
   });
 });
 
@@ -428,6 +437,39 @@ describe('Config I/O', () => {
     expect(rewritten.daemon?.relay?.['enrollToken']).toBeUndefined();
     expect(rewritten.daemon?.relay?.['projectMachineBindingId']).toBeUndefined();
     expect(rewritten.daemon?.relay?.['runtimeTargetId']).toBe('legacy-target');
+  });
+
+  it('migrates legacy projectMachineBindingId into runtimeTargetId when needed', async () => {
+    const dir = path.join(tmpDir, '.viewport');
+    await fs.mkdir(dir, { recursive: true });
+    const configPath = path.join(dir, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        daemon: {
+          relay: {
+            enabled: true,
+            serverUrl: 'http://127.0.0.1:8787',
+            workspaceId: 'workspace_demo',
+            projectMachineBindingId: 'legacy-binding-only',
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const config = await loadConfig();
+
+    expect(config.daemon?.relay?.runtimeTargetId).toBe('legacy-binding-only');
+    expect(
+      (config.daemon?.relay as Record<string, unknown>)['projectMachineBindingId'],
+    ).toBeUndefined();
+
+    const rewritten = JSON.parse(await fs.readFile(configPath, 'utf-8')) as {
+      daemon?: { relay?: Record<string, unknown> };
+    };
+    expect(rewritten.daemon?.relay?.['runtimeTargetId']).toBe('legacy-binding-only');
+    expect(rewritten.daemon?.relay?.['projectMachineBindingId']).toBeUndefined();
   });
 });
 

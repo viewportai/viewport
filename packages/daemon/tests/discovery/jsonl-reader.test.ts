@@ -7,6 +7,7 @@ import {
   encodeProjectDir,
   decodeProjectDir,
   listProjectSessions,
+  readRichSessionMessagesTailFromFile,
 } from '../../src/discovery/jsonl-reader.js';
 
 // ---------------------------------------------------------------------------
@@ -401,6 +402,125 @@ describe('parseJSONLEntry', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// readRichSessionMessagesTailFromFile
+// ---------------------------------------------------------------------------
+
+describe('readRichSessionMessagesTailFromFile', () => {
+  it('reads newest rich messages in chronological order from the file tail', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-jsonl-tail-'));
+    try {
+      const filePath = path.join(dir, 'session.jsonl');
+      await fs.writeFile(
+        filePath,
+        [
+          jsonlMessage('user', 'oldest'),
+          JSON.stringify({ type: 'system', timestamp: '2026-01-01T00:00:01Z' }),
+          jsonlMessage('assistant', 'middle'),
+          jsonlMessage('user', 'newest'),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const blocks = await readRichSessionMessagesTailFromFile(filePath, 2, { chunkSize: 19 });
+      expect(blocks.map((block) => (block.kind === 'text' ? block.text : block.kind))).toEqual([
+        'middle',
+        'newest',
+      ]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('handles JSON lines split across tiny backwards chunks', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-jsonl-tail-'));
+    try {
+      const filePath = path.join(dir, 'session.jsonl');
+      await fs.writeFile(
+        filePath,
+        [
+          jsonlMessage('user', 'first split-safe message'),
+          jsonlMessage('assistant', 'second split-safe message'),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const blocks = await readRichSessionMessagesTailFromFile(filePath, 2, { chunkSize: 7 });
+      expect(blocks.map((block) => (block.kind === 'text' ? block.text : block.kind))).toEqual([
+        'first split-safe message',
+        'second split-safe message',
+      ]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops at the configured tail scan budget instead of reading unbounded history', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-jsonl-tail-'));
+    try {
+      const filePath = path.join(dir, 'session.jsonl');
+      await fs.writeFile(
+        filePath,
+        [
+          jsonlMessage('user', 'outside the scan budget'),
+          ...Array.from({ length: 100 }, (_, index) =>
+            JSON.stringify({
+              type: 'system',
+              timestamp: `2026-01-01T00:00:${index}Z`,
+              pad: 'x'.repeat(128),
+            }),
+          ),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const blocks = await readRichSessionMessagesTailFromFile(filePath, 5, {
+        chunkSize: 64,
+        maxBytes: 512,
+      });
+      expect(blocks).toEqual([]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips oversized tail lines and still returns earlier usable messages', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-jsonl-tail-'));
+    try {
+      const filePath = path.join(dir, 'session.jsonl');
+      await fs.writeFile(
+        filePath,
+        [
+          jsonlMessage('assistant', 'usable before huge line'),
+          jsonlMessage('user', 'x'.repeat(2_048)),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const blocks = await readRichSessionMessagesTailFromFile(filePath, 2, {
+        chunkSize: 128,
+        maxLineBytes: 1_024,
+      });
+      expect(blocks.map((block) => (block.kind === 'text' ? block.text : block.kind))).toEqual([
+        'usable before huge line',
+      ]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+function jsonlMessage(role: 'user' | 'assistant', text: string): string {
+  return JSON.stringify({
+    type: role,
+    timestamp: '2026-01-01T00:00:00Z',
+    uuid: `${role}-${text.slice(0, 8)}`,
+    message: {
+      content: [{ type: 'text', text }],
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // listProjectSessions
