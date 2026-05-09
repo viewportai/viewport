@@ -125,6 +125,14 @@ export function createWsSessionCommandHandlers(
     },
 
     'read-session-messages': async (client, msg) => {
+      const streamed = msg.delivery === 'event-stream' && msg.requestId;
+      if (streamed) {
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          streamed: true,
+          accepted: true,
+        });
+      }
+
       try {
         const startedAt = Date.now();
         log.debug(
@@ -154,7 +162,7 @@ export function createWsSessionCommandHandlers(
           },
           'Read discovered session messages',
         );
-        if (msg.delivery === 'event-stream' && msg.requestId) {
+        if (streamed) {
           client.send(
             JSON.stringify({
               type: 'session-messages-page',
@@ -167,14 +175,6 @@ export function createWsSessionCommandHandlers(
               final: true,
             }),
           );
-          sendAck(client, msg.requestId, 'ok', undefined, {
-            originalReturned: fit.originalReturned,
-            droppedCount: fit.droppedCount,
-            truncated: fit.truncated,
-            hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
-            nextOffset: parseSessionMessageOffset(msg.offset) + fit.messages.length,
-            streamed: true,
-          });
           return;
         }
         sendAck(client, msg.requestId, 'ok', undefined, {
@@ -190,6 +190,21 @@ export function createWsSessionCommandHandlers(
                 ErrorCodes.INTERNAL_ERROR,
                 error instanceof Error ? error.message : 'Session messages not found',
               );
+        if (streamed) {
+          client.send(
+            JSON.stringify({
+              type: 'session-messages-page',
+              requestId: msg.requestId,
+              directoryId: msg.directoryId,
+              sessionId: msg.sessionId,
+              messages: [],
+              error: viewportError.message,
+              errorCode: viewportError.code,
+              final: true,
+            }),
+          );
+          return;
+        }
         sendAck(client, msg.requestId, 'error', viewportError.message, {
           errorCode: viewportError.code,
         });
