@@ -225,6 +225,226 @@ describe('context CLI command', () => {
     expect(output).toContain('"status": "applied"');
   });
 
+  it('searches repo-docs providers through the resolved contract', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-repo-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(repo, 'docs'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: repo-docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+      ].join('\n'),
+    );
+    await fs.writeFile(
+      path.join(repo, 'docs', 'auth.md'),
+      'Auth changes must run session rotation tests.',
+    );
+
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--query',
+      'session rotation',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_search/v1"');
+    expect(output).toContain('"provider_id": "repo-docs"');
+    expect(output).toContain('"privacy": "local_only"');
+    expect(output).toContain('Auth changes must run session rotation tests.');
+    expect(output).toContain('"manifest_digest"');
+  });
+
+  it('gets one repo-docs entry by provider-scoped id', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-get-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(repo, 'docs'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+      ].join('\n'),
+    );
+    await fs.writeFile(path.join(repo, 'docs', 'deploy.md'), 'Deploys require a rollback note.');
+
+    await runContext([
+      'context',
+      'get',
+      'docs:docs/deploy.md',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_get/v1"');
+    expect(output).toContain('"id": "docs:docs/deploy.md"');
+    expect(output).toContain('Deploys require a rollback note.');
+  });
+
+  it('proposes context through a viewport-vault provider declared in the contract', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-propose-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: guardrails',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'propose',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'guardrails',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Auth testing rule',
+      '--body',
+      'Auth changes must run session rotation tests.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_propose/v1"');
+    expect(output).toContain('"provider_id": "guardrails"');
+    expect(output).toContain('"status": "pending_review"');
+    expect(output).toContain('"payload_digest"');
+    expect(output).not.toContain('Auth changes must run session rotation tests.');
+  });
+
+  it('searches approved viewport-vault context through the resolved provider contract', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-vault-search-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: guardrails',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    await runContext([
+      'context',
+      'add',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Auth testing rule',
+      '--body',
+      'Auth changes must run session rotation tests.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'guardrails',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'rotation',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_search/v1"');
+    expect(output).toContain('"provider_id": "guardrails"');
+    expect(output).toContain('"privacy": "control_plane_blind"');
+    expect(output).toContain('Auth changes must run session rotation tests.');
+  });
+
   it('pushes and pulls canonical encrypted context events using saved relay config', async () => {
     await runContext([
       'context',

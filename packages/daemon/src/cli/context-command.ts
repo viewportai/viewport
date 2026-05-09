@@ -14,6 +14,7 @@ import { readCandidateDecisionApplications } from '../context/local-edge-decisio
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
+import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
 import {
   contextDeviceAccept,
   contextDeviceApprove,
@@ -43,7 +44,19 @@ export async function context(): Promise<void> {
     await contextAdd();
     return;
   }
+  if (subcommand === 'search') {
+    await contextSearch();
+    return;
+  }
+  if (subcommand === 'get') {
+    await contextGet();
+    return;
+  }
   if (subcommand === 'propose') {
+    if (getFlag('provider')) {
+      await contextProviderPropose();
+      return;
+    }
     await contextPropose();
     return;
   }
@@ -99,7 +112,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <init|status|add|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
