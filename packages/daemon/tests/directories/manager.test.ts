@@ -121,6 +121,37 @@ describe('DirectoryManager', () => {
     expect(found!.path).toBe(path.resolve(testDir));
   });
 
+  it('finds path aliases and does not auto-register duplicate directory rows', async () => {
+    await configManager.registerDirectory('alias-dir', path.resolve(testDir), { agent: 'codex' });
+
+    const found = manager.getByPath(testDir);
+    const registered = await manager.register(testDir);
+
+    expect(found).toMatchObject({
+      id: 'alias-dir',
+      path: path.resolve(testDir),
+    });
+    expect(registered).toMatchObject({
+      id: 'alias-dir',
+      path: path.resolve(testDir),
+    });
+    expect(Object.entries(configManager.getDirectories())).toHaveLength(1);
+  });
+
+  it('dedupes duplicate path aliases in public directory lists', async () => {
+    const canonicalId = DirectoryManager.idFromPath(testDir);
+    await configManager.registerDirectory('alias-dir', path.resolve(testDir));
+    await configManager.registerDirectory(canonicalId, path.resolve(testDir));
+
+    const dirs = manager.list();
+
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]).toMatchObject({
+      id: canonicalId,
+      path: path.resolve(testDir),
+    });
+  });
+
   it('returns undefined for unregistered path', () => {
     expect(manager.getByPath('/not/registered')).toBeUndefined();
   });
