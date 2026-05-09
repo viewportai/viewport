@@ -38,7 +38,7 @@ describe('HTTP context routes', () => {
       method: 'POST',
       url: '/api/context/init',
       payload: credentials({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         userName: 'alice',
         deviceName: 'alice-laptop',
         keyStore: 'file',
@@ -50,13 +50,16 @@ describe('HTTP context routes', () => {
       method: 'POST',
       url: '/api/context/entries',
       payload: credentials({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         actorName: 'alice-laptop',
         title: 'Review standard',
         body: 'Every risky change needs regression proof.',
       }),
     });
     expect(add.statusCode).toBe(201);
+    expect(JSON.parse(add.payload).entry).toMatchObject({
+      scope: 'resource',
+    });
 
     const raw = await readTree(tempHome);
     expect(raw).toContain('viewport.context_event/v1');
@@ -65,12 +68,12 @@ describe('HTTP context routes', () => {
 
     const status = await app.inject({
       method: 'GET',
-      url: '/api/context/status?project=project-alpha',
+      url: '/api/context/status?context=context-alpha',
     });
     expect(status.statusCode).toBe(200);
-    expect(JSON.parse(status.payload).projects[0]).toMatchObject({
+    expect(JSON.parse(status.payload).contexts[0]).toMatchObject({
       schemaVersion: 'viewport.context_event/v1',
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       entryCount: 1,
       serverSync: 'disabled',
       keyStore: 'file',
@@ -80,7 +83,7 @@ describe('HTTP context routes', () => {
       method: 'POST',
       url: '/api/context/resolve',
       payload: credentials({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         actorName: 'alice-laptop',
         query: 'regression',
       }),
@@ -92,6 +95,22 @@ describe('HTTP context routes', () => {
     expect(body.bundle.items[0]).toMatchObject({
       title: 'Review standard',
       body: 'Every risky change needs regression proof.',
+    });
+  });
+
+  it('rejects context writes without a context resource id', async () => {
+    const init = await app.inject({
+      method: 'POST',
+      url: '/api/context/init',
+      payload: credentials({
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+      }),
+    });
+
+    expect(init.statusCode).toBe(400);
+    expect(JSON.parse(init.payload)).toMatchObject({
+      error: 'contextResourceId is required',
     });
   });
 

@@ -16,7 +16,7 @@ function runJson(home, args) {
   return JSON.parse(run(home, args));
 }
 
-test('CLI can share encrypted project context while excluding private notes', () => {
+test('CLI can share encrypted resource context while excluding private notes', () => {
   const aliceHome = tempHome('vault-cli-alice');
   const bobHome = tempHome('vault-cli-bob');
   const syncHome = tempHome('vault-cli-sync');
@@ -38,7 +38,7 @@ test('CLI can share encrypted project context while excluding private notes', ()
     '--actor',
     'alice',
     '--scope',
-    'project',
+    'resource',
     '--title',
     'Auth rule',
     '--body',
@@ -100,7 +100,7 @@ test('CLI rejects direct approved entries from untrusted source kinds', () => {
       '--actor',
       'alice',
       '--scope',
-      'project',
+      'resource',
       '--title',
       'Unsafe Slack fact',
       '--body',

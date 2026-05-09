@@ -190,7 +190,7 @@ export async function list(): Promise<void> {
   }
   if (dirs.length === 0) {
     console.log('No directories registered.');
-    console.log('Start the daemon with "vpd start" to auto-discover projects.');
+    console.log('Start the daemon with "vpd start" to auto-discover directories.');
     return;
   }
 

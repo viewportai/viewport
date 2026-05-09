@@ -8,6 +8,8 @@ import {
   WorktreeSquashBodySchema,
   invalidPayloadError,
 } from './http-request-schemas.js';
+import { createGitMetadataResolver } from '../session-enrichment/git.js';
+import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 
 export function registerSessionRoutes(app: FastifyInstance, daemon: Daemon): void {
   app.get<{
@@ -22,17 +24,28 @@ export function registerSessionRoutes(app: FastifyInstance, daemon: Daemon): voi
       typeof request.query.directoryId === 'string' ? request.query.directoryId : undefined;
     const agentFilter =
       typeof request.query.agent === 'string' ? request.query.agent.trim() : undefined;
+    const gitMetadataFor = createGitMetadataResolver();
 
     const active = daemon
       .listActiveSessions()
       .map((session) => {
         const dir = daemon.directoryManager.get(session.directoryId);
+        const workingDirectory = dir?.path ?? null;
+        const git = gitMetadataFor(workingDirectory);
         return {
           source: 'active' as const,
           id: session.sessionId,
           sessionId: session.sessionId,
           directoryId: session.directoryId,
           directoryPath: dir?.path ?? null,
+          workingDirectory,
+          repoRoot: git.repoRoot,
+          repoRemoteUrl: git.repoRemoteUrl,
+          repoBranch: git.repoBranch,
+          repoSha: git.repoSha,
+          resourceManifest: resolveSessionResourceManifestSync({
+            workingDirectory: workingDirectory ?? process.cwd(),
+          }),
           agentId: session.agent,
           state: session.state,
           mode: session.mode,
@@ -52,12 +65,22 @@ export function registerSessionRoutes(app: FastifyInstance, daemon: Daemon): voi
       .flatMap(([directoryId, sessions]) =>
         sessions.map((session) => {
           const dir = daemon.directoryManager.get(directoryId);
+          const workingDirectory = session.cwd ?? session.worktreePath ?? dir?.path ?? null;
+          const git = gitMetadataFor(workingDirectory);
           return {
             source: 'discovered' as const,
             id: session.sessionId,
             sessionId: session.sessionId,
             directoryId,
             directoryPath: dir?.path ?? null,
+            workingDirectory,
+            repoRoot: git.repoRoot,
+            repoRemoteUrl: git.repoRemoteUrl,
+            repoBranch: git.repoBranch,
+            repoSha: git.repoSha,
+            resourceManifest: resolveSessionResourceManifestSync({
+              workingDirectory: workingDirectory ?? process.cwd(),
+            }),
             agentId: session.agentId,
             state: 'idle',
             mode: 'detect',

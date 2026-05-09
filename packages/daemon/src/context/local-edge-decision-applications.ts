@@ -2,16 +2,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { configDir } from '../core/config.js';
 import type { ContextCandidateDecisionApplication } from './local-edge-types.js';
-import { safeProjectId } from './local-edge-paths.js';
+import { safeContextResourceId } from './local-edge-paths.js';
 
 export async function recordCandidateDecisionApplication(options: {
   application: ContextCandidateDecisionApplication;
   home: string;
-  projectId: string;
+  contextResourceId: string;
 }): Promise<void> {
   const applications = await readCandidateDecisionApplications({
     home: options.home,
-    projectId: options.projectId,
+    contextResourceId: options.contextResourceId,
   });
   const key = applicationKey(options.application);
   const next = [
@@ -19,19 +19,19 @@ export async function recordCandidateDecisionApplication(options: {
     options.application,
   ].sort((left, right) => left.applied_at.localeCompare(right.applied_at));
 
-  const file = applicationsPath(options.home, options.projectId);
+  const file = applicationsPath(options.home, options.contextResourceId);
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   await fs.writeFile(file, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
 }
 
 export async function readCandidateDecisionApplications(options: {
   home?: string;
-  projectId?: string;
+  contextResourceId?: string;
   since?: string;
 }): Promise<ContextCandidateDecisionApplication[]> {
   const home = options.home ?? configDir();
-  const files = options.projectId
-    ? [applicationsPath(home, options.projectId)]
+  const files = options.contextResourceId
+    ? [applicationsPath(home, options.contextResourceId)]
     : await applicationFiles(home);
 
   const applications: ContextCandidateDecisionApplication[] = [];
@@ -55,12 +55,12 @@ export async function readCandidateDecisionApplications(options: {
     .sort((left, right) => left.applied_at.localeCompare(right.applied_at));
 }
 
-export function applicationsPath(home: string, projectId: string): string {
+export function applicationsPath(home: string, contextResourceId: string): string {
   return path.join(
     home,
     'context',
     'candidate-decision-applications',
-    `${safeProjectId(projectId)}.json`,
+    `${safeContextResourceId(contextResourceId)}.json`,
   );
 }
 

@@ -12,18 +12,13 @@ import {
 } from './local-edge-engine.js';
 import {
   countApprovedEntryEvents,
-  readProjectMetadata,
-  readProjectMetadataRecords,
-  toPublicProjectRecord,
-  touchProjectMetadata,
-  writeProjectMetadata,
+  readContextMetadata,
+  readContextMetadataRecords,
+  toPublicContextRecord,
+  touchContextMetadata,
+  writeContextMetadata,
 } from './local-edge-metadata.js';
-import { migrateLegacyProjectIfNeeded } from './local-edge-migration.js';
-import {
-  archivedContextProjectPath,
-  legacyContextProjectPath,
-  repoIdForProject,
-} from './local-edge-paths.js';
+import { repoIdForContextResource } from './local-edge-paths.js';
 import {
   CONTEXT_BUNDLE_SCHEMA_VERSION,
   CONTEXT_EVENT_SCHEMA_VERSION,
@@ -31,7 +26,7 @@ import {
   type ContextBundle,
   type ContextCredentials,
   type ContextKeyStore,
-  type ContextProjectRecord,
+  type ContextResourceRecord,
   type ContextScope,
   type ContextStoredEntry,
 } from './local-edge-types.js';
@@ -40,34 +35,24 @@ export type {
   ContextBundle,
   ContextCandidateProposal,
   ContextCredentials,
-  ContextProjectRecord,
+  ContextResourceRecord,
   ContextKeyStore,
   ContextScope,
   ContextStoredEntry,
 } from './local-edge-types.js';
 
-export { archivedContextProjectPath, isResolverPinMismatch };
+export { isResolverPinMismatch };
 
-export function contextProjectPath(projectId: string, home = configDir()): string {
-  return legacyContextProjectPath(projectId, home);
-}
-
-export async function initContextProject(options: {
-  projectId: string;
+export async function initContextResource(options: {
+  contextResourceId: string;
   userName: string;
   deviceName: string;
   credentials: ContextCredentials;
   keyStore?: ContextKeyStore;
   home?: string;
-}): Promise<ContextProjectRecord> {
+}): Promise<ContextResourceRecord> {
   const home = options.home ?? configDir();
   const keyStore = options.keyStore ?? resolveContextKeyStore();
-  await migrateLegacyProjectIfNeeded({
-    projectId: options.projectId,
-    home,
-    credentials: options.credentials,
-    keyStore,
-  });
   const vault = createVault(home, keyStore);
   await ensureUserAndDevice(vault, {
     userName: options.userName,
@@ -75,24 +60,24 @@ export async function initContextProject(options: {
     credentials: options.credentials,
   });
   await ensureRepo(vault, {
-    repoId: repoIdForProject(options.projectId),
-    projectId: options.projectId,
+    repoId: repoIdForContextResource(options.contextResourceId),
+    contextResourceId: options.contextResourceId,
     userName: options.userName,
     deviceName: options.deviceName,
     home,
     keyStore,
   });
-  return readProjectMetadata(options.projectId, home);
+  return readContextMetadata(options.contextResourceId, home);
 }
 
-export async function joinContextProject(options: {
-  projectId: string;
+export async function joinContextResource(options: {
+  contextResourceId: string;
   userName: string;
   deviceName: string;
   credentials: ContextCredentials;
   keyStore?: ContextKeyStore;
   home?: string;
-}): Promise<ContextProjectRecord> {
+}): Promise<ContextResourceRecord> {
   const home = options.home ?? configDir();
   const keyStore = options.keyStore ?? resolveContextKeyStore();
   const vault = createVault(home, keyStore);
@@ -102,12 +87,12 @@ export async function joinContextProject(options: {
     credentials: options.credentials,
   });
   const now = new Date().toISOString();
-  await writeProjectMetadata(
+  await writeContextMetadata(
     {
       schemaVersion: CONTEXT_EVENT_SCHEMA_VERSION,
       engine: '@viewportai/context-engine',
-      projectId: options.projectId,
-      repoId: repoIdForProject(options.projectId),
+      contextResourceId: options.contextResourceId,
+      repoId: repoIdForContextResource(options.contextResourceId),
       userName: options.userName,
       deviceName: options.deviceName,
       keyStore,
@@ -117,7 +102,7 @@ export async function joinContextProject(options: {
     },
     home,
   );
-  return readProjectMetadata(options.projectId, home);
+  return readContextMetadata(options.contextResourceId, home);
 }
 
 export async function initContextUser(options: {
@@ -201,14 +186,14 @@ export async function acceptContextDeviceApproval(options: {
 }
 
 export async function grantContextUser(options: {
-  projectId: string;
+  contextResourceId: string;
   actorName: string;
   recipientName: string;
   credentials: ContextCredentials;
   home?: string;
 }): Promise<{ event: unknown; repoId: string }> {
   const home = options.home ?? configDir();
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   assertCredentialsOrApprovedDevice(vault, {
     userName: metadata.userName,
@@ -225,23 +210,26 @@ export async function grantContextUser(options: {
     actorName: options.actorName,
     recipientName: options.recipientName,
   });
-  await touchProjectMetadata(metadata, home);
+  await touchContextMetadata(metadata, home);
   return { event, repoId: metadata.repoId };
 }
 
-export async function readContextStatus(options: { projectId?: string; home?: string }): Promise<{
-  projects: Array<ContextProjectRecord & { entryCount: number }>;
+export async function readContextStatus(options: {
+  contextResourceId?: string;
+  home?: string;
+}): Promise<{
+  contexts: Array<ContextResourceRecord & { entryCount: number }>;
 }> {
   const home = options.home ?? configDir();
-  const records = await readProjectMetadataRecords(home);
-  const filtered = options.projectId
-    ? records.filter((record) => record.projectId === options.projectId)
+  const records = await readContextMetadataRecords(home);
+  const filtered = options.contextResourceId
+    ? records.filter((record) => record.contextResourceId === options.contextResourceId)
     : records;
 
   return {
-    projects: await Promise.all(
+    contexts: await Promise.all(
       filtered.map(async (record) => ({
-        ...toPublicProjectRecord(record),
+        ...toPublicContextRecord(record),
         entryCount: await countApprovedEntryEvents(record.repoId, home),
       })),
     ),
@@ -249,7 +237,7 @@ export async function readContextStatus(options: { projectId?: string; home?: st
 }
 
 export async function addContextEntry(options: {
-  projectId: string;
+  contextResourceId: string;
   actorName: string;
   title: string;
   body: string;
@@ -259,13 +247,7 @@ export async function addContextEntry(options: {
   home?: string;
 }): Promise<ContextStoredEntry> {
   const home = options.home ?? configDir();
-  await migrateLegacyProjectIfNeeded({
-    projectId: options.projectId,
-    home,
-    credentials: options.credentials,
-    keyStore: 'file',
-  });
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   assertCredentialsOrApprovedDevice(vault, {
     userName: metadata.userName,
@@ -278,7 +260,7 @@ export async function addContextEntry(options: {
     credentials: options.credentials,
   });
 
-  const scope = options.scope ?? 'project';
+  const scope = options.scope ?? 'resource';
   const source = options.source ?? 'manual://vpd-context';
   const event = vault.addEntry({
     repoId: metadata.repoId,
@@ -291,7 +273,7 @@ export async function addContextEntry(options: {
     trustState: 'approved',
     appliesTo: [],
   });
-  await touchProjectMetadata(metadata, home);
+  await touchContextMetadata(metadata, home);
 
   return {
     id: event.id,
@@ -307,33 +289,28 @@ export async function addContextEntry(options: {
 }
 
 export async function resolveContextBundle(options: {
-  projectId: string;
+  contextResourceId: string;
   actorName: string;
   query: string;
-  credentials: ContextCredentials;
+  credentials?: ContextCredentials;
   includePrivate?: boolean;
   profile?: string;
   profilePin?: { path?: string; digest?: string };
   home?: string;
 }): Promise<ContextBundle> {
   const home = options.home ?? configDir();
-  await migrateLegacyProjectIfNeeded({
-    projectId: options.projectId,
-    home,
-    credentials: options.credentials,
-    keyStore: 'file',
-  });
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
+  const credentials = options.credentials ?? { passphrase: '', recoveryCode: '' };
   assertCredentialsOrApprovedDevice(vault, {
     userName: metadata.userName,
     deviceName: options.actorName,
-    credentials: options.credentials,
+    credentials,
   });
   await ensureUserOrApprovedDevice(vault, {
     userName: metadata.userName,
     deviceName: options.actorName,
-    credentials: options.credentials,
+    credentials,
   });
 
   const engineBundle = vault.resolveBundle({
@@ -349,7 +326,7 @@ export async function resolveContextBundle(options: {
     manifest: {
       schemaVersion: CONTEXT_BUNDLE_SCHEMA_VERSION,
       apiVersion: CONTEXT_BUNDLE_SCHEMA_VERSION,
-      projectId: metadata.projectId,
+      contextResourceId: metadata.contextResourceId,
       repoId: metadata.repoId,
       actorName: options.actorName,
       query: options.query,
@@ -370,7 +347,7 @@ export async function resolveContextBundle(options: {
 }
 
 export async function writeContextProfile(options: {
-  projectId: string;
+  contextResourceId: string;
   name: string;
   packs: string[];
   query: string;
@@ -379,7 +356,7 @@ export async function writeContextProfile(options: {
   home?: string;
 }): Promise<{ path: string; digest: string }> {
   const home = options.home ?? configDir();
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   assertCredentials(vault, metadata.userName, options.credentials);
   return vault.writeProfile({

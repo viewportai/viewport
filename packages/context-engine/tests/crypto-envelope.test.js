@@ -45,7 +45,7 @@ test('signed encrypted event tampering is rejected during sync import', () => {
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Tamper-proof event',
     body: 'Tampered signed events must not import.',
   });

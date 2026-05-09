@@ -10,7 +10,7 @@ test('trusted edge resolves cached approved context offline with manifest state'
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Offline review rule',
     body: 'Offline agents may use cached approved context with stale manifest state.',
   });

@@ -61,6 +61,7 @@ function unsignedDecisionRecord(
     id: record.id,
     inbox_item_id: record.inbox_item_id ?? null,
     repo_id: record.repo_id,
+    context_resource_id: record.context_resource_id ?? record.repo_id,
     candidate_event_id: record.candidate_event_id,
     payload_digest: record.payload_digest ?? null,
     decision: record.decision,

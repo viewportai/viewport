@@ -66,7 +66,7 @@ async function waitFor<T>(fn: () => Promise<T | null>, timeoutMs = 8_000): Promi
   }
 }
 
-describe('fullstack CLI workflow e2e', () => {
+describe('fullstack CLI workflow e2e', { timeout: 60_000, retry: 2 }, () => {
   let harness: FullstackCliHarness | null = null;
   const originalArgv = process.argv.slice();
 

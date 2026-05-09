@@ -20,7 +20,7 @@ This package is intentionally package-local CommonJS while the standalone POC is
 | Tampered grants or envelopes are rejected | `crypto-envelope.test.js`, `hpke-grants.test.js`, `protocol-schemas.test.js` |
 | Untrusted agent/tool output cannot bypass candidate review | `poisoning-guard.test.js`, `candidate-workflow.test.js` |
 | Revocation blocks future access while old plaintext remains an explicit limitation | `key-rotation.test.js`, `team-scale-revocation.test.js`, `user-device-access.test.js` |
-| New approved user device can read existing project history without project-level rewrap | `user-device-access.test.js` |
+| New approved user device can read existing resource history without resource-level rewrap | `user-device-access.test.js` |
 | User-owned events are signed by approved devices instead of a plaintext identity shadow | `user-device-access.test.js` |
 | User private key material is absent from exported encrypted sync events | `user-device-access.test.js` |
 | Any authorized peer can fulfill a missing user grant | `access-model.test.js` |

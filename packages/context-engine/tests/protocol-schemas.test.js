@@ -47,7 +47,7 @@ test('generated protocol artifacts validate against canonical JSON schemas', () 
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Schema proof context',
     body: 'Auth reviews require regression proof.',
   });
@@ -91,7 +91,7 @@ test('protocol schemas reject malformed or downgraded artifacts', () => {
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Strict schema context',
     body: 'Malformed events must be rejected before sync.',
   });

@@ -46,26 +46,64 @@ describe('ws workflow command handlers', () => {
       workflowYaml: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
       workflowSourceRef: 'viewport://templates/proof',
       directoryId: 'dir-1',
-      projectId: 'project-1',
-      projectMachineBindingId: 'binding-1',
+      resourceId: 'resource-1',
+      runtimeTargetId: 'target-1',
       platformRunId: 'platform-run-1',
       inputs: { focus: 'risk' },
       requestId: 'req-run',
     });
 
-    expect(startRun).toHaveBeenCalledWith({
-      workflowPath: undefined,
-      workflowYaml: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
-      workflowSourceRef: 'viewport://templates/proof',
-      directoryId: 'dir-1',
-      inputs: { focus: 'risk' },
-      projectId: 'project-1',
-      projectMachineBindingId: 'binding-1',
-      platformRunId: 'platform-run-1',
-      initiation: 'browser',
-    });
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowYaml: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
+        workflowSourceRef: 'viewport://templates/proof',
+        directoryId: 'dir-1',
+        inputs: { focus: 'risk' },
+        resourceId: 'resource-1',
+        runtimeTargetId: 'target-1',
+        platformRunId: 'platform-run-1',
+        initiation: 'browser',
+      }),
+    );
+    const request = startRun.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(request).not.toHaveProperty('projectId');
+    expect(request).not.toHaveProperty('projectMachineBindingId');
     expect(sent).toContainEqual({ type: 'workflow-run-started', run });
     expect(sendAck).toHaveBeenCalledWith(client, 'req-run', 'ok', undefined, { runId: 'run-1' });
+  });
+
+  it('passes resourceId and runtimeTargetId as canonical workflow run scope fields', async () => {
+    const { client } = createClient();
+    const run = {
+      id: 'run-resource',
+      status: 'running',
+      workflowName: 'proof',
+      nodes: {},
+      events: [],
+    };
+    const startRun = vi.fn().mockResolvedValue(run);
+    const { handlers } = createHandlers({
+      workflowRunner: { startRun },
+    });
+
+    await handlers['workflow-run'](client, {
+      type: 'workflow-run',
+      workflowYaml: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
+      directoryId: 'dir-1',
+      resourceId: 'resource-1',
+      runtimeTargetId: 'target-1',
+      requestId: 'req-resource-run',
+    });
+
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resourceId: 'resource-1',
+        runtimeTargetId: 'target-1',
+      }),
+    );
+    const request = startRun.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(request).not.toHaveProperty('projectId');
+    expect(request).not.toHaveProperty('projectMachineBindingId');
   });
 
   it('resolves workflow approvals and sends the updated run detail', async () => {

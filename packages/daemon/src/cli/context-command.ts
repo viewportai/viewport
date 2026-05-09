@@ -2,7 +2,7 @@ import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
   addContextEntry,
-  initContextProject,
+  initContextResource,
   isResolverPinMismatch,
   readContextStatus,
   resolveContextBundle,
@@ -107,20 +107,19 @@ function showContextHelp(): void {
 }
 
 async function initContext(): Promise<void> {
-  const projectId = requiredFlag(
-    'project',
-    'vpd context init --project <id> --user <name> --device <name>',
+  const contextResourceId = requiredContextId(
+    'vpd context init --context <id> --user <name> --device <name>',
   );
   const userName = requiredFlag(
     'user',
-    'vpd context init --project <id> --user <name> --device <name>',
+    'vpd context init --context <id> --user <name> --device <name>',
   );
   const deviceName = requiredFlag(
     'device',
-    'vpd context init --project <id> --user <name> --device <name>',
+    'vpd context init --context <id> --user <name> --device <name>',
   );
-  const record = await initContextProject({
-    projectId,
+  const record = await initContextResource({
+    contextResourceId,
     userName,
     deviceName,
     credentials: readCredentials(),
@@ -128,42 +127,43 @@ async function initContext(): Promise<void> {
   });
 
   if (isJsonMode()) {
-    printJson({ command: 'context init', ok: true, project: record });
+    printJson({ command: 'context init', ok: true, context: record });
     return;
   }
-  console.log(`Context initialized for project ${record.projectId}`);
+  console.log(`Context initialized: ${record.contextResourceId}`);
   console.log(`User:        ${record.userName}`);
   console.log(`Device:      ${record.deviceName}`);
   console.log('Server sync: disabled');
 }
 
 async function contextStatus(): Promise<void> {
-  const status = await readContextStatus({ projectId: getFlag('project') });
+  const status = await readContextStatus({ contextResourceId: getContextId() });
   if (isJsonMode()) {
     printJson({ command: 'context status', ok: true, ...status });
     return;
   }
 
-  if (status.projects.length === 0) {
-    console.log('No local context projects initialized.');
+  if (status.contexts.length === 0) {
+    console.log('No local context resources initialized.');
     return;
   }
-  for (const project of status.projects) {
-    console.log(`${project.projectId}  ${project.entryCount} entries  sync=${project.serverSync}`);
+  for (const context of status.contexts) {
+    console.log(
+      `${context.contextResourceId}  ${context.entryCount} entries  sync=${context.serverSync}`,
+    );
   }
 }
 
 async function contextAdd(): Promise<void> {
-  const projectId = requiredFlag(
-    'project',
-    'vpd context add --project <id> --title <text> --body <text>',
+  const contextResourceId = requiredContextId(
+    'vpd context add --context <id> --title <text> --body <text>',
   );
   const entry = await addContextEntry({
-    projectId,
+    contextResourceId,
     actorName:
-      getFlag('actor') ?? requiredFlag('device', 'vpd context add --project <id> --device <name>'),
-    title: requiredFlag('title', 'vpd context add --project <id> --title <text> --body <text>'),
-    body: requiredFlag('body', 'vpd context add --project <id> --title <text> --body <text>'),
+      getFlag('actor') ?? requiredFlag('device', 'vpd context add --context <id> --device <name>'),
+    title: requiredFlag('title', 'vpd context add --context <id> --title <text> --body <text>'),
+    body: requiredFlag('body', 'vpd context add --context <id> --title <text> --body <text>'),
     scope: parseScope(getFlag('scope')),
     source: getFlag('source'),
     credentials: readCredentials(),
@@ -178,17 +178,16 @@ async function contextAdd(): Promise<void> {
 }
 
 async function contextPropose(): Promise<void> {
-  const projectId = requiredFlag(
-    'project',
-    'vpd context propose --project <id> --title <text> --body <text>',
+  const contextResourceId = requiredContextId(
+    'vpd context propose --context <id> --title <text> --body <text>',
   );
   const candidate = await proposeContextEntry({
-    projectId,
+    contextResourceId,
     actorName:
       getFlag('actor') ??
-      requiredFlag('device', 'vpd context propose --project <id> --device <name>'),
-    title: requiredFlag('title', 'vpd context propose --project <id> --title <text> --body <text>'),
-    body: requiredFlag('body', 'vpd context propose --project <id> --title <text> --body <text>'),
+      requiredFlag('device', 'vpd context propose --context <id> --device <name>'),
+    title: requiredFlag('title', 'vpd context propose --context <id> --title <text> --body <text>'),
+    body: requiredFlag('body', 'vpd context propose --context <id> --title <text> --body <text>'),
     source: getFlag('source'),
     sourceKind: parseSourceKind(getFlag('source-kind')),
     credentials: readCredentials(),
@@ -203,11 +202,11 @@ async function contextPropose(): Promise<void> {
 }
 
 async function contextResolve(): Promise<void> {
-  const projectId = requiredFlag('project', 'vpd context resolve --project <id> --query <text>');
+  const contextResourceId = requiredContextId('vpd context resolve --context <id> --query <text>');
   let bundle;
   try {
     bundle = await resolveContextBundle({
-      projectId,
+      contextResourceId,
       actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
       query: getFlag('query') ?? '',
       includePrivate: hasFlag('include-private'),
@@ -240,7 +239,7 @@ async function contextResolve(): Promise<void> {
 async function contextSyncPush(): Promise<void> {
   const target = await resolveContextSyncTarget('sync-push');
   const result = await pushContextEvents({
-    projectId: target.projectId,
+    contextResourceId: target.contextResourceId,
     serverUrl: target.serverUrl,
     credential: target.credential,
   });
@@ -257,7 +256,7 @@ async function contextSyncPush(): Promise<void> {
 async function contextSyncPull(): Promise<void> {
   const target = await resolveContextSyncTarget('sync-pull');
   const result = await pullContextEvents({
-    projectId: target.projectId,
+    contextResourceId: target.contextResourceId,
     serverUrl: target.serverUrl,
     credential: target.credential,
     actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
@@ -278,7 +277,7 @@ async function contextSyncPull(): Promise<void> {
 async function contextDecisions(): Promise<void> {
   const since = parseSince(getFlag('since'));
   const applications = await readCandidateDecisionApplications({
-    projectId: getFlag('project'),
+    contextResourceId: getContextId(),
     since,
     home: getFlag('home'),
   });
@@ -308,8 +307,9 @@ function readCredentials(): { passphrase: string; recoveryCode: string } {
 }
 
 function parseScope(raw: string | undefined): ContextScope {
-  if (!raw) return 'project';
-  if (raw === 'private' || raw === 'project' || raw === 'team' || raw === 'organization') {
+  if (!raw) return 'resource';
+  if (raw === 'project') return 'resource';
+  if (raw === 'private' || raw === 'resource' || raw === 'team' || raw === 'organization') {
     return raw;
   }
   throw new Error(`Unsupported context scope: ${raw}`);
@@ -369,4 +369,16 @@ function requiredFlag(name: string, usage: string): string {
     throw new Error(usage.startsWith('Missing') ? usage : `${usage} (missing --${name})`);
   }
   return value;
+}
+
+function requiredContextId(usage: string): string {
+  const value = getContextId();
+  if (!value || value.startsWith('--')) {
+    throw new Error(`${usage} (missing --context)`);
+  }
+  return value;
+}
+
+function getContextId(): string | undefined {
+  return getFlag('context') ?? getFlag('project');
 }

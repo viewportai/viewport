@@ -21,6 +21,7 @@ import type { PermissionCoordinator } from './permission-coordinator.js';
 import { NoopTracker } from '../tracking/noop-tracker.js';
 import { ViewportError } from './errors.js';
 import { logger } from './logger.js';
+import { buildSessionPromptWithContext } from './session-context-prompt.js';
 
 const log = logger.child({ module: 'session-manager' });
 
@@ -230,6 +231,7 @@ export class SessionManager {
   getSessionInfo(sessionId: string): {
     state: SessionState;
     directoryId: string;
+    resourceId?: string;
     agent: string;
     mode: SessionAgentMode;
     steps: ReadonlyArray<Step>;
@@ -238,6 +240,7 @@ export class SessionManager {
     return {
       state: active.session.state,
       directoryId: active.directoryId,
+      resourceId: active.config.resourceId,
       agent: active.config.agent,
       mode: this.getSessionMode(sessionId),
       steps: active.tracker.steps,
@@ -251,6 +254,7 @@ export class SessionManager {
   listSessionSummaries(): Array<{
     sessionId: string;
     directoryId: string;
+    resourceId?: string;
     agent: string;
     state: SessionState;
     mode: SessionAgentMode;
@@ -259,6 +263,7 @@ export class SessionManager {
     return [...this.sessions.entries()].map(([sessionId, active]) => ({
       sessionId,
       directoryId: active.directoryId,
+      resourceId: active.config.resourceId,
       agent: active.config.agent,
       state: active.session.state,
       mode: this.getSessionMode(sessionId),
@@ -425,10 +430,20 @@ export class SessionManager {
     if (!text) return;
 
     setImmediate(() => {
-      void this.sendPrompt(sessionId, text).catch((err) => {
+      void this.sendInitialPrompt(sessionId, text).catch((err) => {
         log.warn({ sessionId, err }, 'Initial prompt dispatch failed');
       });
     });
+  }
+
+  private async sendInitialPrompt(sessionId: string, text: string): Promise<void> {
+    const active = this.getActiveSession(sessionId);
+    const directory = this.directoryManager.get(active.directoryId);
+    const prompt = await buildSessionPromptWithContext({
+      workingDirectory: directory?.path ?? active.worktreePath,
+      prompt: text,
+    });
+    await this.sendPrompt(sessionId, prompt);
   }
 
   /**

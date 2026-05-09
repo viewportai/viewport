@@ -40,7 +40,7 @@
       "version_id": "ctxev_00000000-0000-4000-8000-000000000001",
       "source": "git://api/AGENTS.md#auth",
       "trust": "approved",
-      "scope": "project",
+      "scope": "resource",
       "body_mode": "included",
       "title": "Auth review standard",
       "retrieval_score": 3

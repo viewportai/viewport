@@ -21,13 +21,13 @@ describe('context access lifecycle CLI commands', () => {
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 
-  it('approves a second device and resolves synced project history through vpd only', async () => {
+  it('approves a second device and resolves synced resource history through vpd only', async () => {
     const laptopHome = path.join(tempHome, 'alice-laptop-home');
     const desktopHome = path.join(tempHome, 'alice-desktop-home');
     const requestFile = path.join(tempHome, 'device-request.json');
     const approvalFile = path.join(tempHome, 'device-approval.json');
     const laptopIdentityFile = path.join(tempHome, 'alice-laptop-identity.json');
-    const pushedEvents = await setupSyncedAliceProject(laptopHome);
+    const pushedEvents = await setupSyncedAliceContext(laptopHome);
 
     await runContext([
       'context',
@@ -85,8 +85,8 @@ describe('context access lifecycle CLI commands', () => {
       'join',
       '--home',
       desktopHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--user',
       'alice',
       '--device',
@@ -121,12 +121,14 @@ describe('context access lifecycle CLI commands', () => {
     ]);
 
     mockPullOnly(pushedEvents);
-    await writeRelayConfig(desktopHome, 'project-alpha');
+    await writeRelayConfig(desktopHome, 'context-alpha');
     await runContext([
       'context',
       'sync-pull',
       '--home',
       desktopHome,
+      '--context',
+      'context-alpha',
       '--device',
       'alice-desktop',
       '--passphrase',
@@ -142,8 +144,8 @@ describe('context access lifecycle CLI commands', () => {
       'resolve',
       '--home',
       desktopHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-desktop',
       '--query',
@@ -159,13 +161,13 @@ describe('context access lifecycle CLI commands', () => {
     );
   });
 
-  it('grants a second user and lets that user resolve synced project context through vpd only', async () => {
+  it('grants a second user and lets that user resolve synced resource context through vpd only', async () => {
     const aliceHome = path.join(tempHome, 'alice-home');
     const bobHome = path.join(tempHome, 'bob-home');
     const aliceIdentityFile = path.join(tempHome, 'alice-identity.json');
     const aliceLaptopIdentityFile = path.join(tempHome, 'alice-laptop-identity.json');
     const bobIdentityFile = path.join(tempHome, 'bob-identity.json');
-    await setupSyncedAliceProject(aliceHome);
+    await setupSyncedAliceContext(aliceHome);
 
     await runContext([
       'context',
@@ -209,8 +211,8 @@ describe('context access lifecycle CLI commands', () => {
       'grant',
       '--home',
       aliceHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--actor',
       'alice-laptop',
       '--recipient',
@@ -226,8 +228,8 @@ describe('context access lifecycle CLI commands', () => {
       'join',
       '--home',
       bobHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--user',
       'bob',
       '--device',
@@ -283,14 +285,24 @@ describe('context access lifecycle CLI commands', () => {
 
     const pushedEvents: unknown[] = [];
     mockPushThenPull(pushedEvents);
-    await writeRelayConfig(aliceHome, 'project-alpha');
-    await runContext(['context', 'sync-push', '--home', aliceHome, '--json']);
-    await writeRelayConfig(bobHome, 'project-alpha');
+    await writeRelayConfig(aliceHome, 'context-alpha');
+    await runContext([
+      'context',
+      'sync-push',
+      '--home',
+      aliceHome,
+      '--context',
+      'context-alpha',
+      '--json',
+    ]);
+    await writeRelayConfig(bobHome, 'context-alpha');
     await runContext([
       'context',
       'sync-pull',
       '--home',
       bobHome,
+      '--context',
+      'context-alpha',
       '--device',
       'bob-laptop',
       '--passphrase',
@@ -306,8 +318,8 @@ describe('context access lifecycle CLI commands', () => {
       'resolve',
       '--home',
       bobHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'bob-laptop',
       '--query',
@@ -330,14 +342,14 @@ describe('context access lifecycle CLI commands', () => {
     await context();
   }
 
-  async function setupSyncedAliceProject(home: string): Promise<unknown[]> {
+  async function setupSyncedAliceContext(home: string): Promise<unknown[]> {
     await runContext([
       'context',
       'init',
       '--home',
       home,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--user',
       'alice',
       '--device',
@@ -355,8 +367,8 @@ describe('context access lifecycle CLI commands', () => {
       'add',
       '--home',
       home,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--title',
@@ -372,8 +384,16 @@ describe('context access lifecycle CLI commands', () => {
 
     const pushedEvents: unknown[] = [];
     mockPushThenPull(pushedEvents);
-    await writeRelayConfig(home, 'project-alpha');
-    await runContext(['context', 'sync-push', '--home', home, '--json']);
+    await writeRelayConfig(home, 'context-alpha');
+    await runContext([
+      'context',
+      'sync-push',
+      '--home',
+      home,
+      '--context',
+      'context-alpha',
+      '--json',
+    ]);
     return pushedEvents;
   }
 
@@ -405,7 +425,7 @@ describe('context access lifecycle CLI commands', () => {
   function mockPullOnly(pushedEvents: unknown[]): void {
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       expect(String(url)).toBe(
-        'https://app.getviewport.test/api/runtime/workspaces/project-alpha/context-vault/events/pull',
+        'https://app.getviewport.test/api/runtime/workspaces/context-alpha/context-vault/events/pull',
       );
       return jsonResponse({
         data: pushedEvents.map((event, index) => ({ id: index + 1, signed_event: event })),

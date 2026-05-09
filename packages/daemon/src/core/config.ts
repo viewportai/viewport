@@ -180,7 +180,7 @@ export interface ViewportConfig {
       serverUrl?: string;
       workspaceId?: string;
       installId?: string;
-      projectMachineBindingId?: string;
+      runtimeTargetId?: string;
       machineId?: string;
       issueToken?: string;
       tlsVerify?: 'auto' | '0' | '1';
@@ -213,55 +213,89 @@ export function configFilePath(): string {
   return path.join(configDir(), 'config.json');
 }
 
-export interface ProjectConfigResolution {
+export interface ResourceOverrideConfigResolution {
   dir: string | null;
-  source: 'explicit' | 'ancestor' | null;
+  source: 'explicit' | null;
 }
 
-export function resolveProjectConfig(
+export function resolveResourceOverrideConfig(
   env: NodeJS.ProcessEnv = process.env,
-): ProjectConfigResolution {
-  const explicit = env['VIEWPORT_PROJECT_CONFIG_DIR'] ?? env['VPD_PROJECT_CONFIG_DIR'];
+): ResourceOverrideConfigResolution {
+  const explicit = env['VIEWPORT_RESOURCE_OVERRIDE_DIR'] ?? env['VPD_RESOURCE_OVERRIDE_DIR'];
   if (typeof explicit === 'string' && explicit.trim().length > 0) {
     const resolved = path.resolve(explicit.trim());
     try {
       const configPath = path.join(resolved, 'config.json');
-      if (fsSync.statSync(resolved).isDirectory() && fsSync.statSync(configPath).isFile()) {
+      if (
+        fsSync.statSync(resolved).isDirectory() &&
+        fsSync.statSync(configPath).isFile() &&
+        isDaemonConfigFile(configPath)
+      ) {
         return { dir: resolved, source: 'explicit' };
       }
     } catch {
-      // Ignore explicit project config directories that do not contain a config file.
-      // A .viewport directory can also hold runtime worktrees and should not block
-      // discovery of a real ancestor override.
+      // Ignore explicit resource override directories that do not contain a config file.
     }
   }
 
-  let current = process.cwd();
-  while (true) {
-    const candidate = path.join(current, '.viewport');
-    const configPath = path.join(candidate, 'config.json');
-    try {
-      if (fsSync.statSync(candidate).isDirectory() && fsSync.statSync(configPath).isFile()) {
-        return { dir: candidate, source: 'ancestor' };
-      }
-    } catch {
-      // Ignore missing ancestor overrides.
-    }
+  return { dir: null, source: null };
+}
 
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return { dir: null, source: null };
-    }
-    current = parent;
+function isDaemonConfigFile(configPath: string): boolean {
+  try {
+    const raw = fsSync.readFileSync(configPath, 'utf8');
+    return hasDaemonConfigShape(JSON.parse(raw));
+  } catch {
+    // Keep malformed daemon override behavior actionable: if the file is not
+    // parseable, let loadConfigFromPath surface the exact JSON/schema error.
+    return true;
   }
 }
 
-export function resolveProjectConfigDir(env: NodeJS.ProcessEnv = process.env): string | null {
-  return resolveProjectConfig(env).dir;
+function hasDaemonConfigShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (hasRepoResourceConfigShape(value)) return false;
+
+  return Boolean(
+    value['daemon'] ||
+    value['directories'] ||
+    value['machineId'] ||
+    hasSessionDefaultsShape(value['defaults']),
+  );
 }
 
-export function projectConfigFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
-  const dir = resolveProjectConfigDir(env);
+function hasRepoResourceConfigShape(value: Record<string, unknown>): boolean {
+  if (value['resources'] || value['scope'] || value['$schema']) return true;
+
+  const defaults = value['defaults'];
+  if (!isPlainObject(defaults)) return false;
+  return Boolean(
+    defaults['inboxRoute'] || defaults['visibility'] || defaults['contextCandidateReview'],
+  );
+}
+
+function hasSessionDefaultsShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  return Boolean(
+    value['agent'] ||
+    value['model'] ||
+    value['gitTracker'] ||
+    value['permissions'] ||
+    value['costCapUsd'] ||
+    value['trust'],
+  );
+}
+
+export function resolveResourceOverrideConfigDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return resolveResourceOverrideConfig(env).dir;
+}
+
+export function resourceOverrideConfigFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const dir = resolveResourceOverrideConfigDir(env);
   return dir ? path.join(dir, 'config.json') : null;
 }
 
@@ -274,9 +308,15 @@ function migrateViewportConfig(raw: unknown): { config: unknown; migrated: boole
   const daemon = raw['daemon'];
   if (isPlainObject(daemon)) {
     const relay = daemon['relay'];
-    if (isPlainObject(relay) && 'enrollToken' in relay) {
-      delete relay['enrollToken'];
-      migrated = true;
+    if (isPlainObject(relay)) {
+      if ('enrollToken' in relay) {
+        delete relay['enrollToken'];
+        migrated = true;
+      }
+      if ('projectMachineBindingId' in relay) {
+        delete relay['projectMachineBindingId'];
+        migrated = true;
+      }
     }
   }
 
@@ -326,15 +366,15 @@ export async function loadGlobalConfig(): Promise<ViewportConfig> {
   return loadConfigFromPath(configFilePath());
 }
 
-/** Load the effective daemon config (global plus optional project override). */
+/** Load the effective daemon config (global plus optional resource override). */
 export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<ViewportConfig> {
   const globalConfig = await loadGlobalConfig();
-  const overridePath = projectConfigFilePath(env);
+  const overridePath = resourceOverrideConfigFilePath(env);
   if (!overridePath) {
     return globalConfig;
   }
-  const projectOverride = await loadConfigFromPath(overridePath);
-  return deepMerge(globalConfig, projectOverride);
+  const resourceOverride = await loadConfigFromPath(overridePath);
+  return deepMerge(globalConfig, resourceOverride);
 }
 
 /** Save the config file, creating the directory if needed. */
@@ -385,19 +425,19 @@ export function resolveConfig(
 export class ConfigManager {
   private config: ViewportConfig = {};
   private globalConfig: ViewportConfig = {};
-  private projectOverrideConfig: ViewportConfig | null = null;
-  private projectOverridePath: string | null = null;
+  private resourceOverrideConfig: ViewportConfig | null = null;
+  private resourceOverridePath: string | null = null;
   private loaded = false;
   private agentRegistry: AgentRegistry | null = null;
 
   /** Load config from disk. Safe to call multiple times. */
   async load(): Promise<void> {
     this.globalConfig = await loadGlobalConfig();
-    this.projectOverridePath = projectConfigFilePath();
-    this.projectOverrideConfig = this.projectOverridePath
-      ? await loadConfigFromPath(this.projectOverridePath)
+    this.resourceOverridePath = resourceOverrideConfigFilePath();
+    this.resourceOverrideConfig = this.resourceOverridePath
+      ? await loadConfigFromPath(this.resourceOverridePath)
       : null;
-    this.config = deepMerge(this.globalConfig, this.projectOverrideConfig ?? {});
+    this.config = deepMerge(this.globalConfig, this.resourceOverrideConfig ?? {});
     this.loaded = true;
   }
 
@@ -412,11 +452,11 @@ export class ConfigManager {
     return this.config;
   }
 
-  getConfigPaths(): { globalPath: string; projectOverridePath: string | null } {
+  getConfigPaths(): { globalPath: string; resourceOverridePath: string | null } {
     this.ensureLoaded();
     return {
       globalPath: configFilePath(),
-      projectOverridePath: this.projectOverridePath,
+      resourceOverridePath: this.resourceOverridePath,
     };
   }
 
@@ -492,7 +532,7 @@ export class ConfigManager {
           serverUrl?: string;
           workspaceId?: string;
           installId?: string;
-          projectMachineBindingId?: string;
+          runtimeTargetId?: string;
           machineId?: string;
           issueToken?: string;
           tlsVerify?: 'auto' | '0' | '1';
@@ -513,19 +553,19 @@ export class ConfigManager {
   async setDaemonConfig(daemonConfig: NonNullable<ViewportConfig['daemon']>): Promise<void> {
     this.ensureLoaded();
     const base =
-      this.projectOverridePath && this.projectOverrideConfig
-        ? (this.projectOverrideConfig.daemon ?? {})
+      this.resourceOverridePath && this.resourceOverrideConfig
+        ? (this.resourceOverrideConfig.daemon ?? {})
         : (this.globalConfig.daemon ?? {});
     const merged = mergeWithDeletes<NonNullable<ViewportConfig['daemon']>>(base, daemonConfig);
     validateRelayRuntimeSecurity(toRuntimeConfigForDaemonValidation(merged));
 
-    if (this.projectOverridePath) {
-      const nextProjectConfig = {
-        ...(this.projectOverrideConfig ?? {}),
+    if (this.resourceOverridePath) {
+      const nextResourceConfig = {
+        ...(this.resourceOverrideConfig ?? {}),
         daemon: merged,
       };
-      this.projectOverrideConfig = nextProjectConfig;
-      await saveConfigToPath(this.projectOverridePath, nextProjectConfig);
+      this.resourceOverrideConfig = nextResourceConfig;
+      await saveConfigToPath(this.resourceOverridePath, nextResourceConfig);
     } else {
       this.globalConfig = {
         ...this.globalConfig,
@@ -534,7 +574,7 @@ export class ConfigManager {
       await saveConfig(this.globalConfig);
     }
 
-    this.config = deepMerge(this.globalConfig, this.projectOverrideConfig ?? {});
+    this.config = deepMerge(this.globalConfig, this.resourceOverrideConfig ?? {});
   }
 
   /** Update global defaults. */

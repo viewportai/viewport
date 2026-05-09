@@ -9,7 +9,7 @@ import type { RelayMetrics } from './metrics.js';
 
 interface RedisBusEnvelope {
   workspaceId: string;
-  projectMachineBindingId: string;
+  runtimeTargetId: string;
   machineId?: string;
   sourceRelayId: string;
   targetRelayId: string | null;
@@ -23,7 +23,7 @@ interface RedisPresenceEntry {
   relayId: string;
   relayWsBaseUrl: string;
   daemonConnected: boolean;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
   updatedAtMs: number;
 }
@@ -43,8 +43,8 @@ function isRedisBusEnvelope(value: unknown): value is RedisBusEnvelope {
   const candidate = value as Record<string, unknown>;
   return (
     typeof candidate['workspaceId'] === 'string' &&
-    typeof candidate['projectMachineBindingId'] === 'string' &&
-    candidate['projectMachineBindingId'].trim().length > 0 &&
+    typeof candidate['runtimeTargetId'] === 'string' &&
+    candidate['runtimeTargetId'].trim().length > 0 &&
     (typeof candidate['machineId'] === 'undefined' || typeof candidate['machineId'] === 'string') &&
     typeof candidate['sourceRelayId'] === 'string' &&
     typeof candidate['payload'] === 'string' &&
@@ -73,8 +73,8 @@ function parseRedisPresenceEntry(raw: string | null): RedisPresenceEntry | null 
       relayId: entry['relayId'],
       relayWsBaseUrl: entry['relayWsBaseUrl'],
       daemonConnected: entry['daemonConnected'],
-      projectMachineBindingId:
-        typeof entry['projectMachineBindingId'] === 'string' ? entry['projectMachineBindingId'] : undefined,
+      runtimeTargetId:
+        typeof entry['runtimeTargetId'] === 'string' ? entry['runtimeTargetId'] : undefined,
       machineId: typeof entry['machineId'] === 'string' ? entry['machineId'] : undefined,
       updatedAtMs: entry['updatedAtMs'],
     };
@@ -160,9 +160,9 @@ export class RedisRelayBackplane implements RelayBackplane {
     return this.blockingClient;
   }
 
-  private presenceKey(workspaceId: string, projectMachineBindingId?: string): string {
-    return projectMachineBindingId
-      ? `${this.keyPrefix}:presence:${workspaceId}:${projectMachineBindingId}`
+  private presenceKey(workspaceId: string, runtimeTargetId?: string): string {
+    return runtimeTargetId
+      ? `${this.keyPrefix}:presence:${workspaceId}:${runtimeTargetId}`
       : `${this.keyPrefix}:presence:${workspaceId}`;
   }
 
@@ -172,9 +172,9 @@ export class RedisRelayBackplane implements RelayBackplane {
 
   async resolvePresence(
     workspaceId: string,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
   ): Promise<RelayPresenceResolution | null> {
-    const cacheKey = this.presenceKey(workspaceId, projectMachineBindingId);
+    const cacheKey = this.presenceKey(workspaceId, runtimeTargetId);
     const cached = this.resolveCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       this.touchResolveCache(cacheKey, cached);
@@ -203,7 +203,7 @@ export class RedisRelayBackplane implements RelayBackplane {
         relayId: entry.relayId,
         relayWsBaseUrl: entry.relayWsBaseUrl,
         daemonConnected: true,
-        projectMachineBindingId: entry.projectMachineBindingId,
+        runtimeTargetId: entry.runtimeTargetId,
         machineId: entry.machineId,
         expiresAt: Date.now() + Math.min(this.config.redisPresenceTtlMs, 2_000),
       };
@@ -224,12 +224,12 @@ export class RedisRelayBackplane implements RelayBackplane {
   async upsertPresence(
     workspaceId: string,
     daemonConnected: boolean,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
     machineId?: string,
   ): Promise<void> {
     try {
       const client = await this.ensureCommandClient();
-      const key = this.presenceKey(workspaceId, projectMachineBindingId);
+      const key = this.presenceKey(workspaceId, runtimeTargetId);
       if (!daemonConnected) {
         await client.del(key);
         this.resolveCache.delete(key);
@@ -240,7 +240,7 @@ export class RedisRelayBackplane implements RelayBackplane {
             relayId: this.config.relayId,
             relayWsBaseUrl: this.config.publicWsBaseUrl,
             daemonConnected: true,
-            projectMachineBindingId,
+            runtimeTargetId,
             machineId,
             updatedAtMs: Date.now(),
           } satisfies RedisPresenceEntry),
@@ -261,14 +261,14 @@ export class RedisRelayBackplane implements RelayBackplane {
 
   async publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string,
   ): Promise<boolean> {
     return await this.publish(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       'client_to_daemon',
       payload,
@@ -278,7 +278,7 @@ export class RedisRelayBackplane implements RelayBackplane {
 
   async publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string | null,
@@ -295,7 +295,7 @@ export class RedisRelayBackplane implements RelayBackplane {
     }
     return await this.publish(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       'daemon_to_clients',
       payload,
@@ -305,18 +305,18 @@ export class RedisRelayBackplane implements RelayBackplane {
 
   private async publish(
     workspaceId: string,
-    projectMachineBindingId: string | undefined,
+    runtimeTargetId: string | undefined,
     machineId: string | undefined,
     direction: RelayBusFrame['direction'],
     payload: string,
     targetRelayId: string,
   ): Promise<boolean> {
-    if (!projectMachineBindingId || projectMachineBindingId.trim().length === 0) {
+    if (!runtimeTargetId || runtimeTargetId.trim().length === 0) {
       this.logger.warn('relay_bus_publish_failed', {
         workspaceId,
         direction,
         targetRelayId,
-        reason: 'missing_project_machine_binding',
+        reason: 'missing_runtime_target',
       });
       this.metrics.increment('relay_bus_publish_failed_total');
       return false;
@@ -326,7 +326,7 @@ export class RedisRelayBackplane implements RelayBackplane {
       const client = await this.ensureCommandClient();
       const signedFields = {
         workspaceId,
-        projectMachineBindingId,
+        runtimeTargetId,
         machineId,
         sourceRelayId: this.config.relayId,
         targetRelayId,
@@ -420,10 +420,10 @@ export class RedisRelayBackplane implements RelayBackplane {
             this.metrics.increment('relay_bus_pull_stale_signature_total');
             continue;
           }
-          const freshnessKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.projectMachineBindingId}`;
+          const freshnessKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.runtimeTargetId}`;
           const previousIssuedAt = this.lastAcceptedIssuedAtMs.get(freshnessKey);
           const previousSignature = this.lastAcceptedSignature.get(freshnessKey);
-          const seenFrameKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.projectMachineBindingId}\n${parsed.signature}`;
+          const seenFrameKey = `${parsed.sourceRelayId}\n${parsed.workspaceId}\n${parsed.runtimeTargetId}\n${parsed.signature}`;
           const seenFrameIssuedAt = this.seenSignedFrames.get(seenFrameKey);
           if (typeof seenFrameIssuedAt === 'number' && parsed.issuedAtMs <= seenFrameIssuedAt) {
             this.metrics.increment('relay_bus_pull_replayed_signature_total');
@@ -442,7 +442,7 @@ export class RedisRelayBackplane implements RelayBackplane {
           const validSignature = verifyBusFrameSignature(
             {
               workspaceId: parsed.workspaceId,
-              projectMachineBindingId: parsed.projectMachineBindingId,
+              runtimeTargetId: parsed.runtimeTargetId,
               machineId: parsed.machineId,
               sourceRelayId: parsed.sourceRelayId,
               targetRelayId: parsed.targetRelayId,
@@ -480,7 +480,7 @@ export class RedisRelayBackplane implements RelayBackplane {
         accepted.push({
           id: now + accepted.length,
           workspaceId: parsed.workspaceId,
-          projectMachineBindingId: parsed.projectMachineBindingId,
+          runtimeTargetId: parsed.runtimeTargetId,
           machineId: parsed.machineId,
           sourceRelayId: parsed.sourceRelayId,
           targetRelayId: parsed.targetRelayId,

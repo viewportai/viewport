@@ -60,7 +60,7 @@ vi.mock('../../src/core/runtime-identity.js', () => ({
     daemonVersion: '0.2.0-dev',
     runtimeKind: 'local-dev',
     daemonHome: '/tmp/.viewport',
-    daemonHomeScope: 'project-override',
+    daemonHomeScope: 'resource-override',
     daemonHomeSource: 'project',
     hostedDefaults: false,
     profile: 'local',
@@ -68,7 +68,7 @@ vi.mock('../../src/core/runtime-identity.js', () => ({
     relayEndpoint: 'wss://getviewport.test:7781/ws',
     relayServerUrl: 'https://getviewport.test',
     relayWorkspaceId: 'workspace_test',
-    projectConfigSource: 'nearest',
+    resourceOverrideConfigSource: 'nearest',
   }),
 }));
 
@@ -106,7 +106,7 @@ function relayHealth(overrides: Record<string, unknown> = {}) {
       daemonVersion: '0.2.0-dev',
       runtimeKind: 'local-dev',
       daemonHome: '/tmp/.viewport',
-      daemonHomeScope: 'project-override',
+      daemonHomeScope: 'resource-override',
       profile: 'local',
       serverUrl: 'https://getviewport.test',
       relayEndpoint: 'wss://getviewport.test:7781/ws',
@@ -132,7 +132,7 @@ describe('lifecycle relay diagnostic output', () => {
     mocks.getMachineId.mockReturnValue('machine_test');
     mocks.getConfigPaths.mockReturnValue({
       globalPath: '/tmp/.viewport/config.json',
-      projectOverridePath: '/repo/.viewport/config.json',
+      resourceOverridePath: '/repo/.viewport/config.json',
     });
     mocks.resolveDaemonEndpoint.mockResolvedValue({
       type: 'http',
@@ -150,7 +150,7 @@ describe('lifecycle relay diagnostic output', () => {
       profile: 'local',
       runtimeKind: 'local-dev',
       daemonHome: '/tmp/.viewport',
-      daemonHomeScope: 'project-override',
+      daemonHomeScope: 'resource-override',
       serverUrl: 'https://getviewport.test',
       relayEndpoint: 'wss://getviewport.test:7781/ws',
       relayServerUrl: 'https://getviewport.test',

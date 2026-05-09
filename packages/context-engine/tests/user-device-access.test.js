@@ -31,7 +31,7 @@ async function syncInto({ sourceVault, targetVault, repoId, actorName, label }) 
   await targetVault.importSyncHpke({ repoId, actorName, inDir: syncDir });
 }
 
-test('new approved device decrypts existing project history without project-level rewrap', async () => {
+test('new approved device decrypts existing resource history without resource-level rewrap', async () => {
   const repoId = 'project-user-device';
   const aliceLaptop = new ContextVault(tempHome('vault-user-device-alice-laptop'));
   const aliceDesktop = new ContextVault(tempHome('vault-user-device-alice-desktop'));
@@ -53,7 +53,7 @@ test('new approved device decrypts existing project history without project-leve
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Historical architecture decision',
     body: 'The team standard says auth middleware owns session renewal.',
   });
@@ -203,7 +203,7 @@ test('user-owned repo events are signed by an approved device, not a plaintext u
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Device signer rule',
     body: 'User-owned context events are signed by approved devices.',
   });
@@ -250,7 +250,7 @@ test('user decryption key material is not written into encrypted event sync', as
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'No key leak rule',
     body: 'Encrypted sync must not include user private key material.',
   });
@@ -300,7 +300,7 @@ test('rotating user decryption identity blocks compromised device from future co
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Before compromise rotation',
     body: 'Old approved devices can read context created before compromise rotation.',
   });
@@ -325,7 +325,7 @@ test('rotating user decryption identity blocks compromised device from future co
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'After compromise rotation',
     body: 'Only devices with the rotated user decryption identity can read future context.',
   });

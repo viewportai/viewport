@@ -6,13 +6,13 @@ export class ConnectionRegistry {
 
   getOrCreate(
     key: string,
-    metadata?: { workspaceId?: string; projectMachineBindingId?: string },
+    metadata?: { workspaceId?: string; runtimeTargetId?: string },
   ): WorkspaceState {
     let state = this.workspaces.get(key);
     if (!state) {
       state = {
         workspaceId: metadata?.workspaceId ?? key,
-        projectMachineBindingId: metadata?.projectMachineBindingId,
+        runtimeTargetId: metadata?.runtimeTargetId,
         daemon: null,
         daemonIssueGeneration: null,
         clients: new Map<WebSocket, ClientConnectionMeta>(),
@@ -24,7 +24,7 @@ export class ConnectionRegistry {
       this.workspaces.set(key, state);
     } else if (metadata?.workspaceId) {
       state.workspaceId = metadata.workspaceId;
-      state.projectMachineBindingId = metadata.projectMachineBindingId;
+      state.runtimeTargetId = metadata.runtimeTargetId;
     }
     return state;
   }

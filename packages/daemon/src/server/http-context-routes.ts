@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   addContextEntry,
-  initContextProject,
+  initContextResource,
   readContextStatus,
   resolveContextBundle,
 } from '../context/local-edge-store.js';
@@ -13,23 +13,23 @@ const CredentialsSchema = z.object({
 });
 
 const InitBodySchema = CredentialsSchema.extend({
-  projectId: z.string().min(1),
+  contextResourceId: z.string().min(1).optional(),
   userName: z.string().min(1),
   deviceName: z.string().min(1),
   keyStore: z.enum(['file', 'macos-keychain']).optional(),
 });
 
 const AddBodySchema = CredentialsSchema.extend({
-  projectId: z.string().min(1),
+  contextResourceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   title: z.string().min(1),
   body: z.string().min(1),
   source: z.string().optional(),
-  scope: z.enum(['private', 'project', 'team', 'organization']).optional(),
+  scope: z.enum(['private', 'resource', 'team', 'organization']).optional(),
 });
 
 const ResolveBodySchema = CredentialsSchema.extend({
-  projectId: z.string().min(1),
+  contextResourceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   query: z.string().default(''),
   includePrivate: z.boolean().optional(),
@@ -43,8 +43,10 @@ const ResolveBodySchema = CredentialsSchema.extend({
 });
 
 export function registerContextRoutes(app: FastifyInstance): void {
-  app.get<{ Querystring: { project?: string } }>('/api/context/status', async (request) => {
-    return readContextStatus({ projectId: request.query.project });
+  app.get<{ Querystring: { context?: string } }>('/api/context/status', async (request) => {
+    return readContextStatus({
+      contextResourceId: request.query.context,
+    });
   });
 
   app.post('/api/context/init', async (request, reply) => {
@@ -54,8 +56,12 @@ export function registerContextRoutes(app: FastifyInstance): void {
         .status(400)
         .send({ error: parsed.error.issues[0]?.message ?? 'Invalid payload' });
     }
-    const project = await initContextProject({
-      projectId: parsed.data.projectId,
+    const contextResourceId = contextResourceIdFrom(parsed.data);
+    if (!contextResourceId) {
+      return reply.status(400).send({ error: 'contextResourceId is required' });
+    }
+    const context = await initContextResource({
+      contextResourceId,
       userName: parsed.data.userName,
       deviceName: parsed.data.deviceName,
       credentials: {
@@ -64,7 +70,7 @@ export function registerContextRoutes(app: FastifyInstance): void {
       },
       keyStore: parsed.data.keyStore,
     });
-    return reply.status(201).send({ project });
+    return reply.status(201).send({ context });
   });
 
   app.post('/api/context/entries', async (request, reply) => {
@@ -74,8 +80,12 @@ export function registerContextRoutes(app: FastifyInstance): void {
         .status(400)
         .send({ error: parsed.error.issues[0]?.message ?? 'Invalid payload' });
     }
+    const contextResourceId = contextResourceIdFrom(parsed.data);
+    if (!contextResourceId) {
+      return reply.status(400).send({ error: 'contextResourceId is required' });
+    }
     const entry = await addContextEntry({
-      projectId: parsed.data.projectId,
+      contextResourceId,
       actorName: parsed.data.actorName,
       title: parsed.data.title,
       body: parsed.data.body,
@@ -96,8 +106,12 @@ export function registerContextRoutes(app: FastifyInstance): void {
         .status(400)
         .send({ error: parsed.error.issues[0]?.message ?? 'Invalid payload' });
     }
+    const contextResourceId = contextResourceIdFrom(parsed.data);
+    if (!contextResourceId) {
+      return reply.status(400).send({ error: 'contextResourceId is required' });
+    }
     const bundle = await resolveContextBundle({
-      projectId: parsed.data.projectId,
+      contextResourceId,
       actorName: parsed.data.actorName,
       query: parsed.data.query,
       includePrivate: parsed.data.includePrivate,
@@ -110,4 +124,8 @@ export function registerContextRoutes(app: FastifyInstance): void {
     });
     return { bundle };
   });
+}
+
+function contextResourceIdFrom(input: { contextResourceId?: string }): string | null {
+  return input.contextResourceId ?? null;
 }

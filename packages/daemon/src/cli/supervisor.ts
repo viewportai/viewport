@@ -2,7 +2,7 @@ import { openSync, closeSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { configDir, resolveProjectConfig } from '../core/config.js';
+import { configDir, resolveResourceOverrideConfig } from '../core/config.js';
 import {
   readProcessInfo,
   writeDaemonRuntimeState,
@@ -142,13 +142,13 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
         endpoint: config.relayEndpoint,
         serverUrl: config.relayServerUrl,
         workspaceId: config.relayWorkspaceId,
-        projectMachineBindingId: config.relayProjectMachineBindingId,
+        runtimeTargetId: config.relayRuntimeTargetId,
         machineId: config.relayMachineId,
       },
     },
     daemonVersion: config.version,
   });
-  const projectConfig = resolveProjectConfig(process.env);
+  const projectConfig = resolveResourceOverrideConfig(process.env);
   await writeDaemonRuntimeState({
     pid: workerPid ?? process.pid,
     ownerPid: process.pid,
@@ -173,7 +173,7 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     relayEndpoint: config.relayEndpoint,
     relayServerUrl: config.relayServerUrl,
     relayWorkspaceId: config.relayWorkspaceId,
-    relayProjectMachineBindingId: config.relayProjectMachineBindingId,
+    relayRuntimeTargetId: config.relayRuntimeTargetId,
     relayMachineId: config.relayMachineId,
     relayTlsVerify: config.relayTlsVerify,
     tlsEnabled: tls.enabled,
@@ -185,8 +185,8 @@ async function writeState(config: RuntimeLaunchConfig, workerPid?: number): Prom
     daemonHome: identity.daemonHome,
     daemonHomeScope: identity.daemonHomeScope,
     serverUrl: identity.serverUrl,
-    projectConfigDir: projectConfig.dir ?? undefined,
-    projectConfigSource: projectConfig.source ?? undefined,
+    resourceOverrideConfigDir: projectConfig.dir ?? undefined,
+    resourceOverrideConfigSource: projectConfig.source ?? undefined,
   });
 }
 

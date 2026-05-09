@@ -9,7 +9,7 @@ test('local semantic retrieval ranks related context without remote plaintext ca
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Authentication session standard',
     body: 'Login changes must include session rotation regression proof before merge.',
     source: 'git://api/AGENTS.md#auth',
@@ -17,7 +17,7 @@ test('local semantic retrieval ranks related context without remote plaintext ca
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Deployment calendar',
     body: 'Production deployments happen on Tuesday after release approval.',
     source: 'git://api/AGENTS.md#deploy',

@@ -142,8 +142,8 @@ export interface WorkflowRunRecord {
   yamlSnapshot: string;
   directoryId: string;
   directoryPath: string;
-  projectId?: string;
-  projectMachineBindingId?: string;
+  resourceId?: string;
+  runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
   machineId: string;
@@ -180,8 +180,8 @@ export interface WorkflowRunRequest {
   workflowSourceRef?: string;
   directoryId: string;
   inputs?: Record<string, WorkflowInputValue>;
-  projectId?: string;
-  projectMachineBindingId?: string;
+  resourceId?: string;
+  runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
   executionPolicy?: WorkflowExecutionPolicy;

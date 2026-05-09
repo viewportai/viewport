@@ -27,24 +27,24 @@ describe('relayRecoveryHint', () => {
     ).toContain('run `vpd restart`');
   });
 
-  it('explains inactive project machine bindings', () => {
+  it('explains inactive runtime target bindings', () => {
     expect(
       relayRecoveryHint({
         state: 'waiting_retry',
-        lastErrorCode: 'PROJECT_MACHINE_BINDING_NOT_FOUND',
-        lastErrorMessage: 'project machine binding not found',
+        lastErrorCode: 'RUNTIME_TARGET_NOT_FOUND',
+        lastErrorMessage: 'runtime target not found',
       }),
     ).toContain('Re-pair this machine');
   });
 
-  it('explains project machine binding mismatches', () => {
+  it('explains runtime target binding mismatches', () => {
     expect(
       relayRecoveryHint({
         state: 'waiting_retry',
-        lastErrorCode: 'PROJECT_MACHINE_BINDING_MISMATCH',
-        lastErrorMessage: 'daemon connected with a different project machine binding',
+        lastErrorCode: 'RUNTIME_TARGET_MISMATCH',
+        lastErrorMessage: 'daemon connected with a different runtime target',
       }),
-    ).toContain('different project machine binding');
+    ).toContain('different runtime target');
   });
 
   it('explains network failures', () => {

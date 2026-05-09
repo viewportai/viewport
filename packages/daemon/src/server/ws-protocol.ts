@@ -37,23 +37,26 @@ const ImageSchema = z.object({
 // Individual message schemas
 // ---------------------------------------------------------------------------
 
-export const LaunchSchema = z.object({
-  type: z.literal('launch'),
-  directoryId: z.string().min(1).max(512),
-  prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
-  model: z.string().max(MAX_MODEL_CHARS).optional(),
-  thinkingMode: z.string().max(MAX_THINKING_MODE_CHARS).optional(),
-  images: z.array(ImageSchema).max(MAX_IMAGE_COUNT).optional(),
-  configOverrides: z
-    .object({
-      agent: z.string().max(64).optional(),
-      model: z.string().max(MAX_MODEL_CHARS).optional(),
-      costCapUsd: z.number().optional(),
-      trust: z.enum(['operator', 'automated', 'external']).optional(),
-    })
-    .optional(),
-  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
-});
+export const LaunchSchema = z
+  .object({
+    type: z.literal('launch'),
+    directoryId: z.string().min(1).max(512),
+    resourceId: z.string().min(1).max(256).optional(),
+    prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
+    model: z.string().max(MAX_MODEL_CHARS).optional(),
+    thinkingMode: z.string().max(MAX_THINKING_MODE_CHARS).optional(),
+    images: z.array(ImageSchema).max(MAX_IMAGE_COUNT).optional(),
+    configOverrides: z
+      .object({
+        agent: z.string().max(64).optional(),
+        model: z.string().max(MAX_MODEL_CHARS).optional(),
+        costCapUsd: z.number().optional(),
+        trust: z.enum(['operator', 'automated', 'external']).optional(),
+      })
+      .optional(),
+    requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+  })
+  .strict();
 
 export const KillSchema = z.object({
   type: z.literal('kill'),
@@ -123,14 +126,17 @@ export const ListSessionsSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
-export const ResumeSchema = z.object({
-  type: z.literal('resume'),
-  sessionId: z.string().min(1).max(256),
-  directoryId: z.string().min(1).max(512),
-  prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
-  model: z.string().max(MAX_MODEL_CHARS).optional(),
-  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
-});
+export const ResumeSchema = z
+  .object({
+    type: z.literal('resume'),
+    sessionId: z.string().min(1).max(256),
+    directoryId: z.string().min(1).max(512),
+    resourceId: z.string().min(1).max(256).optional(),
+    prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
+    model: z.string().max(MAX_MODEL_CHARS).optional(),
+    requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+  })
+  .strict();
 
 export const WatchDiscoveredSessionSchema = z.object({
   type: z.literal('watch-discovered-session'),
@@ -159,8 +165,8 @@ export const WorkflowRunSchema = z
     workflowSourceRef: z.string().min(1).max(4096).optional(),
     directoryId: z.string().min(1).max(512),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
-    projectId: z.string().min(1).max(256).optional(),
-    projectMachineBindingId: z.string().min(1).max(256).optional(),
+    resourceId: z.string().min(1).max(256).optional(),
+    runtimeTargetId: z.string().min(1).max(256).optional(),
     platformRunId: z.string().min(1).max(256).optional(),
     rerunOfWorkflowRunId: z.string().min(1).max(256).optional(),
     executionPolicy: z
@@ -180,6 +186,7 @@ export const WorkflowRunSchema = z
       .optional(),
     requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
   })
+  .strict()
   .refine((value) => Boolean(value.workflowPath || value.workflowYaml), {
     message: 'workflowPath or workflowYaml is required',
     path: ['workflowPath'],

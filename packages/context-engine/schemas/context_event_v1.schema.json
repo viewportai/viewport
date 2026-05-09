@@ -96,6 +96,7 @@
         { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
       ]
     },
+    "contextResourceId": { "type": "string", "minLength": 1 },
     "schemaVersion": { "const": "viewport.context_event/v1" },
     "signature": { "type": "string", "minLength": 1 }
   },

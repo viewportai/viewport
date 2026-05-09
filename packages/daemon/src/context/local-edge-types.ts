@@ -1,11 +1,11 @@
-import type { EncryptedPayload, WrappedKey } from './local-edge-crypto.js';
+import type { EncryptedPayload } from './local-edge-crypto.js';
 
 export const CONTEXT_EVENT_SCHEMA_VERSION = 'viewport.context_event/v1';
 export const CONTEXT_BUNDLE_SCHEMA_VERSION = 'viewport.context_bundle_manifest/v1';
 export const SERVER_SYNC_MODE = 'disabled';
 export const DEVICE_APPROVAL_CODE = '000000';
 
-export type ContextScope = 'private' | 'project' | 'team' | 'organization';
+export type ContextScope = 'private' | 'resource' | 'team' | 'organization';
 export type ContextKeyStore = 'file' | 'macos-keychain';
 
 export interface ContextCredentials {
@@ -13,9 +13,9 @@ export interface ContextCredentials {
   recoveryCode: string;
 }
 
-export interface ContextProjectRecord {
+export interface ContextResourceRecord {
   schemaVersion: typeof CONTEXT_EVENT_SCHEMA_VERSION;
-  projectId: string;
+  contextResourceId: string;
   repoId: string;
   userName: string;
   deviceName: string;
@@ -29,6 +29,7 @@ export interface ContextProjectRecord {
 export interface ContextSyncEvent {
   id: string;
   repoId: string;
+  contextResourceId?: string;
   schemaVersion: typeof CONTEXT_EVENT_SCHEMA_VERSION;
   type: string;
   actorName: string;
@@ -48,6 +49,7 @@ export interface ContextCandidateDecisionPullRecord {
   id: string;
   inbox_item_id?: string;
   repo_id: string;
+  context_resource_id?: string;
   candidate_event_id: string;
   payload_digest?: string | null;
   decision: 'approved' | 'rejected';
@@ -68,6 +70,7 @@ export interface ContextCandidateDecisionApplication {
   decision_id: string;
   inbox_item_id?: string | null;
   repo_id: string;
+  context_resource_id?: string;
   candidate_event_id: string;
   payload_digest?: string | null;
   decision: 'approved' | 'rejected';
@@ -80,33 +83,8 @@ export interface ContextCandidateDecisionApplication {
   platform_signature_digest: string;
 }
 
-export interface ContextProjectMetadata extends ContextProjectRecord {
+export interface ContextResourceMetadata extends ContextResourceRecord {
   engine: '@viewportai/context-engine';
-}
-
-export interface LegacyContextProjectRecord {
-  schemaVersion: 'viewport.context_local_edge/seam-v0';
-  projectId: string;
-  userName: string;
-  deviceName: string;
-  serverSync: typeof SERVER_SYNC_MODE;
-  createdAt: string;
-  updatedAt: string;
-  wrappedProjectKey: WrappedKey;
-  entries: LegacyContextStoredEntry[];
-}
-
-export interface LegacyContextStoredEntry {
-  id: string;
-  scope: ContextScope;
-  title: EncryptedPayload;
-  titleDigest: string;
-  body: EncryptedPayload;
-  bodyDigest: string;
-  source: string;
-  trustState: 'approved';
-  actorName: string;
-  createdAt: string;
 }
 
 export interface ContextStoredEntry {
@@ -150,7 +128,7 @@ export interface ContextBundle {
   manifest: {
     schemaVersion: typeof CONTEXT_BUNDLE_SCHEMA_VERSION;
     apiVersion: typeof CONTEXT_BUNDLE_SCHEMA_VERSION;
-    projectId: string;
+    contextResourceId: string;
     repoId: string;
     actorName: string;
     query: string;
@@ -213,6 +191,7 @@ export interface ContextVaultInstance {
   proposeEntry(options: {
     repoId: string;
     actorName: string;
+    contextResourceId?: string;
     title: string;
     body: string;
     source: string;
@@ -239,6 +218,7 @@ export interface ContextVaultInstance {
     title: string;
     body: string;
     source?: string;
+    contextResourceId?: string;
     review?: Record<string, unknown>;
   }): { approved: ContextSyncEvent; entry: ContextSyncEvent };
   rejectCandidate(options: {

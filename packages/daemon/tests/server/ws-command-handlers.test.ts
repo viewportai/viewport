@@ -31,6 +31,10 @@ describe('ws-command-handlers', () => {
   it('list-sessions includes agentId in payload', async () => {
     const { client, sent } = createClient();
     const daemon = {
+      directoryManager: { get: vi.fn().mockReturnValue({ id: 'dir-1', path: '/tmp/project' }) },
+      configManager: {
+        getConfig: vi.fn().mockReturnValue({}),
+      },
       getDiscoveredSessions: vi.fn().mockReturnValue(
         new Map([
           [
@@ -66,6 +70,12 @@ describe('ws-command-handlers', () => {
     expect(sessionList).toBeTruthy();
     const sessions = sessionList?.['sessions'] as Array<Record<string, unknown>>;
     expect(sessions[0]?.['agentId']).toBe('codex');
+    expect(sessions[0]).toMatchObject({
+      directoryId: 'dir-1',
+      workingDirectory: '/tmp/project',
+    });
+    expect(sessions[0]).not.toHaveProperty('projectId');
+    expect(sessions[0]).not.toHaveProperty('projectBindingSource');
     expect(sendAck).toHaveBeenCalledWith(client, 'req-1', 'ok');
   });
 
@@ -136,7 +146,7 @@ describe('ws-command-handlers', () => {
       requestId: 'req-3',
     });
 
-    expect(resumeSession).toHaveBeenCalledWith('s1', 'dir-1', undefined, {
+    expect(resumeSession).toHaveBeenCalledWith('s1', 'dir-1', '', {
       agent: 'gemini',
       model: 'gemini-pro',
     });
@@ -178,15 +188,62 @@ describe('ws-command-handlers', () => {
     await handlers['launch'](client, {
       type: 'launch',
       directoryId: 'dir-1',
+      resourceId: 'resource-1',
       prompt: 'continue',
       requestId: 'req-launch',
     });
 
-    expect(launchSession).toHaveBeenCalledWith('dir-1', '', undefined);
-    expect(sendPrompt).toHaveBeenCalledWith('s-new', 'continue');
-    expect(sent.find((m) => m['type'] === 'session-started')).toBeTruthy();
+    expect(launchSession).toHaveBeenCalledWith('dir-1', 'continue', {
+      resourceId: 'resource-1',
+    });
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(sent.find((m) => m['type'] === 'session-started')).toMatchObject({
+      resourceId: 'resource-1',
+    });
+    expect(sent.find((m) => m['type'] === 'session-started')).not.toHaveProperty('projectId');
     expect(sent.find((m) => m['type'] === 'session-update')).toBeTruthy();
     expect(sendAck).toHaveBeenCalledWith(client, 'req-launch', 'ok');
+  });
+
+  it('launch accepts resourceId as the resource-first scope', async () => {
+    const { client, sent } = createClient();
+    const launchSession = vi.fn().mockResolvedValue('s-resource');
+    const daemon = {
+      directoryManager: {
+        get: vi.fn().mockReturnValue({ id: 'dir-1', path: '/tmp/resource-repo' }),
+      },
+      launchSession,
+      sendPrompt: vi.fn(),
+    };
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: daemon as any,
+      sendAck,
+      getOrCreateBuffer: vi.fn(() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({
+          entries: [],
+          droppedWindow: false,
+          requestedLastSeq: 0,
+          earliestAvailableSeq: 0,
+          latestAvailableSeq: 0,
+        }),
+      })) as any,
+    });
+
+    await handlers['launch'](client, {
+      type: 'launch',
+      directoryId: 'dir-1',
+      resourceId: 'resource-1',
+      requestId: 'req-resource-launch',
+    });
+
+    expect(launchSession).toHaveBeenCalledWith('dir-1', '', { resourceId: 'resource-1' });
+    expect(sent.find((m) => m['type'] === 'session-started')).toMatchObject({
+      resourceId: 'resource-1',
+    });
+    expect(sent.find((m) => m['type'] === 'session-started')).not.toHaveProperty('projectId');
+    expect(sendAck).toHaveBeenCalledWith(client, 'req-resource-launch', 'ok');
   });
 
   it('resume replays buffered updates and sends prompt after attach', async () => {
@@ -240,13 +297,20 @@ describe('ws-command-handlers', () => {
       type: 'resume',
       directoryId: 'dir-1',
       sessionId: 's1',
+      resourceId: 'resource-1',
       prompt: 'keep going',
       requestId: 'req-resume',
     });
 
-    expect(resumeSession).toHaveBeenCalledWith('s1', 'dir-1', undefined, { agent: 'claude' });
-    expect(sendPrompt).toHaveBeenCalledWith('s1', 'keep going');
-    expect(sent.find((m) => m['type'] === 'session-started')).toBeTruthy();
+    expect(resumeSession).toHaveBeenCalledWith('s1', 'dir-1', 'keep going', {
+      agent: 'claude',
+      resourceId: 'resource-1',
+    });
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(sent.find((m) => m['type'] === 'session-started')).toMatchObject({
+      resourceId: 'resource-1',
+    });
+    expect(sent.find((m) => m['type'] === 'session-started')).not.toHaveProperty('projectId');
     expect(sent.find((m) => m['type'] === 'session-update')).toBeTruthy();
     expect(sendAck).toHaveBeenCalledWith(client, 'req-resume', 'ok');
   });
@@ -369,6 +433,7 @@ describe('ws-command-handlers', () => {
       getAvailableAgents: vi.fn().mockReturnValue([]),
       configManager: {
         getMachineId: vi.fn().mockReturnValue('machine-1'),
+        getConfig: vi.fn().mockReturnValue({}),
         getDaemonConfig: vi.fn().mockReturnValue({
           profile: 'relay',
           relay: {

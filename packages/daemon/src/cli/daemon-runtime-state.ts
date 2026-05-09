@@ -31,7 +31,7 @@ export interface DaemonRuntimeState {
   relayEndpoint?: string;
   relayServerUrl?: string;
   relayWorkspaceId?: string;
-  relayProjectMachineBindingId?: string;
+  relayRuntimeTargetId?: string;
   relayMachineId?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
   tlsEnabled?: boolean;
@@ -41,8 +41,8 @@ export interface DaemonRuntimeState {
   tlsKeyPath?: string;
   runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
   daemonHome?: string;
-  daemonHomeScope?: 'global' | 'project-override';
+  daemonHomeScope?: 'global' | 'resource-override';
   serverUrl?: string;
-  projectConfigDir?: string;
-  projectConfigSource?: 'explicit' | 'ancestor';
+  resourceOverrideConfigDir?: string;
+  resourceOverrideConfigSource?: 'explicit' | 'ancestor';
 }

@@ -5,27 +5,20 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addContextEntry,
-  archivedContextProjectPath,
   acceptContextDeviceApproval,
   approveContextDeviceRequest,
   createContextDeviceRequest,
   exportContextIdentity,
-  contextProjectPath,
   importContextIdentity,
-  initContextProject,
-  joinContextProject,
+  initContextResource,
+  joinContextResource,
   readContextStatus,
   resolveContextBundle,
   writeContextProfile,
 } from '../../src/context/local-edge-store.js';
 import { proposeContextEntry } from '../../src/context/local-edge-candidates.js';
 import { pullContextEvents, pushContextEvents } from '../../src/context/local-edge-sync.js';
-import {
-  createProjectKey,
-  digestText,
-  encryptText,
-  wrapProjectKey,
-} from '../../src/context/local-edge-crypto.js';
+import { contextMetadataPath } from '../../src/context/local-edge-paths.js';
 
 describe('local trusted-edge context store', () => {
   let tempHome: string;
@@ -42,9 +35,9 @@ describe('local trusted-edge context store', () => {
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 
-  it('stores local context encrypted and resolves it only with credentials', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+  it('stores local context encrypted and resolves it with credentials or an approved device', async () => {
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -53,7 +46,7 @@ describe('local trusted-edge context store', () => {
     });
 
     await addContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Auth convention',
       body: 'Use policy classes for authorization checks.',
@@ -68,7 +61,7 @@ describe('local trusted-edge context store', () => {
     expect(raw).toContain('ciphertext');
 
     const bundle = await resolveContextBundle({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       query: 'authorization',
       credentials,
@@ -83,8 +76,19 @@ describe('local trusted-edge context store', () => {
 
     await expect(
       resolveContextBundle({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         actorName: 'alice-laptop',
+        query: 'authorization',
+        home: tempHome,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({ items: expect.arrayContaining([bundle.items[0]]) }),
+    );
+
+    await expect(
+      resolveContextBundle({
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-desktop',
         query: 'authorization',
         credentials: { ...credentials, recoveryCode: 'wrong' },
         home: tempHome,
@@ -93,8 +97,8 @@ describe('local trusted-edge context store', () => {
   });
 
   it('reports local status without decrypting bodies', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -103,11 +107,14 @@ describe('local trusted-edge context store', () => {
     });
 
     const status = await readContextStatus({ home: tempHome });
+    await expect(
+      fs.access(contextMetadataPath('context-alpha', tempHome)),
+    ).resolves.toBeUndefined();
 
-    expect(status.projects).toEqual([
+    expect(status.contexts).toEqual([
       expect.objectContaining({
         schemaVersion: 'viewport.context_event/v1',
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         userName: 'alice',
         deviceName: 'alice-laptop',
         serverSync: 'disabled',
@@ -116,73 +123,9 @@ describe('local trusted-edge context store', () => {
     ]);
   });
 
-  it('migrates seam-v0 projects into canonical engine events and archives the seam file', async () => {
-    const projectKey = createProjectKey();
-    const createdAt = new Date().toISOString();
-    const legacy = {
-      schemaVersion: 'viewport.context_local_edge/seam-v0',
-      projectId: 'project-alpha',
-      userName: 'alice',
-      deviceName: 'alice-laptop',
-      serverSync: 'disabled',
-      createdAt,
-      updatedAt: createdAt,
-      wrappedProjectKey: wrapProjectKey(projectKey, credentials),
-      entries: [
-        {
-          id: 'ctx_legacy',
-          scope: 'project',
-          title: encryptText('Legacy migration rule', projectKey),
-          titleDigest: digestText('Legacy migration rule'),
-          body: encryptText('Seam data migrates without plaintext leakage.', projectKey),
-          bodyDigest: digestText('Seam data migrates without plaintext leakage.'),
-          source: 'manual://legacy',
-          trustState: 'approved',
-          actorName: 'alice-laptop',
-          createdAt,
-        },
-      ],
-    };
-    await fs.mkdir(path.dirname(contextProjectPath('project-alpha', tempHome)), {
-      recursive: true,
-    });
-    await fs.writeFile(
-      contextProjectPath('project-alpha', tempHome),
-      `${JSON.stringify(legacy)}\n`,
-    );
-
-    const bundle = await resolveContextBundle({
-      projectId: 'project-alpha',
-      actorName: 'alice-laptop',
-      query: 'migrates',
-      credentials,
-      home: tempHome,
-    });
-
-    expect(bundle.manifest.schemaVersion).toBe('viewport.context_bundle_manifest/v1');
-    expect(bundle.items[0]?.title).toBe('Legacy migration rule');
-    await expect(
-      fs.stat(archivedContextProjectPath('project-alpha', tempHome)),
-    ).resolves.toBeTruthy();
-    await expect(fs.stat(contextProjectPath('project-alpha', tempHome))).rejects.toThrow();
-
-    const canonicalEvents = await readTree(path.join(tempHome, 'repos', 'project-alpha', 'events'));
-    expect(canonicalEvents).toContain('viewport.context_event/v1');
-    expect(canonicalEvents).not.toContain('Legacy migration rule');
-    expect(canonicalEvents).not.toContain('Seam data migrates');
-
-    const archived = await fs.readFile(
-      archivedContextProjectPath('project-alpha', tempHome),
-      'utf8',
-    );
-    expect(archived).toContain('viewport.context_local_edge/seam-v0');
-    expect(archived).not.toContain('Legacy migration rule');
-    expect(archived).not.toContain('Seam data migrates');
-  });
-
   it('enforces profile registry pins when resolving canonical bundles', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -191,7 +134,7 @@ describe('local trusted-edge context store', () => {
     });
 
     await addContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Auth review standard',
       body: 'Code reviews touching auth need session rotation regression proof.',
@@ -200,7 +143,7 @@ describe('local trusted-edge context store', () => {
       home: tempHome,
     });
     await addContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Release window',
       body: 'Deployments use the release calendar.',
@@ -210,7 +153,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const profile = await writeContextProfile({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       name: 'code-review',
       packs: ['project-standards'],
       query: 'auth review',
@@ -221,7 +164,7 @@ describe('local trusted-edge context store', () => {
 
     await expect(
       resolveContextBundle({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         actorName: 'alice-laptop',
         query: '',
         profile: 'code-review',
@@ -232,7 +175,7 @@ describe('local trusted-edge context store', () => {
     ).rejects.toMatchObject({ code: 'CONTEXT_PROFILE_PIN_MISMATCH' });
 
     const bundle = await resolveContextBundle({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       query: '',
       profile: 'code-review',
@@ -250,8 +193,8 @@ describe('local trusted-edge context store', () => {
   });
 
   it('pushes and pulls only canonical encrypted events through the platform sync API', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -259,7 +202,7 @@ describe('local trusted-edge context store', () => {
       home: tempHome,
     });
     await addContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Sync policy',
       body: 'Context sync must never send plaintext.',
@@ -296,7 +239,7 @@ describe('local trusted-edge context store', () => {
     };
 
     const push = await pushContextEvents({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       serverUrl: 'https://app.getviewport.test',
       credential: 'runtime-token',
       fetchImpl,
@@ -307,7 +250,7 @@ describe('local trusted-edge context store', () => {
     expect(push.pushed).toBe(push.accepted);
 
     const pull = await pullContextEvents({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       serverUrl: 'https://app.getviewport.test',
       credential: 'runtime-token',
       actorName: 'alice-laptop',
@@ -320,7 +263,7 @@ describe('local trusted-edge context store', () => {
     expect(pull.imported).toBe(0);
 
     const secondPull = await pullContextEvents({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       serverUrl: 'https://app.getviewport.test',
       credential: 'runtime-token',
       actorName: 'alice-laptop',
@@ -337,8 +280,8 @@ describe('local trusted-edge context store', () => {
   });
 
   it('applies platform context candidate approvals at the trusted edge for future bundles', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -347,7 +290,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const candidate = await proposeContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Auth review candidate',
       body: 'Agent runs touching auth must include session rotation proof.',
@@ -361,7 +304,7 @@ describe('local trusted-edge context store', () => {
       schema_version: 'viewport.context_candidate_decision/v1',
       id: 'ctxd_inbox_1',
       inbox_item_id: 'inbox_1',
-      repo_id: 'project-alpha',
+      repo_id: 'context-alpha',
       candidate_event_id: candidate.id,
       payload_digest: candidate.bodyDigest,
       decision: 'approved',
@@ -371,7 +314,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const pull = await pullContextEvents({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       serverUrl: 'https://app.getviewport.test',
       credential: 'runtime-token',
       actorName: 'alice-laptop',
@@ -390,7 +333,7 @@ describe('local trusted-edge context store', () => {
     expect(pull.pendingCandidateDecisions).toBe(0);
 
     const bundle = await resolveContextBundle({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       query: 'session rotation proof',
       credentials,
@@ -404,14 +347,14 @@ describe('local trusted-edge context store', () => {
       }),
     ]);
 
-    const raw = await readTree(path.join(tempHome, 'repos', 'project-alpha', 'events'));
+    const raw = await readTree(path.join(tempHome, 'repos', 'context-alpha', 'events'));
     expect(raw).toContain('candidate.approved');
     expect(raw).toContain('entry.approved');
     expect(raw).not.toContain('Agent runs touching auth');
 
     let pushedAfterApproval = '';
     const push = await pushContextEvents({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       serverUrl: 'https://app.getviewport.test',
       credential: 'runtime-token',
       fetchImpl: async (_url, init) => {
@@ -430,9 +373,9 @@ describe('local trusted-edge context store', () => {
     expect(pushedAfterApproval).not.toContain('Agent runs touching auth');
   });
 
-  it('rejects unsigned platform candidate decisions before they can become engine events', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+  it('routes candidate decisions by context resource id and records skipped mismatches', async () => {
+    await initContextResource({
+      contextResourceId: 'ctx-auth-policy',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -441,7 +384,91 @@ describe('local trusted-edge context store', () => {
     });
 
     const candidate = await proposeContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'ctx-auth-policy',
+      actorName: 'alice-laptop',
+      title: 'Resource-scoped candidate',
+      body: 'This candidate only belongs to the auth policy context resource.',
+      sourceKind: 'workflow',
+      credentials,
+      home: tempHome,
+    });
+
+    let proposedEventPayload = '';
+    await pushContextEvents({
+      contextResourceId: 'ctx-auth-policy',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      fetchImpl: async (_url, init) => {
+        proposedEventPayload = String(init?.body ?? '');
+        const body = JSON.parse(proposedEventPayload);
+        return jsonResponse({ ok: true, accepted: body.events.length }, 202);
+      },
+      home: tempHome,
+    });
+
+    expect(proposedEventPayload).toContain('"contextResourceId":"ctx-auth-policy"');
+    expect(proposedEventPayload).not.toContain('This candidate only belongs');
+
+    const mismatchedDecision = signedDecision({
+      schema_version: 'viewport.context_candidate_decision/v1',
+      id: 'ctxd_wrong_resource',
+      inbox_item_id: 'inbox_wrong_resource',
+      repo_id: 'ctx-auth-policy',
+      context_resource_id: 'ctx-release-policy',
+      candidate_event_id: candidate.id,
+      payload_digest: candidate.bodyDigest,
+      decision: 'approved',
+      decided_at: '2026-05-07T17:00:00.000Z',
+      decided_by_user_id: '42',
+    });
+
+    const pull = await pullContextEvents({
+      contextResourceId: 'ctx-auth-policy',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      actorName: 'alice-laptop',
+      credentials,
+      trustedDecisionKeys: pinnedKeysFor(mismatchedDecision),
+      fetchImpl: async () =>
+        jsonResponse({
+          data: [],
+          candidate_decisions: [mismatchedDecision],
+        }),
+      home: tempHome,
+    });
+
+    expect(pull.appliedCandidateDecisions).toBe(0);
+
+    let pushedApplications = '';
+    await pushContextEvents({
+      contextResourceId: 'ctx-auth-policy',
+      serverUrl: 'https://app.getviewport.test',
+      credential: 'runtime-token',
+      fetchImpl: async (_url, init) => {
+        pushedApplications = String(init?.body ?? '');
+        const body = JSON.parse(pushedApplications);
+        return jsonResponse({ ok: true, accepted: body.events.length }, 202);
+      },
+      home: tempHome,
+    });
+
+    expect(pushedApplications).toContain('candidate_decision_applications');
+    expect(pushedApplications).toContain('"context_resource_id":"ctx-release-policy"');
+    expect(pushedApplications).toContain('context_resource_mismatch');
+  });
+
+  it('rejects unsigned platform candidate decisions before they can become engine events', async () => {
+    await initContextResource({
+      contextResourceId: 'context-alpha',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+      keyStore: 'file',
+      home: tempHome,
+    });
+
+    const candidate = await proposeContextEntry({
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Unsigned candidate',
       body: 'Unsigned decisions must not promote context.',
@@ -452,7 +479,7 @@ describe('local trusted-edge context store', () => {
 
     await expect(
       pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-laptop',
@@ -465,7 +492,7 @@ describe('local trusted-edge context store', () => {
               {
                 schema_version: 'viewport.context_candidate_decision/v1',
                 id: 'ctxd_unsigned',
-                repo_id: 'project-alpha',
+                repo_id: 'context-alpha',
                 candidate_event_id: candidate.id,
                 payload_digest: candidate.bodyDigest,
                 decision: 'approved',
@@ -478,8 +505,8 @@ describe('local trusted-edge context store', () => {
   });
 
   it('rejects tampered platform candidate decision signatures', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -488,7 +515,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const candidate = await proposeContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Tampered candidate',
       body: 'Tampered decisions must not promote context.',
@@ -501,7 +528,7 @@ describe('local trusted-edge context store', () => {
       schema_version: 'viewport.context_candidate_decision/v1',
       id: 'ctxd_tampered',
       inbox_item_id: 'inbox_tampered',
-      repo_id: 'project-alpha',
+      repo_id: 'context-alpha',
       candidate_event_id: candidate.id,
       payload_digest: candidate.bodyDigest,
       decision: 'approved',
@@ -512,7 +539,7 @@ describe('local trusted-edge context store', () => {
 
     await expect(
       pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-laptop',
@@ -525,8 +552,8 @@ describe('local trusted-edge context store', () => {
   });
 
   it('rejects candidate decisions signed by an unpinned platform key', async () => {
-    await initContextProject({
-      projectId: 'project-alpha',
+    await initContextResource({
+      contextResourceId: 'context-alpha',
       userName: 'alice',
       deviceName: 'alice-laptop',
       credentials,
@@ -535,7 +562,7 @@ describe('local trusted-edge context store', () => {
     });
 
     const candidate = await proposeContextEntry({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       actorName: 'alice-laptop',
       title: 'Self-signed candidate',
       body: 'Self-signed decisions must not promote context.',
@@ -548,7 +575,7 @@ describe('local trusted-edge context store', () => {
       schema_version: 'viewport.context_candidate_decision/v1',
       id: 'ctxd_self_signed',
       inbox_item_id: 'inbox_self_signed',
-      repo_id: 'project-alpha',
+      repo_id: 'context-alpha',
       candidate_event_id: candidate.id,
       payload_digest: candidate.bodyDigest,
       decision: 'approved',
@@ -558,7 +585,7 @@ describe('local trusted-edge context store', () => {
 
     await expect(
       pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-laptop',
@@ -575,8 +602,8 @@ describe('local trusted-edge context store', () => {
   it('converges when two trusted edges apply the same signed candidate decision', async () => {
     const desktopHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-desktop-'));
     try {
-      await initContextProject({
-        projectId: 'project-alpha',
+      await initContextResource({
+        contextResourceId: 'context-alpha',
         userName: 'alice',
         deviceName: 'alice-laptop',
         credentials,
@@ -584,7 +611,7 @@ describe('local trusted-edge context store', () => {
         home: tempHome,
       });
       const candidate = await proposeContextEntry({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         actorName: 'alice-laptop',
         title: 'Race-safe candidate',
         body: 'Concurrent trusted edges should not duplicate approved context.',
@@ -595,7 +622,7 @@ describe('local trusted-edge context store', () => {
 
       let platformEvents: unknown[] = [];
       await pushContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         fetchImpl: async (_url, init) => {
@@ -627,8 +654,8 @@ describe('local trusted-edge context store', () => {
         keyStore: 'file',
         home: desktopHome,
       });
-      await joinContextProject({
-        projectId: 'project-alpha',
+      await joinContextResource({
+        contextResourceId: 'context-alpha',
         userName: 'alice',
         deviceName: 'alice-desktop',
         credentials,
@@ -645,7 +672,7 @@ describe('local trusted-edge context store', () => {
       });
 
       await pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-desktop',
@@ -664,7 +691,7 @@ describe('local trusted-edge context store', () => {
         schema_version: 'viewport.context_candidate_decision/v1',
         id: 'ctxd_multi_edge',
         inbox_item_id: 'inbox_multi_edge',
-        repo_id: 'project-alpha',
+        repo_id: 'context-alpha',
         candidate_event_id: candidate.id,
         payload_digest: candidate.bodyDigest,
         decision: 'approved',
@@ -674,7 +701,7 @@ describe('local trusted-edge context store', () => {
       const trustedDecisionKeys = pinnedKeysFor(decision);
 
       const laptopDecision = await pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-laptop',
@@ -684,7 +711,7 @@ describe('local trusted-edge context store', () => {
         home: tempHome,
       });
       const desktopDecision = await pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-desktop',
@@ -699,7 +726,7 @@ describe('local trusted-edge context store', () => {
 
       const approvedEvents: unknown[] = [];
       await pushContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         fetchImpl: async (_url, init) => {
@@ -710,7 +737,7 @@ describe('local trusted-edge context store', () => {
         home: tempHome,
       });
       await pushContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         fetchImpl: async (_url, init) => {
@@ -721,7 +748,7 @@ describe('local trusted-edge context store', () => {
         home: desktopHome,
       });
       await pullContextEvents({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         serverUrl: 'https://app.getviewport.test',
         credential: 'runtime-token',
         actorName: 'alice-laptop',
@@ -738,7 +765,7 @@ describe('local trusted-edge context store', () => {
       });
 
       const bundle = await resolveContextBundle({
-        projectId: 'project-alpha',
+        contextResourceId: 'context-alpha',
         actorName: 'alice-laptop',
         query: 'Concurrent trusted edges',
         credentials,
@@ -793,6 +820,7 @@ describe('local trusted-edge context store', () => {
       id: record.id,
       inbox_item_id: record.inbox_item_id ?? null,
       repo_id: record.repo_id,
+      context_resource_id: record.context_resource_id ?? record.repo_id,
       candidate_event_id: record.candidate_event_id,
       payload_digest: record.payload_digest ?? null,
       decision: record.decision,

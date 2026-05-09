@@ -45,10 +45,8 @@ export function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfi
     relayServerUrl: typeof parsed.relayServerUrl === 'string' ? parsed.relayServerUrl : undefined,
     relayWorkspaceId:
       typeof parsed.relayWorkspaceId === 'string' ? parsed.relayWorkspaceId : undefined,
-    relayProjectMachineBindingId:
-      typeof parsed.relayProjectMachineBindingId === 'string'
-        ? parsed.relayProjectMachineBindingId
-        : undefined,
+    relayRuntimeTargetId:
+      typeof parsed.relayRuntimeTargetId === 'string' ? parsed.relayRuntimeTargetId : undefined,
     relayMachineId: typeof parsed.relayMachineId === 'string' ? parsed.relayMachineId : undefined,
     relayIssueToken:
       typeof parsed.relayIssueToken === 'string' ? parsed.relayIssueToken : undefined,

@@ -16,7 +16,7 @@ describe('protocol e2e: workflow execution', () => {
     harness = null;
   });
 
-  it('runs a browser-provided workflow snapshot against an explicit project machine directory target', async () => {
+  it('runs a browser-provided workflow snapshot against an explicit resource runtime target', async () => {
     harness = await ProtocolHarness.start();
     const projectPath = await harness.createProject();
     const directory = await harness.registerDirectory(projectPath);
@@ -27,8 +27,8 @@ describe('protocol e2e: workflow execution', () => {
       type: 'workflow-run',
       requestId: 'workflow-run-1',
       directoryId: directory.id,
-      projectId: 'project-1',
-      projectMachineBindingId: 'binding-1',
+      resourceId: 'resource-1',
+      runtimeTargetId: 'target-1',
       platformRunId: 'platform-run-1',
       executionPolicy: { mode: 'current_tree' },
       workflowSourceRef: 'viewport://tests/protocol-workflow-run',
@@ -46,8 +46,10 @@ nodes:
 
     const started = await client.waitForType('workflow-run-started');
     const startedRun = workflowRunFrom(started);
-    expect(startedRun?.['projectId']).toBe('project-1');
-    expect(startedRun?.['projectMachineBindingId']).toBe('binding-1');
+    expect(startedRun?.['resourceId']).toBe('resource-1');
+    expect(startedRun?.['runtimeTargetId']).toBe('target-1');
+    expect(startedRun).not.toHaveProperty('projectId');
+    expect(startedRun).not.toHaveProperty('projectMachineBindingId');
     expect(startedRun?.['platformRunId']).toBe('platform-run-1');
     expect(startedRun?.['directoryId']).toBe(directory.id);
     expect(startedRun?.['directoryPath']).toBe(projectPath);
@@ -63,7 +65,8 @@ nodes:
       return run?.['id'] === runId && run?.['status'] === 'completed';
     });
     const completedRun = workflowRunFrom(completed);
-    expect(completedRun?.['projectMachineBindingId']).toBe('binding-1');
+    expect(completedRun?.['runtimeTargetId']).toBe('target-1');
+    expect(completedRun).not.toHaveProperty('projectMachineBindingId');
 
     const nodes = completedRun?.['nodes'] as Record<string, Record<string, unknown>>;
     expect(nodes.inspect?.status).toBe('completed');
@@ -76,9 +79,11 @@ nodes:
     const detail = await client.waitForType('workflow-run-detail');
     const detailRun = workflowRunFrom(detail);
     expect(detailRun?.['id']).toBe(runId);
-    expect(detailRun?.['projectId']).toBe('project-1');
+    expect(detailRun?.['resourceId']).toBe('resource-1');
+    expect(detailRun).not.toHaveProperty('projectId');
     expect(detailRun?.['directoryId']).toBe(directory.id);
-    expect(detailRun?.['projectMachineBindingId']).toBe('binding-1');
+    expect(detailRun?.['runtimeTargetId']).toBe('target-1');
+    expect(detailRun).not.toHaveProperty('projectMachineBindingId');
     expect(detailRun?.['platformRunId']).toBe('platform-run-1');
     await client.waitForAck('workflow-show-1');
 
@@ -98,8 +103,8 @@ nodes:
       type: 'workflow-run',
       requestId: 'workflow-run-rich',
       directoryId: directory.id,
-      projectId: 'project-1',
-      projectMachineBindingId: 'binding-1',
+      resourceId: 'resource-1',
+      runtimeTargetId: 'target-1',
       platformRunId: 'platform-run-rich',
       executionPolicy: { mode: 'current_tree' },
       workflowSourceRef: 'viewport://tests/protocol-workflow-rich',
@@ -159,8 +164,8 @@ nodes:
       type: 'workflow-run',
       requestId: 'workflow-run-dataflow',
       directoryId: directory.id,
-      projectId: 'project-dataflow',
-      projectMachineBindingId: 'binding-dataflow',
+      resourceId: 'resource-dataflow',
+      runtimeTargetId: 'target-dataflow',
       platformRunId: 'platform-run-dataflow',
       executionPolicy: { mode: 'current_tree' },
       workflowSourceRef: 'viewport://tests/protocol-workflow-dataflow',
@@ -204,8 +209,10 @@ nodes:
       return run?.['id'] === runId && run?.['status'] === 'completed';
     });
     const completedRun = workflowRunFrom(completed);
-    expect(completedRun?.['projectId']).toBe('project-dataflow');
-    expect(completedRun?.['projectMachineBindingId']).toBe('binding-dataflow');
+    expect(completedRun?.['resourceId']).toBe('resource-dataflow');
+    expect(completedRun?.['runtimeTargetId']).toBe('target-dataflow');
+    expect(completedRun).not.toHaveProperty('projectId');
+    expect(completedRun).not.toHaveProperty('projectMachineBindingId');
     expect(completedRun?.['platformRunId']).toBe('platform-run-dataflow');
 
     const nodes = completedRun?.['nodes'] as Record<string, Record<string, unknown>>;
@@ -242,8 +249,8 @@ nodes:
       type: 'workflow-run',
       requestId: 'workflow-run-approval',
       directoryId: directory.id,
-      projectId: 'project-approval',
-      projectMachineBindingId: 'binding-approval',
+      resourceId: 'resource-approval',
+      runtimeTargetId: 'target-approval',
       platformRunId: 'platform-run-approval',
       executionPolicy: { mode: 'current_tree' },
       workflowSourceRef: 'viewport://tests/protocol-workflow-approval',
@@ -280,7 +287,8 @@ nodes:
     });
     const blockedRun = workflowRunFrom(blocked);
     const blockedNodes = blockedRun?.['nodes'] as Record<string, Record<string, unknown>>;
-    expect(blockedRun?.['projectMachineBindingId']).toBe('binding-approval');
+    expect(blockedRun?.['runtimeTargetId']).toBe('target-approval');
+    expect(blockedRun).not.toHaveProperty('projectMachineBindingId');
     expect(blockedNodes.prepare?.status).toBe('completed');
     expect(blockedNodes.gate?.status).toBe('blocked');
     expect(blockedNodes.ship?.status).toBe('queued');

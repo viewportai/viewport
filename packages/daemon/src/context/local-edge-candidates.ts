@@ -6,8 +6,7 @@ import {
   ensureUserOrApprovedDevice,
 } from './local-edge-engine.js';
 import { recordCandidateDecisionApplication } from './local-edge-decision-applications.js';
-import { readProjectMetadata, touchProjectMetadata } from './local-edge-metadata.js';
-import { migrateLegacyProjectIfNeeded } from './local-edge-migration.js';
+import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
 import {
   CONTEXT_EVENT_SCHEMA_VERSION,
   type ContextCandidateDecisionPullRecord,
@@ -16,7 +15,7 @@ import {
 } from './local-edge-types.js';
 
 export async function proposeContextEntry(options: {
-  projectId: string;
+  contextResourceId: string;
   actorName: string;
   title: string;
   body: string;
@@ -26,13 +25,7 @@ export async function proposeContextEntry(options: {
   home?: string;
 }): Promise<ContextCandidateProposal> {
   const home = options.home ?? configDir();
-  await migrateLegacyProjectIfNeeded({
-    projectId: options.projectId,
-    home,
-    credentials: options.credentials,
-    keyStore: 'file',
-  });
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   assertCredentialsOrApprovedDevice(vault, {
     userName: metadata.userName,
@@ -49,12 +42,13 @@ export async function proposeContextEntry(options: {
   const event = vault.proposeEntry({
     repoId: metadata.repoId,
     actorName: options.actorName,
+    contextResourceId: options.contextResourceId,
     title: options.title,
     body: options.body,
     source,
     sourceKind: options.sourceKind ?? 'workflow',
   });
-  await touchProjectMetadata(metadata, home);
+  await touchContextMetadata(metadata, home);
 
   return {
     id: event.id,
@@ -69,14 +63,14 @@ export async function proposeContextEntry(options: {
 }
 
 export async function applyContextCandidateDecision(options: {
-  projectId: string;
+  contextResourceId: string;
   actorName: string;
   decision: ContextCandidateDecisionPullRecord;
   credentials: ContextCredentials;
   home?: string;
 }): Promise<{ applied: boolean; reason?: string; candidateId?: string; emitted: number }> {
   const home = options.home ?? configDir();
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   assertCredentialsOrApprovedDevice(vault, {
     userName: metadata.userName,
@@ -95,8 +89,23 @@ export async function applyContextCandidateDecision(options: {
       decision: options.decision,
       emitted: 0,
       home,
-      projectId: options.projectId,
+      contextResourceId: options.contextResourceId,
       reason: 'repo_mismatch',
+      status: 'skipped',
+    });
+  }
+
+  if (
+    options.decision.context_resource_id &&
+    options.decision.context_resource_id !== options.contextResourceId
+  ) {
+    return recordAndReturnDecisionApplication({
+      actorName: options.actorName,
+      decision: options.decision,
+      emitted: 0,
+      home,
+      contextResourceId: options.contextResourceId,
+      reason: 'context_resource_mismatch',
       status: 'skipped',
     });
   }
@@ -116,7 +125,7 @@ export async function applyContextCandidateDecision(options: {
       decision: options.decision,
       emitted: 0,
       home,
-      projectId: options.projectId,
+      contextResourceId: options.contextResourceId,
       reason: 'candidate_not_found',
       status: 'skipped',
     });
@@ -128,7 +137,7 @@ export async function applyContextCandidateDecision(options: {
       decision: options.decision,
       emitted: 0,
       home,
-      projectId: options.projectId,
+      contextResourceId: options.contextResourceId,
       reason: `candidate_already_${candidate.status}`,
       status: 'skipped',
     });
@@ -142,6 +151,7 @@ export async function applyContextCandidateDecision(options: {
       title: candidate.title,
       body: candidate.body,
       source: candidate.source ?? `candidate://${candidate.id}`,
+      contextResourceId: options.contextResourceId,
       review: {
         platformDecisionId: options.decision.id,
         platformInboxItemId: options.decision.inbox_item_id ?? null,
@@ -150,7 +160,7 @@ export async function applyContextCandidateDecision(options: {
         platformSignatureDigest: options.decision.platform_signature.signed_payload_digest,
       },
     });
-    await touchProjectMetadata(metadata, home);
+    await touchContextMetadata(metadata, home);
 
     return recordAndReturnDecisionApplication({
       actorName: options.actorName,
@@ -158,7 +168,7 @@ export async function applyContextCandidateDecision(options: {
       decision: options.decision,
       emitted: 2,
       home,
-      projectId: options.projectId,
+      contextResourceId: options.contextResourceId,
       status: 'applied',
     });
   }
@@ -169,7 +179,7 @@ export async function applyContextCandidateDecision(options: {
     candidateId: candidate.id,
     reason: options.decision.message ?? 'Rejected in Viewport Inbox.',
   });
-  await touchProjectMetadata(metadata, home);
+  await touchContextMetadata(metadata, home);
 
   return recordAndReturnDecisionApplication({
     actorName: options.actorName,
@@ -177,7 +187,7 @@ export async function applyContextCandidateDecision(options: {
     decision: options.decision,
     emitted: 1,
     home,
-    projectId: options.projectId,
+    contextResourceId: options.contextResourceId,
     status: 'applied',
   });
 }
@@ -188,18 +198,21 @@ async function recordAndReturnDecisionApplication(options: {
   decision: ContextCandidateDecisionPullRecord;
   emitted: number;
   home: string;
-  projectId: string;
+  contextResourceId: string;
   reason?: string;
   status: 'applied' | 'skipped';
 }): Promise<{ applied: boolean; reason?: string; candidateId?: string; emitted: number }> {
   await recordCandidateDecisionApplication({
     home: options.home,
-    projectId: options.projectId,
+    contextResourceId: options.contextResourceId,
     application: {
       schema_version: 'viewport.context_candidate_application/v1',
       decision_id: options.decision.id,
       inbox_item_id: options.decision.inbox_item_id ?? null,
       repo_id: options.decision.repo_id,
+      ...(options.decision.context_resource_id
+        ? { context_resource_id: options.decision.context_resource_id }
+        : {}),
       candidate_event_id: options.decision.candidate_event_id,
       payload_digest: options.decision.payload_digest ?? null,
       decision: options.decision.decision,

@@ -7,7 +7,10 @@
       "schema": "src/server/ws-protocol.ts#LaunchSchema",
       "handler": "src/server/ws-command-handlers.ts#launch",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-session-lifecycle.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": true
     },
@@ -17,7 +20,10 @@
       "schema": "src/server/ws-protocol.ts#KillSchema",
       "handler": "src/server/ws-command-handlers.ts#kill",
       "unitTests": ["tests/server/ws-protocol.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-session-lifecycle.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": false
     },
@@ -27,7 +33,10 @@
       "schema": "src/server/ws-protocol.ts#PromptSchema",
       "handler": "src/server/ws-command-handlers.ts#prompt",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-session-lifecycle.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": true
     },
@@ -37,7 +46,10 @@
       "schema": "src/server/ws-protocol.ts#RespondPermissionSchema",
       "handler": "src/server/ws-command-handlers.ts#respond-permission",
       "unitTests": ["tests/server/ws-protocol.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-session-lifecycle.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": true
     },
@@ -107,7 +119,10 @@
       "schema": "src/server/ws-protocol.ts#ResumeSchema",
       "handler": "src/server/ws-command-handlers.ts#resume",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-session-lifecycle.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": false
     },
@@ -117,7 +132,10 @@
       "schema": "src/server/ws-protocol.ts#SyncRequestSchema",
       "handler": "src/server/ws-command-handlers.ts#sync-request",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-session-lifecycle.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-session-lifecycle.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": false
     },
@@ -126,7 +144,10 @@
       "class": "experimental",
       "schema": "src/server/ws-protocol.ts#WorkflowRunSchema",
       "handler": "src/server/ws-workflow-command-handlers.ts#workflow-run",
-      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-workflow-command-handlers.test.ts"],
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-workflow-command-handlers.test.ts"
+      ],
       "integrationTests": ["tests/e2e/protocol-workflow-run.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": true
@@ -136,7 +157,10 @@
       "class": "experimental",
       "schema": "src/server/ws-protocol.ts#WorkflowListRunsSchema",
       "handler": "src/server/ws-workflow-command-handlers.ts#workflow-list-runs",
-      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-workflow-command-handlers.test.ts"],
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-workflow-command-handlers.test.ts"
+      ],
       "integrationTests": ["tests/e2e/protocol-workflow-run.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": true
@@ -146,7 +170,10 @@
       "class": "experimental",
       "schema": "src/server/ws-protocol.ts#WorkflowShowRunSchema",
       "handler": "src/server/ws-workflow-command-handlers.ts#workflow-show-run",
-      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-workflow-command-handlers.test.ts"],
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-workflow-command-handlers.test.ts"
+      ],
       "integrationTests": ["tests/e2e/protocol-workflow-run.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": true
@@ -156,7 +183,10 @@
       "class": "experimental",
       "schema": "src/server/ws-protocol.ts#WorkflowApproveRunSchema",
       "handler": "src/server/ws-workflow-command-handlers.ts#workflow-approve",
-      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-workflow-command-handlers.test.ts"],
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-workflow-command-handlers.test.ts"
+      ],
       "integrationTests": ["tests/e2e/protocol-workflow-run.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": true
@@ -166,7 +196,10 @@
       "class": "experimental",
       "schema": "src/server/ws-protocol.ts#WorkflowCancelRunSchema",
       "handler": "src/server/ws-workflow-command-handlers.ts#workflow-cancel",
-      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-workflow-command-handlers.test.ts"],
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-workflow-command-handlers.test.ts"
+      ],
       "integrationTests": ["tests/e2e/protocol-workflow-run.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": true
@@ -177,7 +210,10 @@
       "schema": "src/server/ws-protocol.ts#WatchDiscoveredSessionSchema",
       "handler": "src/server/ws-command-handlers.ts#watch-discovered-session",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-discovery-hooks.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-discovery-hooks.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": false
     },
@@ -187,7 +223,10 @@
       "schema": "src/server/ws-protocol.ts#UnwatchDiscoveredSessionSchema",
       "handler": "src/server/ws-command-handlers.ts#unwatch-discovered-session",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
-      "integrationTests": ["tests/server/ws-server.test.ts", "tests/e2e/protocol-discovery-hooks.test.ts"],
+      "integrationTests": [
+        "tests/server/ws-server.test.ts",
+        "tests/e2e/protocol-discovery-hooks.test.ts"
+      ],
       "surfacedInUi": true,
       "surfacedInCli": false
     },

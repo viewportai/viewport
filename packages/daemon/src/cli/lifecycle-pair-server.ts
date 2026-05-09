@@ -23,7 +23,7 @@ export interface PairingPollApprovedData {
   workspace_id: string;
   workspace_name?: string;
   install_id?: string;
-  project_machine_binding_id?: string;
+  runtime_target_id?: string;
   machine_id?: string;
   relay_endpoint?: string;
   token: string;
@@ -115,7 +115,7 @@ export async function storePairingCredentials(
       serverUrl: data.server_url ?? serverUrl,
       workspaceId: data.workspace_id,
       installId: data.install_id,
-      projectMachineBindingId: data.project_machine_binding_id,
+      runtimeTargetId: data.runtime_target_id,
       machineId: data.machine_id,
       issueToken: nextIssueToken,
     },

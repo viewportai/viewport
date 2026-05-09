@@ -6,12 +6,17 @@
  * changes such as reconnect or relay key exchange.
  */
 
-import { execFileSync } from 'node:child_process';
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRegistry } from '../core/agent-registry.js';
 import { logger } from '../core/logger.js';
 import { resolveDisplayVersion } from '../core/package-meta.js';
 import { resolveDaemonRuntimeIdentity } from '../core/runtime-identity.js';
+import {
+  resolveSessionResourceManifestSync,
+  type SessionResourceManifest,
+} from '../config-resolution/index.js';
+import { createGitMetadataResolver } from '../session-enrichment/git.js';
+import { isRecentlyDiscoveredSession } from './discovered-session-window.js';
 
 const MAX_DISCOVERED_HELLO_SESSIONS = 1_000;
 const log = logger.child({ module: 'hello-builder' });
@@ -34,7 +39,7 @@ export interface SnapshotPayload {
     id: string;
     daemonVersion: string;
     runtimeKind: 'managed' | 'local-dev' | 'self-hosted';
-    daemonHomeScope: 'global' | 'project-override';
+    daemonHomeScope: 'global' | 'resource-override';
     profile?: 'local' | 'lan' | 'relay';
     serverUrl?: string;
     relayEndpoint?: string;
@@ -45,11 +50,21 @@ export interface SnapshotPayload {
     path: string;
     name: string;
     isGitRepository: boolean;
+    repoRoot: string | null;
+    repoRemoteUrl: string | null;
+    repoBranch: string | null;
+    repoSha: string | null;
   }>;
   activeSessions: Array<{
     id: string;
     directoryId: string;
     state: string;
+    workingDirectory: string | null;
+    repoRoot: string | null;
+    repoRemoteUrl: string | null;
+    repoBranch: string | null;
+    repoSha: string | null;
+    resourceManifest: SessionResourceManifest;
   }>;
   discoveredSessions: Array<{
     id: string;
@@ -64,6 +79,12 @@ export interface SnapshotPayload {
     parentDirectoryId?: string;
     parentDirectoryPath?: string;
     worktreePath?: string;
+    workingDirectory: string | null;
+    repoRoot: string | null;
+    repoRemoteUrl: string | null;
+    repoBranch: string | null;
+    repoSha: string | null;
+    resourceManifest: SessionResourceManifest;
   }>;
   discoveredSessionsTruncated: boolean;
   availableAgents: string[];
@@ -72,32 +93,51 @@ export interface SnapshotPayload {
 }
 
 export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): SnapshotPayload {
-  const directories = daemon.directoryManager.list().map((d) => ({
-    id: d.id,
-    path: d.path,
-    name: d.path.split('/').pop() ?? d.path,
-    isGitRepository: isGitWorkTree(d.path),
-  }));
+  const gitMetadataFor = createGitMetadataResolver();
+  const directories = daemon.directoryManager.list().map((d) => {
+    const git = gitMetadataFor(d.path);
+    return {
+      id: d.id,
+      path: d.path,
+      name: d.path.split('/').pop() ?? d.path,
+      isGitRepository: git.isGitRepository,
+      repoRoot: git.repoRoot,
+      repoRemoteUrl: git.repoRemoteUrl,
+      repoBranch: git.repoBranch,
+      repoSha: git.repoSha,
+    };
+  });
 
   const activeSessions = daemon.getActiveSessions().map((id) => {
     const info = daemon.getSessionInfo(id);
-    return { id, directoryId: info.directoryId, state: info.state };
+    const dir = daemon.directoryManager.get(info.directoryId);
+    const workingDirectory = dir?.path ?? null;
+    const git = gitMetadataFor(workingDirectory);
+    return {
+      id,
+      directoryId: info.directoryId,
+      state: info.state,
+      workingDirectory,
+      repoRoot: git.repoRoot,
+      repoRemoteUrl: git.repoRemoteUrl,
+      repoBranch: git.repoBranch,
+      repoSha: git.repoSha,
+      resourceManifest: resolveManifest(workingDirectory),
+    };
   });
 
-  // Include discovered sessions from JSONL files
-  const discoveredSessions: Array<{
-    id: string;
-    agentId: string;
-    directoryId: string;
-    summary: string;
-    lastActivity: number;
-    messageCount: number;
-    resumable: boolean;
-  }> = [];
+  // Include only recent discovered sessions by default. Full local history stays
+  // available through the explicit per-directory `list-sessions` command.
+  const discoveredSessions: SnapshotPayload['discoveredSessions'] = [];
+  const now = Date.now();
 
   for (const [directoryId, sessions] of daemon.getDiscoveredSessions()) {
     for (const s of sessions) {
+      if (!isRecentlyDiscoveredSession(s, now)) continue;
       if (discoveredSessions.length >= MAX_DISCOVERED_HELLO_SESSIONS) break;
+      const workingDirectory =
+        s.cwd ?? s.worktreePath ?? daemon.directoryManager.get(directoryId)?.path ?? null;
+      const git = gitMetadataFor(workingDirectory);
       const discoveredSession: SnapshotPayload['discoveredSessions'][number] = {
         id: s.sessionId,
         agentId: s.agentId,
@@ -106,6 +146,12 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
         lastActivity: s.lastModified,
         messageCount: s.messageCount ?? 0,
         resumable: s.resumable,
+        workingDirectory,
+        repoRoot: git.repoRoot,
+        repoRemoteUrl: git.repoRemoteUrl,
+        repoBranch: git.repoBranch,
+        repoSha: git.repoSha,
+        resourceManifest: resolveManifest(workingDirectory),
       };
       if (s.workflowRunId) discoveredSession.workflowRunId = s.workflowRunId;
       if (s.workflowNodeId) discoveredSession.workflowNodeId = s.workflowNodeId;
@@ -164,16 +210,10 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
   };
 }
 
-function isGitWorkTree(directoryPath: string): boolean {
-  try {
-    execFileSync('git', ['-C', directoryPath, 'rev-parse', '--is-inside-work-tree'], {
-      stdio: 'ignore',
-      timeout: 2_000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+function resolveManifest(workingDirectory: string | null | undefined): SessionResourceManifest {
+  return resolveSessionResourceManifestSync({
+    workingDirectory: workingDirectory ?? process.cwd(),
+  });
 }
 
 function logSnapshotDelivery(kind: 'hello' | 'sync-snapshot', snapshot: SnapshotPayload): void {

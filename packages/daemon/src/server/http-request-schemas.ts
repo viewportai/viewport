@@ -62,8 +62,8 @@ export const WorkflowRunBodySchema = z
     workflowSourceRef: z.string().trim().min(1).optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
-    projectId: z.string().trim().min(1).optional(),
-    projectMachineBindingId: z.string().trim().min(1).optional(),
+    resourceId: z.string().trim().min(1).optional(),
+    runtimeTargetId: z.string().trim().min(1).optional(),
     platformRunId: z.string().trim().min(1).optional(),
     rerunOfWorkflowRunId: z.string().trim().min(1).optional(),
     executionPolicy: z

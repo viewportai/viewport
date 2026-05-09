@@ -19,7 +19,7 @@ export interface RuntimeRoutingContext {
 
 export interface RuntimeRoutingTarget {
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
   clientId: string;
   payload: string;
@@ -31,30 +31,30 @@ export async function routeClientMessageWithoutLocalDaemon(
   target: RuntimeRoutingTarget,
 ): Promise<void> {
   const { config, safeSend, metrics, logger, backplane } = context;
-  const { workspaceId, projectMachineBindingId, machineId, clientId, payload } = target;
+  const { workspaceId, runtimeTargetId, machineId, clientId, payload } = target;
 
-  if (!projectMachineBindingId) {
+  if (!runtimeTargetId) {
     metrics.increment('relay_client_messages_dropped_total');
     safeSend(ws, JSON.stringify(missingRuntimeTargetPayload(workspaceId)));
     logger.warn('client_message_dropped', {
       workspaceId,
       clientId,
-      reason: 'missing_project_machine_binding',
+      reason: 'missing_runtime_target',
     });
     return;
   }
 
-  const preferred = await backplane.resolvePresence(workspaceId, projectMachineBindingId);
+  const preferred = await backplane.resolvePresence(workspaceId, runtimeTargetId);
   if (preferred && preferred.daemonConnected && preferred.relayId !== config.relayId) {
     if (config.clientRedirectEnabled) {
       safeSend(
         ws,
-        JSON.stringify(relayRedirectPayload(workspaceId, preferred.relayWsBaseUrl, projectMachineBindingId)),
+        JSON.stringify(relayRedirectPayload(workspaceId, preferred.relayWsBaseUrl, runtimeTargetId)),
       );
     }
     const published = await backplane.publishClientToDaemon(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       payload,
       preferred.relayId,
@@ -71,11 +71,11 @@ export async function routeClientMessageWithoutLocalDaemon(
   }
 
   metrics.increment('relay_client_messages_dropped_total');
-  safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId, projectMachineBindingId, machineId)));
+  safeSend(ws, JSON.stringify(relayStatusPayload(workspaceId, runtimeTargetId, machineId)));
   logger.warn('client_message_dropped', {
     workspaceId,
     clientId,
-    projectMachineBindingId,
+    runtimeTargetId,
     machineId,
     reason: 'daemon_unavailable',
   });

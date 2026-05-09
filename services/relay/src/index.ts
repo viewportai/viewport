@@ -88,7 +88,7 @@ const UpgradeQuerySchema = z.object({
     .min(1)
     .max(128)
     .regex(/^[A-Za-z0-9._:-]+$/),
-  projectMachineBindingId: z
+  runtimeTargetId: z
     .string()
     .min(1)
     .max(128)
@@ -153,7 +153,7 @@ function buildStatePayload(): Record<string, unknown> {
     clientRedirectEnabled: config.clientRedirectEnabled,
     workspaces: registry.workspaceEntries().map(([, state]) => ({
       workspaceId: state.workspaceId,
-      projectMachineBindingId: state.projectMachineBindingId,
+      runtimeTargetId: state.runtimeTargetId,
       daemonConnected: !!(state.daemon && state.daemon.readyState === WebSocket.OPEN),
       clientCount: [...state.clients.keys()].filter((ws) => ws.readyState === WebSocket.OPEN).length,
       clientIds: config.stateIncludeClientIds ? [...state.clients.values()].map((item) => item.clientId) : undefined,
@@ -330,7 +330,7 @@ server.on('upgrade', async (req, socket, head) => {
     const validated = UpgradeQuerySchema.safeParse({
       role: parsed.searchParams.get('role') ?? '',
       workspaceId: parsed.searchParams.get('workspaceId') ?? '',
-      projectMachineBindingId: parsed.searchParams.get('projectMachineBindingId') ?? undefined,
+      runtimeTargetId: parsed.searchParams.get('runtimeTargetId') ?? undefined,
     });
     if (!validated.success) {
       metrics.increment('relay_upgrade_invalid_query_total');
@@ -338,7 +338,8 @@ server.on('upgrade', async (req, socket, head) => {
       socket.destroy();
       return;
     }
-    const { role, workspaceId, projectMachineBindingId } = validated.data;
+    const { role, workspaceId } = validated.data;
+    const runtimeTargetId = validated.data.runtimeTargetId;
     const auth = resolveUpgradeAuth({
       relayMode: config.relayMode,
       authorizationHeader: typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
@@ -356,7 +357,7 @@ server.on('upgrade', async (req, socket, head) => {
 
     if (role === 'client') {
       const workspaceState = registry.getOrCreate(
-        projectMachineBindingId ? `${workspaceId}:${projectMachineBindingId}` : workspaceId,
+        runtimeTargetId ? `${workspaceId}:${runtimeTargetId}` : workspaceId,
       );
       if (workspaceState.clients.size >= config.maxClientsPerWorkspace) {
         metrics.increment('relay_upgrade_rejected_workspace_clients_total');
@@ -370,7 +371,7 @@ server.on('upgrade', async (req, socket, head) => {
       token,
       role,
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
     });
     if (!admission.ok) {
       metrics.increment('relay_admission_denied_total');
@@ -388,15 +389,15 @@ server.on('upgrade', async (req, socket, head) => {
 
     metrics.increment('relay_admission_ok_total');
     let redirectWsBaseUrl: string | null = null;
-    if (role === 'client' && config.clientRedirectEnabled && projectMachineBindingId) {
-      const preferred = await backplane.resolvePresence(workspaceId, projectMachineBindingId);
+    if (role === 'client' && config.clientRedirectEnabled && runtimeTargetId) {
+      const preferred = await backplane.resolvePresence(workspaceId, runtimeTargetId);
       if (preferred && preferred.daemonConnected && preferred.relayWsBaseUrl !== config.publicWsBaseUrl) {
         redirectWsBaseUrl = preferred.relayWsBaseUrl;
       }
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      registerConnection(routingContext, ws, role, workspaceId, projectMachineBindingId, ip, admission.claims);
+      registerConnection(routingContext, ws, role, workspaceId, runtimeTargetId, ip, admission.claims);
       if (redirectWsBaseUrl) {
         metrics.increment('relay_client_redirect_total');
         safeSend(ws, JSON.stringify(relayRedirectPayload(workspaceId, redirectWsBaseUrl)));
@@ -456,7 +457,7 @@ const presenceSyncInterval = setInterval(async () => {
   if (!config.presenceSyncEnabled) return;
   for (const [, state] of registry.workspaceEntries()) {
     if (state.daemon && state.daemon.readyState === WebSocket.OPEN) {
-      await backplane.upsertPresence(state.workspaceId, true, state.projectMachineBindingId);
+      await backplane.upsertPresence(state.workspaceId, true, state.runtimeTargetId);
     }
   }
 }, config.presenceSyncIntervalMs);

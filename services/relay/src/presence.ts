@@ -10,7 +10,7 @@ interface PresenceResolveResponse {
   relayWsBaseUrl?: string | null;
   daemonConnected?: boolean;
   stale?: boolean;
-  projectMachineBindingId?: string | null;
+  runtimeTargetId?: string | null;
   machineId?: string | null;
 }
 
@@ -22,13 +22,13 @@ interface PresenceCacheEntry {
   relayId: string;
   relayWsBaseUrl: string;
   daemonConnected: boolean;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
   expiresAt: number;
 }
 
-function presenceCacheKey(workspaceId: string, projectMachineBindingId?: string): string {
-  return projectMachineBindingId ? `${workspaceId}:${projectMachineBindingId}` : workspaceId;
+function presenceCacheKey(workspaceId: string, runtimeTargetId?: string): string {
+  return runtimeTargetId ? `${workspaceId}:${runtimeTargetId}` : workspaceId;
 }
 
 export function isAllowedRedirectWsBaseUrl(relayWsBaseUrl: string, config: RelayConfig): boolean {
@@ -89,7 +89,7 @@ export class RelayPresenceClient {
   async upsert(
     workspaceId: string,
     daemonConnected: boolean,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
     machineId?: string,
   ): Promise<void> {
     if (!this.enabled) return;
@@ -100,7 +100,7 @@ export class RelayPresenceClient {
         endpoint,
         {
           workspaceId,
-          projectMachineBindingId,
+          runtimeTargetId,
           machineId,
           relayId: this.config.relayId,
           relayWsBaseUrl: this.config.publicWsBaseUrl,
@@ -133,11 +133,11 @@ export class RelayPresenceClient {
 
   async resolve(
     workspaceId: string,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
   ): Promise<PresenceCacheEntry | null> {
     if (!this.enabled) return null;
 
-    const cacheKey = presenceCacheKey(workspaceId, projectMachineBindingId);
+    const cacheKey = presenceCacheKey(workspaceId, runtimeTargetId);
     const cached = this.resolveCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       this.touchCache(cacheKey, cached);
@@ -148,7 +148,7 @@ export class RelayPresenceClient {
     try {
       const res = await postInternalJson<Record<string, unknown>, PresenceResolveResponse>(
         endpoint,
-        { workspaceId, projectMachineBindingId },
+        { workspaceId, runtimeTargetId },
         {
           'x-relay-internal-key': this.config.relayInternalKey!,
         },
@@ -183,9 +183,9 @@ export class RelayPresenceClient {
         relayId,
         relayWsBaseUrl,
         daemonConnected: true,
-        projectMachineBindingId:
-          typeof res.json.projectMachineBindingId === 'string'
-            ? res.json.projectMachineBindingId
+        runtimeTargetId:
+          typeof res.json.runtimeTargetId === 'string'
+            ? res.json.runtimeTargetId
             : undefined,
         machineId: typeof res.json.machineId === 'string' ? res.json.machineId : undefined,
         expiresAt: Date.now() + 2_000,

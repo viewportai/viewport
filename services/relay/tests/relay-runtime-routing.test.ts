@@ -61,8 +61,8 @@ describe('relay runtime routing contracts', () => {
     expect(sent.map((payload) => JSON.parse(payload))).toEqual([
       {
         type: 'relay_status',
-        code: 'MISSING_PROJECT_MACHINE_BINDING',
-        message: 'Runtime client must specify a project-machine binding target',
+        code: 'RUNTIME_TARGET_REQUIRED',
+        message: 'Runtime client must specify a runtime target',
         workspaceId: 'workspace_1',
         retryable: false,
       },
@@ -71,7 +71,7 @@ describe('relay runtime routing contracts', () => {
     expect(logger.warn).toHaveBeenCalledWith('client_message_dropped', {
       workspaceId: 'workspace_1',
       clientId: 'client_1',
-      reason: 'missing_project_machine_binding',
+      reason: 'missing_runtime_target',
     });
     expect(backplane.resolvePresence).not.toHaveBeenCalled();
   });
@@ -82,7 +82,7 @@ describe('relay runtime routing contracts', () => {
         relayId: 'relay-remote',
         relayWsBaseUrl: 'wss://relay.example/ws',
         daemonConnected: true,
-        projectMachineBindingId: 'binding_1',
+        runtimeTargetId: 'binding_1',
         machineId: 'machine_1',
       }),
       publishClientToDaemon: vi.fn().mockResolvedValue(true),
@@ -90,7 +90,7 @@ describe('relay runtime routing contracts', () => {
 
     await routeClientMessageWithoutLocalDaemon(context, ws, {
       workspaceId: 'workspace_1',
-      projectMachineBindingId: 'binding_1',
+      runtimeTargetId: 'binding_1',
       machineId: 'machine_1',
       clientId: 'client_1',
       payload: '{"type":"relay_key_exchange_init"}',
@@ -102,7 +102,7 @@ describe('relay runtime routing contracts', () => {
         code: 'RELAY_REDIRECT',
         message: 'Workspace is assigned to a different relay instance',
         workspaceId: 'workspace_1',
-        projectMachineBindingId: 'binding_1',
+        runtimeTargetId: 'binding_1',
         relayWsBaseUrl: 'wss://relay.example/ws',
       },
     ]);
@@ -129,7 +129,7 @@ describe('relay runtime routing contracts', () => {
 
     await routeClientMessageWithoutLocalDaemon(context, ws, {
       workspaceId: 'workspace_1',
-      projectMachineBindingId: 'binding_1',
+      runtimeTargetId: 'binding_1',
       machineId: 'machine_1',
       clientId: 'client_1',
       payload: '{"type":"relay_key_exchange_init"}',
@@ -139,9 +139,9 @@ describe('relay runtime routing contracts', () => {
       {
         type: 'relay_status',
         code: 'DAEMON_UNAVAILABLE',
-        message: 'No machine runtime is connected for this project target',
+        message: 'No machine runtime is connected for this runtime target',
         workspaceId: 'workspace_1',
-        projectMachineBindingId: 'binding_1',
+        runtimeTargetId: 'binding_1',
         machineId: 'machine_1',
         retryable: true,
       },
@@ -151,7 +151,7 @@ describe('relay runtime routing contracts', () => {
     expect(logger.warn).toHaveBeenCalledWith('client_message_dropped', {
       workspaceId: 'workspace_1',
       clientId: 'client_1',
-      projectMachineBindingId: 'binding_1',
+      runtimeTargetId: 'binding_1',
       machineId: 'machine_1',
       reason: 'daemon_unavailable',
     });

@@ -77,10 +77,8 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
       relayServerUrl: typeof parsed.relayServerUrl === 'string' ? parsed.relayServerUrl : undefined,
       relayWorkspaceId:
         typeof parsed.relayWorkspaceId === 'string' ? parsed.relayWorkspaceId : undefined,
-      relayProjectMachineBindingId:
-        typeof parsed.relayProjectMachineBindingId === 'string'
-          ? parsed.relayProjectMachineBindingId
-          : undefined,
+      relayRuntimeTargetId:
+        typeof parsed.relayRuntimeTargetId === 'string' ? parsed.relayRuntimeTargetId : undefined,
       relayMachineId: typeof parsed.relayMachineId === 'string' ? parsed.relayMachineId : undefined,
       relayTlsVerify:
         parsed.relayTlsVerify === 'auto' ||
@@ -101,15 +99,18 @@ export async function readDaemonRuntimeState(): Promise<DaemonRuntimeState | nul
           : undefined,
       daemonHome: typeof parsed.daemonHome === 'string' ? parsed.daemonHome : undefined,
       daemonHomeScope:
-        parsed.daemonHomeScope === 'global' || parsed.daemonHomeScope === 'project-override'
+        parsed.daemonHomeScope === 'global' || parsed.daemonHomeScope === 'resource-override'
           ? parsed.daemonHomeScope
           : undefined,
       serverUrl: typeof parsed.serverUrl === 'string' ? parsed.serverUrl : undefined,
-      projectConfigDir:
-        typeof parsed.projectConfigDir === 'string' ? parsed.projectConfigDir : undefined,
-      projectConfigSource:
-        parsed.projectConfigSource === 'explicit' || parsed.projectConfigSource === 'ancestor'
-          ? parsed.projectConfigSource
+      resourceOverrideConfigDir:
+        typeof parsed.resourceOverrideConfigDir === 'string'
+          ? parsed.resourceOverrideConfigDir
+          : undefined,
+      resourceOverrideConfigSource:
+        parsed.resourceOverrideConfigSource === 'explicit' ||
+        parsed.resourceOverrideConfigSource === 'ancestor'
+          ? parsed.resourceOverrideConfigSource
           : undefined,
     };
   } catch {

@@ -18,19 +18,20 @@ export function relayRecoveryHint(input: RelayDiagnosticInput): string | null {
   }
 
   if (
-    code === 'PROJECT_MACHINE_BINDING_NOT_FOUND' ||
-    message.includes('project machine binding not found') ||
-    message.includes('machine binding is missing')
+    code === 'RUNTIME_TARGET_REQUIRED' ||
+    code === 'RUNTIME_TARGET_NOT_FOUND' ||
+    message.includes('runtime target not found') ||
+    message.includes('runtime target is missing')
   ) {
-    return 'The selected project machine binding is no longer active. Re-pair this machine or select a live machine in the runtime UI.';
+    return 'The selected runtime target is no longer active. Re-pair this machine or select a live machine in the runtime UI.';
   }
 
   if (
-    code === 'PROJECT_MACHINE_BINDING_MISMATCH' ||
-    message.includes('project machine binding mismatch') ||
-    message.includes('different project machine binding')
+    code === 'RUNTIME_TARGET_MISMATCH' ||
+    message.includes('runtime target mismatch') ||
+    message.includes('different runtime target')
   ) {
-    return 'The daemon is connected with a different project machine binding than the browser selected. Re-pair or restart the daemon after selecting the intended project.';
+    return 'The daemon is connected with a different runtime target than the browser selected. Re-pair or restart the daemon after selecting the intended runtime target.';
   }
 
   if (code === 'CIRCUIT_OPEN' || state === 'circuit_open') {

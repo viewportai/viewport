@@ -15,7 +15,7 @@ export interface OpenDaemonSocketOptions {
 export interface RelayDaemonUrlOptions {
   relayEndpoint: string;
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
 }
 
 export interface OpenRelayDaemonSocketOptions extends RelayDaemonUrlOptions {
@@ -34,8 +34,8 @@ export function relayDaemonUrl(options: RelayDaemonUrlOptions): string {
   return (
     `${options.relayEndpoint}?role=workspace-daemon` +
     `&workspaceId=${encodeURIComponent(options.workspaceId)}` +
-    (options.projectMachineBindingId
-      ? `&projectMachineBindingId=${encodeURIComponent(options.projectMachineBindingId)}`
+    (options.runtimeTargetId
+      ? `&runtimeTargetId=${encodeURIComponent(options.runtimeTargetId)}`
       : '')
   );
 }

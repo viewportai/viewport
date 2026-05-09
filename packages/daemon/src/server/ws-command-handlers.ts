@@ -9,6 +9,14 @@ import { discoveredWatchKey, removeDiscoveredWatch } from './discovered-watch-ke
 import { ErrorCodes } from '../core/error-codes.js';
 import { logger } from '../core/logger.js';
 import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
+import {
+  resolveSessionResourceManifestSync,
+  type SessionResourceManifest,
+} from '../config-resolution/index.js';
+import {
+  createGitMetadataResolver,
+  type GitRepositoryMetadata,
+} from '../session-enrichment/git.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
 const MAX_CLIENT_DISCOVERED_WATCHES = 2048;
@@ -25,6 +33,41 @@ function addBoundedSetEntry(set: Set<string>, value: string, maxEntries: number)
 }
 
 type IncomingByType<T extends IncomingMessage['type']> = Extract<IncomingMessage, { type: T }>;
+
+interface SessionListSource {
+  sessionId: string;
+  agentId: string;
+  summary: string;
+  lastModified: number;
+  messageCount?: number;
+  resumable: boolean;
+  cwd?: string;
+  worktreePath?: string;
+}
+
+function toSessionListEntry(
+  session: SessionListSource,
+  directoryId: string,
+  workingDirectory: string | null,
+  gitMetadataFor: (directoryPath?: string | null) => GitRepositoryMetadata,
+): Record<string, unknown> {
+  const git = gitMetadataFor(workingDirectory);
+  return {
+    id: session.sessionId,
+    agentId: session.agentId,
+    directoryId,
+    summary: session.summary,
+    lastActivity: session.lastModified,
+    messageCount: session.messageCount ?? 0,
+    resumable: session.resumable,
+    workingDirectory,
+    repoRoot: git.repoRoot,
+    repoRemoteUrl: git.repoRemoteUrl,
+    repoBranch: git.repoBranch,
+    repoSha: git.repoSha,
+    resourceManifest: resolveManifest(workingDirectory),
+  };
+}
 
 export interface AckSender {
   (
@@ -71,19 +114,18 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
 
   return {
     launch: async (client, msg) => {
+      const resourceId = msg.resourceId;
       const overrides = {
         ...msg.configOverrides,
         ...(msg.model ? { model: msg.model } : {}),
+        ...(resourceId ? { resourceId } : {}),
       };
       const initialPrompt = msg.prompt?.trim() ?? '';
       const sessionId = await daemon.launchSession(
         msg.directoryId,
-        '',
+        initialPrompt,
         Object.keys(overrides).length > 0 ? overrides : undefined,
       );
-      if (initialPrompt.length > 0) {
-        await daemon.sendPrompt(sessionId, initialPrompt);
-      }
       addBoundedSetEntry(client.subscriptions, sessionId, MAX_CLIENT_SUBSCRIPTIONS);
 
       const dir = daemon.directoryManager.get(msg.directoryId);
@@ -94,7 +136,9 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           directoryId: msg.directoryId,
           agent: overrides.agent ?? 'claude',
           model: overrides.model,
+          resourceId,
           cwd: dir?.path,
+          resourceManifest: resolveManifest(dir?.path ?? null),
         }),
       );
       sendBufferedReplay(client, sessionId);
@@ -192,6 +236,9 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       const offset = Math.max(0, msg.offset ?? 0);
       const limit = Math.min(200, Math.max(1, msg.limit ?? 50));
       const sliced = sessions.slice(offset, offset + limit);
+      const dir = daemon.directoryManager?.get?.(msg.directoryId);
+      const workingDirectoryFallback = dir?.path ?? null;
+      const gitMetadataFor = createGitMetadataResolver();
 
       log.debug(
         {
@@ -209,12 +256,12 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           type: 'session-list',
           directoryId: msg.directoryId,
           sessions: sliced.map((s) => ({
-            id: s.sessionId,
-            agentId: s.agentId,
-            summary: s.summary,
-            lastActivity: s.lastModified,
-            messageCount: s.messageCount ?? 0,
-            resumable: s.resumable,
+            ...toSessionListEntry(
+              s,
+              msg.directoryId,
+              s.cwd ?? s.worktreePath ?? workingDirectoryFallback,
+              gitMetadataFor,
+            ),
           })),
           total: sessions.length,
           hasMore: offset + limit < sessions.length,
@@ -241,20 +288,19 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
         });
         return;
       }
+      const resourceId = msg.resourceId;
       const overrides = {
         ...(msg.model ? { model: msg.model } : {}),
+        ...(resourceId ? { resourceId } : {}),
         agent: discoveredMatch.agentId,
       };
       const initialPrompt = msg.prompt?.trim() ?? '';
       const resumeSessionId = await daemon.resumeSession(
         msg.sessionId,
         msg.directoryId,
-        undefined,
+        initialPrompt,
         overrides,
       );
-      if (initialPrompt.length > 0) {
-        await daemon.sendPrompt(resumeSessionId, initialPrompt);
-      }
       addBoundedSetEntry(client.subscriptions, resumeSessionId, MAX_CLIENT_SUBSCRIPTIONS);
       client.send(
         JSON.stringify({
@@ -263,7 +309,9 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           directoryId: msg.directoryId,
           cwd: resumeDir.path,
           agent: discoveredMatch.agentId,
+          resourceId,
           summary: discoveredMatch?.summary,
+          resourceManifest: resolveManifest(resumeDir.path),
         }),
       );
       sendBufferedReplay(client, resumeSessionId);
@@ -326,4 +374,10 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       sendAck(client, msg.requestId, 'ok');
     },
   };
+}
+
+function resolveManifest(workingDirectory: string | null | undefined): SessionResourceManifest {
+  return resolveSessionResourceManifestSync({
+    workingDirectory: workingDirectory ?? process.cwd(),
+  });
 }

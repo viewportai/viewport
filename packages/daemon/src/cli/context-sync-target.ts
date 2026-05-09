@@ -2,7 +2,7 @@ import { getFlag } from './args.js';
 import { ConfigManager } from '../core/config.js';
 
 export interface ContextSyncTarget {
-  projectId: string;
+  contextResourceId: string;
   serverUrl: string;
   credential: string;
   decisionSigningKeys?: Record<string, string>;
@@ -16,7 +16,7 @@ export async function resolveContextSyncTarget(
   const daemon = manager.getDaemonConfig() ?? {};
   const relay = daemon.relay ?? {};
 
-  const projectId = getFlag('project') ?? relay.workspaceId;
+  const contextResourceId = getFlag('context') ?? getFlag('project');
   const serverUrl = getFlag('server-url') ?? relay.serverUrl ?? daemon.server?.url;
   const credential = getFlag('credential') ?? relay.issueToken;
   const decisionSigningKeys =
@@ -26,9 +26,9 @@ export async function resolveContextSyncTarget(
         envValue('VIEWPORT_CONTEXT_DECISION_KEY'),
     ) ?? daemon.server?.contextCandidateDecisionKeys;
 
-  if (!projectId) {
+  if (!contextResourceId) {
     throw new Error(
-      `vpd context ${commandName} requires --project or a saved remote workspace from vpd remote login`,
+      `vpd context ${commandName} requires --context <resource-id>; saved remote workspace ids are not context ids`,
     );
   }
   if (!serverUrl) {
@@ -42,7 +42,7 @@ export async function resolveContextSyncTarget(
     );
   }
 
-  return { projectId, serverUrl, credential, decisionSigningKeys };
+  return { contextResourceId, serverUrl, credential, decisionSigningKeys };
 }
 
 function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {

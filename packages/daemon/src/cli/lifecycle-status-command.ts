@@ -148,12 +148,12 @@ export async function status(): Promise<void> {
       lastErrorMessage: health?.relay?.lastErrorMessage ?? null,
     }),
     note,
-    configSource: configPaths.projectOverridePath
-      ? `project override (${configPaths.projectOverridePath})`
+    configSource: configPaths.resourceOverridePath
+      ? `resource override (${configPaths.resourceOverridePath})`
       : `global (${configPaths.globalPath})`,
-    configReason: runtimeIdentity.projectConfigSource
-      ? runtimeIdentity.projectConfigSource === 'explicit'
-        ? 'explicit VIEWPORT_PROJECT_CONFIG_DIR override'
+    configReason: runtimeIdentity.resourceOverrideConfigSource
+      ? runtimeIdentity.resourceOverrideConfigSource === 'explicit'
+        ? 'explicit VIEWPORT_RESOURCE_OVERRIDE_DIR override'
         : 'nearest ancestor .viewport/config.json'
       : 'global ~/.viewport/config.json',
     cliSource:

@@ -32,12 +32,22 @@ describe('LaunchSchema', () => {
     const result = LaunchSchema.safeParse({
       type: 'launch',
       directoryId: 'dir-1',
+      resourceId: 'resource-1',
       prompt: 'Fix the bug',
       model: 'claude-sonnet-4-20250514',
       configOverrides: { agent: 'claude', costCapUsd: 5.0, trust: 'operator' },
       requestId: 'req-1',
     });
     expect(result.success).toBe(true);
+  });
+
+  it('rejects legacy project scope fields', () => {
+    const result = LaunchSchema.safeParse({
+      type: 'launch',
+      directoryId: 'dir-1',
+      projectId: 'project-1',
+    });
+    expect(result.success).toBe(false);
   });
 
   it('rejects missing directoryId', () => {
@@ -250,14 +260,28 @@ describe('Workflow schemas', () => {
           payload: { number: 42, labels: ['needs-review'] },
         },
       },
-      projectId: 'project-1',
-      projectMachineBindingId: 'binding-1',
+      resourceId: 'context-main',
+      runtimeTargetId: 'runtime-target-1',
       platformRunId: 'platform-run-1',
       rerunOfWorkflowRunId: 'source-run-1',
       executionPolicy: { mode: 'named_branch', branch: 'main' },
       requestId: 'req-1',
     });
     expect(result.success).toBe(true);
+  });
+
+  it('rejects legacy project workflow target fields', () => {
+    const result = WorkflowRunSchema.safeParse({
+      type: 'workflow-run',
+      workflowYaml:
+        'schema: viewport.workflow/v1\nname: proof\nnodes:\n  one:\n    type: shell\n    command: echo ok\n',
+      directoryId: 'dir-1',
+      resourceId: 'context-main',
+      runtimeTargetId: 'runtime-target-1',
+      projectId: 'project-1',
+      projectMachineBindingId: 'binding-1',
+    });
+    expect(result.success).toBe(false);
   });
 
   it('accepts a workflow list command', () => {
@@ -369,9 +393,20 @@ describe('ResumeSchema', () => {
       type: 'resume',
       sessionId: 's1',
       directoryId: 'dir-1',
+      resourceId: 'resource-1',
       prompt: 'Continue from where you left off',
     });
     expect(result.success).toBe(true);
+  });
+
+  it('rejects legacy project scope fields', () => {
+    const result = ResumeSchema.safeParse({
+      type: 'resume',
+      sessionId: 's1',
+      directoryId: 'dir-1',
+      projectId: 'project-1',
+    });
+    expect(result.success).toBe(false);
   });
 });
 

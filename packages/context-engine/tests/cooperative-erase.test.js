@@ -12,7 +12,7 @@ test('revoked client can cooperatively erase local cache and emit signed receipt
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Shared rule before erase',
     body: 'Bob can see this before revocation.',
   });

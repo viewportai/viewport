@@ -2,29 +2,51 @@ import { describe, expect, it } from 'vitest';
 import { resolveConnectionAdmission } from '../src/relay-connection-admission.js';
 
 describe('relay connection admission contracts', () => {
-  it('accepts runtime clients scoped to the requested project-machine binding', () => {
+  it('accepts runtime clients scoped to the requested runtime target', () => {
     expect(
       resolveConnectionAdmission({
         role: 'client',
         workspaceId: 'workspace_1',
-        requestedProjectMachineBindingId: 'binding_1',
+        requestedRuntimeTargetId: 'runtime_target_1',
         ip: '127.0.0.1',
         claims: {
           workspaceId: 'workspace_1',
           scope: 'runtime',
-          projectMachineBindingId: 'binding_1',
+          runtimeTargetId: 'runtime_target_1',
           machineId: 'machine_1',
         },
       }),
     ).toEqual({
       ok: true,
       clientScopeClaim: 'runtime',
-      projectMachineBindingId: 'binding_1',
+      runtimeTargetId: 'runtime_target_1',
       machineId: 'machine_1',
     });
   });
 
-  it('accepts pairing clients without a project-machine binding', () => {
+  it('accepts runtime clients scoped through the runtime target field', () => {
+    expect(
+      resolveConnectionAdmission({
+        role: 'client',
+        workspaceId: 'workspace_1',
+        requestedRuntimeTargetId: 'binding_1',
+        ip: '127.0.0.1',
+        claims: {
+          workspaceId: 'workspace_1',
+          scope: 'runtime',
+          runtimeTargetId: 'binding_1',
+          machineId: 'machine_1',
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      clientScopeClaim: 'runtime',
+      runtimeTargetId: 'binding_1',
+      machineId: 'machine_1',
+    });
+  });
+
+  it('accepts pairing clients without a runtime target', () => {
     expect(
       resolveConnectionAdmission({
         role: 'client',
@@ -38,7 +60,7 @@ describe('relay connection admission contracts', () => {
     ).toEqual({
       ok: true,
       clientScopeClaim: 'pairing',
-      projectMachineBindingId: undefined,
+      runtimeTargetId: undefined,
       machineId: undefined,
     });
   });
@@ -79,27 +101,27 @@ describe('relay connection admission contracts', () => {
     });
   });
 
-  it('rejects project-machine binding claim mismatches', () => {
+  it('rejects runtime target claim mismatches', () => {
     expect(
       resolveConnectionAdmission({
         role: 'client',
         workspaceId: 'workspace_1',
-        requestedProjectMachineBindingId: 'binding_1',
+        requestedRuntimeTargetId: 'binding_1',
         ip: '127.0.0.1',
         claims: {
           workspaceId: 'workspace_1',
           scope: 'runtime',
-          projectMachineBindingId: 'binding_2',
+          runtimeTargetId: 'binding_2',
         },
       }),
     ).toMatchObject({
       ok: false,
-      reason: 'project_machine_binding_claim_mismatch',
-      closeReason: 'project machine claim mismatch',
+      reason: 'runtime_target_claim_mismatch',
+      closeReason: 'runtime target claim mismatch',
     });
   });
 
-  it('rejects runtime clients without a project-machine binding target', () => {
+  it('rejects runtime clients without a runtime target', () => {
     expect(
       resolveConnectionAdmission({
         role: 'client',
@@ -112,13 +134,13 @@ describe('relay connection admission contracts', () => {
       }),
     ).toMatchObject({
       ok: false,
-      reason: 'missing_project_machine_binding_claim',
-      closeReason: 'missing project machine claim',
+      reason: 'missing_runtime_target_claim',
+      closeReason: 'missing runtime target claim',
       sendMissingRuntimeTarget: true,
     });
   });
 
-  it('rejects daemons without a project-machine binding target', () => {
+  it('rejects daemons without a runtime target', () => {
     expect(
       resolveConnectionAdmission({
         role: 'workspace-daemon',
@@ -130,8 +152,8 @@ describe('relay connection admission contracts', () => {
       }),
     ).toMatchObject({
       ok: false,
-      reason: 'missing_project_machine_binding_claim',
-      closeReason: 'missing project machine claim',
+      reason: 'missing_runtime_target_claim',
+      closeReason: 'missing runtime target claim',
       sendMissingRuntimeTarget: true,
     });
   });

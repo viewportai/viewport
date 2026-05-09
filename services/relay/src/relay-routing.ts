@@ -159,10 +159,10 @@ function routeSessionOwnedFrame(
     return true;
   }
 
-  if (owner.sourceRelayId && state.projectMachineBindingId) {
+  if (owner.sourceRelayId && state.runtimeTargetId) {
     void backplane.publishDaemonToClients(
       workspaceId,
-      state.projectMachineBindingId,
+      state.runtimeTargetId,
       undefined,
       text,
       owner.sourceRelayId,
@@ -287,10 +287,10 @@ function routeKeyExchangeResponse(
     metrics.increment('relay_key_exchange_response_routed_local_total');
     return true;
   }
-  if (owner.sourceRelayId && state.projectMachineBindingId) {
+  if (owner.sourceRelayId && state.runtimeTargetId) {
     void backplane.publishDaemonToClients(
       workspaceId,
-      state.projectMachineBindingId,
+      state.runtimeTargetId,
       undefined,
       text,
       owner.sourceRelayId,
@@ -331,10 +331,10 @@ function routePairingResponse(
     metrics.increment('relay_pairing_response_routed_local_total');
     return true;
   }
-  if (owner.sourceRelayId && state.projectMachineBindingId) {
+  if (owner.sourceRelayId && state.runtimeTargetId) {
     void backplane.publishDaemonToClients(
       workspaceId,
-      state.projectMachineBindingId,
+      state.runtimeTargetId,
       undefined,
       text,
       owner.sourceRelayId,
@@ -348,19 +348,19 @@ function routePairingResponse(
 
 export function routeBusFrame(context: RelayRoutingContext, frame: RelayBusFrame): void {
   const { registry, safeSend, metrics, logger } = context;
-  if (!frame.projectMachineBindingId) {
+  if (!frame.runtimeTargetId) {
     metrics.increment('relay_bus_frames_rejected_total');
     logger.warn('bus_frame_rejected', {
       workspaceId: frame.workspaceId,
       direction: frame.direction,
-      reason: 'missing_project_machine_binding',
+      reason: 'missing_runtime_target',
     });
     return;
   }
-  const scopeKey = runtimeScopeKey(frame.workspaceId, frame.projectMachineBindingId);
+  const scopeKey = runtimeScopeKey(frame.workspaceId, frame.runtimeTargetId);
   const state = registry.getOrCreate(scopeKey, {
     workspaceId: frame.workspaceId,
-    projectMachineBindingId: frame.projectMachineBindingId,
+    runtimeTargetId: frame.runtimeTargetId,
   });
   registry.touch(scopeKey);
   pruneStalePairingRequests(state);
@@ -476,7 +476,7 @@ export function registerConnection(
   ws: WebSocket,
   role: RelayRole,
   workspaceId: string,
-  requestedProjectMachineBindingId: string | undefined,
+  requestedRuntimeTargetId: string | undefined,
   ip: string,
   claims?: AdmissionClaims,
 ): void {
@@ -503,7 +503,7 @@ export function registerConnection(
   const admission = resolveConnectionAdmission({
     role,
     workspaceId,
-    requestedProjectMachineBindingId,
+    requestedRuntimeTargetId,
     ip,
     claims,
   });
@@ -517,11 +517,11 @@ export function registerConnection(
     return;
   }
 
-  const { clientScopeClaim, projectMachineBindingId, machineId } = admission;
-  const scopeKey = runtimeScopeKey(workspaceId, projectMachineBindingId);
+  const { clientScopeClaim, runtimeTargetId, machineId } = admission;
+  const scopeKey = runtimeScopeKey(workspaceId, runtimeTargetId);
   const state = registry.getOrCreate(scopeKey, {
     workspaceId,
-    projectMachineBindingId,
+    runtimeTargetId,
   });
   registry.touch(scopeKey);
   pruneStalePairingRequests(state);
@@ -575,10 +575,10 @@ export function registerConnection(
     }
     state.keyExchangeRequests.clear();
     state.sessionOwners.clear();
-    void context.backplane.upsertPresence(workspaceId, true, projectMachineBindingId, machineId);
+    void context.backplane.upsertPresence(workspaceId, true, runtimeTargetId, machineId);
     logger.info('daemon_connected', {
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       ip,
     });
@@ -659,13 +659,13 @@ export function registerConnection(
     ws.on('close', () => {
       const clearedCurrentDaemon = registry.clearDaemon(scopeKey, ws);
       if (clearedCurrentDaemon) {
-        void context.backplane.upsertPresence(workspaceId, false, projectMachineBindingId, machineId);
+        void context.backplane.upsertPresence(workspaceId, false, runtimeTargetId, machineId);
       }
       adjustIpConnectionCount(ip, -1);
       metrics.increment('relay_ws_connections_closed_total');
       logger.info('daemon_disconnected', {
         workspaceId,
-        projectMachineBindingId,
+        runtimeTargetId,
         machineId,
         ip,
         clearedCurrentDaemon,
@@ -832,7 +832,7 @@ export function registerConnection(
         ws,
         {
           workspaceId,
-          projectMachineBindingId,
+          runtimeTargetId,
           machineId,
           clientId,
           payload: text,

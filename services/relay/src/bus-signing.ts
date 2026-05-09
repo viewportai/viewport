@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 export interface BusSignatureFields {
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
   sourceRelayId: string;
   targetRelayId: string | null;
@@ -14,7 +14,7 @@ export interface BusSignatureFields {
 export function busSignatureBase(fields: BusSignatureFields): string {
   return [
     fields.workspaceId,
-    fields.projectMachineBindingId ?? '',
+    fields.runtimeTargetId ?? '',
     fields.machineId ?? '',
     fields.sourceRelayId,
     fields.targetRelayId ?? '',

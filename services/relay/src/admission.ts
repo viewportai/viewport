@@ -20,7 +20,7 @@ interface ValidationRequestBody {
   relayToken: string;
   role: RelayRole;
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
 }
 
 const AdmissionClaimsSchema = z
@@ -28,7 +28,7 @@ const AdmissionClaimsSchema = z
     clientId: z.string().min(1).max(128).optional(),
     userId: z.string().min(1).max(128).optional(),
     installId: z.string().min(1).max(128).optional(),
-    projectMachineBindingId: z.string().min(1).max(128).optional(),
+    runtimeTargetId: z.string().min(1).max(128).optional(),
     machineId: z.string().min(1).max(255).optional(),
     role: z.enum(['workspace-daemon', 'client']).optional(),
     workspaceId: z.string().min(1).max(128).optional(),
@@ -135,7 +135,12 @@ function postJson(
 
 export async function validateAdmission(
   config: RelayConfig,
-  payload: { token: string; role: RelayRole; workspaceId: string; projectMachineBindingId?: string },
+  payload: {
+    token: string;
+    role: RelayRole;
+    workspaceId: string;
+    runtimeTargetId?: string;
+  },
 ): Promise<AdmissionResult> {
   const validateUrl = new URL('/api/runtime/internal/relay/validate', config.serverUrl);
   const rejectUnauthorized = resolveServerTlsRejectUnauthorized(
@@ -164,7 +169,7 @@ export async function validateAdmission(
         relayToken: payload.token,
         role: payload.role,
         workspaceId: payload.workspaceId,
-        projectMachineBindingId: payload.projectMachineBindingId,
+        runtimeTargetId: payload.runtimeTargetId,
       },
       config.relayInternalKey
         ? {

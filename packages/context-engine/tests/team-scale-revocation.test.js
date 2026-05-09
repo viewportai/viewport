@@ -54,7 +54,7 @@ test('20-member grant revoke rotation preserves non-revoked access and blocks re
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Pre-revocation standard',
     body: 'Pre-revocation scale context is visible to the whole project.',
   });
@@ -83,7 +83,7 @@ test('20-member grant revoke rotation preserves non-revoked access and blocks re
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Post-revocation standard',
     body: 'Post-revocation scale context is visible only to remaining members.',
   });

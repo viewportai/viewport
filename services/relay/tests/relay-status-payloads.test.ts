@@ -11,7 +11,7 @@ describe('relay status payload contracts', () => {
     expect(runtimeScopeKey('workspace_1')).toBe('workspace_1');
   });
 
-  it('scopes runtime connections by workspace and project-machine binding', () => {
+  it('scopes runtime connections by workspace and runtime target', () => {
     expect(runtimeScopeKey('workspace_1', 'binding_1')).toBe('workspace_1:binding_1');
   });
 
@@ -19,9 +19,9 @@ describe('relay status payload contracts', () => {
     expect(relayStatusPayload('workspace_1', 'binding_1', 'machine_1')).toEqual({
       type: 'relay_status',
       code: 'DAEMON_UNAVAILABLE',
-      message: 'No machine runtime is connected for this project target',
+      message: 'No machine runtime is connected for this runtime target',
       workspaceId: 'workspace_1',
-      projectMachineBindingId: 'binding_1',
+      runtimeTargetId: 'binding_1',
       machineId: 'machine_1',
       retryable: true,
     });
@@ -30,8 +30,8 @@ describe('relay status payload contracts', () => {
   it('reports missing runtime target as non-retryable', () => {
     expect(missingRuntimeTargetPayload('workspace_1')).toEqual({
       type: 'relay_status',
-      code: 'MISSING_PROJECT_MACHINE_BINDING',
-      message: 'Runtime client must specify a project-machine binding target',
+      code: 'RUNTIME_TARGET_REQUIRED',
+      message: 'Runtime client must specify a runtime target',
       workspaceId: 'workspace_1',
       retryable: false,
     });
@@ -43,7 +43,7 @@ describe('relay status payload contracts', () => {
       code: 'RELAY_REDIRECT',
       message: 'Workspace is assigned to a different relay instance',
       workspaceId: 'workspace_1',
-      projectMachineBindingId: 'binding_1',
+      runtimeTargetId: 'binding_1',
       relayWsBaseUrl: 'wss://relay.example/ws',
     });
   });

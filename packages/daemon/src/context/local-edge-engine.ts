@@ -10,7 +10,7 @@ import {
   type ContextVaultConstructor,
   type ContextVaultInstance,
 } from './local-edge-types.js';
-import { writeProjectMetadata } from './local-edge-metadata.js';
+import { writeContextMetadata } from './local-edge-metadata.js';
 
 const require = createRequire(import.meta.url);
 const { ContextVault, MacOsKeychainIdentitySecretStore, ResolverPinMismatchError } =
@@ -81,6 +81,7 @@ export function assertCredentialsOrApprovedDevice(
     credentials: ContextCredentials;
   },
 ): void {
+  if (hasApprovedDeviceCapability(vault, options)) return;
   try {
     assertCredentials(vault, options.userName, options.credentials);
     return;
@@ -89,7 +90,6 @@ export function assertCredentialsOrApprovedDevice(
       throw error;
     }
   }
-  if (hasApprovedDeviceCapability(vault, options)) return;
   throw new Error(`Unknown user: ${options.userName}`);
 }
 
@@ -143,7 +143,7 @@ export async function ensureRepo(
   vault: ContextVaultInstance,
   options: {
     repoId: string;
-    projectId: string;
+    contextResourceId: string;
     userName: string;
     deviceName: string;
     home: string;
@@ -160,11 +160,11 @@ export async function ensureRepo(
   }
 
   const metadata = vault.getRepoMetadata(options.repoId);
-  await writeProjectMetadata(
+  await writeContextMetadata(
     {
       schemaVersion: CONTEXT_EVENT_SCHEMA_VERSION,
       engine: '@viewportai/context-engine',
-      projectId: options.projectId,
+      contextResourceId: options.contextResourceId,
       repoId: options.repoId,
       userName: options.userName,
       deviceName: options.deviceName,

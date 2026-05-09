@@ -1,10 +1,10 @@
 import path from 'node:path';
 import type { ViewportConfig } from './config.js';
-import { resolveProjectConfig, resolveViewportHome } from './config.js';
+import { resolveResourceOverrideConfig, resolveViewportHome } from './config.js';
 import type { DeploymentProfile } from '../server/security.js';
 
 export type DaemonRuntimeKind = 'managed' | 'local-dev' | 'self-hosted';
-export type DaemonHomeScope = 'global' | 'project-override';
+export type DaemonHomeScope = 'global' | 'resource-override';
 export type DaemonHomeSource = 'default' | 'explicit';
 
 export interface DaemonRuntimeIdentity {
@@ -20,8 +20,8 @@ export interface DaemonRuntimeIdentity {
   relayServerUrl?: string;
   relayWorkspaceId?: string;
   hostedDefaults: boolean;
-  projectConfigPath?: string;
-  projectConfigSource?: 'explicit' | 'ancestor';
+  resourceOverrideConfigPath?: string;
+  resourceOverrideConfigSource?: 'explicit' | 'ancestor';
 }
 
 export interface InstallRuntimeCapabilities {
@@ -124,8 +124,8 @@ export function resolveDaemonRuntimeIdentity(
   const daemonHomeSource: DaemonHomeSource =
     envValue(env, 'VIEWPORT_HOME', 'VPD_HOME') !== undefined ? 'explicit' : 'default';
   const daemonHome = resolveViewportHome(env);
-  const projectConfig = resolveProjectConfig(env);
-  const projectConfigDir = projectConfig.dir;
+  const projectConfig = resolveResourceOverrideConfig(env);
+  const resourceOverrideConfigDir = projectConfig.dir;
   const serverUrl =
     daemonConfig?.server?.url ??
     daemonConfig?.relay?.serverUrl ??
@@ -149,7 +149,7 @@ export function resolveDaemonRuntimeIdentity(
     daemonVersion: input.daemonVersion,
     runtimeKind,
     daemonHome,
-    daemonHomeScope: projectConfigDir ? 'project-override' : 'global',
+    daemonHomeScope: resourceOverrideConfigDir ? 'resource-override' : 'global',
     daemonHomeSource,
     profile: daemonConfig?.profile,
     serverUrl,
@@ -157,8 +157,10 @@ export function resolveDaemonRuntimeIdentity(
     relayServerUrl,
     relayWorkspaceId: daemonConfig?.relay?.workspaceId,
     hostedDefaults,
-    projectConfigPath: projectConfigDir ? path.join(projectConfigDir, 'config.json') : undefined,
-    projectConfigSource: projectConfig.source ?? undefined,
+    resourceOverrideConfigPath: resourceOverrideConfigDir
+      ? path.join(resourceOverrideConfigDir, 'config.json')
+      : undefined,
+    resourceOverrideConfigSource: projectConfig.source ?? undefined,
   };
 }
 
