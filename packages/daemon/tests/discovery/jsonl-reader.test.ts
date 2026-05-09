@@ -403,6 +403,36 @@ describe('parseJSONLEntry', () => {
       expect(outputBlocks[0]!.isError).toBe(false);
     }
   });
+
+  it('parses Codex compacted replacement history into text messages', () => {
+    const blocks = parseJSONLEntry({
+      timestamp: '2026-05-03T14:22:53.010Z',
+      type: 'compacted',
+      payload: {
+        message: 'compact previous turns',
+        replacement_history: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'first prior prompt' }],
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'first prior answer' }],
+          },
+          {
+            type: 'compaction',
+            encrypted_content: 'ignored',
+          },
+        ],
+      },
+    });
+
+    expect(
+      blocks.map((block) => (block.kind === 'text' ? `${block.role}:${block.text}` : block.kind)),
+    ).toEqual(['user:first prior prompt', 'assistant:first prior answer']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -539,6 +569,72 @@ describe('readRichSessionMessagesTailFromFile', () => {
         older.messages.map((block) => (block.kind === 'text' ? block.text : block.kind)),
       ).toEqual(['message 2', 'message 3', 'message 4']);
       expect(older).toMatchObject({ nextOffset: 6, hasMoreBefore: true });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('can page into Codex compacted history before a resumed tail', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-jsonl-tail-page-'));
+    try {
+      const filePath = path.join(dir, 'codex-resumed.jsonl');
+      await fs.writeFile(
+        filePath,
+        [
+          JSON.stringify({
+            timestamp: '2026-05-03T14:22:53.010Z',
+            type: 'compacted',
+            payload: {
+              replacement_history: [
+                {
+                  type: 'message',
+                  role: 'user',
+                  content: [{ type: 'input_text', text: 'old user prompt' }],
+                },
+                {
+                  type: 'message',
+                  role: 'assistant',
+                  content: [{ type: 'output_text', text: 'old assistant answer' }],
+                },
+              ],
+            },
+          }),
+          JSON.stringify({
+            timestamp: '2026-05-09T20:19:00.000Z',
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              name: 'exec_command',
+              call_id: 'call_1',
+              arguments: '{"cmd":"pwd"}',
+            },
+          }),
+          JSON.stringify({
+            timestamp: '2026-05-09T20:20:00.000Z',
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'resumed assistant tail' }],
+            },
+          }),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const latest = await readRichSessionMessagesTailPageFromFile(filePath, 2, 0, {
+        chunkSize: 128,
+      });
+      expect(
+        latest.messages.map((block) => (block.kind === 'text' ? block.text : block.kind)),
+      ).toEqual(['tool_use', 'resumed assistant tail']);
+
+      const older = await readRichSessionMessagesTailPageFromFile(filePath, 2, latest.nextOffset, {
+        chunkSize: 128,
+      });
+      expect(
+        older.messages.map((block) => (block.kind === 'text' ? block.text : block.kind)),
+      ).toEqual(['old user prompt', 'old assistant answer']);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

@@ -34,7 +34,7 @@ export function parseJSONLEntry(entry: unknown): RichSessionMessage[] {
   if (typeof entry !== 'object' || entry === null) return [];
 
   const e = entry as Record<string, unknown>;
-  return parseClaudeEntry(e) ?? parseCodexEntry(e) ?? [];
+  return parseClaudeEntry(e) ?? parseCodexEntry(e) ?? parseCodexCompactedEntry(e) ?? [];
 }
 
 function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
@@ -209,6 +209,39 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
   return [];
 }
 
+function parseCodexCompactedEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
+  if (e.type !== 'compacted') return null;
+  const payload =
+    typeof e.payload === 'object' && e.payload !== null
+      ? (e.payload as Record<string, unknown>)
+      : null;
+  const replacementHistory = payload?.replacement_history;
+  if (!Array.isArray(replacementHistory)) return [];
+
+  const ts = timestampFromEntry(e, payload ?? undefined);
+  const blocks: RichSessionMessage[] = [];
+
+  for (let index = 0; index < replacementHistory.length; index += 1) {
+    const item = replacementHistory[index];
+    if (typeof item !== 'object' || item === null) continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== 'message') continue;
+    const role = normalizeCodexRole(record.role);
+    if (!role) continue;
+    const text = extractCodexCompactedMessageText(record.content);
+    if (!text) continue;
+    blocks.push({
+      kind: 'text',
+      role,
+      text,
+      ts,
+      uuid: `codex-compacted-${ts}-${index}`,
+    });
+  }
+
+  return blocks;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -298,6 +331,17 @@ function extractCodexContentText(value: unknown): string {
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
   }
   return '';
+}
+
+function extractCodexCompactedMessageText(content: unknown): string {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const item of content) {
+    const text = extractCodexContentText(item);
+    if (text) parts.push(text);
+  }
+  return parts.join('\n').trim();
 }
 
 function extractCodexReasoning(payload: Record<string, unknown>): string {
