@@ -131,6 +131,7 @@ export const ReadSessionMessagesSchema = z.object({
   directoryId: z.string().min(1).max(512),
   sessionId: z.string().min(1).max(256),
   limit: z.number().int().positive().max(2_000).optional(),
+  offset: z.number().int().nonnegative().optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 

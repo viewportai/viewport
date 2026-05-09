@@ -7,7 +7,9 @@ import { dedupeBySessionId } from './dedupe.js';
 import { parseCodexSessionFile, type ParsedCodexSession } from './codex-parser.js';
 import {
   readRichSessionMessagesFromFile,
+  readRichSessionMessagesTailPageFromFile,
   readRichSessionMessagesTailFromFile,
+  type RichSessionTailPage,
   type RichSessionMessage,
 } from './jsonl-reader.js';
 
@@ -160,6 +162,18 @@ export async function readCodexSessionMessagesRich(
     return readRichSessionMessagesTailFromFile(filePath, options.limit);
   }
   return readRichSessionMessagesFromFile(filePath);
+}
+
+export async function readCodexSessionMessagesPageRich(
+  sessionId: string,
+  preferredSourcePath: string | undefined,
+  options: { limit: number; offset?: number },
+): Promise<RichSessionTailPage> {
+  const filePath = await findCodexSessionFile(sessionId, preferredSourcePath);
+  if (!filePath) {
+    throw new Error(`Codex session file not found for ${sessionId}`);
+  }
+  return readRichSessionMessagesTailPageFromFile(filePath, options.limit, options.offset ?? 0);
 }
 
 async function listSessionFiles(rootDir: string): Promise<string[]> {

@@ -31,7 +31,11 @@ import {
   WorkflowValidateBodySchema,
   invalidPayloadError,
 } from './http-request-schemas.js';
-import { parseSessionMessageLimit, readDaemonSessionMessages } from './session-message-reader.js';
+import {
+  parseSessionMessageLimit,
+  parseSessionMessageOffset,
+  readDaemonSessionMessagePage,
+} from './session-message-reader.js';
 import { ViewportError } from '../core/errors.js';
 
 const startTime = Date.now();
@@ -367,10 +371,10 @@ export function registerHttpRoutes(
 
   app.get<{
     Params: { directoryId: string; sessionId: string };
-    Querystring: { limit?: string | number };
+    Querystring: { limit?: string | number; offset?: string | number };
   }>('/api/directories/:directoryId/sessions/:sessionId/messages', async (request, reply) => {
     try {
-      const messages = await readDaemonSessionMessages(
+      const page = await readDaemonSessionMessagePage(
         daemon,
         request.params.directoryId,
         request.params.sessionId,
@@ -379,9 +383,10 @@ export function registerHttpRoutes(
             request.query.limit === undefined
               ? undefined
               : parseSessionMessageLimit(request.query.limit),
+          offset: parseSessionMessageOffset(request.query.offset),
         },
       );
-      return { messages };
+      return page;
     } catch (error) {
       if (error instanceof ViewportError) {
         return reply.status(error.statusCode).send({ error: error.message, errorCode: error.code });

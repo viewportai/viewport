@@ -361,6 +361,58 @@ export async function readRichSessionMessagesTailFromFile(
   }
 }
 
+export interface RichSessionTailPage {
+  messages: RichSessionMessage[];
+  nextOffset: number;
+  hasMoreBefore: boolean;
+}
+
+/**
+ * Read a latest-first page from the end of a JSONL transcript.
+ *
+ * `offset` is measured from the newest parsed rich block. offset=0 returns the
+ * latest page; offset=200 returns the page immediately before the newest 200
+ * blocks. Internally this still reads backwards from the file and asks for one
+ * extra block so callers can render an honest "load older" affordance without
+ * scanning the whole file.
+ */
+export async function readRichSessionMessagesTailPageFromFile(
+  filePath: string,
+  limit: number,
+  offset = 0,
+  options: RichSessionTailReadOptions = {},
+): Promise<RichSessionTailPage> {
+  const safeLimit = normalizePositiveInteger(limit, 1);
+  const safeOffset = normalizeNonNegativeInteger(offset);
+  const tail = await readRichSessionMessagesTailFromFile(
+    filePath,
+    safeLimit + safeOffset + 1,
+    options,
+  );
+
+  return pageFromTailMessages(tail, safeLimit, safeOffset);
+}
+
+export function pageFromTailMessages<T>(
+  tail: T[],
+  limit: number,
+  offset = 0,
+): {
+  messages: T[];
+  nextOffset: number;
+  hasMoreBefore: boolean;
+} {
+  const safeLimit = normalizePositiveInteger(limit, 1);
+  const safeOffset = normalizeNonNegativeInteger(offset);
+  const withoutNewer = safeOffset > 0 ? tail.slice(0, Math.max(0, tail.length - safeOffset)) : tail;
+  const page = withoutNewer.slice(-safeLimit);
+  return {
+    messages: page,
+    nextOffset: safeOffset + page.length,
+    hasMoreBefore: withoutNewer.length > page.length,
+  };
+}
+
 export interface RichSessionTailReadOptions {
   /** Bytes per backwards file read. Exposed for deterministic split-boundary tests. */
   chunkSize?: number;
@@ -412,6 +464,11 @@ function isAsciiWhitespace(value: number): boolean {
 
 function normalizePositiveInteger(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value) || value === undefined || value <= 0) return fallback;
+  return Math.floor(value);
+}
+
+function normalizeNonNegativeInteger(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined || value < 0) return 0;
   return Math.floor(value);
 }
 
