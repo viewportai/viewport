@@ -51,11 +51,9 @@ export async function readDaemonSessionMessages(
   const discovered = daemon.getDiscoveredSessions(directoryId).get(directoryId) ?? [];
   const discoveredSession = discovered.find((session) => session.sessionId === sessionId);
   const activeHistoryMeta = readPersistedReplayMeta(sessionId);
-  if (activeHistoryMeta?.directoryId === directoryId) {
+  if (activeHistoryMeta?.directoryId === directoryId && !discoveredSession) {
     const messages = readPersistedSessionMessagesRich(sessionId);
-    if (messages.length > 0 || !discoveredSession) {
-      return limitSessionMessages(messages, options.limit);
-    }
+    return limitSessionMessages(messages, options.limit);
   }
 
   if (!discoveredSession) {
@@ -106,11 +104,9 @@ export async function readDaemonSessionMessagePage(
   const discovered = daemon.getDiscoveredSessions(directoryId).get(directoryId) ?? [];
   const discoveredSession = discovered.find((session) => session.sessionId === sessionId);
   const activeHistoryMeta = readPersistedReplayMeta(sessionId);
-  if (activeHistoryMeta?.directoryId === directoryId) {
+  if (activeHistoryMeta?.directoryId === directoryId && !discoveredSession) {
     const messages = readPersistedSessionMessagesRich(sessionId);
-    if (messages.length > 0 || !discoveredSession) {
-      return pageFromTailMessages(messages, limit, offset);
-    }
+    return pageFromTailMessages(messages, limit, offset);
   }
 
   if (!discoveredSession) {

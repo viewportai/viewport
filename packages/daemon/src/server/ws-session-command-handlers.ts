@@ -171,7 +171,7 @@ export function createWsSessionCommandHandlers(
               sessionId: msg.sessionId,
               ...fit,
               hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
-              nextOffset: parseSessionMessageOffset(msg.offset) + fit.messages.length,
+              nextOffset: page.nextOffset,
               final: true,
             }),
           );
@@ -180,7 +180,7 @@ export function createWsSessionCommandHandlers(
         sendAck(client, msg.requestId, 'ok', undefined, {
           ...fit,
           hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
-          nextOffset: parseSessionMessageOffset(msg.offset) + fit.messages.length,
+          nextOffset: page.nextOffset,
         });
       } catch (error) {
         const viewportError =

@@ -317,6 +317,122 @@ describe('ws-command-handlers', () => {
     }
   });
 
+  it('read-session-messages prefers discovered transcript history over live replay when both exist', async () => {
+    const previousViewportHome = process.env['VIEWPORT_HOME'];
+    const previousCodexHome = process.env['CODEX_HOME'];
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-replay-shadow-'));
+    try {
+      process.env['VIEWPORT_HOME'] = path.join(temp, 'viewport-home');
+      process.env['CODEX_HOME'] = path.join(temp, 'codex-home');
+      const sessionId = 'codex-replay-shadow-session';
+      const replayDir = path.join(process.env['VIEWPORT_HOME'], 'replay');
+      const codexDir = path.join(process.env['CODEX_HOME'], 'sessions', '2026', '05', '09');
+      await fs.mkdir(replayDir, { recursive: true });
+      await fs.mkdir(codexDir, { recursive: true });
+      await fs.writeFile(
+        path.join(replayDir, `${encodeURIComponent(sessionId)}.meta.json`),
+        JSON.stringify({ sessionId, directoryId: 'dir-1', latestSeq: 1 }) + '\n',
+        'utf-8',
+      );
+      await fs.writeFile(
+        path.join(replayDir, `${encodeURIComponent(sessionId)}.jsonl`),
+        JSON.stringify({
+          seq: 1,
+          sessionId,
+          update: {
+            updateType: 'user-message',
+            messageId: 'live-tail-only',
+            text: 'live replay tail should not hide file history',
+            timestamp: Date.parse('2026-05-09T00:01:00.000Z'),
+          },
+        }) + '\n',
+        'utf-8',
+      );
+      const sourcePath = path.join(codexDir, `rollout-2026-05-09T00-00-00-${sessionId}.jsonl`);
+      await fs.writeFile(
+        sourcePath,
+        [
+          JSON.stringify({
+            timestamp: '2026-05-09T00:00:00.000Z',
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'canonical discovered transcript history' }],
+            },
+          }),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const { client } = createClient();
+      const daemon = {
+        directoryManager: {
+          get: vi.fn((id: string) => (id === 'dir-1' ? { id, path: '/tmp/project' } : undefined)),
+        },
+        getDiscoveredSessions: vi.fn().mockReturnValue(
+          new Map([
+            [
+              'dir-1',
+              [
+                {
+                  agentId: 'codex',
+                  sessionId,
+                  summary: 'Codex history',
+                  lastModified: Date.now(),
+                  resumable: true,
+                  messageCount: 2,
+                  sourcePath,
+                },
+              ],
+            ],
+          ]),
+        ),
+      };
+      const sendAck = vi.fn();
+      const handlers = createWsCommandHandlers({
+        daemon: daemon as any,
+        sendAck,
+        getOrCreateBuffer: getOrCreateBuffer as any,
+      });
+
+      await handlers['read-session-messages'](client, {
+        type: 'read-session-messages',
+        directoryId: 'dir-1',
+        sessionId,
+        requestId: 'req-history',
+        limit: 100,
+      });
+
+      expect(sendAck).toHaveBeenCalledWith(
+        client,
+        'req-history',
+        'ok',
+        undefined,
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({
+              kind: 'text',
+              text: 'canonical discovered transcript history',
+            }),
+          ],
+        }),
+      );
+    } finally {
+      if (previousViewportHome === undefined) {
+        delete process.env['VIEWPORT_HOME'];
+      } else {
+        process.env['VIEWPORT_HOME'] = previousViewportHome;
+      }
+      if (previousCodexHome === undefined) {
+        delete process.env['CODEX_HOME'];
+      } else {
+        process.env['CODEX_HOME'] = previousCodexHome;
+      }
+      await fs.rm(temp, { recursive: true, force: true });
+    }
+  });
+
   it('read-session-messages can stream the transcript page before acknowledging', async () => {
     const previousViewportHome = process.env['VIEWPORT_HOME'];
     const previousCodexHome = process.env['CODEX_HOME'];
