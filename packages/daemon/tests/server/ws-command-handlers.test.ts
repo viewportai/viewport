@@ -270,6 +270,115 @@ describe('ws-command-handlers', () => {
     }
   });
 
+  it('read-session-messages can stream the transcript page before acknowledging', async () => {
+    const previousViewportHome = process.env['VIEWPORT_HOME'];
+    const previousCodexHome = process.env['CODEX_HOME'];
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-streamed-history-'));
+    try {
+      process.env['VIEWPORT_HOME'] = path.join(temp, 'viewport-home');
+      process.env['CODEX_HOME'] = path.join(temp, 'codex-home');
+      const sessionId = 'codex-streamed-session';
+      const codexDir = path.join(process.env['CODEX_HOME'], 'sessions', '2026', '05', '09');
+      await fs.mkdir(codexDir, { recursive: true });
+      const sourcePath = path.join(codexDir, `rollout-2026-05-09T00-00-00-${sessionId}.jsonl`);
+      await fs.writeFile(
+        sourcePath,
+        [
+          JSON.stringify({
+            timestamp: '2026-05-09T00:00:00.000Z',
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'history sent as page event' }],
+            },
+          }),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const { client, sent } = createClient();
+      const daemon = {
+        directoryManager: {
+          get: vi.fn((id: string) => (id === 'dir-1' ? { id, path: '/tmp/project' } : undefined)),
+        },
+        getDiscoveredSessions: vi.fn().mockReturnValue(
+          new Map([
+            [
+              'dir-1',
+              [
+                {
+                  agentId: 'codex',
+                  sessionId,
+                  summary: 'Codex history',
+                  lastModified: Date.now(),
+                  resumable: true,
+                  messageCount: 1,
+                  sourcePath,
+                },
+              ],
+            ],
+          ]),
+        ),
+      };
+      const sendAck = vi.fn();
+      const handlers = createWsCommandHandlers({
+        daemon: daemon as any,
+        sendAck,
+        getOrCreateBuffer: getOrCreateBuffer as any,
+      });
+
+      await handlers['read-session-messages'](client, {
+        type: 'read-session-messages',
+        directoryId: 'dir-1',
+        sessionId,
+        requestId: 'req-stream-history',
+        limit: 100,
+        delivery: 'event-stream',
+      });
+
+      expect(sent).toContainEqual(
+        expect.objectContaining({
+          type: 'session-messages-page',
+          requestId: 'req-stream-history',
+          directoryId: 'dir-1',
+          sessionId,
+          final: true,
+          messages: [
+            expect.objectContaining({
+              kind: 'text',
+              text: 'history sent as page event',
+            }),
+          ],
+        }),
+      );
+      expect(sendAck).toHaveBeenCalledWith(
+        client,
+        'req-stream-history',
+        'ok',
+        undefined,
+        expect.objectContaining({
+          streamed: true,
+          nextOffset: 1,
+          hasMoreBefore: false,
+        }),
+      );
+      expect(sendAck.mock.calls[0]?.[4]).not.toHaveProperty('messages');
+    } finally {
+      if (previousViewportHome === undefined) {
+        delete process.env['VIEWPORT_HOME'];
+      } else {
+        process.env['VIEWPORT_HOME'] = previousViewportHome;
+      }
+      if (previousCodexHome === undefined) {
+        delete process.env['CODEX_HOME'];
+      } else {
+        process.env['CODEX_HOME'] = previousCodexHome;
+      }
+      await fs.rm(temp, { recursive: true, force: true });
+    }
+  });
+
   it('truncates large transcript ack payloads below the relay-safe plaintext limit', () => {
     const messages = Array.from({ length: 12 }, (_, index) => ({
       kind: 'tool_result' as const,

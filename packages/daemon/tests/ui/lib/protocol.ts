@@ -380,6 +380,8 @@ export const ReadSessionMessagesCommandSchema = z.object({
   directoryId: z.string(),
   sessionId: z.string(),
   limit: z.number().int().positive().max(2000).optional(),
+  offset: z.number().int().nonnegative().optional(),
+  delivery: z.enum(['ack', 'event-stream']).optional(),
   requestId: z.string().optional(),
 });
 

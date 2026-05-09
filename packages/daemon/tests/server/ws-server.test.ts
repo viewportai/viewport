@@ -444,6 +444,67 @@ describe('WebSocket Server', () => {
     client.close();
   });
 
+  it('streams discovered session messages as a page event over a real websocket round trip', async () => {
+    const directory = await daemon.directoryManager.register(testDir);
+    const buffer = new RingBuffer({ sessionId: 'ws-stream-history-session' });
+    buffer.setDirectoryId(directory.id);
+    buffer.push('ws-stream-history-session', {
+      updateType: 'user-message',
+      messageId: 'ws-stream-user',
+      text: 'show streamed websocket transcript',
+      timestamp: Date.now(),
+    });
+    buffer.push('ws-stream-history-session', {
+      updateType: 'agent-message',
+      messageId: 'ws-stream-agent',
+      text: 'streamed websocket transcript response',
+      timestamp: Date.now() + 1,
+    });
+    await buffer.flushPersistence();
+
+    const client = await connect();
+    await client.nextMessage(); // hello
+
+    client.send(
+      JSON.stringify({
+        type: 'read-session-messages',
+        directoryId: directory.id,
+        sessionId: 'ws-stream-history-session',
+        requestId: 'req-stream-session',
+        delivery: 'event-stream',
+      }),
+    );
+
+    const page = await client.nextMessage();
+    expect(page).toMatchObject({
+      type: 'session-messages-page',
+      requestId: 'req-stream-session',
+      directoryId: directory.id,
+      sessionId: 'ws-stream-history-session',
+      final: true,
+      truncated: false,
+      originalReturned: 2,
+      droppedCount: 0,
+    });
+    expect(
+      (page.messages as Array<{ text?: string }>).map((message) => message.text).filter(Boolean),
+    ).toEqual(['show streamed websocket transcript', 'streamed websocket transcript response']);
+
+    const ack = await client.nextMessage();
+    expect(ack).toMatchObject({
+      type: 'ack',
+      requestId: 'req-stream-session',
+      status: 'ok',
+      streamed: true,
+      truncated: false,
+      originalReturned: 2,
+      droppedCount: 0,
+    });
+    expect(ack).not.toHaveProperty('messages');
+
+    client.close();
+  });
+
   // ---------------------------------------------------------------------------
   // session:ended broadcasts
   // ---------------------------------------------------------------------------
