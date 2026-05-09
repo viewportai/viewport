@@ -1,5 +1,6 @@
 import { ConfigManager } from '../core/config.js';
 import type { ViewportConfig } from '../core/config.js';
+import { sanitizeMachineDisplayName } from '../core/machine-name.js';
 import { getFlag } from './args.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 import { inferRelayEndpointFromServer } from './remote-commands.js';
@@ -25,6 +26,7 @@ export interface PairingPollApprovedData {
   install_id?: string;
   runtime_target_id?: string;
   machine_id?: string;
+  daemon_name?: string;
   relay_endpoint?: string;
   token: string;
   server_url?: string;
@@ -51,11 +53,12 @@ export async function resolvePairingServerTransport(
   await manager.load();
   const daemonConfig = manager.getDaemonConfig();
   const serverConfig = daemonConfig?.server;
+  const configuredServerUrl = serverConfig?.url?.trim();
   const resolvedUrl =
     explicitUrl ??
     getFlag('server') ??
     envValue(process.env, 'VPD_SERVER_URL', 'VIEWPORT_SERVER_URL', 'VIEWPORT_SERVER') ??
-    serverConfig?.url ??
+    configuredServerUrl ??
     DEFAULT_PAIRING_SERVER;
 
   return {
@@ -102,6 +105,7 @@ export async function storePairingCredentials(
   }
 
   const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
+  const machineName = sanitizeMachineDisplayName(data.daemon_name) ?? existingRelay.machineName;
 
   await manager.setDaemonConfig({
     server: {
@@ -117,6 +121,7 @@ export async function storePairingCredentials(
       installId: data.install_id,
       runtimeTargetId: data.runtime_target_id,
       machineId: data.machine_id,
+      machineName,
       issueToken: nextIssueToken,
     },
   });

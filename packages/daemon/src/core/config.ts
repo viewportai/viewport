@@ -182,6 +182,7 @@ export interface ViewportConfig {
       installId?: string;
       runtimeTargetId?: string;
       machineId?: string;
+      machineName?: string;
       issueToken?: string;
       tlsVerify?: 'auto' | '0' | '1';
       caCertPath?: string;
@@ -314,6 +315,9 @@ function migrateViewportConfig(raw: unknown): { config: unknown; migrated: boole
         migrated = true;
       }
       if ('projectMachineBindingId' in relay) {
+        if (!('runtimeTargetId' in relay) && typeof relay['projectMachineBindingId'] === 'string') {
+          relay['runtimeTargetId'] = relay['projectMachineBindingId'];
+        }
         delete relay['projectMachineBindingId'];
         migrated = true;
       }
@@ -534,6 +538,7 @@ export class ConfigManager {
           installId?: string;
           runtimeTargetId?: string;
           machineId?: string;
+          machineName?: string;
           issueToken?: string;
           tlsVerify?: 'auto' | '0' | '1';
           caCertPath?: string;

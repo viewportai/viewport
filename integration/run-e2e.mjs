@@ -388,7 +388,7 @@ async function waitForDaemonReady(daemonUrl) {
 async function waitForRelayPresence(
   serverUrl,
   workspaceId,
-  projectMachineBindingId,
+  runtimeTargetId,
   relayHttpUrl,
 ) {
   const start = Date.now();
@@ -402,7 +402,7 @@ async function waitForRelayPresence(
           "content-type": "application/json",
           "x-relay-internal-key": RELAY_INTERNAL_KEY,
         },
-        body: JSON.stringify({ workspaceId, projectMachineBindingId }),
+        body: JSON.stringify({ workspaceId, runtimeTargetId }),
       },
     );
 
@@ -418,9 +418,9 @@ async function waitForRelayPresence(
 
     if (
       resolved?.daemonConnected === true &&
-      resolved?.projectMachineBindingId === projectMachineBindingId &&
+      resolved?.runtimeTargetId === runtimeTargetId &&
       relayWorkspace?.daemonConnected === true &&
-      relayWorkspace?.projectMachineBindingId === projectMachineBindingId
+      relayWorkspace?.runtimeTargetId === runtimeTargetId
     ) {
       return {
         resolvePayload: resolved,
@@ -431,7 +431,7 @@ async function waitForRelayPresence(
     await sleep(500);
   }
   throw new Error(
-    `Timed out waiting for relay presence for workspace ${workspaceId} and project machine ${projectMachineBindingId}`,
+    `Timed out waiting for relay presence for workspace ${workspaceId} and runtime target ${runtimeTargetId}`,
   );
 }
 
@@ -688,21 +688,21 @@ async function main() {
         `Could not find paired install for ${claimed.daemon_name}`,
       );
     }
-    const projectMachineBindingId = claimedInstall.project_machine_binding_id;
-    if (!projectMachineBindingId) {
+    const runtimeTargetId = claimedInstall.runtime_target_id;
+    if (!runtimeTargetId) {
       throw new Error(
-        `Paired install is missing project_machine_binding_id: ${JSON.stringify(claimedInstall)}`,
+        `Paired install is missing runtime_target_id: ${JSON.stringify(claimedInstall)}`,
       );
     }
 
     log("daemon", "wait for health");
     await waitForDaemonReady(daemonUrl);
 
-    log("relay", "wait for project machine presence");
+    log("relay", "wait for runtime target presence");
     const presence = await waitForRelayPresence(
       serverUrl,
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       relayHttpUrl,
     );
 
@@ -741,7 +741,7 @@ async function main() {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          project_machine_binding_id: projectMachineBindingId,
+          runtime_target_id: runtimeTargetId,
         }),
       },
     );
@@ -765,7 +765,7 @@ async function main() {
           relayToken: browserRelayToken.token,
           role: "client",
           workspaceId,
-          projectMachineBindingId,
+          runtimeTargetId,
         }),
       },
     );
@@ -775,7 +775,7 @@ async function main() {
 
     log("relay", "open browser websocket");
     const clientWs = await openWs(
-      `${relayWsUrl}?role=client&workspaceId=${encodeURIComponent(workspaceId)}&projectMachineBindingId=${encodeURIComponent(projectMachineBindingId)}`,
+      `${relayWsUrl}?role=client&workspaceId=${encodeURIComponent(workspaceId)}&runtimeTargetId=${encodeURIComponent(runtimeTargetId)}`,
       {
         headers: {
           authorization: `Bearer ${browserRelayToken.token}`,
@@ -808,7 +808,7 @@ async function main() {
       daemonUrl,
       workspaceId,
       installId: claimedInstall.id,
-      projectMachineBindingId,
+      runtimeTargetId,
       claimedDaemonName: claimed.daemon_name,
       relayPresence: presence.resolvePayload,
     };

@@ -14,9 +14,6 @@ import type { AuthProvider } from './auth.js';
 import { extractBearerToken } from './auth.js';
 import type { SecurityProfile } from './security.js';
 import { isHostAllowed, isLoopbackHost, isOriginAllowed, isPathWithin } from './security.js';
-import { encodeProjectDir, readSessionMessagesRich } from '../discovery/jsonl-reader.js';
-import { readCodexSessionMessagesRich } from '../discovery/codex.js';
-import { readPersistedReplayMeta, readPersistedSessionMessagesRich } from './ring-buffer.js';
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
 import { registerHealthRoutes } from './http-health-routes.js';
@@ -34,6 +31,8 @@ import {
   WorkflowValidateBodySchema,
   invalidPayloadError,
 } from './http-request-schemas.js';
+import { parseSessionMessageLimit, readDaemonSessionMessages } from './session-message-reader.js';
+import { ViewportError } from '../core/errors.js';
 
 const startTime = Date.now();
 
@@ -342,8 +341,11 @@ export function registerHttpRoutes(
     try {
       const diffs = await daemon.getSessionDiffs(request.params.id);
       return diffs;
-    } catch {
-      return reply.status(404).send({ error: 'Session not found' });
+    } catch (error) {
+      if (error instanceof ViewportError) {
+        return reply.status(error.statusCode).send({ error: error.message, errorCode: error.code });
+      }
+      return reply.status(500).send({ error: 'Failed to read session messages' });
     }
   });
 
@@ -351,8 +353,11 @@ export function registerHttpRoutes(
     try {
       const diff = await daemon.getSessionSummaryDiff(request.params.id);
       return { diff };
-    } catch {
-      return reply.status(404).send({ error: 'Session not found' });
+    } catch (error) {
+      if (error instanceof ViewportError) {
+        return reply.status(error.statusCode).send({ error: error.message, errorCode: error.code });
+      }
+      return reply.status(500).send({ error: 'Failed to read session messages' });
     }
   });
 
@@ -360,44 +365,30 @@ export function registerHttpRoutes(
   // Session messages (from JSONL files — discovered sessions)
   // ---------------------------------------------------------------------------
 
-  app.get<{ Params: { directoryId: string; sessionId: string } }>(
-    '/api/directories/:directoryId/sessions/:sessionId/messages',
-    async (request, reply) => {
-      const dir = daemon.directoryManager.get(request.params.directoryId);
-      if (!dir) {
-        return reply.status(404).send({ error: 'Directory not found' });
+  app.get<{
+    Params: { directoryId: string; sessionId: string };
+    Querystring: { limit?: string | number };
+  }>('/api/directories/:directoryId/sessions/:sessionId/messages', async (request, reply) => {
+    try {
+      const messages = await readDaemonSessionMessages(
+        daemon,
+        request.params.directoryId,
+        request.params.sessionId,
+        {
+          limit:
+            request.query.limit === undefined
+              ? undefined
+              : parseSessionMessageLimit(request.query.limit),
+        },
+      );
+      return { messages };
+    } catch (error) {
+      if (error instanceof ViewportError) {
+        return reply.status(error.statusCode).send({ error: error.message, errorCode: error.code });
       }
-
-      const activeHistoryMeta = readPersistedReplayMeta(request.params.sessionId);
-      if (activeHistoryMeta?.directoryId === request.params.directoryId) {
-        return { messages: readPersistedSessionMessagesRich(request.params.sessionId) };
-      }
-
-      const discovered =
-        daemon.getDiscoveredSessions(request.params.directoryId).get(request.params.directoryId) ??
-        [];
-      const discoveredSession = discovered.find((s) => s.sessionId === request.params.sessionId);
-      if (!discoveredSession) {
-        return reply.status(404).send({ error: 'Session not found' });
-      }
-
-      try {
-        if (discoveredSession.agentId === 'codex') {
-          const messages = await readCodexSessionMessagesRich(
-            request.params.sessionId,
-            discoveredSession.sourcePath,
-          );
-          return { messages };
-        }
-
-        const projectDirName = encodeProjectDir(dir.path);
-        const messages = await readSessionMessagesRich(projectDirName, request.params.sessionId);
-        return { messages };
-      } catch {
-        return reply.status(404).send({ error: 'Session not found' });
-      }
-    },
-  );
+      return reply.status(500).send({ error: 'Failed to read session messages' });
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // Models (from agent SDKs)

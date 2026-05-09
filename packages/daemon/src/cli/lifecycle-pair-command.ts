@@ -187,7 +187,7 @@ async function pairWithCode(
     );
   } catch (err) {
     throw new Error(
-      `Network error claiming pairing code: ${err instanceof Error ? err.message : String(err)}`,
+      `Network error claiming pairing code at ${server.url}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
@@ -198,7 +198,11 @@ async function pairWithCode(
   }
 
   const appUrl = server.appUrl;
-  const claimData = (await claimRes.json()) as PairingClaimData;
+  const claimData = (await parseJsonResponse(
+    claimRes,
+    server.url,
+    'claim pairing code',
+  )) as PairingClaimData;
 
   if (typeof claimData.status_token !== 'string' || claimData.status_token.trim() === '') {
     throw new Error('Pairing claim did not return a status token.');
@@ -275,17 +279,24 @@ async function pairWithoutCode(
     });
   } catch (err) {
     throw new Error(
-      `Network error creating pairing code: ${err instanceof Error ? err.message : String(err)}`,
+      `Network error creating pairing code at ${server.url}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
   if (!createRes.ok) {
-    const body = (await createRes.json().catch(() => null)) as Record<string, unknown> | null;
+    const contentType = createRes.headers.get('content-type') ?? '';
+    const body = contentType.includes('application/json')
+      ? ((await createRes.json().catch(() => null)) as Record<string, unknown> | null)
+      : null;
     const message = typeof body?.message === 'string' ? body.message : `HTTP ${createRes.status}`;
     throw new Error(`Failed to create pairing code: ${message}`);
   }
 
-  const data = (await createRes.json()) as PairingCreateData;
+  const data = (await parseJsonResponse(
+    createRes,
+    server.url,
+    'create pairing code',
+  )) as PairingCreateData;
   const code = data.code;
   const statusToken = typeof data.status_token === 'string' ? data.status_token.trim() : '';
   if (statusToken === '') {
@@ -333,4 +344,23 @@ async function pairWithoutCode(
     console.log(`  Workspace: ${approved.workspace_name}`);
   }
   console.log('');
+}
+
+async function parseJsonResponse(
+  response: Response,
+  serverUrl: string,
+  action: string,
+): Promise<unknown> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    const body = await response.text().catch(() => '');
+    const hint = body.trimStart().startsWith('<')
+      ? ' The server returned HTML; use the API/landing host such as https://getviewport.test, not the app host such as https://app.getviewport.test.'
+      : '';
+    throw new Error(
+      `Failed to ${action} at ${serverUrl}: expected JSON but received ${contentType || 'unknown content type'}.${hint}`,
+    );
+  }
+
+  return response.json();
 }

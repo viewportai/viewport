@@ -1,34 +1,31 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import { sanitizeMachineDisplayName } from '../core/machine-name.js';
 
 export async function resolveDefaultPairingName(): Promise<string> {
-  const explicitName = sanitizePairingName(process.env['VIEWPORT_MACHINE_NAME']);
+  const explicitName = sanitizeMachineDisplayName(process.env['VIEWPORT_MACHINE_NAME']);
   if (explicitName) return explicitName;
 
   if (process.platform === 'darwin') {
-    const computerName = sanitizePairingName(
+    const computerName = sanitizeMachineDisplayName(
       await readCommandText('scutil', ['--get', 'ComputerName']),
     );
     if (computerName) return computerName;
 
-    const localHostName = sanitizePairingName(
+    const localHostName = sanitizeMachineDisplayName(
       await readCommandText('scutil', ['--get', 'LocalHostName']),
     );
     if (localHostName) return localHostName;
   }
 
   if (process.platform === 'linux') {
-    const prettyName = sanitizePairingName(await readCommandText('hostnamectl', ['--pretty']));
+    const prettyName = sanitizeMachineDisplayName(
+      await readCommandText('hostnamectl', ['--pretty']),
+    );
     if (prettyName) return prettyName;
   }
 
-  return sanitizePairingName(os.hostname()) ?? 'Viewport machine';
-}
-
-function sanitizePairingName(value: string | null | undefined): string | null {
-  const normalized = value?.replace(/\s+/g, ' ').trim();
-  if (!normalized) return null;
-  return normalized.slice(0, 80);
+  return sanitizeMachineDisplayName(os.hostname()) ?? 'Viewport machine';
 }
 
 function readCommandText(command: string, args: string[]): Promise<string | null> {

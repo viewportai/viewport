@@ -65,5 +65,6 @@ function toDiscoveredSession(s: SessionSummary): DiscoveredSession {
     gitBranch: s.gitBranch,
     resumable: s.resumable,
     messageCount: s.messageCount,
+    sourcePath: s.sourcePath,
   };
 }

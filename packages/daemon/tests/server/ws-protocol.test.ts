@@ -9,6 +9,7 @@ import {
   BranchRetrySchema,
   SquashMergeSchema,
   ListSessionsSchema,
+  ReadSessionMessagesSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
@@ -373,6 +374,28 @@ describe('ListSessionsSchema', () => {
       type: 'list-sessions',
       directoryId: 'dir-1',
       limit: 500,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ReadSessionMessagesSchema', () => {
+  it('accepts a bounded transcript read request', () => {
+    const result = ReadSessionMessagesSchema.safeParse({
+      type: 'read-session-messages',
+      directoryId: 'dir-1',
+      sessionId: 's1',
+      limit: 500,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects unbounded transcript reads above the guardrail', () => {
+    const result = ReadSessionMessagesSchema.safeParse({
+      type: 'read-session-messages',
+      directoryId: 'dir-1',
+      sessionId: 's1',
+      limit: 5000,
     });
     expect(result.success).toBe(false);
   });

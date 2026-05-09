@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
+import {
+  fitMessagesForAck,
+  SESSION_MESSAGES_ACK_PLAINTEXT_LIMIT_BYTES,
+} from '../../src/server/ws-session-command-handlers.js';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 import { discoveredWatchKey } from '../../src/server/discovered-watch-key.js';
 
@@ -68,6 +75,11 @@ describe('ws-command-handlers', () => {
 
     const sessionList = sent.find((m) => m['type'] === 'session-list');
     expect(sessionList).toBeTruthy();
+    expect(sessionList).toMatchObject({
+      offset: 0,
+      limit: 50,
+      hasMore: false,
+    });
     const sessions = sessionList?.['sessions'] as Array<Record<string, unknown>>;
     expect(sessions[0]?.['agentId']).toBe('codex');
     expect(sessions[0]).toMatchObject({
@@ -106,6 +118,177 @@ describe('ws-command-handlers', () => {
       expect.stringContaining('Discovered session not found'),
       { errorCode: 'DISCOVERED_SESSION_NOT_FOUND' },
     );
+  });
+
+  it('read-session-messages distinguishes missing directory and missing discovered session', async () => {
+    const { client } = createClient();
+    const daemon = {
+      directoryManager: {
+        get: vi.fn((id: string) => (id === 'dir-1' ? { id, path: '/tmp/project' } : undefined)),
+      },
+      getDiscoveredSessions: vi.fn().mockReturnValue(new Map([['dir-1', []]])),
+    };
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: daemon as any,
+      sendAck,
+      getOrCreateBuffer: getOrCreateBuffer as any,
+    });
+
+    await handlers['read-session-messages'](client, {
+      type: 'read-session-messages',
+      directoryId: 'missing-dir',
+      sessionId: 'session-1',
+      requestId: 'req-missing-dir',
+    });
+    await handlers['read-session-messages'](client, {
+      type: 'read-session-messages',
+      directoryId: 'dir-1',
+      sessionId: 'missing-session',
+      requestId: 'req-missing-session',
+    });
+
+    expect(sendAck).toHaveBeenNthCalledWith(
+      1,
+      client,
+      'req-missing-dir',
+      'error',
+      expect.stringContaining('Directory not found'),
+      { errorCode: 'DIRECTORY_NOT_FOUND' },
+    );
+    expect(sendAck).toHaveBeenNthCalledWith(
+      2,
+      client,
+      'req-missing-session',
+      'error',
+      expect.stringContaining('Discovered session not found'),
+      { errorCode: 'DISCOVERED_SESSION_NOT_FOUND' },
+    );
+  });
+
+  it('read-session-messages falls back to discovered transcript when stale replay metadata is empty', async () => {
+    const previousViewportHome = process.env['VIEWPORT_HOME'];
+    const previousCodexHome = process.env['CODEX_HOME'];
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-stale-replay-'));
+    try {
+      process.env['VIEWPORT_HOME'] = path.join(temp, 'viewport-home');
+      process.env['CODEX_HOME'] = path.join(temp, 'codex-home');
+      const sessionId = 'codex-stale-replay-session';
+      const replayDir = path.join(process.env['VIEWPORT_HOME'], 'replay');
+      const codexDir = path.join(process.env['CODEX_HOME'], 'sessions', '2026', '05', '09');
+      await fs.mkdir(replayDir, { recursive: true });
+      await fs.mkdir(codexDir, { recursive: true });
+      await fs.writeFile(
+        path.join(replayDir, `${encodeURIComponent(sessionId)}.meta.json`),
+        JSON.stringify({ sessionId, directoryId: 'dir-1', latestSeq: 1 }) + '\n',
+        'utf-8',
+      );
+      const sourcePath = path.join(codexDir, `rollout-2026-05-09T00-00-00-${sessionId}.jsonl`);
+      await fs.writeFile(
+        sourcePath,
+        [
+          JSON.stringify({
+            timestamp: '2026-05-09T00:00:00.000Z',
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'history from discovered transcript' }],
+            },
+          }),
+        ].join('\n'),
+        'utf-8',
+      );
+
+      const { client } = createClient();
+      const daemon = {
+        directoryManager: {
+          get: vi.fn((id: string) => (id === 'dir-1' ? { id, path: '/tmp/project' } : undefined)),
+        },
+        getDiscoveredSessions: vi.fn().mockReturnValue(
+          new Map([
+            [
+              'dir-1',
+              [
+                {
+                  agentId: 'codex',
+                  sessionId,
+                  summary: 'Codex history',
+                  lastModified: Date.now(),
+                  resumable: true,
+                  messageCount: 1,
+                  sourcePath,
+                },
+              ],
+            ],
+          ]),
+        ),
+      };
+      const sendAck = vi.fn();
+      const handlers = createWsCommandHandlers({
+        daemon: daemon as any,
+        sendAck,
+        getOrCreateBuffer: getOrCreateBuffer as any,
+      });
+
+      await handlers['read-session-messages'](client, {
+        type: 'read-session-messages',
+        directoryId: 'dir-1',
+        sessionId,
+        requestId: 'req-history',
+        limit: 100,
+      });
+
+      expect(sendAck).toHaveBeenCalledWith(
+        client,
+        'req-history',
+        'ok',
+        undefined,
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({
+              kind: 'text',
+              text: 'history from discovered transcript',
+            }),
+          ],
+        }),
+      );
+    } finally {
+      if (previousViewportHome === undefined) {
+        delete process.env['VIEWPORT_HOME'];
+      } else {
+        process.env['VIEWPORT_HOME'] = previousViewportHome;
+      }
+      if (previousCodexHome === undefined) {
+        delete process.env['CODEX_HOME'];
+      } else {
+        process.env['CODEX_HOME'] = previousCodexHome;
+      }
+      await fs.rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it('truncates large transcript ack payloads below the relay-safe plaintext limit', () => {
+    const messages = Array.from({ length: 12 }, (_, index) => ({
+      kind: 'tool_result' as const,
+      messageId: `large-${index}`,
+      timestamp: Date.now() + index,
+      toolName: 'shell',
+      output: 'x'.repeat(180_000),
+    }));
+
+    const fit = fitMessagesForAck(messages as any);
+    const bytes = Buffer.byteLength(
+      JSON.stringify({
+        type: 'ack',
+        requestId: 'size-check',
+        status: 'ok',
+        ...fit,
+      }),
+    );
+
+    expect(bytes).toBeLessThanOrEqual(SESSION_MESSAGES_ACK_PLAINTEXT_LIMIT_BYTES);
+    expect(fit.truncated).toBe(true);
   });
 
   it('resume uses discovered agent when resuming', async () => {

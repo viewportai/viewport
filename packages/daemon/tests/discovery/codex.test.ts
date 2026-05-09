@@ -113,7 +113,7 @@ describe('CodexDiscovery', () => {
       'utf-8',
     );
 
-    const discovery = new CodexDiscovery();
+    const discovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
     const sessions = await discovery.discoverSessions(projectPath);
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
@@ -127,5 +127,312 @@ describe('CodexDiscovery', () => {
     });
 
     await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it('does not use injected environment metadata as the session summary', async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-project-jsonl-'));
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '19');
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    await fs.writeFile(
+      path.join(sessionsDir, 'rollout-env-context.jsonl'),
+      [
+        JSON.stringify({
+          timestamp: '2026-04-19T17:07:37.196Z',
+          type: 'session_meta',
+          payload: {
+            id: 'codex-env-session',
+            cwd: projectPath,
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-19T17:07:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: '<environment_context><cwd>/Users/mehr/Herd/viewportai</cwd><shell>zsh</shell><current_date>2026-04-19</current_date></environment_context>',
+              },
+            ],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const discovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
+    const sessions = await discovery.discoverSessions(projectPath);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.summary).toBe('Codex session');
+
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it('skips placeholder summaries and uses the first meaningful user message', async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-project-jsonl-'));
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '20');
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    await fs.writeFile(
+      path.join(sessionsDir, 'rollout-placeholder-context.jsonl'),
+      [
+        JSON.stringify({
+          timestamp: '2026-04-20T17:07:37.196Z',
+          type: 'session_meta',
+          payload: {
+            id: 'codex-placeholder-session',
+            cwd: projectPath,
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-20T17:07:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: '<environment_context><cwd>/Users/mehr/Herd/viewportai</cwd><shell>zsh</shell></environment_context>',
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-20T17:07:38.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'none' }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-20T17:07:39.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Fix the session transcript rendering' }],
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const discovery = new CodexDiscovery();
+    const sessions = await discovery.discoverSessions(projectPath);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.summary).toBe('Fix the session transcript rendering');
+
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it('refreshes cached discovery when a session file changes after the reuse window expires', async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-cache-project-'));
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '21');
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const filePath = path.join(sessionsDir, 'rollout-cache.jsonl');
+
+    await fs.writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-21T17:07:37.196Z',
+          type: 'session_meta',
+          payload: { id: 'codex-cache-session', cwd: projectPath },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-21T17:07:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Initial prompt' }],
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf-8',
+    );
+
+    const discovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
+    expect((await discovery.discoverSessions(projectPath))[0]?.messageCount).toBe(1);
+
+    await fs.appendFile(
+      filePath,
+      JSON.stringify({
+        timestamp: '2026-04-21T17:07:38.198Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Second message' }],
+        },
+      }) + '\n',
+      'utf-8',
+    );
+    const bumped = new Date(Date.now() + 2_000);
+    await fs.utimes(filePath, bumped, bumped);
+
+    const refreshed = await discovery.discoverSessions(projectPath);
+    expect(refreshed[0]?.messageCount).toBe(2);
+
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it('refreshes cached discovery when an older non-newest session file changes after the reuse window expires', async () => {
+    const projectPath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'viewport-codex-cache-older-project-'),
+    );
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '22');
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const olderFile = path.join(sessionsDir, 'rollout-older.jsonl');
+    const newerFile = path.join(sessionsDir, 'rollout-newer.jsonl');
+
+    await fs.writeFile(
+      olderFile,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-22T17:07:37.196Z',
+          type: 'session_meta',
+          payload: { id: 'codex-older-session', cwd: projectPath },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-22T17:07:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Older prompt' }],
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf-8',
+    );
+    await fs.writeFile(
+      newerFile,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-22T17:08:37.196Z',
+          type: 'session_meta',
+          payload: { id: 'codex-newer-session', cwd: projectPath },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-22T17:08:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Newer prompt' }],
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf-8',
+    );
+    const olderTime = new Date(Date.now() - 10_000);
+    const newerTime = new Date(Date.now());
+    await fs.utimes(olderFile, olderTime, olderTime);
+    await fs.utimes(newerFile, newerTime, newerTime);
+
+    const discovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
+    const first = await discovery.discoverSessions(projectPath);
+    expect(first.find((session) => session.sessionId === 'codex-older-session')?.messageCount).toBe(
+      1,
+    );
+
+    await fs.appendFile(
+      olderFile,
+      JSON.stringify({
+        timestamp: '2026-04-22T17:07:38.198Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Older follow-up' }],
+        },
+      }) + '\n',
+      'utf-8',
+    );
+    const stillOlderTime = new Date(Date.now() - 5_000);
+    await fs.utimes(olderFile, stillOlderTime, stillOlderTime);
+    await fs.utimes(newerFile, newerTime, newerTime);
+
+    const refreshed = await discovery.discoverSessions(projectPath);
+    expect(
+      refreshed.find((session) => session.sessionId === 'codex-older-session')?.messageCount,
+    ).toBe(2);
+
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it('reuses the parsed Codex tree across immediate directory lookups', async () => {
+    const firstProjectPath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'viewport-codex-cache-first-project-'),
+    );
+    const secondProjectPath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'viewport-codex-cache-second-project-'),
+    );
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '23');
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const firstFile = path.join(sessionsDir, 'rollout-cache-first.jsonl');
+    const secondFile = path.join(sessionsDir, 'rollout-cache-second.jsonl');
+
+    await fs.writeFile(
+      firstFile,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-23T17:07:37.196Z',
+          type: 'session_meta',
+          payload: { id: 'codex-cache-first-session', cwd: firstProjectPath },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-23T17:07:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'First project prompt' }],
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf-8',
+    );
+
+    const discovery = new CodexDiscovery();
+    expect(await discovery.discoverSessions(firstProjectPath)).toHaveLength(1);
+
+    await fs.writeFile(
+      secondFile,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-23T17:08:37.196Z',
+          type: 'session_meta',
+          payload: { id: 'codex-cache-second-session', cwd: secondProjectPath },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-23T17:08:37.198Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Second project prompt' }],
+          },
+        }),
+      ].join('\n') + '\n',
+      'utf-8',
+    );
+
+    expect(await discovery.discoverSessions(secondProjectPath)).toEqual([]);
+
+    const uncachedDiscovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
+    expect(await uncachedDiscovery.discoverSessions(secondProjectPath)).toHaveLength(1);
+
+    await fs.rm(firstProjectPath, { recursive: true, force: true });
+    await fs.rm(secondProjectPath, { recursive: true, force: true });
   });
 });

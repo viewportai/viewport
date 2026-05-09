@@ -43,6 +43,8 @@ export interface SessionSummary {
   gitBranch?: string;
   /** Whether session can be resumed via SDK. */
   resumable: boolean;
+  /** Source JSONL file backing this session. */
+  sourcePath?: string;
 }
 
 export interface SessionMessage {
@@ -206,6 +208,7 @@ async function parseSessionSummary(
     cwd,
     gitBranch,
     resumable: !resumePoisoned,
+    sourcePath: filePath,
   };
 }
 
@@ -293,6 +296,123 @@ export async function readRichSessionMessagesFromFile(
   }
 
   return blocks;
+}
+
+/**
+ * Read the newest rich messages from a JSONL session file without parsing the
+ * whole transcript. Session detail pages usually need the latest timeline slice,
+ * and large Codex sessions can expand into tens of thousands of rich blocks.
+ */
+export async function readRichSessionMessagesTailFromFile(
+  filePath: string,
+  limit: number,
+  options: RichSessionTailReadOptions = {},
+): Promise<RichSessionMessage[]> {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const stat = await handle.stat();
+    const blocksNewestFirst: RichSessionMessage[] = [];
+    const chunkSize = normalizePositiveInteger(options.chunkSize, DEFAULT_TAIL_CHUNK_SIZE);
+    const maxBytes = normalizePositiveInteger(options.maxBytes, DEFAULT_TAIL_SCAN_BYTES);
+    const maxLineBytes = normalizePositiveInteger(options.maxLineBytes, DEFAULT_TAIL_LINE_BYTES);
+    let remaining = stat.size;
+    let bytesScanned = 0;
+    let carry = Buffer.alloc(0);
+
+    while (remaining > 0 && blocksNewestFirst.length < limit && bytesScanned < maxBytes) {
+      const readSize = Math.min(chunkSize, remaining, maxBytes - bytesScanned);
+      if (readSize <= 0) break;
+      remaining -= readSize;
+      const buffer = Buffer.allocUnsafe(readSize);
+      await handle.read(buffer, 0, readSize, remaining);
+      bytesScanned += readSize;
+
+      const data =
+        carry.length > 0 ? Buffer.concat([buffer, carry], readSize + carry.length) : buffer;
+      let lineEnd = data.length;
+
+      for (
+        let index = data.length - 1;
+        index >= 0 && blocksNewestFirst.length < limit;
+        index -= 1
+      ) {
+        if (data[index] !== 0x0a) continue;
+        pushTailLineBlocks(
+          data.subarray(index + 1, lineEnd),
+          limit,
+          maxLineBytes,
+          blocksNewestFirst,
+        );
+        lineEnd = index;
+      }
+
+      carry = data.subarray(0, lineEnd);
+    }
+
+    if (remaining === 0 && blocksNewestFirst.length < limit && carry.length > 0) {
+      pushTailLineBlocks(carry, limit, maxLineBytes, blocksNewestFirst);
+    }
+
+    return blocksNewestFirst.reverse();
+  } finally {
+    await handle.close();
+  }
+}
+
+export interface RichSessionTailReadOptions {
+  /** Bytes per backwards file read. Exposed for deterministic split-boundary tests. */
+  chunkSize?: number;
+  /** Hard cap on bytes scanned from the end of the file. Keeps live transcript requests bounded. */
+  maxBytes?: number;
+  /** Lines above this size are skipped instead of parsed into giant ack payloads. */
+  maxLineBytes?: number;
+}
+
+const DEFAULT_TAIL_CHUNK_SIZE = 512 * 1024;
+const DEFAULT_TAIL_SCAN_BYTES = 64 * 1024 * 1024;
+const DEFAULT_TAIL_LINE_BYTES = 8 * 1024 * 1024;
+
+function pushTailLineBlocks(
+  lineBuffer: Buffer,
+  limit: number,
+  maxLineBytes: number,
+  outNewestFirst: RichSessionMessage[],
+): void {
+  if (outNewestFirst.length >= limit) return;
+  const line = trimAsciiWhitespace(lineBuffer);
+  if (line.length === 0 || line.length > maxLineBytes) return;
+
+  try {
+    const entry = JSON.parse(line.toString('utf-8'));
+    const parsed = parseJSONLEntry(entry);
+    for (let blockIndex = parsed.length - 1; blockIndex >= 0; blockIndex -= 1) {
+      const block = parsed[blockIndex];
+      if (!block) continue;
+      outNewestFirst.push(block);
+      if (outNewestFirst.length >= limit) break;
+    }
+  } catch {
+    // Skip malformed JSONL lines. In active sessions the writer may leave a trailing partial line.
+  }
+}
+
+function trimAsciiWhitespace(buffer: Buffer): Buffer {
+  let start = 0;
+  let end = buffer.length;
+  while (start < end && isAsciiWhitespace(buffer[start]!)) start += 1;
+  while (end > start && isAsciiWhitespace(buffer[end - 1]!)) end -= 1;
+  return buffer.subarray(start, end);
+}
+
+function isAsciiWhitespace(value: number): boolean {
+  return value === 0x20 || value === 0x09 || value === 0x0a || value === 0x0d;
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || value === undefined || value <= 0) return fallback;
+  return Math.floor(value);
 }
 
 /**

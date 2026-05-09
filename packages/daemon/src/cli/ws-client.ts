@@ -27,7 +27,7 @@ export class DaemonWsClient {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         cleanup();
-        socket.terminate();
+        safeTerminate(socket);
         reject(new Error(`Timed out connecting to daemon websocket after ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -63,7 +63,7 @@ export class DaemonWsClient {
 
   close(): void {
     if (!this.socket) return;
-    this.socket.close();
+    safeClose(this.socket);
     this.socket = null;
   }
 
@@ -124,5 +124,25 @@ export class DaemonWsClient {
       throw new Error(`${ack.error ?? 'Command rejected'}${code}`);
     }
     return ack;
+  }
+}
+
+function safeTerminate(socket: WebSocket): void {
+  try {
+    if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      socket.terminate();
+    }
+  } catch {
+    // The socket may race closed while a connect timeout fires. Treat that as closed.
+  }
+}
+
+function safeClose(socket: WebSocket): void {
+  try {
+    if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      socket.close();
+    }
+  } catch {
+    // Best-effort cleanup for CLI commands; callers only care that the handle is released.
   }
 }

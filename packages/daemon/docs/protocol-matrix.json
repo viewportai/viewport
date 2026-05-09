@@ -107,7 +107,17 @@
       "type": "list-sessions",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#ListSessionsSchema",
-      "handler": "src/server/ws-command-handlers.ts#list-sessions",
+      "handler": "src/server/ws-session-command-handlers.ts#list-sessions",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/server/ws-server.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "read-session-messages",
+      "class": "stable",
+      "schema": "src/server/ws-protocol.ts#ReadSessionMessagesSchema",
+      "handler": "src/server/ws-session-command-handlers.ts#read-session-messages",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
       "integrationTests": ["tests/server/ws-server.test.ts"],
       "surfacedInUi": true,
@@ -117,7 +127,7 @@
       "type": "resume",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#ResumeSchema",
-      "handler": "src/server/ws-command-handlers.ts#resume",
+      "handler": "src/server/ws-session-command-handlers.ts#resume",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
       "integrationTests": [
         "tests/server/ws-server.test.ts",
@@ -208,7 +218,7 @@
       "type": "watch-discovered-session",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#WatchDiscoveredSessionSchema",
-      "handler": "src/server/ws-command-handlers.ts#watch-discovered-session",
+      "handler": "src/server/ws-session-command-handlers.ts#watch-discovered-session",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
       "integrationTests": [
         "tests/server/ws-server.test.ts",
@@ -221,7 +231,7 @@
       "type": "unwatch-discovered-session",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#UnwatchDiscoveredSessionSchema",
-      "handler": "src/server/ws-command-handlers.ts#unwatch-discovered-session",
+      "handler": "src/server/ws-session-command-handlers.ts#unwatch-discovered-session",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
       "integrationTests": [
         "tests/server/ws-server.test.ts",

@@ -126,6 +126,14 @@ export const ListSessionsSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const ReadSessionMessagesSchema = z.object({
+  type: z.literal('read-session-messages'),
+  directoryId: z.string().min(1).max(512),
+  sessionId: z.string().min(1).max(256),
+  limit: z.number().int().positive().max(2_000).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const ResumeSchema = z
   .object({
     type: z.literal('resume'),
@@ -272,6 +280,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   BranchRetrySchema,
   SquashMergeSchema,
   ListSessionsSchema,
+  ReadSessionMessagesSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,

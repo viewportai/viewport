@@ -309,6 +309,10 @@ export const AckMessageSchema = z.object({
   errorCode: z.string().optional(),
   lastSeq: z.number().optional(),
   replayCount: z.number().optional(),
+  messages: z.array(z.unknown()).optional(),
+  originalReturned: z.number().optional(),
+  droppedCount: z.number().optional(),
+  truncated: z.boolean().optional(),
 });
 
 export const SessionStartedMessageSchema = z.object({
@@ -355,6 +359,8 @@ export const SessionAlertMessageSchema = z.object({
 export const SessionListMessageSchema = z.object({
   type: z.literal('session-list'),
   directoryId: z.string(),
+  offset: z.number().optional(),
+  limit: z.number().optional(),
   sessions: z.array(
     z.object({
       id: z.string(),
@@ -367,6 +373,14 @@ export const SessionListMessageSchema = z.object({
   ),
   total: z.number(),
   hasMore: z.boolean(),
+});
+
+export const ReadSessionMessagesCommandSchema = z.object({
+  type: z.literal('read-session-messages'),
+  directoryId: z.string(),
+  sessionId: z.string(),
+  limit: z.number().int().positive().max(2000).optional(),
+  requestId: z.string().optional(),
 });
 
 export const DiscoveredSessionTailMessageSchema = z.object({
@@ -649,6 +663,7 @@ export const OutgoingMessageSchema = z.discriminatedUnion('type', [
   BranchRetryCommandSchema,
   SquashMergeCommandSchema,
   ResumeCommandSchema,
+  ReadSessionMessagesCommandSchema,
   WatchDiscoveredSessionCommandSchema,
   UnwatchDiscoveredSessionCommandSchema,
   SuperviseCommandSchema,
