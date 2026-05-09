@@ -33,6 +33,9 @@ export class DirectoryManager {
       throw new Error(`Not a directory: ${resolved}`);
     }
 
+    const existing = this.findByResolvedPath(resolved);
+    if (existing) return existing;
+
     const id = DirectoryManager.idFromPath(resolved);
     await this.configManager.registerDirectory(id, resolved, config);
 
@@ -48,9 +51,13 @@ export class DirectoryManager {
   /** List all registered directories. */
   list(): DirectoryInfo[] {
     const dirs = this.configManager.getDirectories();
-    return Object.entries(dirs).map(([id, entry]) =>
-      this.toDirectoryInfo(id, entry.path, entry.config),
-    );
+    const byResolvedPath = new Map<string, DirectoryInfo>();
+    for (const [id, entry] of Object.entries(dirs)) {
+      const info = this.toDirectoryInfo(id, entry.path, entry.config);
+      const key = path.resolve(entry.path);
+      byResolvedPath.set(key, chooseDirectoryAlias(byResolvedPath.get(key), info));
+    }
+    return [...byResolvedPath.values()];
   }
 
   /** Get a directory by ID. */
@@ -63,8 +70,7 @@ export class DirectoryManager {
 
   /** Find a directory by its filesystem path. */
   getByPath(dirPath: string): DirectoryInfo | undefined {
-    const id = DirectoryManager.idFromPath(dirPath);
-    return this.get(id);
+    return this.findByResolvedPath(path.resolve(dirPath));
   }
 
   /** Track a session as active in a directory. */
@@ -101,4 +107,46 @@ export class DirectoryManager {
       activeSessions: sessions ? [...sessions] : [],
     };
   }
+
+  private findByResolvedPath(resolvedPath: string): DirectoryInfo | undefined {
+    const dirs = this.configManager.getDirectories();
+    const canonicalId = DirectoryManager.idFromPath(resolvedPath);
+    const canonicalEntry = dirs[canonicalId];
+    if (canonicalEntry && path.resolve(canonicalEntry.path) === resolvedPath) {
+      return this.toDirectoryInfo(canonicalId, canonicalEntry.path, canonicalEntry.config);
+    }
+
+    let match: DirectoryInfo | undefined;
+    for (const [id, entry] of Object.entries(dirs)) {
+      if (path.resolve(entry.path) !== resolvedPath) continue;
+      match = chooseDirectoryAlias(match, this.toDirectoryInfo(id, entry.path, entry.config));
+    }
+    return match;
+  }
+}
+
+function chooseDirectoryAlias(
+  current: DirectoryInfo | undefined,
+  candidate: DirectoryInfo,
+): DirectoryInfo {
+  if (!current) return candidate;
+  const candidateHasActive = candidate.activeSessions.length > 0;
+  const currentHasActive = current.activeSessions.length > 0;
+  if (candidateHasActive !== currentHasActive) {
+    return candidateHasActive ? candidate : current;
+  }
+
+  const candidateHasConfig = Boolean(candidate.config && Object.keys(candidate.config).length > 0);
+  const currentHasConfig = Boolean(current.config && Object.keys(current.config).length > 0);
+  if (candidateHasConfig !== currentHasConfig) {
+    return candidateHasConfig ? candidate : current;
+  }
+
+  const candidateCanonical = candidate.id === DirectoryManager.idFromPath(candidate.path);
+  const currentCanonical = current.id === DirectoryManager.idFromPath(current.path);
+  if (candidateCanonical !== currentCanonical) {
+    return candidateCanonical ? candidate : current;
+  }
+
+  return candidate.id < current.id ? candidate : current;
 }
