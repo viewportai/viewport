@@ -7,6 +7,8 @@ import {
   encodeProjectDir,
   decodeProjectDir,
   listProjectSessions,
+  pageFromTailMessages,
+  readRichSessionMessagesTailPageFromFile,
   readRichSessionMessagesTailFromFile,
 } from '../../src/discovery/jsonl-reader.js';
 
@@ -508,6 +510,56 @@ describe('readRichSessionMessagesTailFromFile', () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('pages older transcript blocks from the tail without full-file reads', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-jsonl-tail-page-'));
+    try {
+      const filePath = path.join(dir, 'session.jsonl');
+      await fs.writeFile(
+        filePath,
+        Array.from({ length: 8 }, (_, index) => jsonlMessage('assistant', `message ${index}`)).join(
+          '\n',
+        ),
+        'utf-8',
+      );
+
+      const latest = await readRichSessionMessagesTailPageFromFile(filePath, 3, 0, {
+        chunkSize: 31,
+      });
+      expect(
+        latest.messages.map((block) => (block.kind === 'text' ? block.text : block.kind)),
+      ).toEqual(['message 5', 'message 6', 'message 7']);
+      expect(latest).toMatchObject({ nextOffset: 3, hasMoreBefore: true });
+
+      const older = await readRichSessionMessagesTailPageFromFile(filePath, 3, latest.nextOffset, {
+        chunkSize: 31,
+      });
+      expect(
+        older.messages.map((block) => (block.kind === 'text' ? block.text : block.kind)),
+      ).toEqual(['message 2', 'message 3', 'message 4']);
+      expect(older).toMatchObject({ nextOffset: 6, hasMoreBefore: true });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('computes tail pages from an already bounded replay buffer', () => {
+    expect(pageFromTailMessages([1, 2, 3, 4, 5, 6], 2, 0)).toEqual({
+      messages: [5, 6],
+      nextOffset: 2,
+      hasMoreBefore: true,
+    });
+    expect(pageFromTailMessages([1, 2, 3, 4, 5, 6], 2, 2)).toEqual({
+      messages: [3, 4],
+      nextOffset: 4,
+      hasMoreBefore: true,
+    });
+    expect(pageFromTailMessages([1, 2, 3, 4, 5, 6], 2, 4)).toEqual({
+      messages: [1, 2],
+      nextOffset: 6,
+      hasMoreBefore: false,
+    });
   });
 });
 

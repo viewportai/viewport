@@ -212,7 +212,7 @@ describe('HTTP Server', () => {
     ]);
   });
 
-  it('GET /api/directories/:directoryId/sessions/:sessionId/messages preserves full history unless a limit is requested', async () => {
+  it('GET /api/directories/:directoryId/sessions/:sessionId/messages pages active history by default', async () => {
     const directory = await daemon.directoryManager.register(testDir);
     const buffer = new RingBuffer({ sessionId: 'long-active-history-session' });
     buffer.setDirectoryId(directory.id);
@@ -234,11 +234,32 @@ describe('HTTP Server', () => {
       method: 'GET',
       url: `/api/directories/${directory.id}/sessions/long-active-history-session/messages?limit=10`,
     });
+    const older = await app.inject({
+      method: 'GET',
+      url: `/api/directories/${directory.id}/sessions/long-active-history-session/messages?limit=10&offset=10`,
+    });
 
     expect(full.statusCode).toBe(200);
     expect(limited.statusCode).toBe(200);
-    expect((JSON.parse(full.payload) as { messages: unknown[] }).messages).toHaveLength(125);
-    expect((JSON.parse(limited.payload) as { messages: unknown[] }).messages).toHaveLength(10);
+    expect(older.statusCode).toBe(200);
+    expect(JSON.parse(full.payload)).toMatchObject({
+      nextOffset: 100,
+      hasMoreBefore: true,
+    });
+    expect((JSON.parse(full.payload) as { messages: unknown[] }).messages).toHaveLength(100);
+    expect(JSON.parse(limited.payload)).toMatchObject({
+      nextOffset: 10,
+      hasMoreBefore: true,
+    });
+    expect(
+      (JSON.parse(limited.payload) as { messages: Array<{ text?: string }> }).messages,
+    ).toHaveLength(10);
+    expect(
+      (JSON.parse(limited.payload) as { messages: Array<{ text?: string }> }).messages[0]?.text,
+    ).toBe('reply 115');
+    expect(
+      (JSON.parse(older.payload) as { messages: Array<{ text?: string }> }).messages[0]?.text,
+    ).toBe('reply 105');
   });
 
   it('GET /api/directories/:directoryId/sessions/:sessionId/messages distinguishes missing directory and session errors', async () => {

@@ -245,6 +245,8 @@ describe('ws-command-handlers', () => {
         'ok',
         undefined,
         expect.objectContaining({
+          nextOffset: 1,
+          hasMoreBefore: false,
           messages: [
             expect.objectContaining({
               kind: 'text',

@@ -14,7 +14,11 @@ import {
 import { discoveredWatchKey, removeDiscoveredWatch } from './discovered-watch-key.js';
 import type { ConnectedClient } from './hello-builder.js';
 import type { RingBuffer } from './ring-buffer.js';
-import { parseSessionMessageLimit, readDaemonSessionMessages } from './session-message-reader.js';
+import {
+  parseSessionMessageLimit,
+  parseSessionMessageOffset,
+  readDaemonSessionMessagePage,
+} from './session-message-reader.js';
 import type { AckSender } from './ws-command-handlers.js';
 import type { IncomingMessage } from './ws-protocol.js';
 
@@ -128,25 +132,33 @@ export function createWsSessionCommandHandlers(
             directoryId: msg.directoryId,
             sessionId: msg.sessionId,
             limit: msg.limit,
+            offset: msg.offset,
           },
           'Reading discovered session messages',
         );
-        const messages = (await readDaemonSessionMessages(daemon, msg.directoryId, msg.sessionId, {
+        const page = await readDaemonSessionMessagePage(daemon, msg.directoryId, msg.sessionId, {
           limit: parseSessionMessageLimit(msg.limit),
-        })) as RichSessionMessage[];
-        const fit = fitMessagesForAck(messages);
+          offset: parseSessionMessageOffset(msg.offset),
+        });
+        const fit = fitMessagesForAck(page.messages);
         log.debug(
           {
             directoryId: msg.directoryId,
             sessionId: msg.sessionId,
             returned: fit.messages.length,
-            originalReturned: messages.length,
+            originalReturned: page.messages.length,
             truncated: fit.truncated,
+            hasMoreBefore: page.hasMoreBefore,
+            nextOffset: page.nextOffset,
             durationMs: Date.now() - startedAt,
           },
           'Read discovered session messages',
         );
-        sendAck(client, msg.requestId, 'ok', undefined, { ...fit });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          ...fit,
+          hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
+          nextOffset: parseSessionMessageOffset(msg.offset) + fit.messages.length,
+        });
       } catch (error) {
         const viewportError =
           error instanceof ViewportError
