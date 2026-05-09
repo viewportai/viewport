@@ -1,4 +1,5 @@
 import type { Daemon } from '../core/daemon.js';
+import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
 import { addEvent, normalizeInputs } from './runtime-helpers.js';
 import { WorkflowRunPlatformSync } from './platform-sync.js';
@@ -112,6 +113,9 @@ export class WorkflowRunner {
     const now = Date.now();
     const resourceId = request.resourceId;
     const runtimeTargetId = request.runtimeTargetId;
+    const resourceManifest = resolveSessionResourceManifestSync({
+      workingDirectory: directory.path,
+    });
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
       workflowName: parsed.definition.name,
@@ -124,6 +128,7 @@ export class WorkflowRunner {
       directoryId: request.directoryId,
       directoryPath: directory.path,
       resourceId,
+      resourceManifest,
       runtimeTargetId,
       platformRunId: request.platformRunId,
       rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,
@@ -157,6 +162,14 @@ export class WorkflowRunner {
     };
 
     addEvent(run, 'run-created', 'Workflow run created');
+    addEvent(run, 'context-manifest-resolved', 'Context manifest resolved for workflow run', {
+      manifestDigest: resourceManifest.manifestDigest,
+      configSourceCount: resourceManifest.configSources.length,
+      providerCount: resourceManifest.contract.contextProviders.length,
+      workflowCount: resourceManifest.contract.workflows.length,
+      warningCount: resourceManifest.warnings.length,
+      conflictCount: resourceManifest.conflicts.length,
+    });
     if (run.executionPolicy) {
       addEvent(
         run,

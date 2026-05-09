@@ -28,6 +28,7 @@ export interface WorkflowRunEvent {
     | 'session-idle'
     | 'session-ended'
     | 'execution-policy-selected'
+    | 'context-manifest-resolved'
     | 'hook-fired'
     | 'inline-agent-started'
     | 'inline-agent-completed'
