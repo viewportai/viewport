@@ -406,8 +406,7 @@ describe('ws-command-handlers', () => {
         undefined,
         expect.objectContaining({
           streamed: true,
-          nextOffset: 1,
-          hasMoreBefore: false,
+          accepted: true,
         }),
       );
       expect(sendAck.mock.calls[0]?.[4]).not.toHaveProperty('messages');

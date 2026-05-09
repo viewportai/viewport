@@ -475,6 +475,15 @@ describe('WebSocket Server', () => {
       }),
     );
 
+    const ack = await client.nextMessage();
+    expect(ack).toMatchObject({
+      type: 'ack',
+      requestId: 'req-stream-session',
+      status: 'ok',
+      streamed: true,
+    });
+    expect(ack).not.toHaveProperty('messages');
+
     const page = await client.nextMessage();
     expect(page).toMatchObject({
       type: 'session-messages-page',
@@ -489,18 +498,6 @@ describe('WebSocket Server', () => {
     expect(
       (page.messages as Array<{ text?: string }>).map((message) => message.text).filter(Boolean),
     ).toEqual(['show streamed websocket transcript', 'streamed websocket transcript response']);
-
-    const ack = await client.nextMessage();
-    expect(ack).toMatchObject({
-      type: 'ack',
-      requestId: 'req-stream-session',
-      status: 'ok',
-      streamed: true,
-      truncated: false,
-      originalReturned: 2,
-      droppedCount: 0,
-    });
-    expect(ack).not.toHaveProperty('messages');
 
     client.close();
   });
