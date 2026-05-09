@@ -2,7 +2,12 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Dirent } from 'node:fs';
-import { VIEWPORT_CONFIG_FILE, type SessionResourceWarning } from './types.js';
+import {
+  VIEWPORT_CONFIG_FILE,
+  VIEWPORT_CONFIG_FILES,
+  type SessionResourceWarning,
+} from './types.js';
+import YAML from 'yaml';
 
 const DEFAULT_EXCLUDES = new Set(['.git', 'node_modules', 'vendor', 'dist', 'build']);
 
@@ -100,8 +105,10 @@ function buildDiscoveryResult(
 async function findNearestConfig(startDirectory: string): Promise<string | null> {
   let current = path.resolve(startDirectory);
   for (;;) {
-    const candidate = path.join(current, VIEWPORT_CONFIG_FILE);
-    if (await exists(candidate)) return candidate;
+    for (const configFile of VIEWPORT_CONFIG_FILES) {
+      const candidate = path.join(current, configFile);
+      if (await exists(candidate)) return candidate;
+    }
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;
@@ -111,8 +118,10 @@ async function findNearestConfig(startDirectory: string): Promise<string | null>
 function findNearestConfigSync(startDirectory: string): string | null {
   let current = path.resolve(startDirectory);
   for (;;) {
-    const candidate = path.join(current, VIEWPORT_CONFIG_FILE);
-    if (fsSync.existsSync(candidate)) return candidate;
+    for (const configFile of VIEWPORT_CONFIG_FILES) {
+      const candidate = path.join(current, configFile);
+      if (fsSync.existsSync(candidate)) return candidate;
+    }
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;
@@ -130,8 +139,8 @@ async function findChildRepoConfigs(
   for (const child of children) {
     if (DEFAULT_EXCLUDES.has(child.name)) continue;
     if (!child.isDirectory()) continue;
-    const candidate = path.join(startDirectory, child.name, VIEWPORT_CONFIG_FILE);
-    if ((await exists(candidate)) && (await isResourceConfigFile(candidate))) {
+    const candidate = await firstExistingConfig(path.join(startDirectory, child.name));
+    if (candidate && (await isResourceConfigFile(candidate))) {
       configPaths.push(candidate);
       if (configPaths.length > maxChildConfigs) {
         tooMany = true;
@@ -157,8 +166,8 @@ function findChildRepoConfigsSync(
   for (const child of children) {
     if (DEFAULT_EXCLUDES.has(child.name)) continue;
     if (!child.isDirectory()) continue;
-    const candidate = path.join(startDirectory, child.name, VIEWPORT_CONFIG_FILE);
-    if (fsSync.existsSync(candidate) && isResourceConfigFileSync(candidate)) {
+    const candidate = firstExistingConfigSync(path.join(startDirectory, child.name));
+    if (candidate && isResourceConfigFileSync(candidate)) {
       configPaths.push(candidate);
       if (configPaths.length > maxChildConfigs) {
         tooMany = true;
@@ -180,6 +189,22 @@ async function exists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function firstExistingConfig(directoryPath: string): Promise<string | null> {
+  for (const configFile of VIEWPORT_CONFIG_FILES) {
+    const candidate = path.join(directoryPath, configFile);
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+function firstExistingConfigSync(directoryPath: string): string | null {
+  for (const configFile of VIEWPORT_CONFIG_FILES) {
+    const candidate = path.join(directoryPath, configFile);
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 async function safeReaddir(directoryPath: string): Promise<Dirent[]> {
@@ -204,7 +229,7 @@ function uniqueSorted(values: string[]): string[] {
 
 async function isResourceConfigFile(configPath: string): Promise<boolean> {
   try {
-    return hasResourceConfigShape(JSON.parse(await fs.readFile(configPath, 'utf8')));
+    return hasResourceConfigShape(parseConfig(await fs.readFile(configPath, 'utf8'), configPath));
   } catch {
     return true;
   }
@@ -212,7 +237,7 @@ async function isResourceConfigFile(configPath: string): Promise<boolean> {
 
 function isResourceConfigFileSync(configPath: string): boolean {
   try {
-    return hasResourceConfigShape(JSON.parse(fsSync.readFileSync(configPath, 'utf8')));
+    return hasResourceConfigShape(parseConfig(fsSync.readFileSync(configPath, 'utf8'), configPath));
   } catch {
     return true;
   }
@@ -222,6 +247,17 @@ function hasResourceConfigShape(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const object = value as Record<string, unknown>;
   return Boolean(
-    object.resources || object.defaults || object.scope || object.name || object.$schema,
+    object.resources ||
+    object.context ||
+    object.workflows ||
+    object.defaults ||
+    object.scope ||
+    object.name ||
+    object.$schema,
   );
+}
+
+function parseConfig(raw: string, configPath: string): unknown {
+  if (configPath.endsWith('.json')) return JSON.parse(raw);
+  return YAML.parse(raw);
 }

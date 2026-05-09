@@ -18,6 +18,85 @@ afterEach(async () => {
 });
 
 describe('viewport config resolver', () => {
+  it('resolves yaml contract providers and workflow refs into a deterministic manifest', async () => {
+    const repo = path.join(root, 'contract-repo');
+    await fs.mkdir(path.join(repo, '.viewport', 'workflows'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'name: contract repo',
+        'context:',
+        '  providers:',
+        '    - id: repo_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - CLAUDE.md',
+        '        - docs/**/*.md',
+        '    - id: platform_vault',
+        '      provider: viewport-vault',
+        '      vault: ctx_platform_arch',
+        '      required: true',
+        '  resolution:',
+        '    order: [repo_docs, platform_vault]',
+        '    size_budget: 64kb',
+        '    strategy: provider_order',
+        'workflows:',
+        '  review-pr: .viewport/workflows/review-pr.yaml',
+        '  release:',
+        '    resource: wf_release',
+        '    version: v3',
+        '    digest: sha256:abc123',
+        '',
+      ].join('\n'),
+    );
+
+    const manifest = await resolveSessionResourceManifest({ workingDirectory: repo });
+    const second = await resolveSessionResourceManifest({ workingDirectory: repo });
+
+    expect(manifest.manifestDigest).toBe(second.manifestDigest);
+    expect(manifest.configSources[0]?.path).toBe(path.join(repo, '.viewport', 'config.yaml'));
+    expect(manifest.contract.contextProviders).toMatchObject([
+      {
+        id: 'repo_docs',
+        provider: 'repo-docs',
+        privacy: 'local_only',
+        capabilities: ['search', 'get'],
+      },
+      {
+        id: 'platform_vault',
+        provider: 'viewport-vault',
+        vault: 'ctx_platform_arch',
+        required: true,
+        privacy: 'control_plane_blind',
+        capabilities: ['search', 'get', 'propose', 'write_approved'],
+      },
+    ]);
+    expect(manifest.contract.contextResolution).toEqual({
+      order: ['repo_docs', 'platform_vault'],
+      sizeBudgetBytes: 65536,
+      strategy: 'provider_order',
+    });
+    expect(manifest.contract.workflows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'release',
+          resource: 'wf_release',
+          version: 'v3',
+          digest: 'sha256:abc123',
+        }),
+        expect.objectContaining({ id: 'review-pr', path: '.viewport/workflows/review-pr.yaml' }),
+      ]),
+    );
+    expect(manifest.resources.contexts).toMatchObject([
+      { id: 'ctx_platform_arch', required: true, resolution: 'requested_unverified' },
+    ]);
+    expect(manifest.resources.workflows.map((workflow) => workflow.id).sort()).toEqual([
+      'release',
+      'review-pr',
+    ]);
+  });
+
   it('resolves a single repo config into a session resource manifest', async () => {
     const repo = await makeRepo('viewport', {
       name: 'viewport-daemon',

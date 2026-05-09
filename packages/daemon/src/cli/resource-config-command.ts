@@ -2,6 +2,53 @@ import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 
+type ResolvedManifest = ReturnType<typeof resolveSessionResourceManifestSync>;
+
+export async function validate(): Promise<void> {
+  const workingDirectory = getPathFlag();
+  const manifest = resolveSessionResourceManifestSync({ workingDirectory });
+  const invalidWarnings = manifest.warnings.filter(
+    (warning) => warning.code === 'invalid_config_skipped',
+  );
+  const ok =
+    manifest.configSources.length > 0 &&
+    manifest.conflicts.length === 0 &&
+    invalidWarnings.length === 0;
+
+  if (isJsonMode()) {
+    printJson({
+      command: 'validate',
+      ok,
+      status: ok ? 'ready' : 'needs_attention',
+      manifest,
+    });
+    return;
+  }
+
+  console.log('Viewport contract validation');
+  console.log(`Working dir: ${manifest.workingDirectory}`);
+  console.log(`Status:      ${ok ? 'ready' : 'needs attention'}`);
+  console.log(`Configs:     ${manifest.configSources.length}`);
+  printWarningsAndConflicts(manifest);
+
+  if (!ok) {
+    throw new Error('Viewport contract validation failed');
+  }
+}
+
+export async function contract(): Promise<void> {
+  const subcommand = getArgs()[1];
+  if (!subcommand) {
+    showContractHelp();
+    return;
+  }
+  if (subcommand === 'resolve') {
+    await contractResolve();
+    return;
+  }
+  throw new Error(contractUsage());
+}
+
 export async function config(): Promise<void> {
   const subcommand = getArgs()[1];
   if (!subcommand) {
@@ -23,8 +70,28 @@ function configUsage(): string {
   return 'Usage: vpd config <resolve|doctor> [--cwd <path>] [--json]';
 }
 
+function contractUsage(): string {
+  return 'Usage: vpd contract resolve [--path <path>|--cwd <path>] [--json]';
+}
+
 function showConfigHelp(): void {
   console.log(configUsage());
+}
+
+function showContractHelp(): void {
+  console.log(contractUsage());
+}
+
+async function contractResolve(): Promise<void> {
+  const workingDirectory = getPathFlag();
+  const manifest = resolveSessionResourceManifestSync({ workingDirectory });
+
+  if (isJsonMode()) {
+    printJson({ command: 'contract resolve', ok: true, manifest });
+    return;
+  }
+
+  printManifest('Viewport contract manifest', manifest);
 }
 
 async function configResolve(): Promise<void> {
@@ -36,31 +103,7 @@ async function configResolve(): Promise<void> {
     return;
   }
 
-  const resourceCount =
-    manifest.resources.contexts.length +
-    manifest.resources.workflows.length +
-    manifest.resources.plans.length +
-    manifest.resources.agentProfiles.length;
-
-  console.log('Viewport config manifest');
-  console.log(`Working dir: ${manifest.workingDirectory}`);
-  console.log(`Digest:      ${manifest.manifestDigest}`);
-  console.log(`Configs:     ${manifest.configSources.length}`);
-  console.log(`Resources:   ${resourceCount}`);
-
-  for (const source of manifest.configSources) {
-    console.log(`  - ${source.path}`);
-  }
-  printResources('Contexts', manifest.resources.contexts);
-  printResources('Workflows', manifest.resources.workflows);
-  printResources('Plans', manifest.resources.plans);
-  printResources('Agent profiles', manifest.resources.agentProfiles);
-  for (const warning of manifest.warnings) {
-    console.log(`Warning: ${warning.code} - ${warning.message}`);
-  }
-  for (const conflict of manifest.conflicts) {
-    console.log(`Conflict: ${conflict.field} requires user selection`);
-  }
+  printManifest('Viewport config manifest', manifest);
 }
 
 async function configDoctor(): Promise<void> {
@@ -83,20 +126,82 @@ async function configDoctor(): Promise<void> {
   console.log(`Status:      ${ok ? 'ready' : 'needs attention'}`);
   console.log(`Configs:     ${manifest.configSources.length}`);
   if (manifest.configSources.length === 0) {
-    console.log('No repo-local .viewport/config.json was found.');
+    console.log('No repo-local .viewport/config.yaml was found.');
   }
   for (const source of manifest.configSources) {
     console.log(`  - ${source.path}`);
   }
+  printProviders(manifest.contract.contextProviders);
+  printWorkflowRefs(manifest.contract.workflows);
   printResources('Contexts', manifest.resources.contexts);
   printResources('Workflows', manifest.resources.workflows);
   printResources('Plans', manifest.resources.plans);
   printResources('Agent profiles', manifest.resources.agentProfiles);
-  for (const warning of manifest.warnings) {
-    console.log(`Warning: ${warning.code} - ${warning.message}`);
+  printWarningsAndConflicts(manifest);
+}
+
+function getPathFlag(): string {
+  return getFlag('path') ?? getFlag('cwd') ?? process.cwd();
+}
+
+function printManifest(title: string, manifest: ResolvedManifest): void {
+  const resourceCount =
+    manifest.resources.contexts.length +
+    manifest.resources.workflows.length +
+    manifest.resources.plans.length +
+    manifest.resources.agentProfiles.length;
+
+  console.log(title);
+  console.log(`Working dir: ${manifest.workingDirectory}`);
+  console.log(`Digest:      ${manifest.manifestDigest}`);
+  console.log(`Configs:     ${manifest.configSources.length}`);
+  console.log(`Resources:   ${resourceCount}`);
+  console.log(`Providers:   ${manifest.contract.contextProviders.length}`);
+  console.log(`Workflows:   ${manifest.contract.workflows.length}`);
+
+  for (const source of manifest.configSources) {
+    console.log(`  - ${source.path}`);
   }
-  for (const conflict of manifest.conflicts) {
-    console.log(`Conflict: ${conflict.field} requires user selection`);
+  printProviders(manifest.contract.contextProviders);
+  printWorkflowRefs(manifest.contract.workflows);
+  printResources('Contexts', manifest.resources.contexts);
+  printResources('Workflows', manifest.resources.workflows);
+  printResources('Plans', manifest.resources.plans);
+  printResources('Agent profiles', manifest.resources.agentProfiles);
+  printWarningsAndConflicts(manifest);
+}
+
+function printProviders(
+  providers: Array<{
+    id: string;
+    provider: string;
+    required: boolean;
+    privacy: string;
+    capabilities: string[];
+  }>,
+): void {
+  if (providers.length === 0) return;
+  console.log('Providers:');
+  for (const provider of providers) {
+    console.log(
+      `  - ${provider.id} (${provider.provider}, ${provider.privacy}, ${provider.capabilities.join(',')})${provider.required ? ' required' : ''}`,
+    );
+  }
+}
+
+function printWorkflowRefs(
+  workflows: Array<{
+    id: string;
+    required: boolean;
+    path?: string;
+    resource?: string;
+  }>,
+): void {
+  if (workflows.length === 0) return;
+  console.log('Workflow refs:');
+  for (const workflow of workflows) {
+    const target = workflow.path ?? workflow.resource ?? 'unresolved';
+    console.log(`  - ${workflow.id} -> ${target}${workflow.required ? ' (required)' : ''}`);
   }
 }
 
@@ -108,5 +213,14 @@ function printResources(
   console.log(`${label}:`);
   for (const resource of resources) {
     console.log(`  - ${resource.id}${resource.required ? ' (required)' : ''}`);
+  }
+}
+
+function printWarningsAndConflicts(manifest: ResolvedManifest): void {
+  for (const warning of manifest.warnings) {
+    console.log(`Warning: ${warning.code} - ${warning.message}`);
+  }
+  for (const conflict of manifest.conflicts) {
+    console.log(`Conflict: ${conflict.field} requires user selection`);
   }
 }

@@ -26,6 +26,7 @@ describe('grouped CLI command help', () => {
     ['worktree'],
     ['workflow'],
     ['config'],
+    ['contract'],
     ['agent'],
     ['service'],
     ['session'],

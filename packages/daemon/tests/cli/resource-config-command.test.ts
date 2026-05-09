@@ -42,6 +42,59 @@ describe('resource config CLI command', () => {
     expect(output).toContain('wf_demo');
   });
 
+  it('prints a provider-aware contract manifest for yaml configs', async () => {
+    const repo = path.join(tempHome, 'contract-repo');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: docs',
+        '      provider: repo-docs',
+        '      paths: [CLAUDE.md]',
+        '    - id: vault',
+        '      provider: viewport-vault',
+        '      vault: ctx_demo',
+        'workflows:',
+        '  review: .viewport/workflows/review.yaml',
+        '',
+      ].join('\n'),
+    );
+
+    await runContract(['contract', 'resolve', '--path', repo, '--json']);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "contract resolve"');
+    expect(output).toContain('"provider": "repo-docs"');
+    expect(output).toContain('"provider": "viewport-vault"');
+    expect(output).toContain('"vault": "ctx_demo"');
+    expect(output).toContain('"path": ".viewport/workflows/review.yaml"');
+  });
+
+  it('validates repo contracts and reports invalid configs', async () => {
+    const repo = path.join(tempHome, 'invalid-contract');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: broken',
+        '      provider: unknown',
+      ].join('\n'),
+    );
+
+    await runValidate(['validate', '--path', repo, '--json']);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "validate"');
+    expect(output).toContain('"ok": false');
+    expect(output).toContain('"code": "invalid_config_skipped"');
+  });
+
   it('prints a human-readable doctor report with resolved resource ids', async () => {
     const repo = path.join(tempHome, 'repo-doctor');
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
@@ -86,4 +139,16 @@ async function runConfig(args: string[]): Promise<void> {
   process.argv = ['node', 'vpd', ...args];
   const { config } = await import('../../src/cli/resource-config-command.js');
   await config();
+}
+
+async function runContract(args: string[]): Promise<void> {
+  process.argv = ['node', 'vpd', ...args];
+  const { contract } = await import('../../src/cli/resource-config-command.js');
+  await contract();
+}
+
+async function runValidate(args: string[]): Promise<void> {
+  process.argv = ['node', 'vpd', ...args];
+  const { validate } = await import('../../src/cli/resource-config-command.js');
+  await validate();
 }

@@ -13,6 +13,8 @@
  *   vpd stop                  Stop the daemon
  *   vpd restart               Restart the daemon
  *   vpd worktree ...          Worktree operator commands
+ *   vpd validate              Validate repo-local Viewport contracts
+ *   vpd contract ...          Resolve repo-local Viewport contracts
  *   vpd config ...            Resolve repo-local Viewport resources
  *   vpd context ...           Local trusted-edge context commands
  */
@@ -45,6 +47,8 @@ import {
   worktree,
   workflow,
   config,
+  contract,
+  validate,
   context,
   service,
   setup,
@@ -91,6 +95,8 @@ const commands: Record<string, () => Promise<void>> = {
   worktree,
   workflow,
   config,
+  contract,
+  validate,
   context,
   service,
   setup,
@@ -168,6 +174,8 @@ if (command === 'hook') {
       handler = workflow;
     } else if (command === 'config') {
       handler = config;
+    } else if (command === 'contract') {
+      handler = contract;
     } else if (command === 'context') {
       handler = context;
     } else if (command === 'remote') {
