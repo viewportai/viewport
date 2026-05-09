@@ -132,6 +132,7 @@ export const ReadSessionMessagesSchema = z.object({
   sessionId: z.string().min(1).max(256),
   limit: z.number().int().positive().max(2_000).optional(),
   offset: z.number().int().nonnegative().optional(),
+  delivery: z.enum(['ack', 'event-stream']).optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 

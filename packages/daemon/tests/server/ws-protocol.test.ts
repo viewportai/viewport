@@ -386,6 +386,7 @@ describe('ReadSessionMessagesSchema', () => {
       directoryId: 'dir-1',
       sessionId: 's1',
       limit: 500,
+      delivery: 'event-stream',
     });
     expect(result.success).toBe(true);
   });

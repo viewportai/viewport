@@ -154,6 +154,29 @@ export function createWsSessionCommandHandlers(
           },
           'Read discovered session messages',
         );
+        if (msg.delivery === 'event-stream' && msg.requestId) {
+          client.send(
+            JSON.stringify({
+              type: 'session-messages-page',
+              requestId: msg.requestId,
+              directoryId: msg.directoryId,
+              sessionId: msg.sessionId,
+              ...fit,
+              hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
+              nextOffset: parseSessionMessageOffset(msg.offset) + fit.messages.length,
+              final: true,
+            }),
+          );
+          sendAck(client, msg.requestId, 'ok', undefined, {
+            originalReturned: fit.originalReturned,
+            droppedCount: fit.droppedCount,
+            truncated: fit.truncated,
+            hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
+            nextOffset: parseSessionMessageOffset(msg.offset) + fit.messages.length,
+            streamed: true,
+          });
+          return;
+        }
         sendAck(client, msg.requestId, 'ok', undefined, {
           ...fit,
           hasMoreBefore: page.hasMoreBefore || fit.droppedCount > 0,
