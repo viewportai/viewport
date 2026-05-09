@@ -15,7 +15,7 @@ export interface WrappedKey extends EncryptedPayload {
   salt: string;
 }
 
-export function createProjectKey(): Buffer {
+export function createResourceKey(): Buffer {
   return crypto.randomBytes(32);
 }
 
@@ -31,20 +31,20 @@ export function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 
-export function wrapProjectKey(
-  projectKey: Buffer,
+export function wrapResourceKey(
+  resourceKey: Buffer,
   credentials: { passphrase: string; recoveryCode: string },
 ): WrappedKey {
   const salt = crypto.randomBytes(16).toString('base64');
   const key = deriveKey({ ...credentials, salt });
   return {
-    ...encryptBuffer(projectKey, key),
+    ...encryptBuffer(resourceKey, key),
     kdf: KDF,
     salt,
   };
 }
 
-export function unwrapProjectKey(
+export function unwrapResourceKey(
   wrappedKey: WrappedKey,
   credentials: { passphrase: string; recoveryCode: string },
 ): Buffer {

@@ -7,7 +7,7 @@ import {
 import { applyContextCandidateDecision } from './local-edge-candidates.js';
 import { readCandidateDecisionApplications } from './local-edge-decision-applications.js';
 import { verifyContextCandidateDecision } from './local-edge-decision-signature.js';
-import { readProjectMetadata, touchProjectMetadata } from './local-edge-metadata.js';
+import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
@@ -16,19 +16,19 @@ import type {
 } from './local-edge-types.js';
 
 export async function pushContextEvents(options: {
-  projectId: string;
+  contextResourceId: string;
   serverUrl: string;
   credential: string;
   home?: string;
   fetchImpl?: typeof fetch;
 }): Promise<{ accepted: number; pushed: number; repoId: string }> {
   const home = options.home ?? configDir();
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   const events = vault.listSyncEvents({ repoId: metadata.repoId });
   const candidateDecisionApplications = await readCandidateDecisionApplications({
     home,
-    projectId: options.projectId,
+    contextResourceId: options.contextResourceId,
   });
   if (events.length === 0 && candidateDecisionApplications.length === 0) {
     return { accepted: 0, pushed: 0, repoId: metadata.repoId };
@@ -36,7 +36,7 @@ export async function pushContextEvents(options: {
 
   const response = await postJson(
     options.fetchImpl ?? fetch,
-    contextRuntimeUrl(options.serverUrl, options.projectId, 'push'),
+    contextRuntimeUrl(options.serverUrl, options.contextResourceId, 'push'),
     {
       credential: options.credential,
       events,
@@ -54,7 +54,7 @@ export async function pushContextEvents(options: {
 }
 
 export async function pullContextEvents(options: {
-  projectId: string;
+  contextResourceId: string;
   serverUrl: string;
   credential: string;
   actorName: string;
@@ -71,7 +71,7 @@ export async function pullContextEvents(options: {
   repoId: string;
 }> {
   const home = options.home ?? configDir();
-  const metadata = await readProjectMetadata(options.projectId, home);
+  const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   assertCredentialsOrApprovedDevice(vault, {
     userName: metadata.userName,
@@ -86,10 +86,11 @@ export async function pullContextEvents(options: {
 
   const response = await postJson(
     options.fetchImpl ?? fetch,
-    contextRuntimeUrl(options.serverUrl, options.projectId, 'pull'),
+    contextRuntimeUrl(options.serverUrl, options.contextResourceId, 'pull'),
     {
       credential: options.credential,
       repo_id: metadata.repoId,
+      context_resource_id: options.contextResourceId,
       ...(metadata.lastServerPullReceivedAt
         ? { after_received_at: metadata.lastServerPullReceivedAt }
         : {}),
@@ -108,7 +109,7 @@ export async function pullContextEvents(options: {
   for (const decision of candidateDecisions) {
     candidateDecisionResults.push(
       await applyContextCandidateDecision({
-        projectId: options.projectId,
+        contextResourceId: options.contextResourceId,
         actorName: options.actorName,
         credentials: options.credentials,
         home,
@@ -122,7 +123,7 @@ export async function pullContextEvents(options: {
   const pendingCandidateDecisions = candidateDecisionResults.filter(
     (result) => result.reason === 'candidate_not_found',
   ).length;
-  await touchProjectMetadata(
+  await touchContextMetadata(
     {
       ...metadata,
       lastServerPullReceivedAt:
@@ -147,11 +148,11 @@ export async function pullContextEvents(options: {
 
 function contextRuntimeUrl(
   serverUrl: string,
-  projectId: string,
+  contextResourceId: string,
   operation: 'push' | 'pull',
 ): string {
   const base = serverUrl.replace(/\/+$/, '');
-  return `${base}/api/runtime/workspaces/${encodeURIComponent(projectId)}/context-vault/events/${operation}`;
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(contextResourceId)}/context-vault/events/${operation}`;
 }
 
 async function postJson(

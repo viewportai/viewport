@@ -6,7 +6,7 @@ const { signEnvelope } = require('../crypto/signatures');
 const { listJsonFiles, readJson, writeJson } = require('./files');
 const { repoPaths } = require('./paths');
 
-function appendSharedEvent(vault, { repoId, actorName, type, payload }) {
+function appendSharedEvent(vault, { repoId, actorName, type, payload, contextResourceId = null }) {
   const metadata = vault.getRepoMetadata(repoId);
   const repoKey = vault.getRepoKey(repoId, metadata.currentKeyEpoch);
   const encrypted = encryptJson(payload, repoKey);
@@ -18,10 +18,11 @@ function appendSharedEvent(vault, { repoId, actorName, type, payload }) {
     visibility: 'shared',
     encrypted,
     payloadDigest: digest(canonicalize(payload)),
+    contextResourceId,
   });
 }
 
-function appendPrivateEvent(vault, { repoId, actorName, type, payload }) {
+function appendPrivateEvent(vault, { repoId, actorName, type, payload, contextResourceId = null }) {
   const identity = vault.getIdentity(actorName);
   const encrypted = encryptJson(payload, Buffer.from(identity.personalKey, 'base64'));
   return appendUnsignedEvent(vault, {
@@ -32,12 +33,23 @@ function appendPrivateEvent(vault, { repoId, actorName, type, payload }) {
     visibility: 'private',
     encrypted,
     payloadDigest: digest(canonicalize(payload)),
+    contextResourceId,
   });
 }
 
 function appendUnsignedEvent(
   vault,
-  { repoId, actor, type, keyEpoch, visibility, encrypted = null, grant = null, payloadDigest = null },
+  {
+    repoId,
+    actor,
+    type,
+    keyEpoch,
+    visibility,
+    encrypted = null,
+    grant = null,
+    payloadDigest = null,
+    contextResourceId = null,
+  },
 ) {
   const event = {
     id: `evt_${crypto.randomUUID()}`,
@@ -48,6 +60,7 @@ function appendUnsignedEvent(
     visibility,
     createdAt: new Date().toISOString(),
     parentIds: latestEventIds(vault.home, repoId).slice(-2),
+    ...(contextResourceId ? { contextResourceId } : {}),
     encrypted,
     grant,
     payloadDigest,

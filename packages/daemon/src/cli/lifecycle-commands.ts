@@ -193,8 +193,7 @@ function applyRuntimeOverrides(
     relayEndpoint: launch.relayEndpoint ?? runtimeState.relayEndpoint,
     relayServerUrl: launch.relayServerUrl ?? runtimeState.relayServerUrl,
     relayWorkspaceId: launch.relayWorkspaceId ?? runtimeState.relayWorkspaceId,
-    relayProjectMachineBindingId:
-      launch.relayProjectMachineBindingId ?? runtimeState.relayProjectMachineBindingId,
+    relayRuntimeTargetId: launch.relayRuntimeTargetId ?? runtimeState.relayRuntimeTargetId,
     relayMachineId: launch.relayMachineId ?? runtimeState.relayMachineId,
     relayTlsVerify: launch.relayTlsVerify ?? runtimeState.relayTlsVerify,
   };
@@ -209,8 +208,8 @@ function applyRuntimeTlsEnvironment(
     'VIEWPORT_TLS_CERT_DIR',
     'VIEWPORT_TLS_CERT',
     'VIEWPORT_TLS_KEY',
-    'VIEWPORT_PROJECT_CONFIG_DIR',
-    'VPD_PROJECT_CONFIG_DIR',
+    'VIEWPORT_RESOURCE_OVERRIDE_DIR',
+    'VPD_RESOURCE_OVERRIDE_DIR',
   ];
   const previous = new Map<string, string | undefined>();
   for (const key of keys) {
@@ -245,9 +244,9 @@ function applyRuntimeTlsEnvironment(
     setEnv('VIEWPORT_TLS_KEY', undefined);
   }
 
-  if (runtimeState?.projectConfigDir) {
-    setEnv('VIEWPORT_PROJECT_CONFIG_DIR', runtimeState.projectConfigDir);
-    setEnv('VPD_PROJECT_CONFIG_DIR', runtimeState.projectConfigDir);
+  if (runtimeState?.resourceOverrideConfigDir) {
+    setEnv('VIEWPORT_RESOURCE_OVERRIDE_DIR', runtimeState.resourceOverrideConfigDir);
+    setEnv('VPD_RESOURCE_OVERRIDE_DIR', runtimeState.resourceOverrideConfigDir);
   }
 
   return () => {
@@ -351,8 +350,10 @@ export function showHelp(): void {
   console.log(
     '                               Validate, run, inspect, approve, and cancel local workflows',
   );
+  console.log('  config resolve [--cwd <path>] [--json]');
+  console.log('                               Resolve repo-local .viewport/config.json resources');
   console.log(
-    '  context init --project <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
+    '  context init --context <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
   );
   console.log(
     '                               Defaults to file; use macos-keychain explicitly on Darwin',
@@ -361,29 +362,29 @@ export function showHelp(): void {
     '  context user-init --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
   );
   console.log(
-    '  context join --project <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
+    '  context join --context <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
   );
-  console.log('  context status [--project <id>] [--json]');
+  console.log('  context status [--context <id>] [--json]');
   console.log(
-    '  context add --project <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
-  );
-  console.log(
-    '  context propose --project <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
+    '  context add --context <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
-    '  context resolve --project <id> --query <text> --passphrase <text> --recovery-code <text> [--json]',
+    '  context propose --context <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log(
+    '  context resolve --context <id> --query <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
     '                               Resolve encrypted local context on this trusted edge',
   );
   console.log(
-    '  context sync-push [--project <id>] [--server-url <url>] [--credential <token>] [--json]',
+    '  context sync-push [--context <id>] [--server-url <url>] [--credential <token>] [--json]',
   );
   console.log(
     '                               Push signed encrypted context events to Viewport; defaults to vpd remote login config',
   );
   console.log(
-    '  context sync-pull [--project <id>] [--server-url <url>] [--credential <token>] --passphrase <text> --recovery-code <text> [--json]',
+    '  context sync-pull [--context <id>] [--server-url <url>] [--credential <token>] --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
     '                               Pull signed encrypted context events from Viewport; defaults to vpd remote login config',
@@ -398,7 +399,7 @@ export function showHelp(): void {
     '  context device-accept --user <name> --device <name> (--approval <json>|--approval-file <path>) --code <code> [--json]',
   );
   console.log(
-    '  context grant --project <id> --actor <device> --recipient <user> --passphrase <text> --recovery-code <text> [--json]',
+    '  context grant --context <id> --actor <device> --recipient <user> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log('  hook notify --event <EventName>');
   console.log('  hook plan                    Send a plan proposal hook from stdin');

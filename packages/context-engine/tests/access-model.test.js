@@ -42,8 +42,8 @@ async function syncToDevice({ sourceVault, peerVault = null, deviceVault, repoId
   await deviceVault.importSyncHpke({ repoId, actorName: deviceName, inDir: syncDir });
 }
 
-test('project ACL grants context to approved devices for current and future members', async () => {
-  const repoId = 'project-acl';
+test('resource ACL grants context to approved devices for current and future members', async () => {
+  const repoId = 'resource-acl';
   const aliceLaptop = createDevice('alice-laptop');
   const aliceDesktop = createDevice('alice-desktop');
   const bobLaptop = createDevice('bob-laptop');
@@ -109,9 +109,9 @@ test('project ACL grants context to approved devices for current and future memb
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
-    title: 'Project history rule',
-    body: 'All active project members should receive approved historical project context.',
+    scope: 'resource',
+    title: 'Resource history rule',
+    body: 'All active resource members should receive approved historical resource context.',
   });
 
   assert.deepEqual(access.accessDecision({ userName: 'alice', deviceName: 'alice-desktop' }), {
@@ -150,9 +150,9 @@ test('project ACL grants context to approved devices for current and future memb
     label: 'carol-history',
   });
 
-  assert.equal(aliceDesktop.search({ repoId, actorName: 'alice-desktop', query: 'historical project context' }).length, 1);
-  assert.equal(bobLaptop.search({ repoId, actorName: 'bob-laptop', query: 'historical project context' }).length, 1);
-  assert.equal(carolLaptop.search({ repoId, actorName: 'carol-laptop', query: 'historical project context' }).length, 1);
+  assert.equal(aliceDesktop.search({ repoId, actorName: 'alice-desktop', query: 'historical resource context' }).length, 1);
+  assert.equal(bobLaptop.search({ repoId, actorName: 'bob-laptop', query: 'historical resource context' }).length, 1);
+  assert.equal(carolLaptop.search({ repoId, actorName: 'carol-laptop', query: 'historical resource context' }).length, 1);
 
   access.addMember('dave', { history: 'full' });
   access.approveDevice({ userName: 'dave', deviceName: 'dave-laptop' });
@@ -165,7 +165,7 @@ test('project ACL grants context to approved devices for current and future memb
     deviceName: 'dave-laptop',
     label: 'dave-history',
   });
-  assert.equal(daveLaptop.search({ repoId, actorName: 'dave-laptop', query: 'historical project context' }).length, 1);
+  assert.equal(daveLaptop.search({ repoId, actorName: 'dave-laptop', query: 'historical resource context' }).length, 1);
 
   access.addMember('erin', { history: 'join_date' });
   access.approveDevice({ userName: 'erin', deviceName: 'erin-laptop' });
@@ -177,12 +177,12 @@ test('project ACL grants context to approved devices for current and future memb
     deviceName: 'erin-laptop',
     label: 'erin-before-future',
   });
-  assert.equal(erinLaptop.search({ repoId, actorName: 'erin-laptop', query: 'historical project context' }).length, 0);
+  assert.equal(erinLaptop.search({ repoId, actorName: 'erin-laptop', query: 'historical resource context' }).length, 0);
 
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Join date rule',
     body: 'Join-date members can read context created after their membership epoch.',
   });
@@ -199,9 +199,9 @@ test('project ACL grants context to approved devices for current and future memb
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Post-removal rule',
-    body: 'Removed members must not decrypt project context created after removal.',
+    body: 'Removed members must not decrypt resource context created after removal.',
   });
   await syncToDevice({
     peerVault: aliceLaptop,
@@ -213,11 +213,11 @@ test('project ACL grants context to approved devices for current and future memb
 
   assert.equal(access.accessDecision({ userName: 'bob', deviceName: 'bob-laptop' }).reason, 'acl_denied');
   assert.equal(bobLaptop.search({ repoId, actorName: 'bob-laptop', query: 'after removal' }).length, 0);
-  assert.equal(bobLaptop.search({ repoId, actorName: 'bob-laptop', query: 'historical project context' }).length, 1);
+  assert.equal(bobLaptop.search({ repoId, actorName: 'bob-laptop', query: 'historical resource context' }).length, 1);
 });
 
 test('any authorized peer can fulfill a missing user grant', async () => {
-  const repoId = 'project-peer-grantor';
+  const repoId = 'resource-peer-grantor';
   const aliceLaptop = createDevice('alice-peer-laptop');
   const bobLaptop = createDevice('bob-peer-laptop');
   const erinLaptop = createDevice('erin-peer-laptop');
@@ -285,7 +285,7 @@ test('any authorized peer can fulfill a missing user grant', async () => {
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Peer grantor rule',
     body: 'Any authorized peer can deliver missing user grants.',
   });
@@ -366,7 +366,7 @@ test('pending key delivery resolves when an authorized peer comes back online', 
   aliceLaptop.addEntry({
     repoId,
     actorName: 'alice-laptop',
-    scope: 'project',
+    scope: 'resource',
     title: 'Pending delivery rule',
     body: 'Key delivery waits until an authorized peer comes back online.',
   });

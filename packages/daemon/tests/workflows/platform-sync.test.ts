@@ -38,11 +38,12 @@ describe('WorkflowRunPlatformSync', () => {
     );
     expect(calls[0]?.body).toMatchObject({
       credential: 'issue-token',
-      project_machine_binding_id: 'binding-1',
+      runtime_target_id: 'binding-1',
       runtime_run_id: 'runtime-run-1',
       status: 'running',
       started_at: '1970-01-01T00:00:01.500Z',
     });
+    expect(calls[0]?.body).not.toHaveProperty('project_machine_binding_id');
     expect(calls[0]?.body['events']).toHaveLength(1);
     expect(calls[0]?.body).toMatchObject({
       nodes: [
@@ -94,6 +95,33 @@ describe('WorkflowRunPlatformSync', () => {
     await sync.sync(run);
 
     expect(calls).toHaveLength(0);
+  });
+
+  it('syncs workflow runs that only carry canonical resource runtime fields', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (url, init) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.resourceId = 'project-1';
+    run.runtimeTargetId = 'binding-1';
+
+    await sync.sync(run);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(
+      'https://getviewport.test/api/runtime/workspaces/project-1/workflow-runs/platform-run-1/sync',
+    );
+    expect(calls[0]?.body).toMatchObject({
+      credential: 'issue-token',
+      runtime_target_id: 'binding-1',
+      runtime_run_id: 'runtime-run-1',
+    });
+    expect(calls[0]?.body).not.toHaveProperty('project_machine_binding_id');
   });
 
   it('emits a privacy-preserving review packet for terminal review workflows', async () => {
@@ -382,7 +410,7 @@ describe('WorkflowRunPlatformSync', () => {
       configManager(),
       async (_url, init) => {
         calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
-        return new Response(JSON.stringify({ reason: 'PROJECT_MACHINE_BINDING_MISMATCH' }), {
+        return new Response(JSON.stringify({ reason: 'RUNTIME_TARGET_MISMATCH' }), {
           status: 403,
         });
       },
@@ -536,7 +564,7 @@ function configManager(): ConfigManager {
       relay: {
         serverUrl: 'https://getviewport.test',
         workspaceId: 'project-1',
-        projectMachineBindingId: 'binding-1',
+        runtimeTargetId: 'binding-1',
         issueToken: 'issue-token',
       },
     }),
@@ -554,8 +582,8 @@ function workflowRun(): WorkflowRunRecord {
     yamlSnapshot: 'schema: viewport.workflow/v1\nname: team/pr-review\nnodes: {}\n',
     directoryId: 'dir-1',
     directoryPath: '/repo',
-    projectId: 'project-1',
-    projectMachineBindingId: 'binding-1',
+    resourceId: 'project-1',
+    runtimeTargetId: 'binding-1',
     platformRunId: 'platform-run-1',
     machineId: 'machine-1',
     initiation: 'browser',

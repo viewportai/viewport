@@ -25,6 +25,7 @@ const PartialSessionConfigSchema = z
   .object({
     agent: z.string().min(1).max(128).optional(),
     model: z.string().min(1).max(256).optional(),
+    resourceId: z.string().min(1).max(256).optional(),
     gitTracker: PartialGitTrackerSchema.optional(),
     permissions: PartialPermissionsSchema.optional(),
     costCapUsd: z.number().nonnegative().optional(),
@@ -73,7 +74,7 @@ export const ViewportConfigSchema = z
             serverUrl: z.string().optional(),
             workspaceId: z.string().optional(),
             installId: z.string().optional(),
-            projectMachineBindingId: z.string().optional(),
+            runtimeTargetId: z.string().optional(),
             machineId: z.string().optional(),
             issueToken: z.string().optional(),
             tlsVerify: z.enum(['auto', '0', '1']).optional(),

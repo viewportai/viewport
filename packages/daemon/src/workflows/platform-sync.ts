@@ -76,7 +76,7 @@ export class WorkflowRunPlatformSync {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         credential: target.issueToken,
-        project_machine_binding_id: target.projectMachineBindingId,
+        runtime_target_id: target.runtimeTargetId,
         runtime_run_id: run.id,
         status: run.status,
         data_capture_policy: dataCapturePolicy(run),
@@ -227,12 +227,14 @@ export class WorkflowRunPlatformSync {
   private targetFor(run: WorkflowRunRecord): {
     url: string;
     issueToken: string;
-    projectMachineBindingId: string;
+    runtimeTargetId: string;
     tlsVerify?: 'auto' | '0' | '1';
     caCertPath?: string;
     tlsPins?: string[];
   } | null {
-    if (!run.projectId || !run.projectMachineBindingId || !run.platformRunId) return null;
+    const resourceId = run.resourceId;
+    const runtimeTargetId = run.runtimeTargetId;
+    if (!resourceId || !runtimeTargetId || !run.platformRunId) return null;
 
     const daemonConfig = this.configManager.getDaemonConfig();
     const server = daemonConfig?.server ?? {};
@@ -241,18 +243,15 @@ export class WorkflowRunPlatformSync {
     const issueToken = relay.issueToken;
 
     if (!serverUrl || !issueToken) return null;
-    if (relay.workspaceId && relay.workspaceId !== run.projectId) return null;
-    if (
-      relay.projectMachineBindingId &&
-      relay.projectMachineBindingId !== run.projectMachineBindingId
-    ) {
+    if (relay.workspaceId && relay.workspaceId !== resourceId) return null;
+    if (relay.runtimeTargetId && relay.runtimeTargetId !== runtimeTargetId) {
       return null;
     }
 
     return {
-      url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(run.projectId)}/workflow-runs/${encodeURIComponent(run.platformRunId)}/sync`,
+      url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(resourceId)}/workflow-runs/${encodeURIComponent(run.platformRunId)}/sync`,
       issueToken,
-      projectMachineBindingId: run.projectMachineBindingId,
+      runtimeTargetId,
       tlsVerify: server.tlsVerify,
       caCertPath: server.caCertPath,
       tlsPins: server.tlsPins,

@@ -107,9 +107,13 @@ describe('HTTP Server', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/sessions?scope=all' });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.payload) as { sessions: Array<{ source: string }> };
+    const body = JSON.parse(res.payload) as {
+      sessions: Array<{ source: string; projectId?: string | null; projectBindingSource?: string }>;
+    };
     expect(body.sessions.some((session) => session.source === 'active')).toBe(true);
     expect(body.sessions.some((session) => session.source === 'discovered')).toBe(true);
+    expect(body.sessions.every((session) => !('projectId' in session))).toBe(true);
+    expect(body.sessions.every((session) => !('projectBindingSource' in session))).toBe(true);
   });
 
   it('POST /api/directories registers a directory', async () => {

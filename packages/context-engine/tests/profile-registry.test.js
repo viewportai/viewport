@@ -19,7 +19,7 @@ test('context profile registry drives bundle retrieval policy and records digest
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Auth review standard',
     body: 'Code reviews touching auth need session rotation regression proof.',
     source: 'git://api/context-profiles/code-review.json',
@@ -27,7 +27,7 @@ test('context profile registry drives bundle retrieval policy and records digest
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Release window',
     body: 'Deployments use the release calendar.',
     source: 'git://api/context-profiles/release.json',

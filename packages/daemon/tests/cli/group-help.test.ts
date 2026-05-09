@@ -25,6 +25,7 @@ describe('grouped CLI command help', () => {
     ['permit'],
     ['worktree'],
     ['workflow'],
+    ['config'],
     ['agent'],
     ['service'],
     ['session'],
@@ -49,7 +50,7 @@ describe('grouped CLI command help', () => {
 });
 
 function packageRoot(): string {
-  return process.cwd();
+  return path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 }
 
 function tsxBin(): string {

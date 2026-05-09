@@ -19,7 +19,7 @@ test('HPKE grants can sync and materialize approved shared context', async () =>
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'HPKE sync rule',
     body: sharedBody,
   });

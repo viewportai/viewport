@@ -110,6 +110,8 @@ export class WorkflowRunner {
 
     const parsed = await resolveWorkflowSource(request, directory.path);
     const now = Date.now();
+    const resourceId = request.resourceId;
+    const runtimeTargetId = request.runtimeTargetId;
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
       workflowName: parsed.definition.name,
@@ -121,8 +123,8 @@ export class WorkflowRunner {
       yamlSnapshot: parsed.sourceText,
       directoryId: request.directoryId,
       directoryPath: directory.path,
-      projectId: request.projectId,
-      projectMachineBindingId: request.projectMachineBindingId,
+      resourceId,
+      runtimeTargetId,
       platformRunId: request.platformRunId,
       rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,
       machineId: this.daemon.configManager.getMachineId(),
@@ -186,8 +188,8 @@ export class WorkflowRunner {
       workflowSourceRef: sourceRun.sourcePath ?? `viewport://workflow-runs/${sourceRun.id}`,
       directoryId: sourceRun.directoryId,
       inputs: sourceRun.inputs,
-      projectId: sourceRun.projectId,
-      projectMachineBindingId: sourceRun.projectMachineBindingId,
+      resourceId: sourceRun.resourceId,
+      runtimeTargetId: sourceRun.runtimeTargetId,
       executionPolicy: sourceRun.executionPolicy,
       dataCapturePolicy: sourceRun.dataCapturePolicy,
       initiation: 'cli',
@@ -372,7 +374,7 @@ export class WorkflowRunner {
   private async schedulePlatformLinkedRuns(): Promise<number> {
     let scheduled = 0;
     for (const run of await this.store.list(500)) {
-      if (!run.projectId || !run.projectMachineBindingId || !run.platformRunId) continue;
+      if (!run.resourceId || !run.runtimeTargetId || !run.platformRunId) continue;
       this.platformSync.schedule(run);
       scheduled += 1;
     }

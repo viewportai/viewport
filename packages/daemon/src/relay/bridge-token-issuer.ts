@@ -19,7 +19,7 @@ const MAX_JWKS_KEYS = 64;
 export interface RelayTokenIssuerOptions {
   relayServerUrl: string;
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
   relayCaCertPath?: string;
   relayTlsPins?: string[];
@@ -66,7 +66,7 @@ export class RelayTokenIssuer {
         body: JSON.stringify({
           role: 'workspace-daemon',
           workspaceId: this.options.workspaceId,
-          projectMachineBindingId: this.options.projectMachineBindingId,
+          runtimeTargetId: this.options.runtimeTargetId,
           credential: this.daemonIssueToken,
         }),
         signal: controller.signal,

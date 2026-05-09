@@ -9,7 +9,7 @@ export interface RelayPresenceResolution {
   relayId: string;
   relayWsBaseUrl: string;
   daemonConnected: boolean;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
 }
 
@@ -17,23 +17,23 @@ export interface RelayBackplane {
   readonly mode: RelayBackplaneMode;
   readonly crossRelayEnabled: boolean;
   readonly pollIntervalMs: number | null;
-  resolvePresence(workspaceId: string, projectMachineBindingId?: string): Promise<RelayPresenceResolution | null>;
+  resolvePresence(workspaceId: string, runtimeTargetId?: string): Promise<RelayPresenceResolution | null>;
   upsertPresence(
     workspaceId: string,
     daemonConnected: boolean,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
     machineId?: string,
   ): Promise<void>;
   publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string,
   ): Promise<boolean>;
   publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string | null,
@@ -84,21 +84,21 @@ class ServerRelayBackplane implements RelayBackplane {
 
   async resolvePresence(
     workspaceId: string,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
   ): Promise<RelayPresenceResolution | null> {
-    return projectMachineBindingId
-      ? await this.presence.resolve(workspaceId, projectMachineBindingId)
+    return runtimeTargetId
+      ? await this.presence.resolve(workspaceId, runtimeTargetId)
       : await this.presence.resolve(workspaceId);
   }
 
   async upsertPresence(
     workspaceId: string,
     daemonConnected: boolean,
-    projectMachineBindingId?: string,
+    runtimeTargetId?: string,
     machineId?: string,
   ): Promise<void> {
-    if (projectMachineBindingId || machineId) {
-      await this.presence.upsert(workspaceId, daemonConnected, projectMachineBindingId, machineId);
+    if (runtimeTargetId || machineId) {
+      await this.presence.upsert(workspaceId, daemonConnected, runtimeTargetId, machineId);
       return;
     }
 
@@ -107,14 +107,14 @@ class ServerRelayBackplane implements RelayBackplane {
 
   async publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string,
   ): Promise<boolean> {
     return await this.bus.publishClientToDaemon(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       payload,
       targetRelayId,
@@ -123,14 +123,14 @@ class ServerRelayBackplane implements RelayBackplane {
 
   async publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string | null,
   ): Promise<boolean> {
     return await this.bus.publishDaemonToClients(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       payload,
       targetRelayId,

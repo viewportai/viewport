@@ -12,7 +12,7 @@ interface BusPublishResponse {
 interface BusPullFrame {
   id?: number;
   workspaceId?: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
   sourceRelayId?: string;
   targetRelayId?: string | null;
@@ -30,7 +30,7 @@ interface BusPullResponse {
 export interface RelayBusFrame {
   id: number;
   workspaceId: string;
-  projectMachineBindingId: string;
+  runtimeTargetId: string;
   machineId?: string;
   sourceRelayId: string;
   targetRelayId: string | null;
@@ -67,14 +67,14 @@ export class RelayBusClient {
 
   async publishClientToDaemon(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string,
   ): Promise<boolean> {
     return await this.publish(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       'client_to_daemon',
       payload,
@@ -84,14 +84,14 @@ export class RelayBusClient {
 
   async publishDaemonToClients(
     workspaceId: string,
-    projectMachineBindingId: string,
+    runtimeTargetId: string,
     machineId: string | undefined,
     payload: string,
     targetRelayId?: string | null,
   ): Promise<boolean> {
     return await this.publish(
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       'daemon_to_clients',
       payload,
@@ -101,27 +101,27 @@ export class RelayBusClient {
 
   private async publish(
     workspaceId: string,
-    projectMachineBindingId: string | undefined,
+    runtimeTargetId: string | undefined,
     machineId: string | undefined,
     direction: PublishDirection,
     payload: string,
     targetRelayId: string | null,
   ): Promise<boolean> {
     if (!this.enabled) return false;
-    if (!projectMachineBindingId || projectMachineBindingId.trim().length === 0) {
+    if (!runtimeTargetId || runtimeTargetId.trim().length === 0) {
       this.metrics.increment('relay_bus_publish_failed_total');
       this.logger.warn('relay_bus_publish_failed', {
         workspaceId,
         direction,
         targetRelayId,
-        reason: 'missing_project_machine_binding',
+        reason: 'missing_runtime_target',
       });
       return false;
     }
     const endpoint = new URL('/api/runtime/internal/relay/bus/publish', this.config.serverUrl);
     const signed: BusSignatureFields = {
       workspaceId,
-      projectMachineBindingId,
+      runtimeTargetId,
       machineId,
       sourceRelayId: this.config.relayId,
       targetRelayId,
@@ -134,7 +134,7 @@ export class RelayBusClient {
         endpoint,
         {
           workspaceId,
-          projectMachineBindingId,
+          runtimeTargetId,
           machineId,
           sourceRelayId: this.config.relayId,
           targetRelayId,
@@ -208,8 +208,8 @@ export class RelayBusClient {
         if (candidate.sourceRelayId === this.config.relayId) continue;
         if (
           typeof candidate.workspaceId !== 'string' ||
-          typeof candidate.projectMachineBindingId !== 'string' ||
-          candidate.projectMachineBindingId.trim().length === 0 ||
+          typeof candidate.runtimeTargetId !== 'string' ||
+          candidate.runtimeTargetId.trim().length === 0 ||
           typeof candidate.sourceRelayId !== 'string' ||
           typeof candidate.payload !== 'string'
         ) {
@@ -240,14 +240,14 @@ export class RelayBusClient {
             this.metrics.increment('relay_bus_pull_stale_signature_total');
             continue;
           }
-          const candidateProjectMachineBindingId = candidate.projectMachineBindingId;
+          const candidateRuntimeTargetId = candidate.runtimeTargetId;
           const candidateMachineId = typeof candidate.machineId === 'string' ? candidate.machineId : '';
-          const freshnessKey = [candidate.sourceRelayId, candidate.workspaceId, candidateProjectMachineBindingId].join(
+          const freshnessKey = [candidate.sourceRelayId, candidate.workspaceId, candidateRuntimeTargetId].join(
             '\n',
           );
           const previousIssuedAt = this.lastAcceptedIssuedAtMs.get(freshnessKey);
           const previousSignature = this.lastAcceptedSignature.get(freshnessKey);
-          const seenFrameKey = `${candidate.sourceRelayId}\n${candidate.workspaceId}\n${candidateProjectMachineBindingId}\n${candidate.signature}`;
+          const seenFrameKey = `${candidate.sourceRelayId}\n${candidate.workspaceId}\n${candidateRuntimeTargetId}\n${candidate.signature}`;
           const seenFrameIssuedAt = this.seenSignedFrames.get(seenFrameKey);
           if (typeof seenFrameIssuedAt === 'number' && candidate.issuedAtMs <= seenFrameIssuedAt) {
             this.metrics.increment('relay_bus_pull_replayed_signature_total');
@@ -270,7 +270,7 @@ export class RelayBusClient {
           const validSignature = verifyBusFrameSignature(
             {
               workspaceId: candidate.workspaceId,
-              projectMachineBindingId: candidateProjectMachineBindingId,
+              runtimeTargetId: candidateRuntimeTargetId,
               machineId: candidateMachineId || undefined,
               sourceRelayId: candidate.sourceRelayId,
               targetRelayId: typeof candidate.targetRelayId === 'string' ? candidate.targetRelayId : null,
@@ -308,7 +308,7 @@ export class RelayBusClient {
         frames.push({
           id: candidate.id,
           workspaceId: candidate.workspaceId,
-          projectMachineBindingId: candidate.projectMachineBindingId,
+          runtimeTargetId: candidate.runtimeTargetId,
           machineId: typeof candidate.machineId === 'string' ? candidate.machineId : undefined,
           sourceRelayId: candidate.sourceRelayId,
           targetRelayId: typeof candidate.targetRelayId === 'string' ? candidate.targetRelayId : null,

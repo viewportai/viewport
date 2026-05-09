@@ -10,7 +10,7 @@ test('private context can participate in a local bundle without leaking through 
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Shared auth rule',
     body: 'Authentication changes require replay protection tests.',
   });

@@ -9,6 +9,12 @@ import { sendHello } from './hello-builder.js';
 import { messageToUpdate, permissionToUpdate, stepToUpdate } from './message-normalizers.js';
 import type { RingBuffer } from './ring-buffer.js';
 import { resolveMatchedDiscoveredWatch } from './discovered-watch-key.js';
+import { createGitMetadataResolver } from '../session-enrichment/git.js';
+import {
+  resolveSessionResourceManifestSync,
+  type SessionResourceManifest,
+} from '../config-resolution/index.js';
+import { isRecentlyDiscoveredSession } from './discovered-session-window.js';
 
 const log = logger.child({ module: 'ws-daemon-event-bridge' });
 
@@ -254,6 +260,7 @@ export function registerWsDaemonEventBridge(
   });
 
   daemon.on('discovery:updated', () => {
+    const gitMetadataFor = createGitMetadataResolver();
     const sessions: Array<{
       id: string;
       agentId: string;
@@ -262,11 +269,22 @@ export function registerWsDaemonEventBridge(
       lastActivity: number;
       messageCount: number;
       resumable: boolean;
+      workingDirectory: string | null;
+      repoRoot: string | null;
+      repoRemoteUrl: string | null;
+      repoBranch: string | null;
+      repoSha: string | null;
+      resourceManifest: SessionResourceManifest;
     }> = [];
 
+    const now = Date.now();
     for (const [directoryId, discovered] of daemon.getDiscoveredSessions()) {
       for (const s of discovered) {
         if (sessions.length >= MAX_DISCOVERED_BROADCAST) break;
+        if (!isRecentlyDiscoveredSession(s, now)) continue;
+        const directoryPath = daemon.directoryManager.get(directoryId)?.path;
+        const workingDirectory = s.cwd ?? s.worktreePath ?? directoryPath ?? null;
+        const git = gitMetadataFor(workingDirectory);
         sessions.push({
           id: s.sessionId,
           agentId: s.agentId,
@@ -275,6 +293,14 @@ export function registerWsDaemonEventBridge(
           lastActivity: s.lastModified,
           messageCount: s.messageCount ?? 0,
           resumable: s.resumable,
+          workingDirectory,
+          repoRoot: git.repoRoot,
+          repoRemoteUrl: git.repoRemoteUrl,
+          repoBranch: git.repoBranch,
+          repoSha: git.repoSha,
+          resourceManifest: resolveSessionResourceManifestSync({
+            workingDirectory: workingDirectory ?? process.cwd(),
+          }),
         });
       }
       if (sessions.length >= MAX_DISCOVERED_BROADCAST) break;

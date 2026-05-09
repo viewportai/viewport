@@ -7,7 +7,7 @@ function addSharedRule(vault) {
   vault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Pinned resolver rule',
     body: 'Use pinned resolver versions before delivering context to agents.',
   });

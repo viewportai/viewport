@@ -27,8 +27,8 @@ describe('context CLI command', () => {
       'init',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--user',
       'alice',
       '--device',
@@ -51,8 +51,8 @@ describe('context CLI command', () => {
       'add',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--title',
@@ -69,11 +69,12 @@ describe('context CLI command', () => {
     ]);
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"command": "context add"'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"scope": "resource"'));
     logSpy.mockClear();
 
     const { writeContextProfile } = await import('../../src/context/local-edge-store.js');
     const profile = await writeContextProfile({
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       name: 'code-review',
       packs: ['project-standards'],
       query: 'regression',
@@ -90,8 +91,8 @@ describe('context CLI command', () => {
       'resolve',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--query',
@@ -123,8 +124,8 @@ describe('context CLI command', () => {
       'init',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--user',
       'alice',
       '--device',
@@ -142,8 +143,8 @@ describe('context CLI command', () => {
       'propose',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--title',
@@ -164,8 +165,8 @@ describe('context CLI command', () => {
       'resolve',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--query',
@@ -188,12 +189,12 @@ describe('context CLI command', () => {
       await import('../../src/context/local-edge-decision-applications.js');
     await recordCandidateDecisionApplication({
       home: tempHome,
-      projectId: 'project-alpha',
+      contextResourceId: 'context-alpha',
       application: {
         schema_version: 'viewport.context_candidate_application/v1',
         decision_id: 'ctxd_inbox_1',
         inbox_item_id: 'inbox_1',
-        repo_id: 'project-alpha',
+        repo_id: 'context-alpha',
         candidate_event_id: 'ctxc_event_1',
         payload_digest: 'sha256:test',
         decision: 'approved',
@@ -211,8 +212,8 @@ describe('context CLI command', () => {
       'decisions',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--since',
       '24h',
       '--json',
@@ -230,8 +231,8 @@ describe('context CLI command', () => {
       'init',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--user',
       'alice',
       '--device',
@@ -247,8 +248,8 @@ describe('context CLI command', () => {
       'add',
       '--home',
       tempHome,
-      '--project',
-      'project-alpha',
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--title',
@@ -273,7 +274,7 @@ describe('context CLI command', () => {
         enabled: true,
         endpoint: 'wss://getviewport.test:7781/ws',
         serverUrl: 'https://app.getviewport.test',
-        workspaceId: 'project-alpha',
+        workspaceId: 'context-alpha',
         issueToken: 'runtime-token',
         tlsVerify: 'auto',
       },
@@ -285,7 +286,7 @@ describe('context CLI command', () => {
       if (String(url).endsWith('/push')) {
         pushedEvents = body.events;
         expect(String(url)).toBe(
-          'https://app.getviewport.test/api/runtime/workspaces/project-alpha/context-vault/events/push',
+          'https://app.getviewport.test/api/runtime/workspaces/context-alpha/context-vault/events/push',
         );
         expect(JSON.stringify(pushedEvents)).toContain('viewport.context_event/v1');
         expect(JSON.stringify(pushedEvents)).not.toContain(
@@ -295,7 +296,7 @@ describe('context CLI command', () => {
       }
 
       expect(String(url)).toBe(
-        'https://app.getviewport.test/api/runtime/workspaces/project-alpha/context-vault/events/pull',
+        'https://app.getviewport.test/api/runtime/workspaces/context-alpha/context-vault/events/pull',
       );
       return jsonResponse({
         data: pushedEvents.map((event, index) => ({ id: index + 1, signed_event: event })),
@@ -303,13 +304,23 @@ describe('context CLI command', () => {
     }) as typeof fetch;
 
     logSpy.mockClear();
-    await runContext(['context', 'sync-push', '--home', tempHome, '--json']);
+    await runContext([
+      'context',
+      'sync-push',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--json',
+    ]);
 
     await runContext([
       'context',
       'sync-pull',
       '--home',
       tempHome,
+      '--context',
+      'context-alpha',
       '--device',
       'alice-laptop',
       '--passphrase',
@@ -324,6 +335,26 @@ describe('context CLI command', () => {
     expect(output).toContain('"accepted"');
     expect(output).toContain('"command": "context sync-pull"');
     expect(output).toContain('"pulled"');
+  });
+
+  it('does not treat saved remote workspace id as an implicit context resource id', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://getviewport.test:7781/ws',
+        serverUrl: 'https://app.getviewport.test',
+        workspaceId: 'workspace-not-context',
+        issueToken: 'runtime-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    await expect(
+      runContext(['context', 'sync-push', '--home', tempHome, '--json']),
+    ).rejects.toThrow('requires --context <resource-id>');
   });
 
   async function runContext(args: string[]): Promise<void> {

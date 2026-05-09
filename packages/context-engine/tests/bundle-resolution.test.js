@@ -8,7 +8,7 @@ test('bundle manifests are deterministic and change when active context is super
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Testing rule',
     body: 'Run the focused auth test suite before merge.',
   });

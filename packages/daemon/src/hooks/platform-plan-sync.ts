@@ -62,12 +62,12 @@ export class PlatformPlanHookSync {
     const relay = daemonConfig?.relay ?? {};
     const serverUrl = relay.serverUrl ?? server.url;
     const issueToken = relay.issueToken;
-    const projectId = relay.workspaceId;
+    const workspaceId = relay.workspaceId;
 
-    if (!serverUrl || !issueToken || !projectId) return null;
+    if (!serverUrl || !issueToken || !workspaceId) return null;
 
     return {
-      url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(projectId)}/agent-hooks/plans`,
+      url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/agent-hooks/plans`,
       issueToken,
       tlsVerify: server.tlsVerify,
       caCertPath: server.caCertPath,

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { configDir, configFilePath, projectConfigFilePath } from '../core/config.js';
+import { configDir, configFilePath, resourceOverrideConfigFilePath } from '../core/config.js';
 
 export interface LocalTlsState {
   enabled: boolean;
@@ -58,9 +58,9 @@ export function resolveLocalTlsState(env: NodeJS.ProcessEnv = process.env): Loca
   }
 
   const globalCertDir = path.join(configDir(), 'certs');
-  const projectConfigPath = projectConfigFilePath(env);
-  const projectCertDir = projectConfigPath
-    ? path.join(path.dirname(projectConfigPath), 'certs')
+  const resourceOverrideConfigPath = resourceOverrideConfigFilePath(env);
+  const projectCertDir = resourceOverrideConfigPath
+    ? path.join(path.dirname(resourceOverrideConfigPath), 'certs')
     : null;
   const certDirs = env['VIEWPORT_TLS_CERT_DIR']?.trim()
     ? [env['VIEWPORT_TLS_CERT_DIR'].trim()]
@@ -69,7 +69,7 @@ export function resolveLocalTlsState(env: NodeJS.ProcessEnv = process.env): Loca
     ? [explicitHost]
     : unique([
         'localhost',
-        ...readConfigHosts(projectConfigPath),
+        ...readConfigHosts(resourceOverrideConfigPath),
         ...readConfigHosts(configFilePath()),
       ]);
 

@@ -95,7 +95,7 @@ export async function remote(): Promise<void> {
         serverUrl: relayConfig.serverUrl,
         workspaceId: relayConfig.workspaceId,
         installId: relayConfig.installId,
-        projectMachineBindingId: relayConfig.projectMachineBindingId,
+        runtimeTargetId: relayConfig.runtimeTargetId,
         machineId: relayConfig.machineId,
         issueToken: redact(relayConfig.issueToken),
         tlsVerify: relayConfig.tlsVerify ?? 'auto',
@@ -112,7 +112,7 @@ export async function remote(): Promise<void> {
     console.log(`Relay server:         ${payload.relay.serverUrl ?? '-'}`);
     console.log(`Workspace:            ${payload.relay.workspaceId ?? '-'}`);
     console.log(`Install:              ${payload.relay.installId ?? '-'}`);
-    console.log(`Project machine:      ${payload.relay.projectMachineBindingId ?? '-'}`);
+    console.log(`Runtime target:       ${payload.relay.runtimeTargetId ?? '-'}`);
     console.log(`Machine:              ${payload.relay.machineId ?? '-'}`);
     console.log(`Issue token:          ${payload.relay.issueToken ?? '-'}`);
     console.log(`TLS verify:           ${payload.relay.tlsVerify}`);
@@ -144,7 +144,7 @@ export async function remote(): Promise<void> {
         ...relayConfig,
         enabled: false,
         installId: undefined,
-        projectMachineBindingId: undefined,
+        runtimeTargetId: undefined,
         machineId: undefined,
         issueToken: undefined,
       },
@@ -195,9 +195,7 @@ export async function remote(): Promise<void> {
     const enableNow = hasFlag('enable') || !boolLike(getFlag('no-enable'));
     const nextIssueToken = preserveIssuedInstall ? relayConfig.issueToken : undefined;
     const nextInstallId = preserveIssuedInstall ? relayConfig.installId : undefined;
-    const nextProjectMachineBindingId = preserveIssuedInstall
-      ? relayConfig.projectMachineBindingId
-      : undefined;
+    const nextRuntimeTargetId = preserveIssuedInstall ? relayConfig.runtimeTargetId : undefined;
     const nextMachineId = preserveIssuedInstall ? relayConfig.machineId : undefined;
 
     await manager.setDaemonConfig({
@@ -213,7 +211,7 @@ export async function remote(): Promise<void> {
         serverUrl,
         workspaceId,
         installId: nextInstallId,
-        projectMachineBindingId: nextProjectMachineBindingId,
+        runtimeTargetId: nextRuntimeTargetId,
         machineId: nextMachineId,
         issueToken: issueToken.trim() || nextIssueToken,
         tlsVerify: relayTlsVerify,
@@ -230,7 +228,7 @@ export async function remote(): Promise<void> {
         serverUrl,
         workspaceId,
         installId: nextInstallId,
-        projectMachineBindingId: nextProjectMachineBindingId,
+        runtimeTargetId: nextRuntimeTargetId,
         machineId: nextMachineId,
         issueToken: redact(issueToken.trim() || nextIssueToken),
         tlsVerify: relayTlsVerify,

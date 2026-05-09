@@ -321,6 +321,8 @@ export type PermissionDecision =
 export interface SessionConfig {
   agent: string;
   model?: string;
+  /** Explicit resource context selected by the launcher/operator. */
+  resourceId?: string;
   gitTracker: GitTrackerConfig;
   permissions: PermissionsConfig;
   costCapUsd?: number;

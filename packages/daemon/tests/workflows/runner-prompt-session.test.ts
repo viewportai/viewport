@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { addContextEntry, initContextResource } from '../../src/context/local-edge-store.js';
+import { buildSessionPromptWithContext } from '../../src/core/session-context-prompt.js';
 import {
   MockAdapter,
   waitForNodeSession,
@@ -15,14 +17,17 @@ let tempHome: string;
 let projectDir: string;
 let originalHome: string | undefined;
 let originalCodexHome: string | undefined;
+let originalViewportHome: string | undefined;
 
 async function setup(): Promise<Daemon> {
   tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-home-'));
   projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-project-'));
   originalHome = process.env['HOME'];
   originalCodexHome = process.env['CODEX_HOME'];
+  originalViewportHome = process.env['VIEWPORT_HOME'];
   process.env['HOME'] = tempHome;
   process.env['CODEX_HOME'] = path.join(tempHome, '.codex');
+  process.env['VIEWPORT_HOME'] = path.join(tempHome, '.viewport');
 
   const daemon = new Daemon();
   await daemon.initialize();
@@ -35,6 +40,8 @@ async function cleanup(): Promise<void> {
   else process.env['HOME'] = originalHome;
   if (originalCodexHome === undefined) delete process.env['CODEX_HOME'];
   else process.env['CODEX_HOME'] = originalCodexHome;
+  if (originalViewportHome === undefined) delete process.env['VIEWPORT_HOME'];
+  else process.env['VIEWPORT_HOME'] = originalViewportHome;
   await fs.rm(tempHome, { recursive: true, force: true });
   await fs.rm(projectDir, { recursive: true, force: true });
 }
@@ -144,6 +151,94 @@ nodes:
         data: { output: 'done' },
       }),
     );
+  });
+
+  it('injects repo-configured Context Vault entries into workflow prompt sessions', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+
+    await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, '.viewport', 'config.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          resources: {
+            contexts: ['ctx-workflow-launch'],
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    const credentials = { passphrase: 'alice-passphrase', recoveryCode: 'alice-recovery' };
+    await initContextResource({
+      contextResourceId: 'ctx-workflow-launch',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+    });
+    await addContextEntry({
+      contextResourceId: 'ctx-workflow-launch',
+      actorName: 'alice-laptop',
+      title: 'Workflow launch context',
+      body: 'Workflow prompt nodes must receive resource manifest context.',
+      credentials,
+    });
+    await expect(
+      buildSessionPromptWithContext({
+        workingDirectory: projectDir,
+        prompt: 'Review workflow context for the current directory.',
+      }),
+    ).resolves.toContain('<viewport_context>');
+
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-context-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review workflow context for the current directory.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    const session = await waitForSessionWithPrompt(
+      adapter,
+      'Review workflow context for the current directory.',
+    );
+    const sentPrompt = String(session.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(sentPrompt).toContain('<viewport_context>');
+    expect(sentPrompt).toContain('## ctx-workflow-launch');
+    expect(sentPrompt).toContain('### Workflow launch context');
+    expect(sentPrompt).toContain('Workflow prompt nodes must receive resource manifest context.');
+    expect(sentPrompt).toContain('<user_request>');
+    expect(sentPrompt).toContain('Review workflow context for the current directory.');
+
+    session.emitAgentMessage('context used');
+    session.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.review?.output).toBe('context used');
   });
 
   it('fails and kills a prompt node when its timeout expires', async () => {

@@ -5,14 +5,14 @@ const path = require('node:path');
 const { signEnvelope } = require('../src/crypto/signatures');
 const { pairedVaults, readAllText, tempHome } = require('./helpers');
 
-test('shared project context syncs as encrypted events and materializes for another identity', () => {
+test('shared resource context syncs as encrypted events and materializes for another identity', () => {
   const { aliceVault, bobVault } = pairedVaults();
   const secretBody = 'PRs touching auth must run session rotation tests.';
 
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Auth review rule',
     body: secretBody,
     source: 'git://api/AGENTS.md#auth',
@@ -44,7 +44,7 @@ test('shared project context syncs as encrypted events and materializes for anot
   assert.equal(search[0].body, secretBody);
 });
 
-test('shared project context syncs from event objects and materializes for another identity', async () => {
+test('shared resource context syncs from event objects and materializes for another identity', async () => {
   const { aliceVault, bobVault } = pairedVaults();
   const repoId = 'project-hpke-api';
   const secretBody = 'PRs touching auth must run session rotation tests.';
@@ -53,7 +53,7 @@ test('shared project context syncs from event objects and materializes for anoth
   aliceVault.addEntry({
     repoId,
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Auth review rule',
     body: secretBody,
     source: 'git://api/AGENTS.md#auth',
@@ -93,7 +93,7 @@ test('sync import rejects downgraded signed events before copying them', () => {
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Downgrade guard',
     body: 'Schema downgrade must not sync.',
   });
@@ -131,7 +131,7 @@ test('materializer rejects downgraded local events before decrypting payloads', 
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Materializer downgrade guard',
     body: 'Local event log downgrade must not materialize.',
   });

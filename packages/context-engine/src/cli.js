@@ -84,7 +84,7 @@ function main() {
     print(vault.addEntry({
       repoId: requireArg(args, 'repo'),
       actorName: requireArg(args, 'actor'),
-      scope: args.scope || 'project',
+      scope: args.scope || 'resource',
       title: requireArg(args, 'title'),
       body: requireArg(args, 'body'),
       source: args.source,

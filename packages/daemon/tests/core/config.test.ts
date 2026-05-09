@@ -8,7 +8,7 @@ import {
   resolveConfig,
   ConfigManager,
   loadConfig,
-  resolveProjectConfig,
+  resolveResourceOverrideConfig,
   saveConfig,
 } from '../../src/core/config.js';
 import { AgentRegistry } from '../../src/core/agent-registry.js';
@@ -185,34 +185,34 @@ describe('BUILT_IN_DEFAULTS', () => {
 describe('Config I/O', () => {
   let tmpDir: string;
   let originalHome: string;
-  let originalProjectConfigDir: string | undefined;
-  let originalVpdProjectConfigDir: string | undefined;
+  let originalResourceOverrideDir: string | undefined;
+  let originalLegacyResourceOverrideDir: string | undefined;
   let originalCwd: string;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-config-test-'));
     originalHome = process.env['HOME'] ?? '';
-    originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
-    originalVpdProjectConfigDir = process.env['VPD_PROJECT_CONFIG_DIR'];
+    originalResourceOverrideDir = process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'];
+    originalLegacyResourceOverrideDir = process.env['VPD_RESOURCE_OVERRIDE_DIR'];
     originalCwd = process.cwd();
     process.env['HOME'] = tmpDir;
-    delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
-    delete process.env['VPD_PROJECT_CONFIG_DIR'];
+    delete process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'];
+    delete process.env['VPD_RESOURCE_OVERRIDE_DIR'];
     process.chdir(tmpDir);
   });
 
   afterEach(async () => {
     process.chdir(originalCwd);
     process.env['HOME'] = originalHome;
-    if (originalProjectConfigDir === undefined) {
-      delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    if (originalResourceOverrideDir === undefined) {
+      delete process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'];
     } else {
-      process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+      process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'] = originalResourceOverrideDir;
     }
-    if (originalVpdProjectConfigDir === undefined) {
-      delete process.env['VPD_PROJECT_CONFIG_DIR'];
+    if (originalLegacyResourceOverrideDir === undefined) {
+      delete process.env['VPD_RESOURCE_OVERRIDE_DIR'];
     } else {
-      process.env['VPD_PROJECT_CONFIG_DIR'] = originalVpdProjectConfigDir;
+      process.env['VPD_RESOURCE_OVERRIDE_DIR'] = originalLegacyResourceOverrideDir;
     }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -241,7 +241,7 @@ describe('Config I/O', () => {
     expect(config.machineId).toBe('roundtrip');
   });
 
-  it('loadConfig merges a project override on top of the global config', async () => {
+  it('loadConfig merges a resource override on top of the global config', async () => {
     await saveConfig({
       daemon: {
         server: { url: 'https://getviewport.com' },
@@ -253,10 +253,10 @@ describe('Config I/O', () => {
       },
     });
 
-    const projectConfigDir = path.join(tmpDir, 'repo', '.viewport');
-    await fs.mkdir(projectConfigDir, { recursive: true });
+    const resourceOverrideConfigDir = path.join(tmpDir, 'repo', '.viewport');
+    await fs.mkdir(resourceOverrideConfigDir, { recursive: true });
     await fs.writeFile(
-      path.join(projectConfigDir, 'config.json'),
+      path.join(resourceOverrideConfigDir, 'config.json'),
       JSON.stringify({
         daemon: {
           server: { url: 'https://getviewport.test' },
@@ -269,14 +269,14 @@ describe('Config I/O', () => {
       'utf-8',
     );
 
-    process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = projectConfigDir;
+    process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'] = resourceOverrideConfigDir;
     const config = await loadConfig();
     expect(config.daemon?.server?.url).toBe('https://getviewport.test');
     expect(config.daemon?.relay?.serverUrl).toBe('https://getviewport.test');
     expect(config.daemon?.relay?.endpoint).toBe('wss://getviewport.test:7781/ws');
   });
 
-  it('resolveProjectConfig ignores .viewport directories without config files', async () => {
+  it('resolveResourceOverrideConfig ignores ancestor .viewport daemon configs', async () => {
     const sharedConfigDir = path.join(tmpDir, '.viewport');
     const repoDir = path.join(tmpDir, 'repo');
     await fs.mkdir(path.join(repoDir, '.viewport', 'worktrees'), { recursive: true });
@@ -289,13 +289,13 @@ describe('Config I/O', () => {
 
     process.chdir(repoDir);
 
-    expect(resolveProjectConfig()).toEqual({
-      dir: await fs.realpath(sharedConfigDir),
-      source: 'ancestor',
+    expect(resolveResourceOverrideConfig()).toEqual({
+      dir: null,
+      source: null,
     });
   });
 
-  it('resolveProjectConfig falls through explicit directories without config files', async () => {
+  it('resolveResourceOverrideConfig ignores explicit directories without config files', async () => {
     const sharedConfigDir = path.join(tmpDir, '.viewport');
     const repoConfigDir = path.join(tmpDir, 'repo', '.viewport');
     await fs.mkdir(repoConfigDir, { recursive: true });
@@ -306,19 +306,68 @@ describe('Config I/O', () => {
       'utf-8',
     );
 
-    process.env['VPD_PROJECT_CONFIG_DIR'] = repoConfigDir;
+    process.env['VPD_RESOURCE_OVERRIDE_DIR'] = repoConfigDir;
     process.chdir(path.dirname(repoConfigDir));
 
-    expect(resolveProjectConfig()).toEqual({
-      dir: await fs.realpath(sharedConfigDir),
-      source: 'ancestor',
+    expect(resolveResourceOverrideConfig()).toEqual({
+      dir: null,
+      source: null,
     });
+  });
+
+  it('resolveResourceOverrideConfig ignores checked-in resource configs and ancestor daemon configs', async () => {
+    const repoConfigDir = path.join(tmpDir, 'repo', '.viewport');
+    const sharedConfigDir = path.join(tmpDir, '.viewport');
+    await fs.mkdir(repoConfigDir, { recursive: true });
+    await fs.mkdir(sharedConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(repoConfigDir, 'config.json'),
+      JSON.stringify({
+        version: 1,
+        resources: {
+          contexts: ['ctx_auth'],
+        },
+      }),
+      'utf-8',
+    );
+    await fs.writeFile(
+      path.join(sharedConfigDir, 'config.json'),
+      JSON.stringify({ daemon: { server: { url: 'https://getviewport.test' } } }),
+      'utf-8',
+    );
+
+    process.chdir(path.dirname(repoConfigDir));
+
+    expect(resolveResourceOverrideConfig()).toEqual({
+      dir: null,
+      source: null,
+    });
+  });
+
+  it('loadConfig does not parse checked-in resource configs as daemon config', async () => {
+    const repoConfigDir = path.join(tmpDir, 'repo', '.viewport');
+    await fs.mkdir(repoConfigDir, { recursive: true });
+    await fs.writeFile(
+      path.join(repoConfigDir, 'config.json'),
+      JSON.stringify({
+        version: 1,
+        resources: {
+          contexts: ['ctx_auth'],
+        },
+      }),
+      'utf-8',
+    );
+
+    process.chdir(path.dirname(repoConfigDir));
+
+    await expect(loadConfig()).resolves.toEqual({});
   });
 
   it('loadConfig throws on malformed JSON with actionable error', async () => {
     const dir = path.join(tmpDir, '.viewport');
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'config.json'), '{ bad json !!!', 'utf-8');
+    process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'] = dir;
 
     await expect(loadConfig()).rejects.toThrow('Invalid viewport config JSON');
   });
@@ -335,11 +384,12 @@ describe('Config I/O', () => {
       }),
       'utf-8',
     );
+    process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'] = dir;
 
     await expect(loadConfig()).rejects.toThrow('Invalid viewport config schema');
   });
 
-  it('migrates deprecated daemon relay keys and persists the sanitized config', async () => {
+  it('migrates removed daemon relay keys and persists the sanitized config', async () => {
     const dir = path.join(tmpDir, '.viewport');
     await fs.mkdir(dir, { recursive: true });
     const configPath = path.join(dir, 'config.json');
@@ -353,8 +403,10 @@ describe('Config I/O', () => {
             serverUrl: 'http://127.0.0.1:8787',
             workspaceId: 'workspace_demo',
             installId: 'install_demo',
+            runtimeTargetId: 'legacy-target',
             issueToken: 'install-issue-token',
             enrollToken: 'workspace-enroll-token',
+            projectMachineBindingId: 'removed-runtime-target-alias',
             tlsVerify: '0',
           },
         },
@@ -364,34 +416,40 @@ describe('Config I/O', () => {
 
     const config = await loadConfig();
     expect(config.daemon?.relay?.issueToken).toBe('install-issue-token');
+    expect(config.daemon?.relay?.runtimeTargetId).toBe('legacy-target');
     expect((config.daemon?.relay as Record<string, unknown>)['enrollToken']).toBeUndefined();
+    expect(
+      (config.daemon?.relay as Record<string, unknown>)['projectMachineBindingId'],
+    ).toBeUndefined();
 
     const rewritten = JSON.parse(await fs.readFile(configPath, 'utf-8')) as {
       daemon?: { relay?: Record<string, unknown> };
     };
     expect(rewritten.daemon?.relay?.['enrollToken']).toBeUndefined();
+    expect(rewritten.daemon?.relay?.['projectMachineBindingId']).toBeUndefined();
+    expect(rewritten.daemon?.relay?.['runtimeTargetId']).toBe('legacy-target');
   });
 });
 
 describe('ConfigManager', () => {
   let tmpDir: string;
   let originalHome: string;
-  let originalProjectConfigDir: string | undefined;
+  let originalResourceOverrideDir: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-cfgmgr-test-'));
     originalHome = process.env['HOME'] ?? '';
-    originalProjectConfigDir = process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    originalResourceOverrideDir = process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'];
     process.env['HOME'] = tmpDir;
-    delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    delete process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'];
   });
 
   afterEach(async () => {
     process.env['HOME'] = originalHome;
-    if (originalProjectConfigDir === undefined) {
-      delete process.env['VIEWPORT_PROJECT_CONFIG_DIR'];
+    if (originalResourceOverrideDir === undefined) {
+      delete process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'];
     } else {
-      process.env['VIEWPORT_PROJECT_CONFIG_DIR'] = originalProjectConfigDir;
+      process.env['VIEWPORT_RESOURCE_OVERRIDE_DIR'] = originalResourceOverrideDir;
     }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });

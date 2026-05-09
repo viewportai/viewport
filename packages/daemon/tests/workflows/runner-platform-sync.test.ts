@@ -11,8 +11,14 @@ describe('workflow runner platform sync', () => {
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-project-'));
     const originalHome = process.env['HOME'];
     const originalCodexHome = process.env['CODEX_HOME'];
+    const originalViewportHome = process.env['VIEWPORT_HOME'];
+    const originalVpdHome = process.env['VPD_HOME'];
+    const originalCwd = process.cwd();
     process.env['HOME'] = tempHome;
     process.env['CODEX_HOME'] = path.join(tempHome, '.codex');
+    process.env['VIEWPORT_HOME'] = path.join(tempHome, '.viewport');
+    delete process.env['VPD_HOME'];
+    process.chdir(tempHome);
 
     const originalFetch = globalThis.fetch;
     const fetchMock = vi
@@ -33,7 +39,7 @@ describe('workflow runner platform sync', () => {
             relay: {
               serverUrl: 'http://127.0.0.1:7777',
               workspaceId: 'project-1',
-              projectMachineBindingId: 'binding-1',
+              runtimeTargetId: 'binding-1',
               issueToken: 'issue-token',
             },
           },
@@ -54,8 +60,8 @@ describe('workflow runner platform sync', () => {
           yamlSnapshot: 'schema: viewport.workflow/v1\nname: boot-sync-proof\nnodes: {}\n',
           directoryId: 'dir-1',
           directoryPath: projectDir,
-          projectId: 'project-1',
-          projectMachineBindingId: 'binding-1',
+          resourceId: 'project-1',
+          runtimeTargetId: 'binding-1',
           platformRunId: 'platform-run-1',
           machineId: 'machine-1',
           initiation: 'browser',
@@ -114,6 +120,11 @@ describe('workflow runner platform sync', () => {
       else process.env['HOME'] = originalHome;
       if (originalCodexHome === undefined) delete process.env['CODEX_HOME'];
       else process.env['CODEX_HOME'] = originalCodexHome;
+      if (originalViewportHome === undefined) delete process.env['VIEWPORT_HOME'];
+      else process.env['VIEWPORT_HOME'] = originalViewportHome;
+      if (originalVpdHome === undefined) delete process.env['VPD_HOME'];
+      else process.env['VPD_HOME'] = originalVpdHome;
+      process.chdir(originalCwd);
       await fs.rm(tempHome, { recursive: true, force: true });
       await fs.rm(projectDir, { recursive: true, force: true });
     }

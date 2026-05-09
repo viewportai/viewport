@@ -18,7 +18,7 @@ const users = require('./users');
 const { openStore, resetStore } = require('../store/sqlite');
 const { allCandidates, allEntries, searchEntries } = require('../store/search');
 
-const SHARED_SCOPES = new Set(['project', 'team', 'organization']);
+const SHARED_SCOPES = new Set(['resource', 'team', 'organization', 'project']);
 const DIRECT_APPROVAL_SOURCE_KINDS = new Set(['human']);
 
 class ContextVault {
@@ -157,7 +157,7 @@ class ContextVault {
     const {
       repoId,
       actorName,
-      scope = 'project',
+      scope = 'resource',
       title,
       body,
       source = 'manual://local',
@@ -165,6 +165,7 @@ class ContextVault {
       trustState = 'approved',
       appliesTo = [],
       review = null,
+      contextResourceId = null,
     } = options;
 
     if (trustState !== 'approved' && trustState !== 'canonical') {
@@ -191,22 +192,34 @@ class ContextVault {
     };
 
     if (scope === 'private') {
-      return this.appendPrivateEvent({ repoId, actorName, type: 'entry.approved', payload });
+      return this.appendPrivateEvent({
+        repoId,
+        actorName,
+        type: 'entry.approved',
+        payload,
+        contextResourceId,
+      });
     }
 
     if (!SHARED_SCOPES.has(scope)) {
       throw new Error(`Unsupported scope: ${scope}`);
     }
 
-    return this.appendSharedEvent({ repoId, actorName, type: 'entry.approved', payload });
+    return this.appendSharedEvent({
+      repoId,
+      actorName,
+      type: 'entry.approved',
+      payload,
+      contextResourceId,
+    });
   }
 
   proposeEntry(options) {
     return candidates.proposeEntry(this, options);
   }
 
-  approveCandidate({ repoId, actorName, candidateId, title, body, source, review }) {
-    return candidates.approveCandidate(this, { repoId, actorName, candidateId, title, body, source, review });
+  approveCandidate({ repoId, actorName, candidateId, title, body, source, review, contextResourceId }) {
+    return candidates.approveCandidate(this, { repoId, actorName, candidateId, title, body, source, review, contextResourceId });
   }
 
   assignCandidate({ repoId, actorName, candidateId, reviewerName }) {
@@ -254,7 +267,7 @@ class ContextVault {
       repoId,
       actorName,
       id: replacementId,
-      scope: 'project',
+      scope: 'resource',
       title,
       body,
       source: `supersedes://${entryId}`,
@@ -468,12 +481,12 @@ class ContextVault {
     return Buffer.from(encoded, 'base64');
   }
 
-  appendSharedEvent({ repoId, actorName, type, payload }) {
-    return events.appendSharedEvent(this, { repoId, actorName, type, payload });
+  appendSharedEvent({ repoId, actorName, type, payload, contextResourceId = null }) {
+    return events.appendSharedEvent(this, { repoId, actorName, type, payload, contextResourceId });
   }
 
-  appendPrivateEvent({ repoId, actorName, type, payload }) {
-    return events.appendPrivateEvent(this, { repoId, actorName, type, payload });
+  appendPrivateEvent({ repoId, actorName, type, payload, contextResourceId = null }) {
+    return events.appendPrivateEvent(this, { repoId, actorName, type, payload, contextResourceId });
   }
 
   appendGrantEvent({ repoId, actorName, recipient, keyEpoch, repoKey, eventType }) {
@@ -484,7 +497,7 @@ class ContextVault {
     return membership.appendGrantEventHpke(this, { repoId, actorName, recipient, keyEpoch, repoKey, eventType });
   }
 
-  appendUnsignedEvent({ repoId, actor, type, keyEpoch, visibility, encrypted = null, grant = null, payloadDigest = null }) {
+  appendUnsignedEvent({ repoId, actor, type, keyEpoch, visibility, encrypted = null, grant = null, payloadDigest = null, contextResourceId = null }) {
     return events.appendUnsignedEvent(this, {
       repoId,
       actor,
@@ -494,6 +507,7 @@ class ContextVault {
       encrypted,
       grant,
       payloadDigest,
+      contextResourceId,
     });
   }
 

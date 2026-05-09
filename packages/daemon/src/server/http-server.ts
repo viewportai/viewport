@@ -237,8 +237,8 @@ export function registerHttpRoutes(
       workflowSourceRef?: string;
       directoryId?: string;
       inputs?: Record<string, WorkflowInputValue>;
-      projectId?: string;
-      projectMachineBindingId?: string;
+      resourceId?: string;
+      runtimeTargetId?: string;
       executionPolicy?: {
         mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
         branch?: string;
@@ -258,8 +258,8 @@ export function registerHttpRoutes(
         workflowSourceRef: parsedBody.data.workflowSourceRef,
         directoryId: parsedBody.data.directoryId,
         inputs: parsedBody.data.inputs,
-        projectId: parsedBody.data.projectId,
-        projectMachineBindingId: parsedBody.data.projectMachineBindingId,
+        resourceId: parsedBody.data.resourceId,
+        runtimeTargetId: parsedBody.data.runtimeTargetId,
         platformRunId: parsedBody.data.platformRunId,
         rerunOfWorkflowRunId: parsedBody.data.rerunOfWorkflowRunId,
         executionPolicy: parsedBody.data.executionPolicy,

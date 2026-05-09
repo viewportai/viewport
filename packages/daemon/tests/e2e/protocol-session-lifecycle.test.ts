@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { ProtocolHarness, type WsMessage } from './support/protocol-harness.js';
 import { FakeAdapter, StaticDiscovery } from './support/fake-agent.js';
+import { addContextEntry, initContextResource } from '../../src/context/local-edge-store.js';
 
 function isSessionUpdate(msg: WsMessage): boolean {
   return msg['type'] === 'session-update';
@@ -42,6 +45,7 @@ describe('protocol e2e: session lifecycle', () => {
     client.send({
       type: 'launch',
       directoryId: directory.id,
+      resourceId: 'resource-explicit',
       prompt,
       requestId: 'launch-1',
     });
@@ -49,6 +53,8 @@ describe('protocol e2e: session lifecycle', () => {
     const started = await client.waitForType('session-started');
     const sessionId = String(started['sessionId']);
     expect(sessionId.length).toBeGreaterThan(0);
+    expect(started['resourceId']).toBe('resource-explicit');
+    expect(started).not.toHaveProperty('projectId');
 
     const ack = await client.waitForAck('launch-1');
     expect(ack['status']).toBe('ok');
@@ -79,6 +85,75 @@ describe('protocol e2e: session lifecycle', () => {
 
     client.close();
   });
+
+  it('launch injects Context Vault entries requested by repo config into the initial prompt', async () => {
+    harness = await ProtocolHarness.start({
+      adapters: [new FakeAdapter('claude')],
+    });
+    const projectPath = await harness.createProject();
+    await fs.mkdir(path.join(projectPath, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectPath, '.viewport', 'config.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          resources: {
+            contexts: ['ctx-session-launch'],
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    const credentials = { passphrase: 'alice-passphrase', recoveryCode: 'alice-recovery' };
+    await initContextResource({
+      contextResourceId: 'ctx-session-launch',
+      userName: 'alice',
+      deviceName: 'alice-laptop',
+      credentials,
+    });
+    await addContextEntry({
+      contextResourceId: 'ctx-session-launch',
+      actorName: 'alice-laptop',
+      title: 'Launch context',
+      body: 'Use the resource manifest when starting agents from this repo.',
+      credentials,
+    });
+
+    const directory = await harness.registerDirectory(projectPath);
+    const client = await harness.connectClient();
+    await client.waitForType('hello');
+
+    client.send({
+      type: 'launch',
+      directoryId: directory.id,
+      prompt: 'Start the implementation.',
+      requestId: 'launch-with-context',
+    });
+
+    const started = await client.waitForType('session-started');
+    const sessionId = String(started['sessionId']);
+    await client.waitForAck('launch-with-context');
+
+    const userUpdate = await client.waitFor(
+      (msg) =>
+        isSessionUpdate(msg) &&
+        msg['sessionId'] === sessionId &&
+        updateType(msg) === 'user-message',
+      5_000,
+    );
+    const sentPrompt = updateText(userUpdate) ?? '';
+    expect(sentPrompt).toContain('<viewport_context>');
+    expect(sentPrompt).toContain('## ctx-session-launch');
+    expect(sentPrompt).toContain('### Launch context');
+    expect(sentPrompt).toContain('Use the resource manifest when starting agents from this repo.');
+    expect(sentPrompt).toContain('<user_request>');
+    expect(sentPrompt).toContain('Start the implementation.');
+
+    client.close();
+  }, 15_000);
 
   it('resume replays buffered updates before ack and sends prompt updates after attach', async () => {
     const claudeAdapter = new FakeAdapter('claude');

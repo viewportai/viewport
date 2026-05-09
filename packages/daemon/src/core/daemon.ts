@@ -267,6 +267,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   getSessionInfo(sessionId: string): {
     state: SessionState;
     directoryId: string;
+    resourceId?: string;
     agent: string;
     mode: SessionAgentMode;
     steps: ReadonlyArray<Step>;
@@ -289,6 +290,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   listActiveSessions(): Array<{
     sessionId: string;
     directoryId: string;
+    resourceId?: string;
     agent: string;
     state: SessionState;
     mode: SessionAgentMode;

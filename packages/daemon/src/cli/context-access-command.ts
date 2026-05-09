@@ -9,7 +9,7 @@ import {
   grantContextUser,
   importContextIdentity,
   initContextUser,
-  joinContextProject,
+  joinContextResource,
   type ContextKeyStore,
 } from '../context/local-edge-store.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
@@ -26,15 +26,14 @@ export async function contextUserInit(): Promise<void> {
 }
 
 export async function contextJoin(): Promise<void> {
-  const result = await joinContextProject({
-    projectId: requiredFlag(
-      'project',
-      'vpd context join --project <id> --user <name> --device <name>',
+  const result = await joinContextResource({
+    contextResourceId: requiredContextId(
+      'vpd context join --context <id> --user <name> --device <name>',
     ),
-    userName: requiredFlag('user', 'vpd context join --project <id> --user <name> --device <name>'),
+    userName: requiredFlag('user', 'vpd context join --context <id> --user <name> --device <name>'),
     deviceName: requiredFlag(
       'device',
-      'vpd context join --project <id> --user <name> --device <name>',
+      'vpd context join --context <id> --user <name> --device <name>',
     ),
     credentials: readCredentials(),
     keyStore: parseKeyStore(getFlag('key-store')),
@@ -42,8 +41,8 @@ export async function contextJoin(): Promise<void> {
   });
   await writeOutput(
     'context join',
-    { project: result },
-    `Context project joined: ${result.projectId}`,
+    { context: result },
+    `Context joined: ${result.contextResourceId}`,
   );
 }
 
@@ -135,17 +134,16 @@ function unwrapRecord(value: unknown, key: string): Record<string, unknown> {
 
 export async function contextGrant(): Promise<void> {
   const result = await grantContextUser({
-    projectId: requiredFlag(
-      'project',
-      'vpd context grant --project <id> --actor <device> --recipient <user>',
+    contextResourceId: requiredContextId(
+      'vpd context grant --context <id> --actor <device> --recipient <user>',
     ),
     actorName: requiredFlag(
       'actor',
-      'vpd context grant --project <id> --actor <device> --recipient <user>',
+      'vpd context grant --context <id> --actor <device> --recipient <user>',
     ),
     recipientName: requiredFlag(
       'recipient',
-      'vpd context grant --project <id> --actor <device> --recipient <user>',
+      'vpd context grant --context <id> --actor <device> --recipient <user>',
     ),
     credentials: readCredentials(),
     home: getFlag('home'),
@@ -192,6 +190,14 @@ function requiredFlag(name: string, usage: string): string {
   const value = getFlag(name);
   if (!value || value.startsWith('--')) {
     throw new Error(usage.startsWith('Missing') ? usage : `${usage} (missing --${name})`);
+  }
+  return value;
+}
+
+function requiredContextId(usage: string): string {
+  const value = getFlag('context');
+  if (!value || value.startsWith('--')) {
+    throw new Error(`${usage} (missing --context)`);
   }
   return value;
 }

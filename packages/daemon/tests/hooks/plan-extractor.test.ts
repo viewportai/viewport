@@ -132,7 +132,7 @@ describe('extractPlanProposalFromText', () => {
           body: 'Plan body',
           metadata: {
             providerModel: 'sonnet',
-            projectId: 'agent-controlled-project',
+            resourceId: 'agent-controlled-project',
             secret: 'do-not-broadcast',
             nested: { unsafe: true },
           },

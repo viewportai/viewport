@@ -70,7 +70,7 @@ describe('relay backplane', () => {
       {
         id: 7,
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
         sourceRelayId: 'relay-b',
         targetRelayId: 'relay-a',
         direction: 'client_to_daemon',
@@ -107,7 +107,7 @@ describe('relay backplane', () => {
       {
         id: 7,
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
         sourceRelayId: 'relay-b',
         targetRelayId: 'relay-a',
         direction: 'client_to_daemon',

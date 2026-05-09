@@ -61,12 +61,12 @@ export async function doctor(): Promise<void> {
       lastErrorCode: health?.relay?.lastErrorCode ?? null,
       lastErrorMessage: health?.relay?.lastErrorMessage ?? null,
     }),
-    configSource: configPaths.projectOverridePath
-      ? `project override (${configPaths.projectOverridePath})`
+    configSource: configPaths.resourceOverridePath
+      ? `resource override (${configPaths.resourceOverridePath})`
       : `global (${configPaths.globalPath})`,
-    configReason: identity.projectConfigSource
-      ? identity.projectConfigSource === 'explicit'
-        ? 'explicit VIEWPORT_PROJECT_CONFIG_DIR override'
+    configReason: identity.resourceOverrideConfigSource
+      ? identity.resourceOverrideConfigSource === 'explicit'
+        ? 'explicit VIEWPORT_RESOURCE_OVERRIDE_DIR override'
         : 'nearest ancestor .viewport/config.json'
       : 'global ~/.viewport/config.json',
     cliVersion,

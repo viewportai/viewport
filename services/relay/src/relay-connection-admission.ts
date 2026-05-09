@@ -3,7 +3,7 @@ import type { AdmissionClaims, RelayRole } from './types.js';
 export interface RelayConnectionAdmissionInput {
   role: RelayRole;
   workspaceId: string;
-  requestedProjectMachineBindingId?: string;
+  requestedRuntimeTargetId?: string;
   ip: string;
   claims?: AdmissionClaims;
 }
@@ -12,7 +12,7 @@ export type RelayConnectionAdmissionResult =
   | {
       ok: true;
       clientScopeClaim?: AdmissionClaims['scope'];
-      projectMachineBindingId?: string;
+      runtimeTargetId?: string;
       machineId?: string;
     }
   | {
@@ -27,7 +27,7 @@ export type RelayConnectionAdmissionResult =
 export function resolveConnectionAdmission(
   input: RelayConnectionAdmissionInput,
 ): RelayConnectionAdmissionResult {
-  const { role, workspaceId, requestedProjectMachineBindingId, ip, claims } = input;
+  const { role, workspaceId, requestedRuntimeTargetId, ip, claims } = input;
   const clientScopeClaim = claims?.scope;
   const claimedWorkspaceId = typeof claims?.workspaceId === 'string' ? claims.workspaceId.trim() : '';
   if (claimedWorkspaceId === '') {
@@ -61,26 +61,26 @@ export function resolveConnectionAdmission(
     };
   }
 
-  const claimedProjectMachineBindingId =
-    typeof claims?.projectMachineBindingId === 'string' ? claims.projectMachineBindingId.trim() : '';
-  if (requestedProjectMachineBindingId && claimedProjectMachineBindingId !== requestedProjectMachineBindingId) {
+  const claimedRuntimeTargetId =
+    typeof claims?.runtimeTargetId === 'string' ? claims.runtimeTargetId.trim() : '';
+  if (requestedRuntimeTargetId && claimedRuntimeTargetId !== requestedRuntimeTargetId) {
     return {
       ok: false,
       logEvent: 'connection_rejected',
-      reason: 'project_machine_binding_claim_mismatch',
-      closeReason: 'project machine claim mismatch',
+      reason: 'runtime_target_claim_mismatch',
+      closeReason: 'runtime target claim mismatch',
       logDetails: {
         workspaceId,
-        requestedProjectMachineBindingId,
-        claimedProjectMachineBindingId,
+        requestedRuntimeTargetId,
+        claimedRuntimeTargetId,
         role,
         ip,
-        reason: 'project_machine_binding_claim_mismatch',
+        reason: 'runtime_target_claim_mismatch',
       },
     };
   }
 
-  const projectMachineBindingId = claimedProjectMachineBindingId || requestedProjectMachineBindingId;
+  const runtimeTargetId = claimedRuntimeTargetId || requestedRuntimeTargetId;
   const machineId = typeof claims?.machineId === 'string' ? claims.machineId.trim() : undefined;
   if (role === 'client' && clientScopeClaim !== 'runtime' && clientScopeClaim !== 'pairing') {
     return {
@@ -97,18 +97,18 @@ export function resolveConnectionAdmission(
     };
   }
 
-  if ((role === 'workspace-daemon' || clientScopeClaim === 'runtime') && !projectMachineBindingId) {
+  if ((role === 'workspace-daemon' || clientScopeClaim === 'runtime') && !runtimeTargetId) {
     return {
       ok: false,
       logEvent: 'connection_rejected',
-      reason: 'missing_project_machine_binding_claim',
-      closeReason: 'missing project machine claim',
+      reason: 'missing_runtime_target_claim',
+      closeReason: 'missing runtime target claim',
       sendMissingRuntimeTarget: true,
       logDetails: {
         workspaceId,
         role,
         ip,
-        reason: 'missing_project_machine_binding_claim',
+        reason: 'missing_runtime_target_claim',
       },
     };
   }
@@ -116,7 +116,7 @@ export function resolveConnectionAdmission(
   return {
     ok: true,
     clientScopeClaim,
-    projectMachineBindingId,
+    runtimeTargetId,
     machineId,
   };
 }

@@ -86,7 +86,7 @@ schema: viewport.workflow/v1
 name: context-aware-review
 context:
   - context://team/release-standards
-  - ref: context://project/nonblocking-notes
+  - ref: context://resource/nonblocking-notes
     as: notes
     required: false
     refresh: before_run
@@ -100,7 +100,7 @@ nodes:
 
     expect(parsed.definition.context?.[0]).toBe('context://team/release-standards');
     expect(parsed.definition.context?.[1]).toMatchObject({
-      ref: 'context://project/nonblocking-notes',
+      ref: 'context://resource/nonblocking-notes',
       as: 'notes',
       required: false,
       refresh: 'before_run',

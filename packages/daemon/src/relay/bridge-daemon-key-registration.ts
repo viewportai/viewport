@@ -7,7 +7,7 @@ import { transportFetch } from '../cli/network.js';
 interface DaemonKeyRegistrationOptions {
   relayServerUrl: string;
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
   relayCaCertPath?: string;
   relayTlsPins?: string[];
@@ -37,7 +37,7 @@ export async function registerDaemonPublicKeyWithControlPlane(input: {
       body: JSON.stringify({
         credential: input.daemonIssueToken ?? undefined,
         daemonPublicKey: input.identity.publicKey,
-        projectMachineBindingId: input.options.projectMachineBindingId,
+        runtimeTargetId: input.options.runtimeTargetId,
       }),
       signal: controller.signal,
       tlsVerify: input.options.relayTlsVerify ?? 'auto',

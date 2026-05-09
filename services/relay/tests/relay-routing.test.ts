@@ -99,7 +99,7 @@ describe('relay routing', () => {
         clientId: 'client_demo',
         scope: 'runtime',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       },
     );
 
@@ -164,7 +164,7 @@ describe('relay routing', () => {
         clientId: 'client_demo',
         scope: 'runtime',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       },
     );
 
@@ -234,7 +234,7 @@ describe('relay routing', () => {
       clientId: 'client_demo',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     const validInit = JSON.stringify({
@@ -254,7 +254,7 @@ describe('relay routing', () => {
       clientId: 'client_demo',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     (secondClientWs as unknown as FakeWs).emit('message', Buffer.from(validInit));
 
@@ -310,7 +310,7 @@ describe('relay routing', () => {
         scope: 'runtime',
         e2eeProfile: 'noise-ikpsk2',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       },
     );
 
@@ -374,7 +374,7 @@ describe('relay routing', () => {
       {
         e2eeProfile: 'noise-ik',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       },
     );
 
@@ -438,7 +438,7 @@ describe('relay routing', () => {
         clientId: 'client_demo',
         scope: 'pairing',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       },
     );
 
@@ -502,7 +502,7 @@ describe('relay routing', () => {
         clientId: 'client_demo',
         scope: 'runtime',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       },
     );
 
@@ -584,13 +584,13 @@ describe('relay routing', () => {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsB, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_b',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     const envelope = (seq: number) =>
@@ -655,7 +655,7 @@ describe('relay routing', () => {
     registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     const frame = JSON.stringify({
@@ -716,7 +716,7 @@ describe('relay routing', () => {
       {
         clientId: 'client_demo',
         workspaceId: 'workspace_demo',
-        projectMachineBindingId: 'binding_demo',
+        runtimeTargetId: 'binding_demo',
       } as never,
     );
 
@@ -830,7 +830,7 @@ describe('relay routing', () => {
     expect(registry.getOrCreate('workspace_requested').clients.size).toBe(0);
   });
 
-  it('rejects runtime connections without a project machine claim', () => {
+  it('rejects runtime connections without a runtime target claim', () => {
     const config = loadConfig({
       RELAY_TLS: '0',
       SERVER_URL: 'http://127.0.0.1:7780',
@@ -876,7 +876,7 @@ describe('relay routing', () => {
       },
     );
 
-    expect(closed).toEqual([{ code: 4008, reason: 'missing project machine claim' }]);
+    expect(closed).toEqual([{ code: 4008, reason: 'missing runtime target claim' }]);
   });
 
   it('isolates runtime routing between machine bindings in the same workspace', () => {
@@ -914,17 +914,17 @@ describe('relay routing', () => {
 
     registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_a',
+      runtimeTargetId: 'binding_a',
     });
     registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.2', {
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_b',
+      runtimeTargetId: 'binding_b',
     });
     registerConnection(context, clientA, 'client', 'workspace_demo', undefined, '127.0.0.3', {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_a',
+      runtimeTargetId: 'binding_a',
     });
 
     const init = JSON.stringify({
@@ -976,7 +976,7 @@ describe('relay routing', () => {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_a',
+      runtimeTargetId: 'binding_a',
       machineId: 'machine_a',
     });
 
@@ -999,9 +999,9 @@ describe('relay routing', () => {
     expect((client as unknown as FakeWs).sent.map((payload) => JSON.parse(payload))).toContainEqual({
       type: 'relay_status',
       code: 'DAEMON_UNAVAILABLE',
-      message: 'No machine runtime is connected for this project target',
+      message: 'No machine runtime is connected for this runtime target',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_a',
+      runtimeTargetId: 'binding_a',
       machineId: 'machine_a',
       retryable: true,
     });
@@ -1009,7 +1009,7 @@ describe('relay routing', () => {
     expect(backplane.publishClientToDaemon).not.toHaveBeenCalled();
   });
 
-  it('returns a non-retryable status when a runtime client has no project-machine target', async () => {
+  it('returns a non-retryable status when a runtime client has no runtime target', async () => {
     const config = loadConfig({
       RELAY_TLS: '0',
       SERVER_URL: 'http://127.0.0.1:7780',
@@ -1064,8 +1064,8 @@ describe('relay routing', () => {
 
     expect((client as unknown as FakeWs).sent.map((payload) => JSON.parse(payload))).toContainEqual({
       type: 'relay_status',
-      code: 'MISSING_PROJECT_MACHINE_BINDING',
-      message: 'Runtime client must specify a project-machine binding target',
+      code: 'RUNTIME_TARGET_REQUIRED',
+      message: 'Runtime client must specify a runtime target',
       workspaceId: 'workspace_demo',
       retryable: false,
     });
@@ -1110,19 +1110,19 @@ describe('relay routing', () => {
     registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ikpsk2',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsA, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_a',
       scope: 'pairing',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsB, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_b',
       scope: 'pairing',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     const offerReq = JSON.stringify({
@@ -1187,13 +1187,13 @@ describe('relay routing', () => {
     registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ikpsk2',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWs, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_a',
       scope: 'pairing',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     const req1 = JSON.stringify({
@@ -1272,19 +1272,19 @@ describe('relay routing', () => {
     registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsA, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsB, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_b',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     const kexInit = JSON.stringify({
@@ -1368,12 +1368,12 @@ describe('relay routing', () => {
     registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.2', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     expect(closed).toContainEqual({
@@ -1423,14 +1423,14 @@ describe('relay routing', () => {
     registerConnection(context, daemonCurrent, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       daemonIssueGeneration: 3,
     });
 
     registerConnection(context, daemonStale, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.2', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       daemonIssueGeneration: 2,
     });
 
@@ -1478,14 +1478,14 @@ describe('relay routing', () => {
     registerConnection(context, daemonStale, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       machineId: 'machine_demo',
     });
     (daemonStale as unknown as FakeWs).readyState = 3;
     registerConnection(context, daemonCurrent, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.2', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       machineId: 'machine_demo',
     });
 
@@ -1545,12 +1545,12 @@ describe('relay routing', () => {
     registerConnection(context, daemonA, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, daemonB, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.2', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     expect(adjustments).toEqual([1]);
@@ -1593,19 +1593,19 @@ describe('relay routing', () => {
     registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', undefined, '127.0.0.1', {
       e2eeProfile: 'noise-ik',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsA, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsB, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_b',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
 
     (clientWsA as unknown as FakeWs).emit(
@@ -1733,13 +1733,13 @@ describe('relay routing', () => {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registerConnection(context, clientWsB, 'client', 'workspace_demo', undefined, '127.0.0.1', {
       clientId: 'client_b',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registry.getOrCreate('workspace_demo:binding_demo').sessionOwners.set('sess-owned', {
       clientWs: clientWsA as unknown as WebSocket,
@@ -1760,7 +1760,7 @@ describe('relay routing', () => {
     routeBusFrame(context, {
       id: 1,
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       sourceRelayId: 'relay-b',
       targetRelayId: 'relay-a',
       direction: 'daemon_to_clients',
@@ -1781,7 +1781,7 @@ describe('relay routing', () => {
     routeBusFrame(context, {
       id: 2,
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       sourceRelayId: 'relay-b',
       targetRelayId: 'relay-a',
       direction: 'daemon_to_clients',
@@ -1830,7 +1830,7 @@ describe('relay routing', () => {
       clientId: 'client_a',
       scope: 'runtime',
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
     });
     registry.getOrCreate('workspace_demo:binding_demo').sessionOwners.set('sess-owned', {
       clientWs,
@@ -1863,7 +1863,7 @@ describe('relay routing', () => {
     routeBusFrame(context, {
       id: 1,
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       sourceRelayId: 'relay-b',
       targetRelayId: 'relay-a',
       direction: 'daemon_to_clients',
@@ -1872,7 +1872,7 @@ describe('relay routing', () => {
     routeBusFrame(context, {
       id: 2,
       workspaceId: 'workspace_demo',
-      projectMachineBindingId: 'binding_demo',
+      runtimeTargetId: 'binding_demo',
       sourceRelayId: 'relay-b',
       targetRelayId: 'relay-a',
       direction: 'daemon_to_clients',

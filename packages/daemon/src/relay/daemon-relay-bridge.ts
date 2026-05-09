@@ -68,7 +68,7 @@ export interface DaemonRelayBridgeOptions {
   relayEndpoint: string;
   relayServerUrl: string;
   workspaceId: string;
-  projectMachineBindingId?: string;
+  runtimeTargetId?: string;
   machineId?: string;
   issueToken?: string;
   daemonWsUrl: string;

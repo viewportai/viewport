@@ -8,7 +8,7 @@ test('revocation rotates future keys while documenting retained old access', () 
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'Old shared rule',
     body: 'This pre-revocation rule is visible to Bob.',
   });
@@ -23,7 +23,7 @@ test('revocation rotates future keys while documenting retained old access', () 
   aliceVault.addEntry({
     repoId: 'project-api',
     actorName: 'alice',
-    scope: 'project',
+    scope: 'resource',
     title: 'New shared rule',
     body: 'This post-revocation rule must not decrypt for Bob.',
   });

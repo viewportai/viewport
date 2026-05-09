@@ -22,15 +22,15 @@ describe('bridge connection contracts', () => {
     ).toBe('wss://relay.test/ws?role=workspace-daemon&workspaceId=workspace%20one');
   });
 
-  it('builds relay daemon url with encoded project-machine scope', () => {
+  it('builds relay daemon url with encoded runtime target scope', () => {
     expect(
       relayDaemonUrl({
         relayEndpoint: 'wss://relay.test/ws',
         workspaceId: 'workspace one',
-        projectMachineBindingId: 'machine/binding:one',
+        runtimeTargetId: 'machine/binding:one',
       }),
     ).toBe(
-      'wss://relay.test/ws?role=workspace-daemon&workspaceId=workspace%20one&projectMachineBindingId=machine%2Fbinding%3Aone',
+      'wss://relay.test/ws?role=workspace-daemon&workspaceId=workspace%20one&runtimeTargetId=machine%2Fbinding%3Aone',
     );
   });
 });

@@ -42,6 +42,7 @@ interface CodexClient {
 }
 
 type CodexClientFactory = (apiKey?: string) => Promise<CodexClient>;
+type CodexThreadProvider = CodexThread | (() => Promise<CodexThread>);
 
 async function defaultClientFactory(apiKey?: string): Promise<CodexClient> {
   const loaded = await importCodexSdkModule();
@@ -62,16 +63,23 @@ export class CodexSession extends EventEmitter implements Session {
   readonly id: string;
   state: SessionState = 'starting';
 
-  private readonly thread: CodexThread;
+  private readonly threadProvider: CodexThreadProvider;
+  private resolvedThread?: CodexThread;
+  private resolvingThread?: Promise<CodexThread>;
   private readonly cwd: string;
   private readonly model?: string;
   private chain: Promise<void> = Promise.resolve();
   private stopped = false;
 
-  constructor(params: { sessionId: string; thread: CodexThread; cwd: string; model?: string }) {
+  constructor(params: {
+    sessionId: string;
+    thread: CodexThreadProvider;
+    cwd: string;
+    model?: string;
+  }) {
     super();
     this.id = params.sessionId;
-    this.thread = params.thread;
+    this.threadProvider = params.thread;
     this.cwd = params.cwd;
     this.model = params.model;
   }
@@ -101,9 +109,10 @@ export class CodexSession extends EventEmitter implements Session {
 
       const chunkMessageId = randomUUID();
       let aggregated = '';
+      const thread = await this.getThread();
 
-      if (typeof this.thread.runStreamed === 'function') {
-        for await (const chunk of this.runStreamed(text)) {
+      if (typeof thread.runStreamed === 'function') {
+        for await (const chunk of this.runStreamed(thread, text)) {
           const toolCall = extractToolCallEvent(chunk);
           if (toolCall) this.emitMessage(toolCall);
           const toolUpdate = extractToolCallUpdateEvent(chunk);
@@ -120,8 +129,8 @@ export class CodexSession extends EventEmitter implements Session {
             timestamp: Date.now(),
           });
         }
-      } else if (typeof this.thread.run === 'function') {
-        const result = await this.run(text);
+      } else if (typeof thread.run === 'function') {
+        const result = await this.run(thread, text);
         aggregated = extractText(result);
       } else {
         throw new Error('Codex thread does not expose run or runStreamed');
@@ -164,10 +173,24 @@ export class CodexSession extends EventEmitter implements Session {
     this.emit('state-change', next);
   }
 
-  private async *runStreamed(text: string): AsyncGenerator<unknown> {
-    if (typeof this.thread.runStreamed !== 'function') return;
+  private async getThread(): Promise<CodexThread> {
+    if (this.resolvedThread) return this.resolvedThread;
+    if (typeof this.threadProvider !== 'function') {
+      this.resolvedThread = this.threadProvider;
+      return this.resolvedThread;
+    }
 
-    const modern = await this.thread.runStreamed(text);
+    this.resolvingThread ??= this.threadProvider().then((thread) => {
+      this.resolvedThread = thread;
+      return thread;
+    });
+    return this.resolvingThread;
+  }
+
+  private async *runStreamed(thread: CodexThread, text: string): AsyncGenerator<unknown> {
+    if (typeof thread.runStreamed !== 'function') return;
+
+    const modern = await thread.runStreamed(text);
     const modernEvents = extractEventsStream(modern);
     if (modernEvents) {
       for await (const event of modernEvents) {
@@ -179,7 +202,7 @@ export class CodexSession extends EventEmitter implements Session {
     }
 
     const legacyInput = this.buildLegacyInput(text);
-    const legacy = await this.thread.runStreamed(legacyInput);
+    const legacy = await thread.runStreamed(legacyInput);
     const legacyEvents = extractEventsStream(legacy);
     if (legacyEvents) {
       for await (const event of legacyEvents) {
@@ -193,17 +216,17 @@ export class CodexSession extends EventEmitter implements Session {
     throw new Error('Codex runStreamed did not return an async event stream');
   }
 
-  private async run(text: string): Promise<unknown> {
-    if (typeof this.thread.run !== 'function') {
+  private async run(thread: CodexThread, text: string): Promise<unknown> {
+    if (typeof thread.run !== 'function') {
       throw new Error('Codex thread does not expose run');
     }
 
     try {
-      return await this.thread.run(text);
+      return await thread.run(text);
     } catch (err) {
       if (!shouldFallbackToLegacyRun(err)) throw err;
       const legacyInput = this.buildLegacyInput(text);
-      return this.thread.run(legacyInput);
+      return thread.run(legacyInput);
     }
   }
 
@@ -243,7 +266,10 @@ export class CodexAdapter implements AgentAdapter {
   async resumeSession(sessionId: string, cwd: string, options?: SessionOptions): Promise<Session> {
     metrics.increment('sessions.codex.resumed');
     const client = await this.createClient(this.apiKey);
-    const thread = await this.resolveResumeThread(client, sessionId, cwd, options);
+    const shouldDeferResume = Boolean(options?.deferInitialPrompt);
+    const thread = shouldDeferResume
+      ? () => this.resolveResumeThread(client, sessionId, cwd, options)
+      : await this.resolveResumeThread(client, sessionId, cwd, options);
     const session = new CodexSession({
       sessionId,
       thread,

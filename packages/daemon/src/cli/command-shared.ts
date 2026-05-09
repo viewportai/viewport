@@ -54,14 +54,14 @@ export interface HealthResponse {
     daemonVersion?: string;
     runtimeKind?: 'managed' | 'local-dev' | 'self-hosted';
     daemonHome?: string;
-    daemonHomeScope?: 'global' | 'project-override';
+    daemonHomeScope?: 'global' | 'resource-override';
     daemonHomeSource?: 'default' | 'explicit';
     profile?: 'local' | 'lan' | 'relay';
     serverUrl?: string;
     relayEndpoint?: string;
     relayServerUrl?: string;
     relayWorkspaceId?: string;
-    relayProjectMachineBindingId?: string;
+    relayRuntimeTargetId?: string;
     relayMachineId?: string;
     hostedDefaults?: boolean;
   };

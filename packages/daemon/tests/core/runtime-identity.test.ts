@@ -37,7 +37,7 @@ describe('runtime identity', () => {
         },
       } as any,
       env: {
-        VIEWPORT_PROJECT_CONFIG_DIR: '/tmp/viewport-no-project-override',
+        VIEWPORT_RESOURCE_OVERRIDE_DIR: '/tmp/viewport-no-resource-override',
       },
       machineId: 'machine-1',
     });
@@ -52,7 +52,7 @@ describe('runtime identity', () => {
       daemonVersion: '1.2.3',
       env: {
         VIEWPORT_HOME: '/tmp/viewport-dev',
-        VIEWPORT_PROJECT_CONFIG_DIR: '/tmp/viewport-no-project-override',
+        VIEWPORT_RESOURCE_OVERRIDE_DIR: '/tmp/viewport-no-resource-override',
         VIEWPORT_SERVER_URL: 'https://getviewport.test',
         VIEWPORT_RELAY_ENDPOINT: 'wss://getviewport.test:7781/ws',
       },
@@ -67,7 +67,7 @@ describe('runtime identity', () => {
     const identity = resolveDaemonRuntimeIdentity({
       daemonVersion: '1.2.3',
       env: {
-        VIEWPORT_PROJECT_CONFIG_DIR: '/tmp/viewport-no-project-override',
+        VIEWPORT_RESOURCE_OVERRIDE_DIR: '/tmp/viewport-no-resource-override',
         VIEWPORT_SERVER_URL: 'https://viewport.internal.example.com',
         VIEWPORT_RELAY_ENDPOINT: 'wss://relay.internal.example.com/ws',
       },

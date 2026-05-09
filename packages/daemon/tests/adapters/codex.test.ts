@@ -106,6 +106,33 @@ describe('CodexAdapter', () => {
     expect(run).toHaveBeenCalledWith('Continue.');
   });
 
+  it('resumeSession with deferred initial prompt stays idle until a real prompt is sent', async () => {
+    const run = vi.fn().mockResolvedValue('continuing');
+    const resumeThread = vi.fn().mockReturnValue({ id: 'codex-resume-deferred', run });
+    const createClient = vi.fn().mockResolvedValue({
+      startThread: vi.fn(),
+      resumeThread,
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    const session = await adapter.resumeSession('codex-resume-deferred', '/tmp/project', {
+      deferInitialPrompt: true,
+    });
+
+    expect(session.state).toBe('idle');
+    expect(resumeThread).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+
+    await session.sendPrompt('continue now');
+
+    expect(resumeThread).toHaveBeenCalledWith('codex-resume-deferred', {
+      workingDirectory: '/tmp/project',
+      model: DEFAULT_CODEX_MODEL,
+      skipGitRepoCheck: true,
+    });
+    expect(run).toHaveBeenCalledWith('continue now');
+  });
+
   it('resumeSession falls back to getThread when resumeThread is unavailable', async () => {
     const run = vi.fn().mockResolvedValue('continuing');
     const getThread = vi.fn().mockReturnValue({ id: 'codex-resume-2', run });

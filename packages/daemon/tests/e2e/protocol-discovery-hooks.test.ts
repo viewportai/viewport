@@ -50,12 +50,21 @@ describe('protocol e2e: discovery and hooks', () => {
         lastModified: now,
         resumable: true,
       },
+      {
+        agentId: 'gemini',
+        sessionId: 'gemini-old',
+        summary: 'Older local history',
+        lastModified: now - 25 * 60 * 60 * 1000,
+        resumable: true,
+      },
     ]);
     const client = await harness.connectClient();
     await client.waitForType('hello');
 
     await harness.runDiscoveryBroadcast();
-    await client.waitForType('discovered-sessions-updated');
+    const update = await client.waitForType('discovered-sessions-updated');
+    const announced = update['sessions'] as Array<Record<string, unknown>>;
+    expect(announced.map((session) => session['id'])).not.toContain('gemini-old');
 
     client.send({
       type: 'list-sessions',
@@ -65,10 +74,11 @@ describe('protocol e2e: discovery and hooks', () => {
 
     const list = await client.waitForType('session-list');
     const sessions = list['sessions'] as Array<Record<string, unknown>>;
-    expect(sessions).toHaveLength(3);
+    expect(sessions).toHaveLength(4);
 
     const agentIds = sessions.map((s) => String(s['agentId']));
     expect(new Set(agentIds)).toEqual(new Set(['claude', 'codex', 'gemini']));
+    expect(sessions.map((session) => session['id'])).toContain('gemini-old');
 
     const ack = await client.waitForAck('list-1');
     expect(ack['status']).toBe('ok');

@@ -40,12 +40,13 @@ function proposeEntry(vault, options) {
     actorName: options.actorName,
     type: 'entry.proposed',
     payload,
+    contextResourceId: options.contextResourceId ?? null,
   });
 }
 
 function approveCandidate(
   vault,
-  { repoId, actorName, candidateId, title, body, source, review = null },
+  { repoId, actorName, candidateId, title, body, source, review = null, contextResourceId = null },
 ) {
   const approved = vault.appendSharedEvent({
     repoId,
@@ -57,19 +58,21 @@ function approveCandidate(
       reviewedAt: new Date().toISOString(),
       review,
     },
+    contextResourceId,
   });
 
   const entry = vault.addEntry({
     id: `ctxe_from_${candidateId}`,
     repoId,
     actorName,
-    scope: 'project',
+    scope: 'resource',
     title,
     body,
     source: source ?? `candidate://${candidateId}`,
     sourceKind: 'human',
     trustState: 'approved',
     review,
+    contextResourceId,
   });
 
   return { approved, entry };

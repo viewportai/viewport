@@ -180,7 +180,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       metadata: sanitizePlanProposalMetadata({
         workflowRunId: run.id,
         workflowNodeId: nodeId,
-        projectId: run.projectId ?? null,
+        resourceId: run.resourceId ?? null,
       }),
     });
     addEvent(

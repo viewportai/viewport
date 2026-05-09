@@ -31,7 +31,7 @@ describe('PlatformPlanHookSync', () => {
         source: 'claude',
         sourceRef: 'claude://session/session_1',
         metadata: {
-          projectId: 'workspace_2',
+          resourceId: 'workspace_2',
           secret: 'do-not-forward',
           workflowRunId: 'run_1',
         },
@@ -58,7 +58,7 @@ describe('PlatformPlanHookSync', () => {
     expect(JSON.parse(String(requests[0]?.options.body))).not.toHaveProperty('cwd');
   });
 
-  it('skips sync when no relay issue token or project target is configured', async () => {
+  it('skips sync when no relay issue token or runtime target is configured', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
     const sync = new PlatformPlanHookSync(
       {
@@ -97,7 +97,7 @@ describe('PlatformPlanHookSync', () => {
         sessionId: 'session_1',
         adapter: 'viewport-workflow',
         body: 'Plan',
-        metadata: { projectId: 'workspace_2' },
+        metadata: { resourceId: 'workspace_2' },
       }),
     ).resolves.toEqual({ synced: true });
     expect(fetcher).toHaveBeenCalledOnce();

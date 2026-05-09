@@ -24,7 +24,7 @@ export interface RuntimeLaunchConfig {
   relayEndpoint?: string;
   relayServerUrl?: string;
   relayWorkspaceId?: string;
-  relayProjectMachineBindingId?: string;
+  relayRuntimeTargetId?: string;
   relayMachineId?: string;
   relayIssueToken?: string;
   relayTlsVerify?: 'auto' | '0' | '1';
