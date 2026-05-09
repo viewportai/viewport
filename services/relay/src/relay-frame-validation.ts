@@ -12,21 +12,25 @@ export function parseFramePayload(text: string): FramePayload | null {
   }
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 export function isE2eeEnvelope(frame: FramePayload): boolean {
   return (
     frame['type'] === 'e2ee' &&
     frame['version'] === 2 &&
     (frame['profile'] === 'noise-ik' || frame['profile'] === 'noise-ikpsk2') &&
-    typeof frame['sessionId'] === 'string' &&
+    isNonEmptyString(frame['sessionId']) &&
     typeof frame['epoch'] === 'number' &&
     Number.isInteger(frame['epoch']) &&
     (frame['epoch'] as number) >= 1 &&
     typeof frame['seq'] === 'number' &&
     Number.isInteger(frame['seq']) &&
     (frame['seq'] as number) >= 1 &&
-    typeof frame['iv'] === 'string' &&
-    typeof frame['tag'] === 'string' &&
-    typeof frame['ciphertext'] === 'string'
+    isNonEmptyString(frame['iv']) &&
+    isNonEmptyString(frame['tag']) &&
+    isNonEmptyString(frame['ciphertext'])
   );
 }
 
