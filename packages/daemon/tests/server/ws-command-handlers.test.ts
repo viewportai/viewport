@@ -9,6 +9,7 @@ import {
 } from '../../src/server/ws-session-command-handlers.js';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 import { discoveredWatchKey } from '../../src/server/discovered-watch-key.js';
+import { ViewportError } from '../../src/core/errors.js';
 
 function createClient(): { client: ConnectedClient; sent: Array<Record<string, unknown>> } {
   const sent: Array<Record<string, unknown>> = [];
@@ -117,6 +118,52 @@ describe('ws-command-handlers', () => {
       'error',
       expect.stringContaining('Discovered session not found'),
       { errorCode: 'DISCOVERED_SESSION_NOT_FOUND' },
+    );
+  });
+
+  it('resume rejects discovered sessions that the agent cannot resume', async () => {
+    const { client } = createClient();
+    const daemon = {
+      directoryManager: { get: vi.fn().mockReturnValue({ id: 'dir-1', path: '/tmp/project' }) },
+      getDiscoveredSessions: vi.fn().mockReturnValue(
+        new Map([
+          [
+            'dir-1',
+            [
+              {
+                agentId: 'aider',
+                sessionId: 'not-resumable',
+                summary: 'Cannot resume me',
+                lastModified: 123,
+                resumable: false,
+              },
+            ],
+          ],
+        ]),
+      ),
+      resumeSession: vi.fn(),
+    };
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: daemon as any,
+      sendAck,
+      getOrCreateBuffer: getOrCreateBuffer as any,
+    });
+
+    await handlers['resume'](client, {
+      type: 'resume',
+      directoryId: 'dir-1',
+      sessionId: 'not-resumable',
+      requestId: 'req-not-resumable',
+    });
+
+    expect(daemon.resumeSession).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledWith(
+      client,
+      'req-not-resumable',
+      'error',
+      expect.stringContaining('Session is not resumable'),
+      { errorCode: 'SESSION_NOT_RESUMABLE' },
     );
   });
 
@@ -446,6 +493,59 @@ describe('ws-command-handlers', () => {
     });
     const started = sent.find((m) => m['type'] === 'session-started');
     expect(started?.['agent']).toBe('gemini');
+  });
+
+  it('resume returns structured ack errors from the resume path', async () => {
+    const { client } = createClient();
+    const resumeSession = vi
+      .fn()
+      .mockRejectedValue(
+        new ViewportError(
+          'ADAPTER_NOT_AVAILABLE',
+          'No adapter registered for agent: missing-agent',
+        ),
+      );
+    const daemon = {
+      directoryManager: { get: vi.fn().mockReturnValue({ id: 'dir-1', path: '/tmp/project' }) },
+      getDiscoveredSessions: vi.fn().mockReturnValue(
+        new Map([
+          [
+            'dir-1',
+            [
+              {
+                agentId: 'missing-agent',
+                sessionId: 's1',
+                summary: 'Resume me',
+                lastModified: 123,
+                resumable: true,
+              },
+            ],
+          ],
+        ]),
+      ),
+      resumeSession,
+    };
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: daemon as any,
+      sendAck,
+      getOrCreateBuffer: getOrCreateBuffer as any,
+    });
+
+    await handlers['resume'](client, {
+      type: 'resume',
+      directoryId: 'dir-1',
+      sessionId: 's1',
+      requestId: 'req-adapter-missing',
+    });
+
+    expect(sendAck).toHaveBeenCalledWith(
+      client,
+      'req-adapter-missing',
+      'error',
+      expect.stringContaining('No adapter registered'),
+      { errorCode: 'ADAPTER_NOT_AVAILABLE' },
+    );
   });
 
   it('launch starts session then sends prompt and replays buffered updates', async () => {
