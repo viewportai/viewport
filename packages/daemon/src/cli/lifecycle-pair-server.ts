@@ -51,11 +51,12 @@ export async function resolvePairingServerTransport(
   await manager.load();
   const daemonConfig = manager.getDaemonConfig();
   const serverConfig = daemonConfig?.server;
+  const configuredServerUrl = serverConfig?.url?.trim();
   const resolvedUrl =
     explicitUrl ??
     getFlag('server') ??
     envValue(process.env, 'VPD_SERVER_URL', 'VIEWPORT_SERVER_URL', 'VIEWPORT_SERVER') ??
-    serverConfig?.url ??
+    configuredServerUrl ??
     DEFAULT_PAIRING_SERVER;
 
   return {
