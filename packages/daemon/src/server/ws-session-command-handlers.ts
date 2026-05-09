@@ -214,6 +214,12 @@ export function createWsSessionCommandHandlers(
         });
         return;
       }
+      if (!discoveredMatch.resumable) {
+        sendAck(client, msg.requestId, 'error', `Session is not resumable: ${msg.sessionId}`, {
+          errorCode: ErrorCodes.SESSION_NOT_RESUMABLE,
+        });
+        return;
+      }
 
       const resourceId = msg.resourceId;
       const overrides = {
@@ -222,12 +228,27 @@ export function createWsSessionCommandHandlers(
         agent: discoveredMatch.agentId,
       };
       const initialPrompt = msg.prompt?.trim() ?? '';
-      const resumeSessionId = await daemon.resumeSession(
-        msg.sessionId,
-        msg.directoryId,
-        initialPrompt,
-        overrides,
-      );
+      let resumeSessionId: string;
+      try {
+        resumeSessionId = await daemon.resumeSession(
+          msg.sessionId,
+          msg.directoryId,
+          initialPrompt,
+          overrides,
+        );
+      } catch (error) {
+        const viewportError =
+          error instanceof ViewportError
+            ? error
+            : new ViewportError(
+                ErrorCodes.INTERNAL_ERROR,
+                error instanceof Error ? error.message : 'Failed to resume session',
+              );
+        sendAck(client, msg.requestId, 'error', viewportError.message, {
+          errorCode: viewportError.code,
+        });
+        return;
+      }
       addBoundedSetEntry(client.subscriptions, resumeSessionId, MAX_CLIENT_SUBSCRIPTIONS);
       client.send(
         JSON.stringify({
