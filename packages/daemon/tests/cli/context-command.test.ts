@@ -200,6 +200,58 @@ describe('context CLI command', () => {
     expect(output).not.toContain('runtime-token');
   });
 
+  it('attaches a platform Context Vault provider to repo config', async () => {
+    const repo = path.join(tempHome, 'use-repo');
+
+    await runContext([
+      'context',
+      'use',
+      'ctx_platform_arch',
+      '--path',
+      repo,
+      '--provider',
+      'platform-arch',
+      '--json',
+    ]);
+
+    const config = await fs.readFile(path.join(repo, '.viewport', 'config.yaml'), 'utf8');
+    expect(config).toContain('version: 1');
+    expect(config).toContain('id: platform-arch');
+    expect(config).toContain('provider: viewport-vault');
+    expect(config).toContain('vault: ctx_platform_arch');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context use"');
+    expect(output).toContain('"changed": true');
+    expect(output).toContain('"provider": "viewport-vault"');
+    expect(output).toContain('"vault": "ctx_platform_arch"');
+  });
+
+  it('keeps context use idempotent for an existing vault provider', async () => {
+    const repo = path.join(tempHome, 'use-existing-repo');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: ctx_platform_arch',
+        '      provider: viewport-vault',
+        '      vault: ctx_platform_arch',
+        '      required: true',
+        '',
+      ].join('\n'),
+    );
+
+    await runContext(['context', 'use', 'ctx_platform_arch', '--path', repo, '--json']);
+
+    const config = await fs.readFile(path.join(repo, '.viewport', 'config.yaml'), 'utf8');
+    expect(config.match(/viewport-vault/g)).toHaveLength(1);
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"changed": false');
+  });
+
   it('proposes candidate context through vpd arguments without resolving it before review', async () => {
     await runContext([
       'context',

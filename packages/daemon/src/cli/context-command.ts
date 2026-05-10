@@ -17,6 +17,7 @@ import { resolveContextSyncTarget } from './context-sync-target.js';
 import { parseLimit, parseSince } from './context-command-parsers.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
 import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
+import { contextVaultUse } from './context-vault-use-command.js';
 import {
   contextDeviceAccept,
   contextDeviceApprove,
@@ -52,6 +53,10 @@ export async function context(): Promise<void> {
   }
   if (subcommand === 'vaults' || subcommand === 'list') {
     await contextVaultsList();
+    return;
+  }
+  if (subcommand === 'use') {
+    await contextVaultUse();
     return;
   }
   if (subcommand === 'search') {
@@ -122,7 +127,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
