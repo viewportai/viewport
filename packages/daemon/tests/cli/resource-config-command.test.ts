@@ -253,6 +253,115 @@ describe('resource config CLI command', () => {
     expect(parsed['errors']).toEqual([expect.objectContaining({ code: 'invalid_config_skipped' })]);
   });
 
+  it('allows guard checks for paths outside risky approval rules', async () => {
+    const repo = await writeGuardRepo('guard-allowed');
+
+    await runGuard([
+      'guard',
+      'check',
+      '--cwd',
+      repo,
+      '--path',
+      'apps/api/PublicController.php',
+      '--action',
+      'edit',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    const parsed = parseLoggedJson(output);
+    expect(parsed).toMatchObject({
+      schema_version: 'viewport.cli.guard_check/v1',
+      command: 'guard check',
+      ok: true,
+      path: 'apps/api/PublicController.php',
+      action: 'edit',
+      risk: 'low',
+      decision: 'allowed',
+      approval_rules: [],
+    });
+    expect(parsed['manifest_digest']).toMatch(/^sha256:/);
+  });
+
+  it('blocks guard checks for risky paths that require approval', async () => {
+    const repo = await writeGuardRepo('guard-blocked');
+
+    await expect(
+      runGuard([
+        'guard',
+        'check',
+        '--cwd',
+        repo,
+        '--path',
+        'apps/api/Auth/LoginController.php',
+        '--action',
+        'edit',
+        '--json',
+      ]),
+    ).rejects.toThrow('Viewport guard requires approval for apps/api/Auth/LoginController.php');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    const parsed = parseLoggedJson(output);
+    expect(parsed).toMatchObject({
+      schema_version: 'viewport.cli.guard_check/v1',
+      command: 'guard check',
+      ok: false,
+      path: 'apps/api/Auth/LoginController.php',
+      action: 'edit',
+      risk: 'high',
+      decision: 'requires_approval',
+      approval_rules: [
+        expect.objectContaining({
+          id: 'security-review',
+          path: 'apps/api/Auth/**',
+          require: ['team:security'],
+          checks: ['npm run test -- session-rotation'],
+          reviewers: ['team:security'],
+        }),
+      ],
+    });
+  });
+
+  it('fails guard checks when the repo contract is invalid', async () => {
+    const repo = path.join(tempHome, 'guard-invalid');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'approvals:',
+        '  risky_paths:',
+        '    - path: apps/api/Auth/**',
+        '      require: []',
+        '',
+      ].join('\n'),
+    );
+
+    await expect(
+      runGuard([
+        'guard',
+        'check',
+        '--cwd',
+        repo,
+        '--path',
+        'apps/api/Auth/LoginController.php',
+        '--json',
+      ]),
+    ).rejects.toThrow('Viewport guard could not validate the repo contract');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    const parsed = parseLoggedJson(output);
+    expect(parsed).toMatchObject({
+      schema_version: 'viewport.cli.guard_check/v1',
+      command: 'guard check',
+      ok: false,
+      risk: 'unknown',
+      decision: 'contract_invalid',
+      approval_rules: [],
+    });
+    expect(parsed['errors']).toEqual([expect.objectContaining({ code: 'invalid_config_skipped' })]);
+  });
+
   it('prints a human-readable doctor report with resolved resource ids', async () => {
     const repo = path.join(tempHome, 'repo-doctor');
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
@@ -311,6 +420,12 @@ async function runValidate(args: string[]): Promise<void> {
   await validate();
 }
 
+async function runGuard(args: string[]): Promise<void> {
+  process.argv = ['node', 'vpd', ...args];
+  const { guard } = await import('../../src/cli/guard-command.js');
+  await guard();
+}
+
 function parseLoggedJson(output: string): Record<string, unknown> {
   return JSON.parse(output) as Record<string, unknown>;
 }
@@ -327,6 +442,26 @@ async function writeContractRepo(name: string, vaultId: string): Promise<string>
       '    - id: vault',
       '      provider: viewport-vault',
       `      vault: ${vaultId}`,
+      '',
+    ].join('\n'),
+  );
+  return repo;
+}
+
+async function writeGuardRepo(name: string): Promise<string> {
+  const repo = path.join(tempRoot(), name);
+  await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+  await fs.writeFile(
+    path.join(repo, '.viewport', 'config.yaml'),
+    [
+      'version: 1',
+      'approvals:',
+      '  risky_paths:',
+      '    - id: security-review',
+      '      path: apps/api/Auth/**',
+      '      require: [team:security]',
+      '      checks:',
+      '        - npm run test -- session-rotation',
       '',
     ].join('\n'),
   );

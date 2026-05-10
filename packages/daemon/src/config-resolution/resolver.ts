@@ -2,8 +2,10 @@ import crypto from 'node:crypto';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { manifestRiskyPathRules, normalizeRiskyPathRules } from './approval-rules.js';
 import { discoverViewportConfigPaths, discoverViewportConfigPathsSync } from './discovery.js';
 import { ViewportConfigSchema, type ViewportConfigInput } from './schema.js';
+import { digestJson } from './stable-json.js';
 import YAML from 'yaml';
 import {
   SESSION_RESOURCE_MANIFEST_SCHEMA,
@@ -167,6 +169,7 @@ export function buildSessionResourceManifest(input: {
       contextProviders: manifestContextProviders(input.configs),
       contextResolution: mergeContextResolution(input.configs),
       workflows: manifestWorkflows(input.configs),
+      riskyPathRules: manifestRiskyPathRules(input.configs),
     },
     conflicts: detectConflicts(input.configs),
     warnings: input.warnings ?? [],
@@ -200,6 +203,7 @@ function normalizeViewportConfig(
       contextProviders: normalizeContextProviders(configPath, config.context?.providers ?? []),
       contextResolution: normalizeContextResolution(config.context?.resolution),
       workflows: normalizeWorkflowRefs(configPath, config.workflows ?? {}),
+      riskyPathRules: normalizeRiskyPathRules(configPath, config.approvals),
     },
     defaults: config.defaults ?? {},
     scope: config.scope ?? {},
@@ -376,22 +380,4 @@ function emptyManifestResources(): Record<ViewportResourceKind, SessionResourceM
     plans: [],
     agentProfiles: [],
   };
-}
-
-function digestJson(value: unknown): string {
-  return `sha256:${crypto.createHash('sha256').update(stableJson(value)).digest('hex')}`;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(',')}]`;
-  }
-  if (value && typeof value === 'object') {
-    const object = value as Record<string, unknown>;
-    return `{${Object.keys(object)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
 }

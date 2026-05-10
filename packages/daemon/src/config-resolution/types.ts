@@ -69,6 +69,14 @@ export interface ViewportWorkflowRef {
   digest?: string;
 }
 
+export interface ViewportRiskyPathRule {
+  id: string;
+  path: string;
+  require: string[];
+  checks: string[];
+  sourceConfigPath: string;
+}
+
 export interface ParsedViewportConfig {
   path: string;
   digest: string;
@@ -79,6 +87,7 @@ export interface ParsedViewportConfig {
     contextProviders: ViewportContextProviderRef[];
     contextResolution: ViewportContextResolution;
     workflows: ViewportWorkflowRef[];
+    riskyPathRules: ViewportRiskyPathRule[];
   };
   defaults: ViewportConfigDefaults;
   scope: ViewportConfigScope;
@@ -135,6 +144,7 @@ export interface SessionResourceManifest {
     contextProviders: SessionContextProviderManifest[];
     contextResolution: ViewportContextResolution;
     workflows: SessionWorkflowManifest[];
+    riskyPathRules: ViewportRiskyPathRule[];
   };
   conflicts: SessionResourceConflict[];
   warnings: SessionResourceWarning[];

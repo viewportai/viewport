@@ -250,6 +250,7 @@ function hasResourceConfigShape(value: unknown): boolean {
     object.resources ||
     object.context ||
     object.workflows ||
+    object.approvals ||
     object.defaults ||
     object.scope ||
     object.name ||
