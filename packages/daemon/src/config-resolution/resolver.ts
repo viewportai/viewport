@@ -240,6 +240,9 @@ function normalizeContextProviders(
         ? (provider.capabilities as ViewportContextProviderCapability[])
         : defaultCapabilities(kind),
       sourceConfigPath,
+      ...(provider.credential_ref || provider.credentialRef
+        ? { credentialRef: provider.credential_ref ?? provider.credentialRef }
+        : {}),
       ...(provider.vault ? { vault: provider.vault } : {}),
       ...(provider.paths ? { paths: provider.paths } : {}),
       ...(provider.notebook ? { notebook: provider.notebook } : {}),

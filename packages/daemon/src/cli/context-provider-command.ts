@@ -2,29 +2,14 @@ import {
   resolveSessionResourceManifestSync,
   type SessionContextProviderManifest,
 } from '../config-resolution/index.js';
-import {
-  resolveRepoDocsProvider,
-  type RepoDocsContextItem,
-} from '../context-providers/repo-docs-provider.js';
-import { resolveContextBundle, type ContextBundle } from '../context/local-edge-store.js';
+import { contextProviderAdapterFor } from '../context-providers/registry.js';
+import type { ContextProviderResult } from '../context-providers/types.js';
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
   fallbackProposeProvider,
   proposeToViewportVaultProvider,
 } from './context-provider-propose.js';
-
-type ContextProviderResult = {
-  id: string;
-  provider_id: string;
-  provider: string;
-  privacy: string;
-  title: string;
-  body: string;
-  digest?: string;
-  source?: string;
-  score?: number;
-};
 
 type ProviderConsulted = {
   id: string;
@@ -35,10 +20,6 @@ type ProviderConsulted = {
   reason?: string;
   result_count?: number;
 };
-
-const DEFAULT_VAULT_MAX_ITEMS = 25;
-const MAX_VAULT_ITEMS_PER_PROVIDER = 50;
-const ASSUMED_VAULT_ITEM_BYTES = 2048;
 
 export async function contextSearch(): Promise<void> {
   const query = getFlag('query') ?? '';
@@ -58,11 +39,19 @@ export async function contextSearch(): Promise<void> {
         consulted.push(providerConsulted(provider, started, 'skipped', 'capability_not_supported'));
         continue;
       }
-      const providerResults = await searchProvider(
+      const adapter = contextProviderAdapterFor(provider);
+      if (!adapter?.search) {
+        consulted.push(providerConsulted(provider, started, 'skipped', 'adapter_not_implemented'));
+        continue;
+      }
+      const providerResults = await adapter.search({
         provider,
         query,
-        manifest.contract.contextResolution.sizeBudgetBytes,
-      );
+        sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
+        actorName: getActorName(),
+        credentials: optionalCredentials(),
+        home: getFlag('home'),
+      });
       results.push(...providerResults);
       consulted.push(providerConsulted(provider, started, 'ok', undefined, providerResults.length));
     } catch (error) {
@@ -107,12 +96,16 @@ export async function contextGet(): Promise<void> {
 
   for (const provider of providers) {
     if (!provider.capabilities.includes('get')) continue;
-    const results = await searchProvider(
+    const adapter = contextProviderAdapterFor(provider);
+    const entry = await adapter?.get?.({
       provider,
-      '',
-      manifest.contract.contextResolution.sizeBudgetBytes,
-    );
-    const entry = results.find((result) => result.id === entryId);
+      entryId,
+      query: '',
+      sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
+      actorName: getActorName(),
+      credentials: optionalCredentials(),
+      home: getFlag('home'),
+    });
     if (!entry) continue;
     if (isJsonMode()) {
       printJson({
@@ -199,7 +192,7 @@ export async function contextProviderPropose(): Promise<void> {
     console.log(`Provider ${provider.id} does not support proposed context.`);
     return;
   }
-  if (provider.provider !== 'viewport-vault' || !provider.vault) {
+  if (!contextProviderAdapterFor(provider)?.propose) {
     throw new Error(`Provider ${provider.id} does not have a v1 propose adapter.`);
   }
 
@@ -226,66 +219,6 @@ export async function contextProviderPropose(): Promise<void> {
   console.log(`Context candidate proposed: ${candidate.id}`);
   console.log(`Provider: ${provider.id}`);
   console.log('Status: pending review');
-}
-
-async function searchProvider(
-  provider: SessionContextProviderManifest,
-  query: string,
-  sizeBudgetBytes?: number,
-): Promise<ContextProviderResult[]> {
-  if (provider.provider === 'repo-docs') {
-    const items = await resolveRepoDocsProvider({ provider, query, sizeBudgetBytes });
-    return items.map(repoDocsResult);
-  }
-  if (provider.provider === 'viewport-vault') {
-    if (!provider.vault) throw new Error('viewport-vault provider missing vault id');
-    const bundle = await resolveContextBundle({
-      contextResourceId: provider.vault,
-      actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
-      query,
-      maxItems: maxItemsForBudget(sizeBudgetBytes),
-      credentials: optionalCredentials(),
-      home: getFlag('home'),
-    });
-    return bundleResults(provider, bundle);
-  }
-  return [];
-}
-
-function maxItemsForBudget(sizeBudgetBytes?: number): number {
-  if (!sizeBudgetBytes || sizeBudgetBytes <= 0) return DEFAULT_VAULT_MAX_ITEMS;
-  return Math.max(
-    1,
-    Math.min(MAX_VAULT_ITEMS_PER_PROVIDER, Math.floor(sizeBudgetBytes / ASSUMED_VAULT_ITEM_BYTES)),
-  );
-}
-
-function repoDocsResult(item: RepoDocsContextItem): ContextProviderResult {
-  return {
-    id: item.id,
-    provider_id: item.providerId,
-    provider: item.providerKind,
-    privacy: item.privacy,
-    title: item.title,
-    body: item.body,
-    digest: item.digest,
-    source: item.sourcePath,
-  };
-}
-
-function bundleResults(
-  provider: SessionContextProviderManifest,
-  bundle: ContextBundle,
-): ContextProviderResult[] {
-  return bundle.items.map((item) => ({
-    id: item.id,
-    provider_id: provider.id,
-    provider: provider.provider,
-    privacy: provider.privacy,
-    title: item.title,
-    body: item.body,
-    source: `viewport-vault://${provider.vault}/${item.id}`,
-  }));
 }
 
 function orderedProviders(
@@ -334,6 +267,10 @@ function optionalCredentials(): { passphrase: string; recoveryCode: string } {
     passphrase: getFlag('passphrase') ?? '',
     recoveryCode: getFlag('recovery-code') ?? '',
   };
+}
+
+function getActorName(): string {
+  return getFlag('actor') ?? getFlag('device') ?? 'local-device';
 }
 
 function parseSourceKind(raw: string | undefined): 'workflow' | 'plan' | 'integration' | undefined {

@@ -1,5 +1,5 @@
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
-import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { contextProviderAdapterFor } from '../context-providers/registry.js';
 
 export type ContextCandidateSourceKind = 'workflow' | 'plan' | 'integration';
 
@@ -35,23 +35,18 @@ export function fallbackProposeProvider(
 export function proposeToViewportVaultProvider(
   provider: SessionContextProviderManifest,
   input: ContextProviderProposeInput,
-) {
-  if (provider.provider !== 'viewport-vault' || !provider.vault) {
+): Promise<{ id: string; bodyDigest: string }> {
+  const adapter = contextProviderAdapterFor(provider);
+  if (!adapter?.propose) {
     throw new Error(`Provider ${provider.id} does not have a v1 propose adapter.`);
   }
-  const source =
-    input.source ??
-    (input.sourceProvider
-      ? `contract://${input.manifestDigest}/${input.sourceProvider.id}/fallback/${provider.id}`
-      : `contract://${input.manifestDigest}/${provider.id}`);
-  return proposeContextEntry({
-    contextResourceId: provider.vault,
-    actorName: input.actorName,
-    title: input.title,
-    body: input.body,
-    source,
-    sourceKind: input.sourceKind,
-    credentials: input.credentials,
-    home: input.home,
-  });
+  return adapter
+    .propose({
+      provider,
+      ...input,
+    })
+    .then((result) => ({
+      id: result.candidate_id,
+      bodyDigest: result.payload_digest,
+    }));
 }

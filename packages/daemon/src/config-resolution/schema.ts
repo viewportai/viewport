@@ -41,6 +41,8 @@ const ContextProviderSchema = z
     required: z.boolean().optional(),
     privacy: ProviderPrivacySchema.optional(),
     capabilities: z.array(ProviderCapabilitySchema).max(4).optional(),
+    credential_ref: z.string().trim().min(1).max(256).optional(),
+    credentialRef: z.string().trim().min(1).max(256).optional(),
     paths: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
     vault: z.string().trim().min(1).max(256).optional(),
     notebook: z.string().trim().min(1).max(256).optional(),
