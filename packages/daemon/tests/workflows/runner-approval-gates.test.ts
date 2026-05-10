@@ -17,6 +17,7 @@ let tempHome: string;
 let projectDir: string;
 let originalHome: string | undefined;
 let originalCodexHome: string | undefined;
+let daemonUnderTest: Daemon | undefined;
 
 async function setup(): Promise<Daemon> {
   tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-home-'));
@@ -29,16 +30,19 @@ async function setup(): Promise<Daemon> {
   const daemon = new Daemon();
   await daemon.initialize();
   await daemon.directoryManager.register(projectDir);
+  daemonUnderTest = daemon;
   return daemon;
 }
 
 async function cleanup(): Promise<void> {
+  await daemonUnderTest?.shutdown();
+  daemonUnderTest = undefined;
   if (originalHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = originalHome;
   if (originalCodexHome === undefined) delete process.env['CODEX_HOME'];
   else process.env['CODEX_HOME'] = originalCodexHome;
-  await fs.rm(tempHome, { recursive: true, force: true });
-  await fs.rm(projectDir, { recursive: true, force: true });
+  await fs.rm(tempHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  await fs.rm(projectDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 }
 
 describe('workflow runner approval nodes', () => {
