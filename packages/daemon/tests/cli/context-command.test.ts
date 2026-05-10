@@ -581,6 +581,81 @@ describe('context CLI command', () => {
     expect(output).not.toContain('Auth changes must run session rotation tests.');
   });
 
+  it('routes unsupported provider proposals into the configured viewport-vault fallback', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-fallback-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(repo, 'docs'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: repo_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+        '    - id: team_memory',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+        '  resolution:',
+        '    propose_fallback_provider: team_memory',
+      ].join('\n'),
+    );
+    await fs.writeFile(path.join(repo, 'docs', 'auth.md'), 'Auth docs are local only.');
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'propose',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'repo_docs',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Auth testing rule',
+      '--body',
+      'Auth changes must run session rotation tests.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_propose/v1"');
+    expect(output).toContain('"requested_provider_id": "repo_docs"');
+    expect(output).toContain('"provider_id": "team_memory"');
+    expect(output).toContain('"fallback_provider_id": "team_memory"');
+    expect(output).toContain('"fallback_reason": "provider_does_not_support_propose"');
+    expect(output).toContain('"status": "pending_review"');
+    expect(output).toContain('"payload_digest"');
+    expect(output).not.toContain('Auth changes must run session rotation tests.');
+  });
+
   it('closes the candidate review loop through provider CLI, sync, signed decision, and receipt push', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-candidate-loop-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });

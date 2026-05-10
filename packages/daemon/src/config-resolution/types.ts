@@ -57,6 +57,7 @@ export interface ViewportContextResolution {
   order?: string[];
   sizeBudgetBytes?: number;
   strategy?: 'rank_by_recency_then_query' | 'pinned_then_recent' | 'provider_order';
+  proposeFallbackProvider?: string;
 }
 
 export interface ViewportWorkflowRef {
