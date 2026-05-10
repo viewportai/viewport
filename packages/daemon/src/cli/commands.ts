@@ -34,6 +34,7 @@ export { worktree } from './worktree-commands.js';
 export { workflow } from './workflow-commands.js';
 export { context } from './context-command.js';
 export { config, contract, validate } from './resource-config-command.js';
+export { guard } from './guard-command.js';
 export { skills } from './skills-command.js';
 export { service } from './service-commands.js';
 export { setup } from './setup-command.js';

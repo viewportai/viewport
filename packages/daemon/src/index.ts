@@ -15,6 +15,7 @@
  *   vpd worktree ...          Worktree operator commands
  *   vpd validate              Validate repo-local Viewport contracts
  *   vpd contract ...          Resolve repo-local Viewport contracts
+ *   vpd guard ...             Check repo-local approval/risk gates
  *   vpd config ...            Resolve repo-local Viewport resources
  *   vpd context ...           Local trusted-edge context commands
  *   vpd skills ...            Install agent skills that call vpd
@@ -50,6 +51,7 @@ import {
   config,
   contract,
   validate,
+  guard,
   context,
   skills,
   service,
@@ -99,6 +101,7 @@ const commands: Record<string, () => Promise<void>> = {
   config,
   contract,
   validate,
+  guard,
   context,
   skills,
   service,
@@ -179,6 +182,8 @@ if (command === 'hook') {
       handler = config;
     } else if (command === 'contract') {
       handler = contract;
+    } else if (command === 'guard') {
+      handler = guard;
     } else if (command === 'context') {
       handler = context;
     } else if (command === 'skills') {

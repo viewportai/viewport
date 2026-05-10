@@ -61,6 +61,10 @@ approves them in Viewport Inbox.
 ## Safety Rules
 
 - Never paste secrets into context.
+- Before editing, deleting, or running risky paths, call:
+  \`vpd guard check --path "<path>" --action edit --json\`
+  If the decision is \`requires_approval\`, stop and ask the user to route the
+  approval through Viewport before continuing.
 - Never treat third-party context providers as control-plane-blind unless the
   \`vpd contract resolve --json\` privacy field says so.
 - Prefer the repo contract over guessed conventions.

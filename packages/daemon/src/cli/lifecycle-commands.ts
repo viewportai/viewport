@@ -379,6 +379,8 @@ export function showHelp(): void {
   console.log('                               Validate repo-local .viewport/config.yaml contract');
   console.log('  contract resolve [--path <path>] [--json]');
   console.log('                               Resolve repo-local contract manifest');
+  console.log('  guard check --path <file> [--action edit] [--cwd <repo>] [--json]');
+  console.log('                               Check repo-local approval/risk gates');
   console.log('  skills install [claude-code|cursor|all] [--target <path>] [--force] [--json]');
   console.log('                               Install agent instructions for calling vpd');
   console.log(

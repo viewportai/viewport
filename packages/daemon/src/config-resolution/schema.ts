@@ -75,6 +75,15 @@ const WorkflowRefSchema = z.union([
     }),
 ]);
 
+const RiskyPathRuleSchema = z
+  .object({
+    id: z.string().trim().min(1).max(128).optional(),
+    path: z.string().trim().min(1).max(512),
+    require: z.array(z.string().trim().min(1).max(128)).min(1).max(20),
+    checks: z.array(z.string().trim().min(1).max(512)).max(20).optional(),
+  })
+  .strict();
+
 export const ViewportConfigSchema = z
   .object({
     $schema: z.string().url().optional(),
@@ -97,6 +106,13 @@ export const ViewportConfigSchema = z
       .strict()
       .optional(),
     workflows: z.record(z.string().trim().min(1).max(128), WorkflowRefSchema).optional(),
+    approvals: z
+      .object({
+        risky_paths: z.array(RiskyPathRuleSchema).max(100).optional(),
+        riskyPaths: z.array(RiskyPathRuleSchema).max(100).optional(),
+      })
+      .strict()
+      .optional(),
     defaults: z
       .object({
         inboxRoute: z.string().trim().min(1).max(256).optional(),
