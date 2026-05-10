@@ -127,11 +127,8 @@ export async function contextGet(): Promise<void> {
 }
 
 export async function contextProviderPropose(): Promise<void> {
-  const providerId = requiredFlag(
-    'provider',
-    'vpd context propose --provider <id> --title <text> --body <text>',
-  );
   const manifest = resolveSessionResourceManifestSync({ workingDirectory: getPathFlag() });
+  const providerId = getFlag('provider') ?? defaultProposeProviderId(manifest);
   const provider = manifest.contract.contextProviders.find(
     (candidate) => candidate.id === providerId,
   );
@@ -235,6 +232,42 @@ function orderedProviders(
   return [...ordered, ...remainder];
 }
 
+function defaultProposeProviderId(manifest: {
+  contract: {
+    contextProviders: SessionContextProviderManifest[];
+    contextResolution: { proposeFallbackProvider?: string };
+  };
+}): string {
+  const configuredFallback = manifest.contract.contextResolution.proposeFallbackProvider;
+  if (configuredFallback) {
+    const provider = manifest.contract.contextProviders.find(
+      (candidate) => candidate.id === configuredFallback,
+    );
+    if (!provider) {
+      throw new Error(
+        `Configured propose fallback provider not found in resolved contract: ${configuredFallback}`,
+      );
+    }
+    return provider.id;
+  }
+
+  const capable = manifest.contract.contextProviders.filter((provider) =>
+    provider.capabilities.includes('propose'),
+  );
+  if (capable.length === 1) return capable[0]!.id;
+  if (capable.length > 1) {
+    throw new Error(
+      `Multiple context providers can accept proposals (${capable
+        .map((provider) => provider.id)
+        .join(', ')}). Pass --provider <id>.`,
+    );
+  }
+
+  throw new Error(
+    'No context provider in the resolved contract can accept proposals. Add a viewport-vault provider or pass --context <id> for the legacy local path.',
+  );
+}
+
 function providerConsulted(
   provider: SessionContextProviderManifest,
   started: number,
@@ -285,9 +318,12 @@ function proposeInput(manifestDigest: string) {
     actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
     title: requiredFlag(
       'title',
-      'vpd context propose --provider <id> --title <text> --body <text>',
+      'vpd context propose [--provider <id>] --title <text> --body <text>',
     ),
-    body: requiredFlag('body', 'vpd context propose --provider <id> --title <text> --body <text>'),
+    body: requiredFlag(
+      'body',
+      'vpd context propose [--provider <id>] --title <text> --body <text>',
+    ),
     source: getFlag('source'),
     sourceKind: parseSourceKind(getFlag('source-kind')) ?? 'workflow',
     credentials: optionalCredentials(),

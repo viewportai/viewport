@@ -880,6 +880,72 @@ describe('context CLI command', () => {
     expect(output).not.toContain('Auth changes must run session rotation tests.');
   });
 
+  it('routes context proposals to the single proposal-capable provider from the repo contract', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-default-propose-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: repo_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+        '    - id: team_memory',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'propose',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Incident-sensitive file rule',
+      '--body',
+      'Files under billing/reconciliation caused an incident last week; inspect rollback paths before editing.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_propose/v1"');
+    expect(output).toContain('"provider_id": "team_memory"');
+    expect(output).toContain('"status": "pending_review"');
+    expect(output).toContain('"payload_digest"');
+    expect(output).not.toContain('Files under billing/reconciliation caused an incident');
+  });
+
   it('closes the candidate review loop through provider CLI, sync, signed decision, and receipt push', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-candidate-loop-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
