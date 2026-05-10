@@ -17,6 +17,7 @@ import type {
 
 export async function pushContextEvents(options: {
   contextResourceId: string;
+  workspaceId?: string;
   serverUrl: string;
   credential: string;
   home?: string;
@@ -36,7 +37,7 @@ export async function pushContextEvents(options: {
 
   const response = await postJson(
     options.fetchImpl ?? fetch,
-    contextRuntimeUrl(options.serverUrl, options.contextResourceId, 'push'),
+    contextRuntimeUrl(options.serverUrl, options.workspaceId ?? options.contextResourceId, 'push'),
     {
       credential: options.credential,
       events,
@@ -55,6 +56,7 @@ export async function pushContextEvents(options: {
 
 export async function pullContextEvents(options: {
   contextResourceId: string;
+  workspaceId?: string;
   serverUrl: string;
   credential: string;
   actorName: string;
@@ -86,7 +88,7 @@ export async function pullContextEvents(options: {
 
   const response = await postJson(
     options.fetchImpl ?? fetch,
-    contextRuntimeUrl(options.serverUrl, options.contextResourceId, 'pull'),
+    contextRuntimeUrl(options.serverUrl, options.workspaceId ?? options.contextResourceId, 'pull'),
     {
       credential: options.credential,
       repo_id: metadata.repoId,
@@ -148,11 +150,11 @@ export async function pullContextEvents(options: {
 
 function contextRuntimeUrl(
   serverUrl: string,
-  contextResourceId: string,
+  workspaceId: string,
   operation: 'push' | 'pull',
 ): string {
   const base = serverUrl.replace(/\/+$/, '');
-  return `${base}/api/runtime/workspaces/${encodeURIComponent(contextResourceId)}/context-vault/events/${operation}`;
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/events/${operation}`;
 }
 
 async function postJson(
