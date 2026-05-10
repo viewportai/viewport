@@ -1,0 +1,245 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://getviewport.dev/schemas/workflow-v1.schema.json",
+  "title": "Viewport workflow",
+  "description": "Schema for viewport.workflow/v1 YAML files executed by vpd.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "nodes"],
+  "properties": {
+    "schema": { "const": "viewport.workflow/v1" },
+    "name": { "$ref": "#/$defs/identifier" },
+    "title": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/inputDefinition" }
+    },
+    "context": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ref"],
+            "properties": {
+              "ref": { "type": "string", "minLength": 1 },
+              "as": { "$ref": "#/$defs/identifier" },
+              "required": { "type": "boolean" },
+              "description": { "type": "string" },
+              "refresh": { "enum": ["manual", "before_run", "on_demand"] }
+            }
+          }
+        ]
+      }
+    },
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agents": { "$ref": "#/$defs/stringList" },
+        "tools": { "$ref": "#/$defs/stringList" },
+        "integrations": { "$ref": "#/$defs/stringList" },
+        "secrets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9._/-]+$"
+    },
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "inputValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "type": "array" },
+        { "type": "object" }
+      ]
+    },
+    "inputDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["string", "number", "boolean", "json"] },
+        "required": { "type": "boolean" },
+        "default": { "$ref": "#/$defs/inputValue" },
+        "description": { "type": "string" }
+      }
+    },
+    "outputDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["string", "number", "boolean", "json", "file", "artifact"] },
+        "description": { "type": "string" },
+        "extract": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifactDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["file", "directory", "patch", "report", "log"] },
+        "description": { "type": "string" }
+      }
+    },
+    "retryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxAttempts"],
+      "properties": {
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "backoffSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+        "transient": { "$ref": "#/$defs/stringList" },
+        "fatal": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "nodeBase": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "needs": { "$ref": "#/$defs/stringList" },
+        "when": { "type": "string", "minLength": 1 },
+        "triggerRule": { "enum": ["all_success", "all_done", "one_success"] },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "retry": { "$ref": "#/$defs/retryPolicy" },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "onFailure": { "enum": ["halt", "continue", "skip_dependents"] },
+            "approvalRequired": { "type": "boolean" }
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/outputDefinition" }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/artifactDefinition" }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "oneOf": [{ "required": ["value"] }, { "required": ["secret"] }],
+            "properties": {
+              "value": { "type": "string" },
+              "secret": { "$ref": "#/$defs/identifier" }
+            }
+          }
+        }
+      }
+    },
+    "node": {
+      "allOf": [{ "$ref": "#/$defs/nodeBase" }],
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "command"],
+          "properties": {
+            "type": { "const": "shell" },
+            "command": { "type": "string", "minLength": 1 },
+            "cwd": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "prompt"],
+          "properties": {
+            "type": { "const": "prompt" },
+            "prompt": { "type": "string", "minLength": 1 },
+            "agent": { "type": "string", "minLength": 1 },
+            "provider": { "type": "string", "minLength": 1 },
+            "model": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "prompt"],
+          "properties": {
+            "type": { "const": "approval" },
+            "prompt": { "type": "string", "minLength": 1 },
+            "captureResponse": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "title", "body"],
+          "properties": {
+            "type": { "const": "plan" },
+            "title": { "type": "string", "minLength": 1 },
+            "body": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "minLength": 1 },
+            "waitForApproval": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "gate"],
+          "properties": {
+            "type": { "const": "gate" },
+            "gate": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": { "enum": ["check", "policy", "human_review", "schedule"] }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "maxIterations", "body"],
+          "properties": {
+            "type": { "const": "loop" },
+            "foreach": { "type": "string", "minLength": 1 },
+            "while": { "type": "string", "minLength": 1 },
+            "until": { "type": "string", "minLength": 1 },
+            "maxIterations": { "type": "integer", "minimum": 1, "maximum": 1000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "inline"],
+          "properties": {
+            "type": { "const": "subflow" },
+            "inline": { "type": "object" }
+          }
+        }
+      ]
+    }
+  }
+}
