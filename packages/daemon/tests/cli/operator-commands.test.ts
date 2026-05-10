@@ -37,6 +37,7 @@ describe('operator CLI commands', () => {
               sessionId: 'sess-1',
               directoryId: 'dir-1',
               directoryPath: '/tmp/project',
+              workingDirectory: '/tmp/project',
               agentId: 'claude',
               state: 'running',
               mode: 'detect',
@@ -69,6 +70,115 @@ describe('operator CLI commands', () => {
     await stopSession();
 
     expect(mocks.daemonFetch).toHaveBeenCalledWith('/api/sessions/sess-1/stop', { method: 'POST' });
+  });
+
+  it('vpd session manifest returns provider, workflow, and approval provenance', async () => {
+    process.argv = ['node', 'vpd', 'session', 'manifest', '--session', 'sess-1', '--json'];
+    mocks.daemonFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              source: 'discovered',
+              sessionId: 'sess-1',
+              directoryId: 'dir-1',
+              directoryPath: '/tmp/project',
+              agentId: 'codex',
+              state: 'idle',
+              mode: 'detect',
+              resumable: true,
+              lastActivity: 1778325483594,
+              summary: 'Review auth changes',
+              messageCount: 42,
+              resourceManifest: {
+                schema: 'viewport.session_resource_manifest/v1',
+                manifestDigest: 'sha256:manifest',
+                workingDirectory: '/tmp/project',
+                configSources: [
+                  {
+                    path: '/tmp/project/.viewport/config.yaml',
+                    digest: 'sha256:config',
+                    version: 1,
+                  },
+                ],
+                resources: { contexts: [], workflows: [], plans: [], agentProfiles: [] },
+                contract: {
+                  contextProviders: [
+                    {
+                      id: 'repo-docs',
+                      provider: 'repo-docs',
+                      privacy: 'local_only',
+                      capabilities: ['search', 'get'],
+                      required: false,
+                      sourceConfigPath: '/tmp/project/.viewport/config.yaml',
+                      resolution: 'requested_unverified',
+                    },
+                  ],
+                  contextResolution: {},
+                  workflows: [
+                    {
+                      id: 'review',
+                      path: '.viewport/workflows/review.yaml',
+                      required: true,
+                      sourceConfigPath: '/tmp/project/.viewport/config.yaml',
+                      resolution: 'requested_unverified',
+                    },
+                  ],
+                  riskyPathRules: [
+                    {
+                      id: 'security-review',
+                      path: 'apps/api/Auth/**',
+                      require: ['team:security'],
+                      checks: ['npm run test -- session-rotation'],
+                      sourceConfigPath: '/tmp/project/.viewport/config.yaml',
+                    },
+                  ],
+                },
+                conflicts: [],
+                warnings: [],
+              },
+            },
+          ],
+          counts: { active: 0, discovered: 1, total: 1 },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { sessionManifest } = await import('../../src/cli/session-commands.js');
+    await sessionManifest();
+
+    expect(mocks.daemonFetch).toHaveBeenCalledWith('/api/sessions?scope=all');
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.session_manifest/v1"');
+    expect(output).toContain('"manifest_digest": "sha256:manifest"');
+    expect(output).toContain('"providers_used"');
+    expect(output).toContain('"repo-docs"');
+    expect(output).toContain('"workflows"');
+    expect(output).toContain('"review"');
+    expect(output).toContain('"approvals"');
+    expect(output).toContain('"security-review"');
+  });
+
+  it('vpd session manifest reports missing sessions as structured JSON', async () => {
+    process.argv = ['node', 'vpd', 'session', 'manifest', '--session', 'missing', '--json'];
+    mocks.daemonFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({ sessions: [], counts: { active: 0, discovered: 0, total: 0 } }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const { sessionManifest } = await import('../../src/cli/session-commands.js');
+    await expect(sessionManifest()).rejects.toThrow('Session not found: missing');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.session_manifest/v1"');
+    expect(output).toContain('"ok": false');
+    expect(output).toContain('"session_not_found"');
   });
 
   it('vpd permit ls returns structured JSON', async () => {
