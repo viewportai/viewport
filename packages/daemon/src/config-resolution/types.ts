@@ -47,6 +47,7 @@ export interface ViewportContextProviderRef {
   privacy: ViewportContextProviderPrivacy;
   capabilities: ViewportContextProviderCapability[];
   sourceConfigPath: string;
+  credentialRef?: string;
   vault?: string;
   paths?: string[];
   notebook?: string;

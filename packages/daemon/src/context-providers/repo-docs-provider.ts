@@ -2,6 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ViewportContextProviderRef } from '../config-resolution/index.js';
+import type {
+  ContextProviderAdapter,
+  ContextProviderResult,
+  ContextProviderSearchInput,
+} from './types.js';
 
 const DEFAULT_SIZE_BUDGET_BYTES = 100 * 1024;
 const MAX_DOCS_PER_PROVIDER = 50;
@@ -154,4 +159,37 @@ function repoRootForConfig(configPath: string): string {
     return path.dirname(configDirectory);
   }
   return configDirectory;
+}
+
+export const repoDocsProviderAdapter: ContextProviderAdapter = {
+  kind: 'repo-docs',
+  async search(input: ContextProviderSearchInput): Promise<ContextProviderResult[]> {
+    const items = await resolveRepoDocsProvider({
+      provider: input.provider,
+      query: input.query,
+      sizeBudgetBytes: input.sizeBudgetBytes,
+    });
+    return items.map(repoDocsResult);
+  },
+  async get(input) {
+    const items = await resolveRepoDocsProvider({
+      provider: input.provider,
+      query: '',
+      sizeBudgetBytes: input.sizeBudgetBytes,
+    });
+    return items.map(repoDocsResult).find((item) => item.id === input.entryId);
+  },
+};
+
+function repoDocsResult(item: RepoDocsContextItem): ContextProviderResult {
+  return {
+    id: item.id,
+    provider_id: item.providerId,
+    provider: item.providerKind,
+    privacy: item.privacy,
+    title: item.title,
+    body: item.body,
+    digest: item.digest,
+    source: item.sourcePath,
+  };
 }

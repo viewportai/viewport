@@ -482,6 +482,43 @@ describe('context CLI command', () => {
     expect(output).toContain('"manifest_digest"');
   });
 
+  it('reports provider adapters that are declared but not implemented yet', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-adapter-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: research_notebook',
+        '      provider: notebooklm',
+        '      notebook: nb_platform',
+        '      credential_ref: credentials/notebooklm/platform',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--query',
+      'session rotation',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_search/v1"');
+    expect(output).toContain('"id": "research_notebook"');
+    expect(output).toContain('"provider": "notebooklm"');
+    expect(output).toContain('"status": "skipped"');
+    expect(output).toContain('"reason": "adapter_not_implemented"');
+    expect(output).not.toContain('credentials/notebooklm/platform');
+  });
+
   it('gets one repo-docs entry by provider-scoped id', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-get-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });

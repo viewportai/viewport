@@ -74,6 +74,7 @@ export function buildContractResolveJsonOutput(
       capabilities: provider.capabilities,
       required: provider.required,
       status: 'available',
+      ...(provider.credentialRef ? { credential_ref: provider.credentialRef } : {}),
       ...(provider.vault ? { vault: provider.vault } : {}),
       ...(provider.paths ? { paths: provider.paths } : {}),
       ...(provider.notebook ? { notebook: provider.notebook } : {}),
