@@ -24,6 +24,7 @@ describe('context access lifecycle CLI commands', () => {
   it('approves a second device and resolves synced resource history through vpd only', async () => {
     const laptopHome = path.join(tempHome, 'alice-laptop-home');
     const desktopHome = path.join(tempHome, 'alice-desktop-home');
+    const repo = path.join(tempHome, 'alice-contract-repo');
     const requestFile = path.join(tempHome, 'device-request.json');
     const approvalFile = path.join(tempHome, 'device-approval.json');
     const laptopIdentityFile = path.join(tempHome, 'alice-laptop-identity.json');
@@ -159,6 +160,41 @@ describe('context access lifecycle CLI commands', () => {
     expect(logSpy.mock.calls.map((call) => call.join(' ')).join('\n')).toContain(
       'Shared handoff policy is available to approved devices.',
     );
+
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'use',
+      'context-alpha',
+      '--path',
+      repo,
+      '--provider',
+      'handoff',
+      '--json',
+    ]);
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      desktopHome,
+      '--path',
+      repo,
+      '--provider',
+      'handoff',
+      '--device',
+      'alice-desktop',
+      '--query',
+      'handoff',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    const contractOutput = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(contractOutput).toContain('"command": "context use"');
+    expect(contractOutput).toContain('"provider_id": "handoff"');
+    expect(contractOutput).toContain('Shared handoff policy is available to approved devices.');
   });
 
   it('grants a second user and lets that user resolve synced resource context through vpd only', async () => {

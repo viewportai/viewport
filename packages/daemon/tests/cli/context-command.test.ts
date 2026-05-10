@@ -200,6 +200,87 @@ describe('context CLI command', () => {
     expect(output).not.toContain('runtime-token');
   });
 
+  it('creates, initializes, and attaches a Context Vault in one command', async () => {
+    const repo = path.join(tempHome, 'created-use-repo');
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: false,
+        endpoint: 'wss://getviewport.test:7781/ws',
+        serverUrl: 'http://app.getviewport.test',
+        workspaceId: 'workspace-alpha',
+        issueToken: 'runtime-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults',
+      );
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      expect(body).toMatchObject({
+        credential: 'runtime-token',
+        name: 'Platform Architecture',
+        vault_id: 'ctx_platform_arch',
+      });
+      return jsonResponse(
+        {
+          data: {
+            id: '01created',
+            vault_id: 'ctx_platform_arch',
+            name: 'Platform Architecture',
+            workspace_id: 'workspace-alpha',
+            description: null,
+            encryption: { privacy: 'control_plane_blind', server_plaintext: false },
+            access: { role: 'owner', can_view: true },
+          },
+        },
+        201,
+      );
+    }) as typeof fetch;
+
+    await runContext([
+      'context',
+      'create',
+      '--name',
+      'Platform Architecture',
+      '--vault',
+      'ctx_platform_arch',
+      '--init',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--key-store',
+      'file',
+      '--use',
+      '--path',
+      repo,
+      '--provider',
+      'platform-arch',
+      '--json',
+    ]);
+
+    const config = await fs.readFile(path.join(repo, '.viewport', 'config.yaml'), 'utf8');
+    expect(config).toContain('id: platform-arch');
+    expect(config).toContain('provider: viewport-vault');
+    expect(config).toContain('vault: ctx_platform_arch');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context create"');
+    expect(output).toContain('"local_context"');
+    expect(output).toContain('"contextResourceId": "ctx_platform_arch"');
+    expect(output).toContain('"config"');
+    expect(output).toContain('"manifest_digest"');
+  });
+
   it('attaches a platform Context Vault provider to repo config', async () => {
     const repo = path.join(tempHome, 'use-repo');
 
