@@ -1,12 +1,15 @@
 const assert = require('node:assert/strict');
+const { execFile } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { promisify } = require('node:util');
 const { test } = require('node:test');
 const { canonicalize } = require('../src/crypto/canonical');
 const { createProtocolValidator } = require('../src/protocol/schemas');
 
 const VECTOR_DIR = path.join(__dirname, '..', 'fixtures', 'protocol-vectors');
+const execFileAsync = promisify(execFile);
 const KEY_WRAP_SALT = Buffer.from('viewport-context-vault-key-wrap-v1', 'utf8');
 
 function readVector(name) {
@@ -116,4 +119,22 @@ test('signed event vector verifies from canonical JSON and public key only', () 
   const tampered = structuredClone(vector);
   tampered.event.payloadDigest = `sha256:${'0'.repeat(64)}`;
   assert.equal(verifySignedEventVector(tampered), false);
+});
+
+test('standalone decoder validates protocol vectors without importing engine source', async () => {
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [path.join(VECTOR_DIR, 'standalone-decoder.mjs')],
+    { cwd: path.join(__dirname, '..') },
+  );
+  const result = JSON.parse(stdout);
+
+  assert.equal(result.schemaVersion, 'viewport.context_protocol_standalone_decoder_result/v1');
+  assert.equal(result.hpke_key_grant.ok, true);
+  assert.equal(
+    result.hpke_key_grant.repo_key_digest,
+    readVector('hpke-key-grant.json').expectedRepoKeyDigest,
+  );
+  assert.equal(result.signed_event.ok, true);
+  assert.equal(result.signed_event.tamper_rejected, true);
 });

@@ -3,6 +3,16 @@
 These fixtures are synthetic protocol vectors for validating external
 implementations. They are not customer data and are not production secrets.
 
+Run the standalone decoder proof from the repository root:
+
+```bash
+node packages/context-engine/fixtures/protocol-vectors/standalone-decoder.mjs
+```
+
+That script intentionally imports no `@viewportai/context-engine` source modules. It
+uses Node's built-in `crypto` APIs plus the documented HPKE library to prove the
+decoder surface from fixture fields alone.
+
 Cryptographic decoder vectors:
 
 - `key-grant.json` is the legacy X25519/HKDF/AES-GCM key-grant vector. It includes
