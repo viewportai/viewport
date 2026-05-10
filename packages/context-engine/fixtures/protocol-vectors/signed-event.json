@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "viewport.context_signed_event_test_vector/v1",
+  "note": "Synthetic signed event vector. The private key is intentionally omitted; decoders verify against the public key.",
+  "actor": {
+    "name": "alice-laptop",
+    "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAdc43VFGaywZlUGIEbJDnyU/Lnaib26Tjy3knMsHF/7U=\n-----END PUBLIC KEY-----\n"
+  },
+  "event": {
+    "id": "evt_protocol_golden_000000000000000001",
+    "repoId": "ctx_protocol_golden",
+    "type": "entry.approved",
+    "actorName": "alice-laptop",
+    "keyEpoch": 7,
+    "visibility": "shared",
+    "createdAt": "2026-05-10T00:00:00.000Z",
+    "parentIds": [],
+    "encrypted": {
+      "alg": "aes-256-gcm",
+      "iv": "AAAAAAAAAAAAAAAA",
+      "ciphertext": "cHJvdG9jb2wtZ29sZGVuLWNpcGhlcnRleHQ=",
+      "tag": "BBBBBBBBBBBBBBBBBBBBBB=="
+    },
+    "grant": null,
+    "payloadDigest": "sha256:748800bd8e465b4369449954e39905047be7849b0d5158917f45eccef0fb6392",
+    "schemaVersion": "viewport.context_event/v1",
+    "signature": "n+itl+5FYUAKQ+xEBZlgBfogNuVkG4tGTETT7lp6fk6k2JeS6uSaqIxiCUAEZ7UvCxQT3RHdsJBYliuaAy67Cg=="
+  }
+}
