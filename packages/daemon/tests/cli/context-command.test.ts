@@ -671,6 +671,103 @@ describe('context CLI command', () => {
     expect(searchOutput).toContain('Auth changes must run session rotation tests.');
   });
 
+  it('reuses one local viewport-vault cache across multiple repo contracts', async () => {
+    const repoA = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-shared-vault-a-'));
+    const repoB = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-shared-vault-b-'));
+    for (const [repo, providerId] of [
+      [repoA, 'team_memory'],
+      [repoB, 'service_memory'],
+    ] as const) {
+      await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+      await fs.writeFile(
+        path.join(repo, '.viewport', 'config.yaml'),
+        [
+          'version: 1',
+          'context:',
+          '  providers:',
+          `    - id: ${providerId}`,
+          '      provider: viewport-vault',
+          '      vault: context-alpha',
+          '      required: true',
+        ].join('\n'),
+      );
+    }
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'add',
+      '--home',
+      tempHome,
+      '--path',
+      repoA,
+      '--provider',
+      'team_memory',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Shared vault rule',
+      '--body',
+      'Any repo using this vault should see the same approved context.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const reposDir = path.join(tempHome, 'repos');
+    const repoStateDirs = (await fs.readdir(reposDir)).filter((name) => !name.startsWith('.'));
+    expect(repoStateDirs).toEqual(['context-alpha']);
+    await fs.access(path.join(tempHome, 'repos', 'context-alpha', 'events'));
+    await fs.access(path.join(tempHome, 'context', 'canonical-resources', 'context-alpha.json'));
+
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repoB,
+      '--provider',
+      'service_memory',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'approved context',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const searchOutput = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(searchOutput).toContain('"provider_id": "service_memory"');
+    expect(searchOutput).toContain(
+      'Any repo using this vault should see the same approved context.',
+    );
+  });
+
   it('routes unsupported provider proposals into the configured viewport-vault fallback', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-fallback-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
