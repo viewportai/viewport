@@ -1,13 +1,11 @@
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
-  addContextEntry,
   initContextResource,
   isResolverPinMismatch,
   readContextStatus,
   resolveContextBundle,
   type ContextKeyStore,
-  type ContextScope,
 } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
@@ -15,6 +13,7 @@ import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
 import { parseLimit, parseMaxItems, parseSince } from './context-command-parsers.js';
+import { contextAdd } from './context-add-command.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
 import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
 import { contextVaultUse } from './context-vault-use-command.js';
@@ -182,29 +181,6 @@ async function contextStatus(): Promise<void> {
   }
 }
 
-async function contextAdd(): Promise<void> {
-  const contextResourceId = requiredContextId(
-    'vpd context add --context <id> --title <text> --body <text>',
-  );
-  const entry = await addContextEntry({
-    contextResourceId,
-    actorName:
-      getFlag('actor') ?? requiredFlag('device', 'vpd context add --context <id> --device <name>'),
-    title: requiredFlag('title', 'vpd context add --context <id> --title <text> --body <text>'),
-    body: requiredFlag('body', 'vpd context add --context <id> --title <text> --body <text>'),
-    scope: parseScope(getFlag('scope')),
-    source: getFlag('source'),
-    credentials: readCredentials(),
-  });
-
-  if (isJsonMode()) {
-    printJson({ command: 'context add', ok: true, entry });
-    return;
-  }
-  console.log(`Context entry added: ${entry.id}`);
-  console.log('Title: [encrypted]');
-}
-
 async function contextPropose(): Promise<void> {
   const contextResourceId = requiredContextId(
     'vpd context propose --context <id> --title <text> --body <text>',
@@ -335,15 +311,6 @@ function readCredentials(): { passphrase: string; recoveryCode: string } {
     passphrase: requiredFlag('passphrase', 'Missing --passphrase'),
     recoveryCode: requiredFlag('recovery-code', 'Missing --recovery-code'),
   };
-}
-
-function parseScope(raw: string | undefined): ContextScope {
-  if (!raw) return 'resource';
-  if (raw === 'project') return 'resource';
-  if (raw === 'private' || raw === 'resource' || raw === 'team' || raw === 'organization') {
-    return raw;
-  }
-  throw new Error(`Unsupported context scope: ${raw}`);
 }
 
 function parseProfileName(raw: string | undefined): string | undefined {

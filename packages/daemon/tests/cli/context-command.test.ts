@@ -581,6 +581,96 @@ describe('context CLI command', () => {
     expect(output).not.toContain('Auth changes must run session rotation tests.');
   });
 
+  it('adds approved context through a viewport-vault provider declared in the contract', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-add-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: team_memory',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'add',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'team_memory',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Auth testing rule',
+      '--body',
+      'Auth changes must run session rotation tests.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"schema_version": "viewport.cli.context_add/v1"');
+    expect(output).toContain('"command": "context add"');
+    expect(output).toContain('"provider_id": "team_memory"');
+    expect(output).toContain('"manifest_digest"');
+    expect(output).toContain('"entry"');
+    expect(output).not.toContain('Auth changes must run session rotation tests.');
+
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'team_memory',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'rotation',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const searchOutput = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(searchOutput).toContain('"provider_id": "team_memory"');
+    expect(searchOutput).toContain('Auth changes must run session rotation tests.');
+  });
+
   it('routes unsupported provider proposals into the configured viewport-vault fallback', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-fallback-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
