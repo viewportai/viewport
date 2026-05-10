@@ -21,6 +21,27 @@ interface WorkflowRunResponse {
   };
 }
 
+export function buildWorkflowRunJsonOutput(
+  run: WorkflowRunResponse['run'],
+): Record<string, unknown> {
+  return {
+    schema_version: 'viewport.cli.workflow_run/v1',
+    command: 'workflow run',
+    ok: run.status === 'completed',
+    run_id: run.id,
+    workflow: {
+      id: run.workflowName,
+      name: run.workflowTitle ?? run.workflowName,
+      digest: run.digest,
+    },
+    status: run.status,
+    manifest_digest: run.digest,
+    steps: [],
+    errors: run.error ? [{ code: 'workflow_run_error', message: run.error }] : [],
+    run,
+  };
+}
+
 export async function workflow(): Promise<void> {
   const subcommand = getArgs()[1];
   if (!subcommand) {
@@ -218,7 +239,7 @@ async function pollWorkflowRun(runId: string): Promise<WorkflowRunResponse> {
 
 function printRun(run: WorkflowRunResponse['run']): void {
   if (isJsonMode()) {
-    printJson({ command: 'workflow run', ok: run.status === 'completed', run });
+    printJson(buildWorkflowRunJsonOutput(run));
     return;
   }
   console.log(`Workflow run: ${run.id}`);

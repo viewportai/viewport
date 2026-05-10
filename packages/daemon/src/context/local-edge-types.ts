@@ -231,7 +231,7 @@ export interface ContextVaultInstance {
     repoId: string;
     actorName: string;
     includePrivate: boolean;
-    query: string;
+    query: string | null;
     profile?: string | null;
     profilePin?: { path?: string; digest?: string } | null;
   }): {
