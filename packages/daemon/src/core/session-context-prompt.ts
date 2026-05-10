@@ -4,6 +4,7 @@ import { readContextStatus, resolveContextBundle } from '../context/local-edge-s
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'session-context-prompt' });
+const MAX_VAULT_PROMPT_ITEMS = 12;
 
 export async function buildSessionPromptWithContext(options: {
   workingDirectory: string;
@@ -53,6 +54,7 @@ export async function buildSessionPromptWithContext(options: {
         contextResourceId: context.id,
         actorName: record.deviceName,
         query: text,
+        maxItems: MAX_VAULT_PROMPT_ITEMS,
         includePrivate: false,
       });
       if (bundle.items.length === 0) {
@@ -60,6 +62,7 @@ export async function buildSessionPromptWithContext(options: {
           contextResourceId: context.id,
           actorName: record.deviceName,
           query: '',
+          maxItems: MAX_VAULT_PROMPT_ITEMS,
           includePrivate: false,
         });
       }

@@ -7,6 +7,15 @@ export function parseLimit(raw: string | undefined): number | undefined {
   return value;
 }
 
+export function parseMaxItems(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 500) {
+    throw new Error(`Unsupported context max-items value: ${raw}`);
+  }
+  return value;
+}
+
 export function parseSince(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const relativeHours = raw.match(/^(\d+)h$/i);

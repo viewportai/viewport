@@ -232,6 +232,7 @@ export interface ContextVaultInstance {
     actorName: string;
     includePrivate: boolean;
     query: string | null;
+    maxItems?: number | null;
     profile?: string | null;
     profilePin?: { path?: string; digest?: string } | null;
   }): {
