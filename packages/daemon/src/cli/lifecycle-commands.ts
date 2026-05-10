@@ -401,7 +401,7 @@ export function showHelp(): void {
   );
   console.log('  context status [--context <id>] [--json]');
   console.log(
-    '  context add --context <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
+    '  context add (--context <id>|--provider <id> --path <repo>) --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
     '  context propose --context <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
