@@ -1,7 +1,27 @@
 # Protocol Vectors
 
-These fixtures are draft, synthetic protocol vectors for validating external implementations during the POC.
+These fixtures are synthetic protocol vectors for validating external
+implementations. They are not customer data and are not production secrets.
 
-They are not customer data and are not production secrets. `key-grant.json` intentionally includes synthetic recipient private key material so an independent decoder can prove it can unwrap the encrypted repo key from documented fields.
+Cryptographic decoder vectors:
 
-Only `key-grant.json` and generated HPKE proof artifacts are cryptographic decoder vectors today. The event, manifest, profile, and erase-receipt fixtures are schema fixtures with synthetic placeholder signatures/digests. They must be replaced with true cryptographic golden vectors before a stable wire protocol release.
+- `key-grant.json` is the legacy X25519/HKDF/AES-GCM key-grant vector. It includes
+  synthetic recipient private key material so an independent decoder can unwrap the
+  repo key from documented fields.
+- `hpke-key-grant.json` is the canonical HPKE draft grant vector for
+  `viewport.context_key_grant/hpke-draft-01`. It includes synthetic recipient HPKE
+  private key material so an independent decoder can recover the 32-byte repo key
+  from the suite, `enc`, ciphertext, info, and AAD fields.
+- `signed-event.json` is a canonical-JSON Ed25519 event-signature vector. It omits
+  the private signing key and includes the public signing key needed to verify the
+  event.
+
+Schema fixtures:
+
+- `event.json`
+- `bundle-manifest.json`
+- `profile.json`
+- `erase-receipt.json`
+
+Those schema fixtures intentionally use synthetic placeholder signatures/digests
+where the test target is JSON-schema shape rather than cryptographic decoding.

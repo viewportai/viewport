@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "viewport.context_hpke_grant_test_vector/v1",
+  "note": "Synthetic test-only key material for independent HPKE decoder validation.",
+  "recipient": {
+    "name": "bob",
+    "hpkePublicKey": "hMEIiwjdhCBLmIIZplaNKGp1mYTwLgmUZaueCxO/UEg=",
+    "hpkePrivateKey": "syFrnRn1OPjUlejS91CacJeZJXyrlauwZZJT9uX1M80="
+  },
+  "grant": {
+    "version": "viewport.context_key_grant/hpke-draft-01",
+    "recipientName": "bob",
+    "repoId": "ctx_protocol_golden",
+    "keyEpoch": 7,
+    "suite": {
+      "kem": "DHKEM_X25519_HKDF_SHA256",
+      "kdf": "HKDF_SHA256",
+      "aead": "AES_256_GCM"
+    },
+    "enc": "HLJVnA/9rEKTXOQ56xlbNXJZjW3AH4C7sAH9jyOisDY=",
+    "ciphertext": "i86AuN9MGuZoGI/5oNeE8m1yZSvNF5Opoc3BmwnSnKK6fXJ90+lWqucVY8Us4rQs",
+    "aadDigest": "sha256:1aee4f1b637f12e595218e8bb882e1bd8eb904a77ce9da6fcf19ac32c4ba7374"
+  },
+  "expectedRepoKeyDigest": "sha256:109ec41db86953f8fc155548d636770073705a6e0939a14b7e924d2e636d64f7"
+}
