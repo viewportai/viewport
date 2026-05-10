@@ -253,6 +253,39 @@ describe('resource config CLI command', () => {
     expect(parsed['errors']).toEqual([expect.objectContaining({ code: 'invalid_config_skipped' })]);
   });
 
+  it('rejects inline provider secrets and points users to credential handles', async () => {
+    const repo = path.join(tempHome, 'inline-provider-secret');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: product-research',
+        '      provider: notebooklm',
+        '      notebook: nb_product',
+        '      api_key: sk-do-not-commit',
+      ].join('\n'),
+    );
+
+    await runValidate(['validate', '--path', repo, '--json']);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    const parsed = parseLoggedJson(output);
+    expect(parsed).toMatchObject({
+      schema_version: 'viewport.cli.validate/v1',
+      command: 'validate',
+      ok: false,
+      status: 'needs_attention',
+      config_files: [],
+    });
+    expect(JSON.stringify(parsed['errors'])).toContain(
+      'Provider credentials must use credential_ref handles',
+    );
+    expect(output).not.toContain('sk-do-not-commit');
+  });
+
   it('allows guard checks for paths outside risky approval rules', async () => {
     const repo = await writeGuardRepo('guard-allowed');
 

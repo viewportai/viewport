@@ -33,6 +33,18 @@ const SizeBudgetSchema = z.union([
     .trim()
     .regex(/^\d+(b|kb|mb)?$/i, 'Use bytes, kb, or mb, for example 64000 or 64kb.'),
 ]);
+const CredentialRefSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/,
+    'Use an opaque credential handle, for example credentials/notebooklm/work.',
+  );
+const ALLOWED_CREDENTIAL_REF_KEYS = new Set(['credential_ref', 'credentialRef']);
+const SECRET_FIELD_PATTERN =
+  /(^|[_-])(auth|oauth|token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|secret|password|credential|credentials)([_-]|$)/i;
 
 const ContextProviderSchema = z
   .object({
@@ -41,14 +53,54 @@ const ContextProviderSchema = z
     required: z.boolean().optional(),
     privacy: ProviderPrivacySchema.optional(),
     capabilities: z.array(ProviderCapabilitySchema).max(4).optional(),
-    credential_ref: z.string().trim().min(1).max(256).optional(),
-    credentialRef: z.string().trim().min(1).max(256).optional(),
+    credential_ref: CredentialRefSchema.optional(),
+    credentialRef: CredentialRefSchema.optional(),
     paths: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
     vault: z.string().trim().min(1).max(256).optional(),
     notebook: z.string().trim().min(1).max(256).optional(),
     command: z.string().trim().min(1).max(512).optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((provider, ctx) => {
+    if (
+      provider.credential_ref &&
+      provider.credentialRef &&
+      provider.credential_ref !== provider.credentialRef
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['credential_ref'],
+        message: 'credential_ref and credentialRef must match when both are set.',
+      });
+    }
+
+    for (const fieldPath of secretFieldPaths(provider)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: fieldPath,
+        message:
+          'Provider credentials must use credential_ref handles. Do not commit tokens, API keys, passwords, or auth blocks in .viewport config.',
+      });
+    }
+  });
+
+function secretFieldPaths(
+  value: unknown,
+  path: Array<string | number> = [],
+): Array<Array<string | number>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const paths: Array<Array<string | number>> = [];
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (ALLOWED_CREDENTIAL_REF_KEYS.has(key)) continue;
+    const nextPath = [...path, key];
+    if (SECRET_FIELD_PATTERN.test(key)) {
+      paths.push(nextPath);
+      continue;
+    }
+    paths.push(...secretFieldPaths(nestedValue, nextPath));
+  }
+  return paths;
+}
 
 const ContextResolutionSchema = z
   .object({
