@@ -1,0 +1,60 @@
+name: Release Preflight
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  daemon-npm-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Validate daemon publish metadata
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('packages/daemon/package.json', 'utf8'));
+          const expectedRepoUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}.git`;
+          if (pkg.repository?.url !== expectedRepoUrl) {
+            console.error(`repository.url must equal ${expectedRepoUrl}, got: ${pkg.repository?.url}`);
+            process.exit(1);
+          }
+          if (pkg.repository?.directory !== 'packages/daemon') {
+            console.error(`repository.directory must equal packages/daemon, got: ${pkg.repository?.directory}`);
+            process.exit(1);
+          }
+          if (pkg.bin?.vpd !== 'bin/vpd.js') {
+            console.error(`bin.vpd must equal bin/vpd.js, got: ${pkg.bin?.vpd}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Verify release secret is configured
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN is not configured for this repository."
+            exit 1
+          fi
+
+      - name: Verify npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry https://registry.npmjs.org/
+
+      - name: Verify commit-analyzer preset dependency
+        run: node -p "require.resolve('conventional-changelog-conventionalcommits')"

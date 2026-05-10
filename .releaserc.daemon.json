@@ -1,0 +1,48 @@
+{
+  "branches": ["main"],
+  "tagFormat": "@viewportai/daemon@${version}",
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "breaking": true, "release": "major" },
+          { "type": "feat", "release": "minor" },
+          { "type": "fix", "release": "patch" },
+          { "type": "perf", "release": "patch" },
+          { "type": "refactor", "release": "patch" },
+          { "type": "revert", "release": "patch" }
+        ]
+      }
+    ],
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/changelog",
+      { "changelogFile": "packages/daemon/CHANGELOG.md" }
+    ],
+    [
+      "@semantic-release/npm",
+      { "pkgRoot": "packages/daemon", "npmPublish": true }
+    ],
+    [
+      "@semantic-release/exec",
+      { "prepareCmd": "npm install --package-lock-only --ignore-scripts" }
+    ],
+    [
+      "@semantic-release/github",
+      { "successComment": false, "failComment": false }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "packages/daemon/CHANGELOG.md",
+          "packages/daemon/package.json",
+          "package-lock.json"
+        ],
+        "message": "chore(release): @viewportai/daemon ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ]
+  ]
+}

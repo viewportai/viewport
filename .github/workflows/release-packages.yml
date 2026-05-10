@@ -1,34 +1,120 @@
 name: Release Packages
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ['OSS CI']
+    types: [completed]
   workflow_dispatch:
 
+permissions:
+  contents: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: release-packages-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  release:
+  daemon:
+    name: Daemon npm package
+    if: >
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'))
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
           registry-url: https://registry.npmjs.org
+
       - run: npm ci
-      - name: Create release PR or publish
-        uses: changesets/action@v1
-        with:
-          version: npm run version:packages
-          publish: npm run release:packages
-          commit: 'chore: release packages'
-          title: 'chore: release packages'
+
+      - name: Validate daemon publish metadata
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('packages/daemon/package.json', 'utf8'));
+          const expectedRepoUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}.git`;
+          const repo = pkg.repository || {};
+          if (repo.url !== expectedRepoUrl) {
+            console.error(`packages/daemon package.json repository.url must equal ${expectedRepoUrl}, got: ${repo.url}`);
+            process.exit(1);
+          }
+          if (repo.directory !== 'packages/daemon') {
+            console.error(`packages/daemon package.json repository.directory must equal packages/daemon, got: ${repo.directory}`);
+            process.exit(1);
+          }
+          if (pkg.bin?.vpd !== 'bin/vpd.js') {
+            console.error(`packages/daemon package.json bin.vpd must equal bin/vpd.js, got: ${pkg.bin?.vpd}`);
+            process.exit(1);
+          }
+          if (pkg.publishConfig?.access !== 'public') {
+            console.error('packages/daemon package.json publishConfig.access must be public.');
+            process.exit(1);
+          }
+          NODE
+
+      - name: Verify release secret is configured
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN is not configured."
+            exit 1
+          fi
+
+      - name: Verify npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry https://registry.npmjs.org/
+
+      - name: Verify daemon baseline tag
+        run: |
+          if ! git rev-parse -q --verify 'refs/tags/@viewportai/daemon@0.2.0' >/dev/null; then
+            echo "Missing daemon baseline tag @viewportai/daemon@0.2.0."
+            exit 1
+          fi
+
+      - name: Detect daemon release changes
+        id: daemon_changes
+        shell: bash
+        run: |
+          latest_tag="$(git tag --list '@viewportai/daemon@*' --sort=-version:refname | head -1)"
+          if [[ -z "$latest_tag" ]]; then
+            echo "No daemon release tag found."
+            exit 1
+          fi
+
+          changed_files="$(git diff --name-only "$latest_tag"..HEAD)"
+          echo "$changed_files"
+          if echo "$changed_files" | grep -E '^(packages/daemon/|packages/context-engine/|package.json$|package-lock.json$)' >/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Semantic release daemon
+        if: steps.daemon_changes.outputs.changed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: npx semantic-release --extends ./.releaserc.daemon.json
+
+      - name: Skip daemon release
+        if: steps.daemon_changes.outputs.changed != 'true'
+        run: echo "No daemon package changes since the latest daemon release tag."
