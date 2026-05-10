@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -580,6 +581,200 @@ describe('context CLI command', () => {
     expect(output).not.toContain('Auth changes must run session rotation tests.');
   });
 
+  it('closes the candidate review loop through provider CLI, sync, signed decision, and receipt push', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-candidate-loop-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: guardrails',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+        '      required: true',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--key-store',
+      'file',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'propose',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'guardrails',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Auth rotation candidate',
+      '--body',
+      'Agent runs touching auth must include session rotation proof.',
+      '--source-kind',
+      'workflow',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    const proposeOutput = parseLastJsonLog() as {
+      candidate_id: string;
+      payload_digest: string;
+      status: string;
+    };
+    expect(proposeOutput.status).toBe('pending_review');
+    expect(proposeOutput.payload_digest).toMatch(/^sha256:/);
+
+    const platformEvents: unknown[] = [];
+    let pushedBodies: string[] = [];
+    const decisionState: { current?: ReturnType<typeof signedDecision> } = {};
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      if (requestUrl.endsWith('/push')) {
+        pushedBodies.push(String(init?.body ?? ''));
+        platformEvents.push(...((body.events as unknown[] | undefined) ?? []));
+        expect(JSON.stringify(body)).not.toContain(
+          'Agent runs touching auth must include session rotation proof.',
+        );
+        return jsonResponse(
+          { ok: true, accepted: ((body.events as unknown[] | undefined) ?? []).length },
+          202,
+        );
+      }
+
+      expect(requestUrl).toBe(
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/pull',
+      );
+      return jsonResponse({
+        data: platformEvents.map((event, index) => ({
+          id: index + 1,
+          received_at: `2026-05-09T18:00:${String(index).padStart(2, '0')}.000Z`,
+          signed_event: event,
+        })),
+        candidate_decisions: decisionState.current ? [decisionState.current] : [],
+      });
+    }) as typeof fetch;
+
+    await writeRelayConfig(tempHome);
+    await runContext([
+      'context',
+      'sync-push',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--json',
+    ]);
+    expect(JSON.stringify(platformEvents)).toContain('entry.proposed');
+    expect(JSON.stringify(platformEvents)).not.toContain(
+      'Agent runs touching auth must include session rotation proof.',
+    );
+
+    const decision = signedDecision({
+      schema_version: 'viewport.context_candidate_decision/v1',
+      id: 'ctxd_cli_loop_1',
+      inbox_item_id: 'inbox_cli_loop_1',
+      repo_id: 'context-alpha',
+      context_resource_id: 'context-alpha',
+      candidate_event_id: proposeOutput.candidate_id,
+      payload_digest: proposeOutput.payload_digest,
+      decision: 'approved',
+      message: 'Approved in Viewport Inbox.',
+      decided_at: '2026-05-09T18:01:00.000Z',
+      decided_by_user_id: 'user_42',
+    });
+    decisionState.current = decision;
+
+    await runContext([
+      'context',
+      'sync-pull',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--context-decision-key',
+      `${decision.platform_signature.kid}:${decision.platform_signature.public_key}`,
+      '--json',
+    ]);
+    const pullOutput = parseLastJsonLog() as { appliedCandidateDecisions: number };
+    expect(pullOutput.appliedCandidateDecisions).toBe(1);
+
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'guardrails',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'session rotation',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    const searchOutput = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(searchOutput).toContain('"schema_version": "viewport.cli.context_search/v1"');
+    expect(searchOutput).toContain('"provider_id": "guardrails"');
+    expect(searchOutput).toContain('Agent runs touching auth must include session rotation proof.');
+
+    pushedBodies = [];
+    await runContext([
+      'context',
+      'sync-push',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--json',
+    ]);
+    const receiptPush = pushedBodies.join('\n');
+    expect(receiptPush).toContain('candidate_decision_applications');
+    expect(receiptPush).toContain('ctxd_cli_loop_1');
+    expect(receiptPush).toContain('candidate.approved');
+    expect(receiptPush).toContain('entry.approved');
+    expect(receiptPush).not.toContain(
+      'Agent runs touching auth must include session rotation proof.',
+    );
+  });
+
   it('searches approved viewport-vault context through the resolved provider contract', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-vault-search-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
@@ -800,10 +995,94 @@ describe('context CLI command', () => {
     await context();
   }
 
+  async function writeRelayConfig(home: string): Promise<void> {
+    const previous = process.env['VIEWPORT_HOME'];
+    process.env['VIEWPORT_HOME'] = home;
+    vi.resetModules();
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      server: { url: 'https://app.getviewport.test' },
+      relay: {
+        enabled: true,
+        endpoint: 'wss://getviewport.test:7781/ws',
+        serverUrl: 'https://app.getviewport.test',
+        workspaceId: 'workspace-alpha',
+        issueToken: 'runtime-token',
+        tlsVerify: 'auto',
+      },
+    });
+    if (previous === undefined) {
+      delete process.env['VIEWPORT_HOME'];
+    } else {
+      process.env['VIEWPORT_HOME'] = previous;
+    }
+  }
+
+  function parseLastJsonLog(): unknown {
+    const line = logSpy.mock.calls.at(-1)?.join(' ');
+    if (!line) throw new Error('Expected a JSON log line');
+    return JSON.parse(line);
+  }
+
   function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  }
+
+  function signedDecision<T extends Record<string, unknown>>(
+    record: T,
+  ): T & {
+    platform_signature: {
+      algorithm: 'Ed25519';
+      kid: string;
+      public_key: string;
+      signature: string;
+      signed_payload_digest: string;
+    };
+  } {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const publicDer = publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    const rawPublicKey = publicDer.subarray(-32);
+    const payload = canonicalJson({
+      schema_version: record.schema_version,
+      id: record.id,
+      inbox_item_id: record.inbox_item_id ?? null,
+      repo_id: record.repo_id,
+      context_resource_id: record.context_resource_id ?? record.repo_id,
+      candidate_event_id: record.candidate_event_id,
+      payload_digest: record.payload_digest ?? null,
+      decision: record.decision,
+      message: record.message ?? null,
+      decided_at: record.decided_at ?? null,
+      decided_by_user_id: record.decided_by_user_id ?? null,
+    });
+    return {
+      ...record,
+      platform_signature: {
+        algorithm: 'Ed25519',
+        kid: 'platform-v1',
+        public_key: rawPublicKey.toString('base64'),
+        signature: crypto.sign(null, Buffer.from(payload), privateKey).toString('base64'),
+        signed_payload_digest: `sha256:${crypto.createHash('sha256').update(payload).digest('hex')}`,
+      },
+    };
+  }
+
+  function canonicalJson(value: unknown): string {
+    return JSON.stringify(sortKeys(value));
+  }
+
+  function sortKeys(value: unknown): unknown {
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(sortKeys);
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, item]) => [key, sortKeys(item)]),
+    );
   }
 });
