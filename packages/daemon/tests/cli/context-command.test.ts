@@ -118,6 +118,88 @@ describe('context CLI command', () => {
     expect(output).toContain('Every bug fix needs a regression test.');
   });
 
+  it('lists and creates platform Context Vault metadata through the paired runtime credential', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: false,
+        endpoint: 'wss://getviewport.test:7781/ws',
+        serverUrl: 'http://app.getviewport.test',
+        workspaceId: 'workspace-alpha',
+        issueToken: 'runtime-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    const requests: Array<{ url: string; body?: unknown; method?: string }> = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ url: requestUrl, method: init?.method, body });
+      if (requestUrl.includes('/context-vaults?')) {
+        expect(requestUrl).toBe(
+          'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults?credential=runtime-token',
+        );
+        return jsonResponse({
+          data: [
+            {
+              id: '01vault',
+              vault_id: 'ctx_platform_arch',
+              name: 'Platform Architecture',
+              workspace_id: 'workspace-alpha',
+              description: null,
+              encryption: { privacy: 'control_plane_blind', server_plaintext: false },
+              access: { role: 'owner', can_view: true },
+            },
+          ],
+        });
+      }
+      expect(requestUrl).toBe(
+        'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults',
+      );
+      expect(body).toMatchObject({
+        credential: 'runtime-token',
+        name: 'Runtime Guardrails',
+        vault_id: 'ctx_runtime_guardrails',
+      });
+      return jsonResponse(
+        {
+          data: {
+            id: '01created',
+            vault_id: 'ctx_runtime_guardrails',
+            name: 'Runtime Guardrails',
+            workspace_id: 'workspace-alpha',
+            description: null,
+            encryption: { privacy: 'control_plane_blind', server_plaintext: false },
+            access: { role: 'owner', can_view: true },
+          },
+        },
+        201,
+      );
+    }) as typeof fetch;
+
+    await runContext(['context', 'vaults', '--json']);
+    await runContext([
+      'context',
+      'create',
+      '--name',
+      'Runtime Guardrails',
+      '--vault',
+      'ctx_runtime_guardrails',
+      '--json',
+    ]);
+
+    expect(requests).toHaveLength(2);
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context vaults"');
+    expect(output).toContain('"vault_id": "ctx_platform_arch"');
+    expect(output).toContain('"command": "context create"');
+    expect(output).toContain('"vault_id": "ctx_runtime_guardrails"');
+    expect(output).not.toContain('runtime-token');
+  });
+
   it('proposes candidate context through vpd arguments without resolving it before review', async () => {
     await runContext([
       'context',
@@ -494,7 +576,7 @@ describe('context CLI command', () => {
         enabled: true,
         endpoint: 'wss://getviewport.test:7781/ws',
         serverUrl: 'https://app.getviewport.test',
-        workspaceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
         issueToken: 'runtime-token',
         tlsVerify: 'auto',
       },
@@ -506,7 +588,7 @@ describe('context CLI command', () => {
       if (String(url).endsWith('/push')) {
         pushedEvents = body.events;
         expect(String(url)).toBe(
-          'https://app.getviewport.test/api/runtime/workspaces/context-alpha/context-vault/events/push',
+          'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/push',
         );
         expect(JSON.stringify(pushedEvents)).toContain('viewport.context_event/v1');
         expect(JSON.stringify(pushedEvents)).not.toContain(
@@ -516,8 +598,9 @@ describe('context CLI command', () => {
       }
 
       expect(String(url)).toBe(
-        'https://app.getviewport.test/api/runtime/workspaces/context-alpha/context-vault/events/pull',
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/pull',
       );
+      expect(body).toMatchObject({ context_resource_id: 'context-alpha' });
       return jsonResponse({
         data: pushedEvents.map((event, index) => ({ id: index + 1, signed_event: event })),
       });

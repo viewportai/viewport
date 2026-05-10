@@ -3,6 +3,7 @@ import { ConfigManager } from '../core/config.js';
 
 export interface ContextSyncTarget {
   contextResourceId: string;
+  workspaceId: string;
   serverUrl: string;
   credential: string;
   decisionSigningKeys?: Record<string, string>;
@@ -17,6 +18,7 @@ export async function resolveContextSyncTarget(
   const relay = daemon.relay ?? {};
 
   const contextResourceId = getFlag('context') ?? getFlag('project');
+  const workspaceId = getFlag('workspace') ?? relay.workspaceId;
   const serverUrl = getFlag('server-url') ?? relay.serverUrl ?? daemon.server?.url;
   const credential = getFlag('credential') ?? relay.issueToken;
   const decisionSigningKeys =
@@ -36,13 +38,18 @@ export async function resolveContextSyncTarget(
       `vpd context ${commandName} requires --server-url or a saved remote server from vpd remote login`,
     );
   }
+  if (!workspaceId) {
+    throw new Error(
+      `vpd context ${commandName} requires --workspace <id> or a saved remote workspace from vpd remote login`,
+    );
+  }
   if (!credential) {
     throw new Error(
       `vpd context ${commandName} requires --credential or a saved relay issue token from vpd remote login`,
     );
   }
 
-  return { contextResourceId, serverUrl, credential, decisionSigningKeys };
+  return { contextResourceId, workspaceId, serverUrl, credential, decisionSigningKeys };
 }
 
 function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {

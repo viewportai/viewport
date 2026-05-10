@@ -14,7 +14,9 @@ import { readCandidateDecisionApplications } from '../context/local-edge-decisio
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
+import { parseLimit, parseSince } from './context-command-parsers.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
+import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
 import {
   contextDeviceAccept,
   contextDeviceApprove,
@@ -42,6 +44,14 @@ export async function context(): Promise<void> {
   }
   if (subcommand === 'add') {
     await contextAdd();
+    return;
+  }
+  if (subcommand === 'create') {
+    await contextVaultCreate();
+    return;
+  }
+  if (subcommand === 'vaults' || subcommand === 'list') {
+    await contextVaultsList();
     return;
   }
   if (subcommand === 'search') {
@@ -112,7 +122,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -253,6 +263,7 @@ async function contextSyncPush(): Promise<void> {
   const target = await resolveContextSyncTarget('sync-push');
   const result = await pushContextEvents({
     contextResourceId: target.contextResourceId,
+    workspaceId: target.workspaceId,
     serverUrl: target.serverUrl,
     credential: target.credential,
   });
@@ -270,6 +281,7 @@ async function contextSyncPull(): Promise<void> {
   const target = await resolveContextSyncTarget('sync-pull');
   const result = await pullContextEvents({
     contextResourceId: target.contextResourceId,
+    workspaceId: target.workspaceId,
     serverUrl: target.serverUrl,
     credential: target.credential,
     actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
@@ -352,28 +364,6 @@ function parseSourceKind(raw: string | undefined): 'workflow' | 'plan' | 'integr
 
 function parseKeyStore(raw: string | undefined): ContextKeyStore {
   return resolveContextKeyStore(raw);
-}
-
-function parseLimit(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 500) {
-    throw new Error(`Unsupported context sync limit: ${raw}`);
-  }
-  return value;
-}
-
-function parseSince(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const relativeHours = raw.match(/^(\d+)h$/i);
-  if (relativeHours) {
-    return new Date(Date.now() - Number(relativeHours[1]) * 60 * 60 * 1000).toISOString();
-  }
-  const since = new Date(raw);
-  if (Number.isNaN(since.getTime())) {
-    throw new Error(`Unsupported context decisions --since value: ${raw}`);
-  }
-  return since.toISOString();
 }
 
 function requiredFlag(name: string, usage: string): string {
