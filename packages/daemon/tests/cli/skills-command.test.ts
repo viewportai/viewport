@@ -27,6 +27,8 @@ describe('skills CLI command', () => {
     const body = await fs.readFile(target, 'utf8');
     expect(body).toContain('Viewport Agent Contract');
     expect(body).toContain('vpd context search --query');
+    expect(body).toContain('vpd context add --provider');
+    expect(body).toContain('Use `context propose` for agent-learned suggestions');
 
     const output = parseLoggedJson(logSpy.mock.calls.map((call) => call.join(' ')).join('\n'));
     expect(output).toMatchObject({
