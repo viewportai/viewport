@@ -32,6 +32,7 @@ const ResolveBodySchema = CredentialsSchema.extend({
   contextResourceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   query: z.string().default(''),
+  maxItems: z.number().int().min(1).max(500).optional(),
   includePrivate: z.boolean().optional(),
   profile: z.string().min(1).optional(),
   profilePin: z
@@ -114,6 +115,7 @@ export function registerContextRoutes(app: FastifyInstance): void {
       contextResourceId,
       actorName: parsed.data.actorName,
       query: parsed.data.query,
+      maxItems: parsed.data.maxItems,
       includePrivate: parsed.data.includePrivate,
       profile: parsed.data.profile,
       profilePin: parsed.data.profilePin,

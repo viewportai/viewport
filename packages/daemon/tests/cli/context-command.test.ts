@@ -855,6 +855,91 @@ describe('context CLI command', () => {
     expect(output).toContain('Auth changes must run session rotation tests.');
   });
 
+  it('bounds viewport-vault provider search by the resolved context size budget', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-vault-budget-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: guardrails',
+        '      provider: viewport-vault',
+        '      vault: context-alpha',
+        '  resolution:',
+        '    size_budget: 2kb',
+      ].join('\n'),
+    );
+
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    for (let index = 0; index < 5; index += 1) {
+      await runContext([
+        'context',
+        'add',
+        '--home',
+        tempHome,
+        '--context',
+        'context-alpha',
+        '--device',
+        'alice-laptop',
+        '--title',
+        `Auth testing rule ${index}`,
+        '--body',
+        `Auth changes must run session rotation tests. Budget proof ${index}.`,
+        '--passphrase',
+        'alice-passphrase',
+        '--recovery-code',
+        'alice-recovery',
+        '--json',
+      ]);
+    }
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'search',
+      '--home',
+      tempHome,
+      '--path',
+      repo,
+      '--provider',
+      'guardrails',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'rotation',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+
+    const output = parseLastJsonLog() as {
+      results: unknown[];
+      providers_consulted: Array<{ result_count: number }>;
+    };
+    expect(output.results).toHaveLength(1);
+    expect(output.providers_consulted[0]?.result_count).toBe(1);
+  });
+
   it('pushes and pulls canonical encrypted context events using saved relay config', async () => {
     await runContext([
       'context',

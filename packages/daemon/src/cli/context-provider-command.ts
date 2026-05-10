@@ -33,6 +33,10 @@ type ProviderConsulted = {
   result_count?: number;
 };
 
+const DEFAULT_VAULT_MAX_ITEMS = 25;
+const MAX_VAULT_ITEMS_PER_PROVIDER = 50;
+const ASSUMED_VAULT_ITEM_BYTES = 2048;
+
 export async function contextSearch(): Promise<void> {
   const query = getFlag('query') ?? '';
   const providerId = getFlag('provider');
@@ -209,12 +213,21 @@ async function searchProvider(
       contextResourceId: provider.vault,
       actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
       query,
+      maxItems: maxItemsForBudget(sizeBudgetBytes),
       credentials: optionalCredentials(),
       home: getFlag('home'),
     });
     return bundleResults(provider, bundle);
   }
   return [];
+}
+
+function maxItemsForBudget(sizeBudgetBytes?: number): number {
+  if (!sizeBudgetBytes || sizeBudgetBytes <= 0) return DEFAULT_VAULT_MAX_ITEMS;
+  return Math.max(
+    1,
+    Math.min(MAX_VAULT_ITEMS_PER_PROVIDER, Math.floor(sizeBudgetBytes / ASSUMED_VAULT_ITEM_BYTES)),
+  );
 }
 
 function repoDocsResult(item: RepoDocsContextItem): ContextProviderResult {

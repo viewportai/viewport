@@ -292,6 +292,7 @@ export async function resolveContextBundle(options: {
   contextResourceId: string;
   actorName: string;
   query: string;
+  maxItems?: number;
   credentials?: ContextCredentials;
   includePrivate?: boolean;
   profile?: string;
@@ -318,6 +319,7 @@ export async function resolveContextBundle(options: {
     actorName: options.actorName,
     includePrivate: options.includePrivate ?? false,
     query: options.query.trim() === '' ? null : options.query,
+    maxItems: options.maxItems ?? null,
     profile: options.profile ?? null,
     profilePin: options.profilePin ?? null,
   });

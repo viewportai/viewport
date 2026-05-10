@@ -14,7 +14,7 @@ import { readCandidateDecisionApplications } from '../context/local-edge-decisio
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget } from './context-sync-target.js';
-import { parseLimit, parseSince } from './context-command-parsers.js';
+import { parseLimit, parseMaxItems, parseSince } from './context-command-parsers.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
 import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
 import { contextVaultUse } from './context-vault-use-command.js';
@@ -237,6 +237,7 @@ async function contextResolve(): Promise<void> {
       contextResourceId,
       actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
       query: getFlag('query') ?? '',
+      maxItems: parseMaxItems(getFlag('max-items')),
       includePrivate: hasFlag('include-private'),
       profile: parseProfileName(getFlag('profile')),
       profilePin: parseProfilePin(),
