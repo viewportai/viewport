@@ -9,6 +9,95 @@ import { resolveSessionResourceManifestSync } from '../config-resolution/index.j
 
 type ResolvedManifest = ReturnType<typeof resolveSessionResourceManifestSync>;
 
+export function buildValidateJsonOutput(
+  manifest: ResolvedManifest,
+  ok: boolean,
+): Record<string, unknown> {
+  return {
+    schema_version: 'viewport.cli.validate/v1',
+    command: 'validate',
+    ok,
+    status: ok ? 'ready' : 'needs_attention',
+    path: manifest.workingDirectory,
+    config_files: manifest.configSources.map((source) => source.path),
+    workflow_files: manifest.contract.workflows
+      .map((workflow) => workflow.path)
+      .filter((workflowPath): workflowPath is string => typeof workflowPath === 'string'),
+    warnings: manifest.warnings,
+    errors: [
+      ...manifest.conflicts.map((conflict) => ({
+        code: 'contract_conflict',
+        field: conflict.field,
+        resolution: conflict.resolution,
+        values: conflict.values,
+      })),
+      ...manifest.warnings
+        .filter((warning) => warning.code === 'invalid_config_skipped')
+        .map((warning) => ({
+          code: warning.code,
+          message: warning.message,
+          ...(warning.path ? { path: warning.path } : {}),
+        })),
+    ],
+    manifest,
+  };
+}
+
+export function buildContractResolveJsonOutput(
+  manifest: ResolvedManifest,
+): Record<string, unknown> {
+  return {
+    schema_version: 'viewport.cli.contract_resolve/v1',
+    command: 'contract resolve',
+    ok: true,
+    manifest_digest: manifest.manifestDigest,
+    path: manifest.workingDirectory,
+    repo: null,
+    config_files: manifest.configSources.map((source) => ({
+      path: source.path,
+      digest: source.digest,
+      ...(source.name ? { name: source.name } : {}),
+    })),
+    workflows: manifest.contract.workflows.map((workflow) => ({
+      id: workflow.id,
+      source: workflow.path ? 'local_file' : workflow.resource ? 'resource' : 'unresolved',
+      ...(workflow.path ? { path: workflow.path } : {}),
+      ...(workflow.resource ? { resource: workflow.resource } : {}),
+      ...(workflow.digest ? { digest: workflow.digest } : {}),
+      required: workflow.required,
+      status: 'requested_unverified',
+    })),
+    providers: manifest.contract.contextProviders.map((provider) => ({
+      id: provider.id,
+      provider: provider.provider,
+      privacy: provider.privacy,
+      capabilities: provider.capabilities,
+      required: provider.required,
+      status: 'available',
+      ...(provider.vault ? { vault: provider.vault } : {}),
+      ...(provider.paths ? { paths: provider.paths } : {}),
+      ...(provider.notebook ? { notebook: provider.notebook } : {}),
+      ...(provider.command ? { command: provider.command } : {}),
+    })),
+    denied: [],
+    missing: manifest.warnings
+      .filter((warning) => warning.code === 'no_config_found')
+      .map((warning) => ({
+        code: warning.code,
+        message: warning.message,
+        ...(warning.path ? { path: warning.path } : {}),
+      })),
+    conflicts: manifest.conflicts,
+    warnings: manifest.warnings,
+    errors: [],
+    resolver: {
+      name: 'vpd-contract-resolver',
+      version: '1',
+    },
+    manifest,
+  };
+}
+
 export async function validate(): Promise<void> {
   const workingDirectory = getPathFlag();
   const manifest = resolveSessionResourceManifestSync({ workingDirectory });
@@ -21,12 +110,7 @@ export async function validate(): Promise<void> {
     invalidWarnings.length === 0;
 
   if (isJsonMode()) {
-    printJson({
-      command: 'validate',
-      ok,
-      status: ok ? 'ready' : 'needs_attention',
-      manifest,
-    });
+    printJson(buildValidateJsonOutput(manifest, ok));
     return;
   }
 
@@ -102,7 +186,7 @@ async function contractResolve(): Promise<void> {
   const manifest = resolveSessionResourceManifestSync({ workingDirectory });
 
   if (isJsonMode()) {
-    printJson({ command: 'contract resolve', ok: true, manifest });
+    printJson(buildContractResolveJsonOutput(manifest));
     return;
   }
 

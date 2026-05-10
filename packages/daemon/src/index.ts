@@ -17,6 +17,7 @@
  *   vpd contract ...          Resolve repo-local Viewport contracts
  *   vpd config ...            Resolve repo-local Viewport resources
  *   vpd context ...           Local trusted-edge context commands
+ *   vpd skills ...            Install agent skills that call vpd
  */
 
 import { getCommand, getArgs } from './cli/args.js';
@@ -50,6 +51,7 @@ import {
   contract,
   validate,
   context,
+  skills,
   service,
   setup,
   remote,
@@ -98,6 +100,7 @@ const commands: Record<string, () => Promise<void>> = {
   contract,
   validate,
   context,
+  skills,
   service,
   setup,
   remote,
@@ -178,6 +181,8 @@ if (command === 'hook') {
       handler = contract;
     } else if (command === 'context') {
       handler = context;
+    } else if (command === 'skills') {
+      handler = skills;
     } else if (command === 'remote') {
       handler = remote;
     }

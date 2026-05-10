@@ -317,7 +317,7 @@ export async function resolveContextBundle(options: {
     repoId: metadata.repoId,
     actorName: options.actorName,
     includePrivate: options.includePrivate ?? false,
-    query: options.query,
+    query: options.query.trim() === '' ? null : options.query,
     profile: options.profile ?? null,
     profilePin: options.profilePin ?? null,
   });

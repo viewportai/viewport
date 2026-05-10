@@ -74,11 +74,47 @@ describe('resource config CLI command', () => {
     await runContract(['contract', 'resolve', '--path', repo, '--json']);
 
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-    expect(output).toContain('"command": "contract resolve"');
-    expect(output).toContain('"provider": "repo-docs"');
-    expect(output).toContain('"provider": "viewport-vault"');
-    expect(output).toContain('"vault": "ctx_demo"');
-    expect(output).toContain('"path": ".viewport/workflows/review.yaml"');
+    const parsed = parseLoggedJson(output);
+    expect(parsed).toMatchObject({
+      schema_version: 'viewport.cli.contract_resolve/v1',
+      command: 'contract resolve',
+      ok: true,
+      path: repo,
+      resolver: {
+        name: 'vpd-contract-resolver',
+        version: '1',
+      },
+    });
+    expect(parsed['manifest_digest']).toMatch(/^sha256:/);
+    expect(parsed['config_files']).toEqual([
+      expect.objectContaining({
+        path: path.join(repo, '.viewport', 'config.yaml'),
+        digest: expect.stringMatching(/^sha256:/),
+      }),
+    ]);
+    expect(parsed['providers']).toEqual([
+      expect.objectContaining({
+        id: 'docs',
+        provider: 'repo-docs',
+        privacy: 'local_only',
+        status: 'available',
+      }),
+      expect.objectContaining({
+        id: 'vault',
+        provider: 'viewport-vault',
+        vault: 'ctx_demo',
+        status: 'available',
+      }),
+    ]);
+    expect(parsed['workflows']).toEqual([
+      expect.objectContaining({
+        id: 'review',
+        source: 'local_file',
+        path: '.viewport/workflows/review.yaml',
+        status: 'requested_unverified',
+      }),
+    ]);
+    expect(output).toContain('"schema": "viewport.session_resource_manifest/v1"');
   });
 
   it('authorizes a resolved contract against the runtime control-plane route', async () => {
@@ -201,9 +237,20 @@ describe('resource config CLI command', () => {
     await runValidate(['validate', '--path', repo, '--json']);
 
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-    expect(output).toContain('"command": "validate"');
-    expect(output).toContain('"ok": false');
-    expect(output).toContain('"code": "invalid_config_skipped"');
+    const parsed = parseLoggedJson(output);
+    expect(parsed).toMatchObject({
+      schema_version: 'viewport.cli.validate/v1',
+      command: 'validate',
+      ok: false,
+      status: 'needs_attention',
+      path: repo,
+      config_files: [],
+      workflow_files: [],
+    });
+    expect(parsed['warnings']).toEqual([
+      expect.objectContaining({ code: 'invalid_config_skipped' }),
+    ]);
+    expect(parsed['errors']).toEqual([expect.objectContaining({ code: 'invalid_config_skipped' })]);
   });
 
   it('prints a human-readable doctor report with resolved resource ids', async () => {
@@ -262,6 +309,10 @@ async function runValidate(args: string[]): Promise<void> {
   process.argv = ['node', 'vpd', ...args];
   const { validate } = await import('../../src/cli/resource-config-command.js');
   await validate();
+}
+
+function parseLoggedJson(output: string): Record<string, unknown> {
+  return JSON.parse(output) as Record<string, unknown>;
 }
 
 async function writeContractRepo(name: string, vaultId: string): Promise<string> {

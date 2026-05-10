@@ -379,6 +379,8 @@ export function showHelp(): void {
   console.log('                               Validate repo-local .viewport/config.yaml contract');
   console.log('  contract resolve [--path <path>] [--json]');
   console.log('                               Resolve repo-local contract manifest');
+  console.log('  skills install [claude-code|cursor|all] [--target <path>] [--force] [--json]');
+  console.log('                               Install agent instructions for calling vpd');
   console.log(
     '  context init --context <id> --user <name> --device <name> --passphrase <text> --recovery-code <text> [--key-store file|macos-keychain] [--json]',
   );
