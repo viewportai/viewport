@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.2.0...@viewportai/daemon@0.2.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **daemon:** route context proposals through providers ([68ca104](https://github.com/viewportai/viewport/commit/68ca104c73fdb484114b0291fe2555a20773a3ad))
+
 # [0.2.0](https://github.com/viewportai/viewport/compare/v0.1.0...v0.2.0) (2026-03-09)
 
 
