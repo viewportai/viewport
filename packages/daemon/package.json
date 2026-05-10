@@ -20,7 +20,8 @@
     "bin",
     "dist",
     "README.md",
-    "docs"
+    "docs",
+    "schemas"
   ],
   "bundledDependencies": [
     "@viewportai/context-engine"

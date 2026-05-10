@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveSessionResourceManifest } from '../../src/config-resolution/index.js';
 import { resolveRepoDocsProvider } from '../../src/context-providers/repo-docs-provider.js';
+import { repoDocsProviderAdapter } from '../../src/context-providers/repo-docs-provider.js';
 
 let root: string;
 
@@ -84,5 +85,54 @@ describe('repo-docs provider', () => {
     });
 
     expect(items.map((item) => item.title)).toEqual(['docs/small.md']);
+  });
+
+  it('returns bounded search snippets while explicit get can return the full note', async () => {
+    const repo = path.join(root, 'repo');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(repo, 'docs'), { recursive: true });
+    const body = [
+      'intro '.repeat(2000),
+      'Auth changes must run session rotation tests.',
+      ' outro'.repeat(2000),
+    ].join('\n');
+    await fs.writeFile(path.join(repo, 'docs', 'large-runbook.md'), body);
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: repo_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+        '  resolution:',
+        '    size_budget: 64kb',
+        '',
+      ].join('\n'),
+    );
+
+    const manifest = await resolveSessionResourceManifest({ workingDirectory: repo });
+    const provider = manifest.contract.contextProviders[0]!;
+    const search = await repoDocsProviderAdapter.search?.({
+      provider,
+      query: 'session rotation',
+      sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
+      actorName: 'alice-laptop',
+    });
+
+    expect(search).toBeDefined();
+    expect(search![0]?.body).toContain('session rotation tests');
+    expect(Buffer.byteLength(search![0]!.body, 'utf8')).toBeLessThanOrEqual(8 * 1024);
+
+    const full = await repoDocsProviderAdapter.get?.({
+      provider,
+      entryId: 'repo_docs:docs/large-runbook.md',
+      query: '',
+      sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
+      actorName: 'alice-laptop',
+    });
+    expect(full?.body).toBe(body);
   });
 });

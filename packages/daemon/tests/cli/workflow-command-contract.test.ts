@@ -27,9 +27,30 @@ describe('workflow CLI JSON contract', () => {
           { path: '/repo/.viewport/config.yaml', digest: 'sha256:config', version: 1 },
         ],
         resources: {
-          contexts: [],
-          workflows: [],
-          plans: [],
+          contexts: [
+            {
+              id: 'ctx_platform_arch',
+              required: true,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
+          workflows: [
+            {
+              id: 'review-pr',
+              required: true,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
+          plans: [
+            {
+              id: 'plan_release_template',
+              required: false,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
           agentProfiles: [],
         },
         contract: {
@@ -43,9 +64,41 @@ describe('workflow CLI JSON contract', () => {
               sourceConfigPath: '/repo/.viewport/config.yaml',
               resolution: 'requested_unverified',
             },
+            {
+              id: 'platform_arch',
+              provider: 'viewport-vault',
+              required: true,
+              privacy: 'control_plane_blind',
+              capabilities: ['search', 'get', 'propose', 'write_approved'],
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+              vault: 'ctx_platform_arch',
+            },
           ],
-          contextResolution: {},
-          workflows: [],
+          contextResolution: {
+            order: ['repo_docs', 'platform_arch'],
+            strategy: 'provider_order',
+            sizeBudgetBytes: 65536,
+            proposeFallbackProvider: 'platform_arch',
+          },
+          workflows: [
+            {
+              id: 'review-pr',
+              path: '.viewport/workflows/review-pr.yaml',
+              required: true,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
+          riskyPathRules: [
+            {
+              id: 'auth-touch',
+              path: 'apps/api/Auth/**',
+              require: ['reviewer:security'],
+              checks: ['npm run test -- session-rotation'],
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+            },
+          ],
         },
         conflicts: [],
         warnings: [],
@@ -98,7 +151,35 @@ describe('workflow CLI JSON contract', () => {
       resource_manifest: {
         schema: 'viewport.session_resource_manifest/v1',
         manifest_digest: 'sha256:manifestdigest',
+        working_directory: '/repo',
         config_files: ['/repo/.viewport/config.yaml'],
+        resources: {
+          contexts: [
+            {
+              id: 'ctx_platform_arch',
+              required: true,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
+          workflows: [
+            {
+              id: 'review-pr',
+              required: true,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
+          plans: [
+            {
+              id: 'plan_release_template',
+              required: false,
+              sourceConfigPath: '/repo/.viewport/config.yaml',
+              resolution: 'requested_unverified',
+            },
+          ],
+          agentProfiles: [],
+        },
         providers: [
           {
             id: 'repo_docs',
@@ -106,6 +187,42 @@ describe('workflow CLI JSON contract', () => {
             privacy: 'local_only',
             capabilities: ['search', 'get'],
             status: 'requested_unverified',
+            required: true,
+            source_config_path: '/repo/.viewport/config.yaml',
+          },
+          {
+            id: 'platform_arch',
+            provider: 'viewport-vault',
+            privacy: 'control_plane_blind',
+            capabilities: ['search', 'get', 'propose', 'write_approved'],
+            status: 'requested_unverified',
+            required: true,
+            vault: 'ctx_platform_arch',
+            source_config_path: '/repo/.viewport/config.yaml',
+          },
+        ],
+        context_resolution: {
+          order: ['repo_docs', 'platform_arch'],
+          strategy: 'provider_order',
+          sizeBudgetBytes: 65536,
+          proposeFallbackProvider: 'platform_arch',
+        },
+        workflows: [
+          {
+            id: 'review-pr',
+            required: true,
+            status: 'requested_unverified',
+            source_config_path: '/repo/.viewport/config.yaml',
+            path: '.viewport/workflows/review-pr.yaml',
+          },
+        ],
+        approvals: [
+          {
+            id: 'auth-touch',
+            path: 'apps/api/Auth/**',
+            require: ['reviewer:security'],
+            checks: ['npm run test -- session-rotation'],
+            source_config_path: '/repo/.viewport/config.yaml',
           },
         ],
         warnings: [],

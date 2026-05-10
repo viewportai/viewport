@@ -10,6 +10,7 @@ import type {
 
 const DEFAULT_SIZE_BUDGET_BYTES = 100 * 1024;
 const MAX_DOCS_PER_PROVIDER = 50;
+const MAX_SEARCH_SNIPPET_BYTES = 8 * 1024;
 
 export interface RepoDocsContextItem {
   id: string;
@@ -169,7 +170,7 @@ export const repoDocsProviderAdapter: ContextProviderAdapter = {
       query: input.query,
       sizeBudgetBytes: input.sizeBudgetBytes,
     });
-    return items.map(repoDocsResult);
+    return items.map((item) => repoDocsResult(item, input.query));
   },
   async get(input) {
     const items = await resolveRepoDocsProvider({
@@ -177,19 +178,40 @@ export const repoDocsProviderAdapter: ContextProviderAdapter = {
       query: '',
       sizeBudgetBytes: input.sizeBudgetBytes,
     });
-    return items.map(repoDocsResult).find((item) => item.id === input.entryId);
+    return items.map((item) => repoDocsResult(item)).find((item) => item.id === input.entryId);
   },
 };
 
-function repoDocsResult(item: RepoDocsContextItem): ContextProviderResult {
+function repoDocsResult(item: RepoDocsContextItem, query?: string): ContextProviderResult {
   return {
     id: item.id,
     provider_id: item.providerId,
     provider: item.providerKind,
     privacy: item.privacy,
     title: item.title,
-    body: item.body,
+    body: query ? searchSnippet(item.body, query) : item.body,
     digest: item.digest,
     source: item.sourcePath,
   };
+}
+
+function searchSnippet(body: string, query: string): string {
+  if (Buffer.byteLength(body, 'utf8') <= MAX_SEARCH_SNIPPET_BYTES) return body;
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedBody = body.toLowerCase();
+  const matchIndex = normalizedQuery ? normalizedBody.indexOf(normalizedQuery) : -1;
+  const center = matchIndex >= 0 ? matchIndex : 0;
+  const radius = Math.floor(MAX_SEARCH_SNIPPET_BYTES / 2);
+  const start = Math.max(0, center - radius);
+  const end = Math.min(body.length, start + MAX_SEARCH_SNIPPET_BYTES);
+  const prefix = start > 0 ? '...\n' : '';
+  const suffix = end < body.length ? '\n...' : '';
+  let snippet = `${prefix}${body.slice(start, end).trim()}${suffix}`;
+
+  while (Buffer.byteLength(snippet, 'utf8') > MAX_SEARCH_SNIPPET_BYTES && snippet.length > 0) {
+    snippet = snippet.slice(0, -1);
+  }
+
+  return snippet;
 }

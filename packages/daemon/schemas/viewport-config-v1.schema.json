@@ -1,0 +1,209 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://getviewport.dev/schemas/viewport-config-v1.schema.json",
+  "title": "Viewport repository contract",
+  "description": "Schema for .viewport/config.yaml. This contract declares the workflows, context providers, resources, and approval rules vpd resolves for agent runs in a repository.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contexts": { "$ref": "#/$defs/resourceRefs" },
+        "workflows": { "$ref": "#/$defs/resourceRefs" },
+        "plans": { "$ref": "#/$defs/resourceRefs" },
+        "agentProfiles": { "$ref": "#/$defs/resourceRefs" }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "providers": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/contextProvider" }
+        },
+        "resolution": { "$ref": "#/$defs/contextResolution" }
+      }
+    },
+    "workflows": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/workflowRef" }
+    },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "risky_paths": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/riskyPathRule" }
+        },
+        "riskyPaths": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/riskyPathRule" }
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inboxRoute": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "workflow": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "visibility": { "enum": ["private", "team", "organization"] },
+        "context_candidate_review": {
+          "enum": ["single_reviewer", "owner_auto_approve", "manual_assign"]
+        },
+        "contextCandidateReview": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "includeChildren": { "type": "boolean" },
+        "maxDepth": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "exclude": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resourceRefs": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "oneOf": [
+          { "type": "string", "minLength": 1, "maxLength": 512 },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "required": { "type": "boolean" }
+            }
+          }
+        ]
+      }
+    },
+    "contextProvider": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "provider"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "provider": {
+          "enum": ["repo-docs", "viewport-vault", "notebooklm", "glean", "custom-cli", "custom-mcp"]
+        },
+        "required": { "type": "boolean" },
+        "privacy": {
+          "enum": ["local_only", "control_plane_blind", "third_party_terms", "customer_hosted", "unknown"]
+        },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 4,
+          "items": { "enum": ["search", "get", "propose", "write_approved"] }
+        },
+        "credential_ref": { "$ref": "#/$defs/credentialRef" },
+        "credentialRef": { "$ref": "#/$defs/credentialRef" },
+        "paths": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "vault": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "notebook": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "command": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["token"] },
+          { "required": ["api_key"] },
+          { "required": ["apiKey"] },
+          { "required": ["client_secret"] },
+          { "required": ["clientSecret"] },
+          { "required": ["password"] },
+          { "required": ["credentials"] }
+        ]
+      }
+    },
+    "credentialRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:@-]*$"
+    },
+    "contextResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "size_budget": { "$ref": "#/$defs/sizeBudget" },
+        "size_budget_bytes": { "$ref": "#/$defs/sizeBudget" },
+        "strategy": {
+          "enum": ["rank_by_recency_then_query", "pinned_then_recent", "provider_order"]
+        },
+        "propose_fallback_provider": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "proposeFallbackProvider": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "sizeBudget": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1024, "maximum": 1000000 },
+        { "type": "string", "pattern": "^\\d+(b|kb|mb)?$" }
+      ]
+    },
+    "workflowRef": {
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 512 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "anyOf": [{ "required": ["path"] }, { "required": ["resource"] }],
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "resource": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "digest": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "required": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "riskyPathRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "require"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "path": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "require": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "checks": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        }
+      }
+    }
+  }
+}
