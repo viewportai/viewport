@@ -14,6 +14,7 @@ import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
+import { buildWorkflowContractBinding } from './contract-binding.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
@@ -129,6 +130,7 @@ export class WorkflowRunner {
       directoryPath: directory.path,
       resourceId,
       resourceManifest,
+      workflowContract: buildWorkflowContractBinding(request.workflowContract, parsed.digest),
       runtimeTargetId,
       platformRunId: request.platformRunId,
       rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,

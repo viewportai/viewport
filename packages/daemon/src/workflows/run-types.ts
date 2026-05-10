@@ -145,6 +145,7 @@ export interface WorkflowRunRecord {
   directoryPath: string;
   resourceId?: string;
   resourceManifest?: SessionResourceManifest;
+  workflowContract?: WorkflowContractBinding;
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
@@ -180,6 +181,7 @@ export interface WorkflowRunRequest {
   workflowPath?: string;
   workflowYaml?: string;
   workflowSourceRef?: string;
+  workflowContract?: WorkflowContractBindingInput;
   directoryId: string;
   inputs?: Record<string, WorkflowInputValue>;
   resourceId?: string;
@@ -189,6 +191,25 @@ export interface WorkflowRunRequest {
   executionPolicy?: WorkflowExecutionPolicy;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
   initiation: WorkflowRunRecord['initiation'];
+}
+
+export type WorkflowContractStatus = 'verified' | 'undeclared' | 'digest_mismatch';
+export type WorkflowContractDigestStatus = 'matched' | 'unpinned' | 'mismatch';
+
+export interface WorkflowContractBindingInput {
+  id?: string;
+  sourceConfigPath?: string;
+  declaredPath?: string;
+  resource?: string;
+  version?: string;
+  declaredDigest?: string;
+  status: WorkflowContractStatus;
+  reason?: string;
+}
+
+export interface WorkflowContractBinding extends WorkflowContractBindingInput {
+  actualDigest: string;
+  digestStatus: WorkflowContractDigestStatus;
 }
 
 export interface WorkflowApprovalDecision {

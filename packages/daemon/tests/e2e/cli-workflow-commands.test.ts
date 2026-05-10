@@ -75,7 +75,15 @@ describe('fullstack CLI workflow commands', () => {
   it('runs, lists, and shows a workflow against a registered repository directory', async () => {
     harness = await FullstackCliHarness.start();
     const projectPath = await harness.createGitProject();
-    const workflowPath = path.join(projectPath, 'workflow.yaml');
+    const workflowPath = path.join(projectPath, '.viewport', 'workflows', 'fullstack.yaml');
+    await fs.mkdir(path.dirname(workflowPath), { recursive: true });
+    await fs.writeFile(
+      path.join(projectPath, '.viewport', 'config.yaml'),
+      ['version: 1', 'workflows:', '  fullstack: .viewport/workflows/fullstack.yaml', ''].join(
+        '\n',
+      ),
+      'utf-8',
+    );
     await fs.writeFile(
       workflowPath,
       `
@@ -111,15 +119,27 @@ nodes:
     expect(validatePayload.workflow?.nodeCount).toBe(2);
 
     const workflowRunResult = await runCliCommand(
-      ['workflow', 'run', workflowPath, '--directory', projectPath, '--detach', '--json'],
+      ['workflow', 'run', 'fullstack', '--path', projectPath, '--detach', '--json'],
       '../../src/cli/workflow-commands.js',
       'workflow',
     );
     const workflowRunPayload = parseJsonLog(workflowRunResult.logs) as {
       run?: { id?: string; status?: string };
+      workflow_contract?: { id?: string; status?: string; digest_status?: string };
+      manifest_digest?: string;
+      resource_manifest?: { config_files?: string[] };
     };
     expect(['queued', 'running']).toContain(workflowRunPayload.run?.status);
     expect(workflowRunPayload.run?.id).toBeTruthy();
+    expect(workflowRunPayload.workflow_contract).toMatchObject({
+      id: 'fullstack',
+      status: 'verified',
+      digest_status: 'unpinned',
+    });
+    expect(workflowRunPayload.manifest_digest).toMatch(/^sha256:/);
+    expect(workflowRunPayload.resource_manifest?.config_files).toContain(
+      path.join(projectPath, '.viewport', 'config.yaml'),
+    );
     const workflowRunId = String(workflowRunPayload.run!.id);
 
     const workflowSession = await waitFor(async () => {

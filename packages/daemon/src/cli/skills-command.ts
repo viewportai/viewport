@@ -53,7 +53,9 @@ approves them in Viewport Inbox.
 ## Workflows
 
 - Run declared workflows with:
-  \`vpd workflow run <workflow-file> --directory . --json\`
+  \`vpd workflow run <workflow-id> --path . --json\`
+- Use workflow files directly only when the user explicitly asks to run an
+  undeclared local workflow.
 - If a workflow blocks for approval, tell the user where the decision is waiting.
 
 ## Safety Rules

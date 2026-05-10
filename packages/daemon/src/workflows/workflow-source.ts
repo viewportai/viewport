@@ -20,5 +20,21 @@ export async function resolveWorkflowSource(
   const workflowPath = path.isAbsolute(request.workflowPath)
     ? request.workflowPath
     : path.join(directoryPath, request.workflowPath);
-  return parseWorkflowFile(workflowPath);
+  const parsed = await parseWorkflowFile(workflowPath);
+  assertDeclaredDigestMatches(request, parsed.digest);
+  return parsed;
+}
+
+function assertDeclaredDigestMatches(request: WorkflowRunRequest, actualDigest: string): void {
+  const declaredDigest = request.workflowContract?.declaredDigest;
+  if (!declaredDigest) return;
+  if (normalizeDigest(declaredDigest) === normalizeDigest(actualDigest)) return;
+  const contract = request.workflowContract;
+  throw new Error(
+    `Workflow digest mismatch for ${contract?.id ?? request.workflowPath}: expected ${declaredDigest}, got sha256:${actualDigest}`,
+  );
+}
+
+function normalizeDigest(value: string): string {
+  return value.startsWith('sha256:') ? value.slice('sha256:'.length) : value;
 }

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { SessionResourceManifest } from '../config-resolution/types.js';
+import type { WorkflowContractBinding } from '../workflows/types.js';
 
 export interface WorkflowRunJsonInput {
   id: string;
@@ -11,6 +12,7 @@ export interface WorkflowRunJsonInput {
   status: string;
   error?: string;
   resourceManifest?: SessionResourceManifest;
+  workflowContract?: WorkflowContractBinding;
   nodes?: Record<
     string,
     {
@@ -47,6 +49,7 @@ export function buildWorkflowRunJsonOutput(run: WorkflowRunJsonInput): Record<st
       ...(run.sourceType ? { source: run.sourceType } : {}),
       ...(run.sourcePath ? { path: run.sourcePath } : {}),
     },
+    ...(run.workflowContract ? { workflow_contract: workflowContractSummary(run) } : {}),
     status: run.status,
     manifest_digest: run.resourceManifest?.manifestDigest ?? run.digest,
     ...(run.resourceManifest
@@ -55,6 +58,23 @@ export function buildWorkflowRunJsonOutput(run: WorkflowRunJsonInput): Record<st
     steps: workflowRunSteps(run),
     errors: run.error ? [{ code: 'workflow_run_error', message: run.error }] : [],
     run,
+  };
+}
+
+function workflowContractSummary(run: WorkflowRunJsonInput): Record<string, unknown> {
+  const contract = run.workflowContract;
+  if (!contract) return {};
+  return {
+    status: contract.status,
+    digest_status: contract.digestStatus,
+    actual_digest: contract.actualDigest,
+    ...(contract.id ? { id: contract.id } : {}),
+    ...(contract.sourceConfigPath ? { source_config_path: contract.sourceConfigPath } : {}),
+    ...(contract.declaredPath ? { declared_path: contract.declaredPath } : {}),
+    ...(contract.resource ? { resource: contract.resource } : {}),
+    ...(contract.version ? { version: contract.version } : {}),
+    ...(contract.declaredDigest ? { declared_digest: contract.declaredDigest } : {}),
+    ...(contract.reason ? { reason: contract.reason } : {}),
   };
 }
 

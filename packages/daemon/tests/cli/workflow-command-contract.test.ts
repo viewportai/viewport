@@ -11,6 +11,14 @@ describe('workflow CLI JSON contract', () => {
       status: 'blocked',
       sourceType: 'local_file',
       sourcePath: '/repo/.viewport/workflows/review-pr.yaml',
+      workflowContract: {
+        id: 'review-pr',
+        sourceConfigPath: '/repo/.viewport/config.yaml',
+        declaredPath: '.viewport/workflows/review-pr.yaml',
+        status: 'verified',
+        actualDigest: 'sha256:workflowdigest',
+        digestStatus: 'unpinned',
+      },
       resourceManifest: {
         schema: 'viewport.session_resource_manifest/v1',
         manifestDigest: 'sha256:manifestdigest',
@@ -78,6 +86,14 @@ describe('workflow CLI JSON contract', () => {
         path: '/repo/.viewport/workflows/review-pr.yaml',
       },
       status: 'blocked',
+      workflow_contract: {
+        id: 'review-pr',
+        status: 'verified',
+        digest_status: 'unpinned',
+        actual_digest: 'sha256:workflowdigest',
+        source_config_path: '/repo/.viewport/config.yaml',
+        declared_path: '.viewport/workflows/review-pr.yaml',
+      },
       manifest_digest: 'sha256:manifestdigest',
       resource_manifest: {
         schema: 'viewport.session_resource_manifest/v1',

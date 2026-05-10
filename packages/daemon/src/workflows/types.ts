@@ -14,6 +14,10 @@ export type {
 export type {
   WorkflowApprovalActor,
   WorkflowApprovalDecision,
+  WorkflowContractBinding,
+  WorkflowContractBindingInput,
+  WorkflowContractDigestStatus,
+  WorkflowContractStatus,
   WorkflowDataCapturePolicy,
   WorkflowInputValue,
   WorkflowLoopIterationRecord,
