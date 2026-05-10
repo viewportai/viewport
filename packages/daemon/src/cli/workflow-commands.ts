@@ -4,6 +4,9 @@ import { getArgs, getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
+import { buildWorkflowRunJsonOutput, type WorkflowRunJsonInput } from './workflow-run-json.js';
+
+export { buildWorkflowRunJsonOutput } from './workflow-run-json.js';
 
 interface DirectoryInfo {
   id: string;
@@ -11,35 +14,7 @@ interface DirectoryInfo {
 }
 
 interface WorkflowRunResponse {
-  run: {
-    id: string;
-    workflowName: string;
-    workflowTitle?: string;
-    digest: string;
-    status: string;
-    error?: string;
-  };
-}
-
-export function buildWorkflowRunJsonOutput(
-  run: WorkflowRunResponse['run'],
-): Record<string, unknown> {
-  return {
-    schema_version: 'viewport.cli.workflow_run/v1',
-    command: 'workflow run',
-    ok: run.status === 'completed',
-    run_id: run.id,
-    workflow: {
-      id: run.workflowName,
-      name: run.workflowTitle ?? run.workflowName,
-      digest: run.digest,
-    },
-    status: run.status,
-    manifest_digest: run.digest,
-    steps: [],
-    errors: run.error ? [{ code: 'workflow_run_error', message: run.error }] : [],
-    run,
-  };
+  run: WorkflowRunJsonInput;
 }
 
 export async function workflow(): Promise<void> {
