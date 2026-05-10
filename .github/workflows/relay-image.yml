@@ -40,7 +40,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}/relay
+          images: ghcr.io/${{ github.repository_owner }}/relay
           tags: |
             type=raw,value=${{ steps.relay_version.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
@@ -72,6 +72,6 @@ jobs:
 
             Published image tags include:
 
-            - `ghcr.io/${{ github.repository }}/relay:${{ steps.relay_version.outputs.version }}`
-            - `ghcr.io/${{ github.repository }}/relay:latest`
-            - `ghcr.io/${{ github.repository }}/relay:sha-${{ github.sha }}`
+            - `ghcr.io/${{ github.repository_owner }}/relay:${{ steps.relay_version.outputs.version }}`
+            - `ghcr.io/${{ github.repository_owner }}/relay:latest`
+            - `ghcr.io/${{ github.repository_owner }}/relay:sha-${{ github.sha }}`
