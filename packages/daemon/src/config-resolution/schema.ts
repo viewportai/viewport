@@ -56,6 +56,8 @@ const ContextResolutionSchema = z
     strategy: z
       .enum(['rank_by_recency_then_query', 'pinned_then_recent', 'provider_order'])
       .optional(),
+    propose_fallback_provider: z.string().trim().min(1).max(128).optional(),
+    proposeFallbackProvider: z.string().trim().min(1).max(128).optional(),
   })
   .strict();
 

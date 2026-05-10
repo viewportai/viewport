@@ -253,10 +253,13 @@ function normalizeContextResolution(
 ): ViewportContextResolution {
   if (!resolution) return {};
   const sizeBudget = resolution.size_budget ?? resolution.size_budget_bytes;
+  const proposeFallbackProvider =
+    resolution.propose_fallback_provider ?? resolution.proposeFallbackProvider;
   return {
     ...(resolution.order ? { order: resolution.order } : {}),
     ...(sizeBudget ? { sizeBudgetBytes: parseSizeBudget(sizeBudget) } : {}),
     ...(resolution.strategy ? { strategy: resolution.strategy } : {}),
+    ...(proposeFallbackProvider ? { proposeFallbackProvider } : {}),
   };
 }
 

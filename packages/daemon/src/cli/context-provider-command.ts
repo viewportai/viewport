@@ -6,10 +6,13 @@ import {
   resolveRepoDocsProvider,
   type RepoDocsContextItem,
 } from '../context-providers/repo-docs-provider.js';
-import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { resolveContextBundle, type ContextBundle } from '../context/local-edge-store.js';
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
+import {
+  fallbackProposeProvider,
+  proposeToViewportVaultProvider,
+} from './context-provider-propose.js';
 
 type ContextProviderResult = {
   id: string;
@@ -143,6 +146,42 @@ export async function contextProviderPropose(): Promise<void> {
     throw new Error(`Context provider not found in resolved contract: ${providerId}`);
   }
   if (!provider.capabilities.includes('propose')) {
+    const fallbackProvider = fallbackProposeProvider(
+      manifest.contract.contextProviders,
+      manifest.contract.contextResolution.proposeFallbackProvider,
+      provider.id,
+    );
+    if (fallbackProvider) {
+      const candidate = await proposeToViewportVaultProvider(fallbackProvider, {
+        ...proposeInput(manifest.manifestDigest),
+        sourceProvider: provider,
+        source: getFlag('source'),
+      });
+      if (isJsonMode()) {
+        printJson({
+          schema_version: 'viewport.cli.context_propose/v1',
+          command: 'context propose',
+          ok: true,
+          requested_provider_id: provider.id,
+          requested_provider: provider.provider,
+          provider_id: fallbackProvider.id,
+          provider: fallbackProvider.provider,
+          fallback_provider_id: fallbackProvider.id,
+          fallback_reason: 'provider_does_not_support_propose',
+          status: 'pending_review',
+          candidate_id: candidate.id,
+          payload_digest: candidate.bodyDigest,
+          manifest_digest: manifest.manifestDigest,
+          message: 'Context candidate queued for human review through fallback provider.',
+        });
+        return;
+      }
+      console.log(`Context candidate proposed: ${candidate.id}`);
+      console.log(`Requested provider: ${provider.id}`);
+      console.log(`Fallback provider: ${fallbackProvider.id}`);
+      console.log('Status: pending review');
+      return;
+    }
     const output = {
       schema_version: 'viewport.cli.context_propose/v1',
       command: 'context propose',
@@ -164,19 +203,10 @@ export async function contextProviderPropose(): Promise<void> {
     throw new Error(`Provider ${provider.id} does not have a v1 propose adapter.`);
   }
 
-  const candidate = await proposeContextEntry({
-    contextResourceId: provider.vault,
-    actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
-    title: requiredFlag(
-      'title',
-      'vpd context propose --provider <id> --title <text> --body <text>',
-    ),
-    body: requiredFlag('body', 'vpd context propose --provider <id> --title <text> --body <text>'),
-    source: getFlag('source') ?? `contract://${manifest.manifestDigest}/${provider.id}`,
-    sourceKind: parseSourceKind(getFlag('source-kind')) ?? 'workflow',
-    credentials: optionalCredentials(),
-    home: getFlag('home'),
-  });
+  const candidate = await proposeToViewportVaultProvider(
+    provider,
+    proposeInput(manifest.manifestDigest),
+  );
 
   if (isJsonMode()) {
     printJson({
@@ -310,6 +340,22 @@ function parseSourceKind(raw: string | undefined): 'workflow' | 'plan' | 'integr
   if (!raw) return undefined;
   if (raw === 'workflow' || raw === 'plan' || raw === 'integration') return raw;
   throw new Error(`Unsupported context candidate source kind: ${raw}`);
+}
+
+function proposeInput(manifestDigest: string) {
+  return {
+    manifestDigest,
+    actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
+    title: requiredFlag(
+      'title',
+      'vpd context propose --provider <id> --title <text> --body <text>',
+    ),
+    body: requiredFlag('body', 'vpd context propose --provider <id> --title <text> --body <text>'),
+    source: getFlag('source'),
+    sourceKind: parseSourceKind(getFlag('source-kind')) ?? 'workflow',
+    credentials: optionalCredentials(),
+    home: getFlag('home'),
+  };
 }
 
 function requiredFlag(name: string, usage: string): string {

@@ -41,6 +41,7 @@ describe('viewport config resolver', () => {
         '    order: [repo_docs, platform_vault]',
         '    size_budget: 64kb',
         '    strategy: provider_order',
+        '    propose_fallback_provider: platform_vault',
         'workflows:',
         '  review-pr: .viewport/workflows/review-pr.yaml',
         '  release:',
@@ -76,6 +77,7 @@ describe('viewport config resolver', () => {
       order: ['repo_docs', 'platform_vault'],
       sizeBudgetBytes: 65536,
       strategy: 'provider_order',
+      proposeFallbackProvider: 'platform_vault',
     });
     expect(manifest.contract.workflows).toEqual(
       expect.arrayContaining([
