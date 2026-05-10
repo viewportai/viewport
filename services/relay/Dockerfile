@@ -14,6 +14,9 @@ COPY eslint.config.mjs ./
 RUN npm run build
 
 FROM node:22-alpine AS runtime
+LABEL org.opencontainers.image.source="https://github.com/viewportai/viewport"
+LABEL org.opencontainers.image.description="Viewport relay service"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
