@@ -3,6 +3,13 @@ name: Release Preflight
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'packages/daemon/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.releaserc.daemon.json'
+      - '.github/workflows/release-packages.yml'
+      - '.github/workflows/release-preflight.yml'
   workflow_dispatch:
 
 jobs:
@@ -10,8 +17,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: changes
+        shell: bash
+        run: |
+          should_run=true
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            should_run=false
+            changed_files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
+            while IFS= read -r file; do
+              case "$file" in
+                packages/daemon/*|packages/daemon/**|package.json|package-lock.json|.releaserc.daemon.json|.github/workflows/release-packages.yml)
+                  should_run=true
+                  ;;
+              esac
+            done <<< "$changed_files"
+          fi
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip daemon release preflight
+        if: steps.changes.outputs.should_run != 'true'
+        run: echo "No daemon package or daemon release changes detected; skipping npm auth preflight."
 
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.should_run == 'true'
         with:
           node-version: 24
           cache: npm
@@ -19,8 +50,10 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - run: npm ci
+        if: steps.changes.outputs.should_run == 'true'
 
       - name: Validate daemon publish metadata
+        if: steps.changes.outputs.should_run == 'true'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
@@ -43,6 +76,7 @@ jobs:
           NODE
 
       - name: Verify release secret is configured
+        if: steps.changes.outputs.should_run == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -52,9 +86,11 @@ jobs:
           fi
 
       - name: Verify npm authentication
+        if: steps.changes.outputs.should_run == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm whoami --registry https://registry.npmjs.org/
 
       - name: Verify commit-analyzer preset dependency
+        if: steps.changes.outputs.should_run == 'true'
         run: node -p "require.resolve('conventional-changelog-conventionalcommits')"

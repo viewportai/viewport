@@ -1,0 +1,24 @@
+app = "viewport-relay"
+primary_region = "iad"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "7781"
+  RELAY_MODE = "staging"
+  RELAY_TLS = "0"
+  RELAY_BACKPLANE_MODE = "single"
+  RELAY_PUBLIC_WS_BASE_URL = "wss://relay.getviewport.com/ws"
+  SERVER_URL = "https://api.getviewport.com"
+
+[http_service]
+  internal_port = 7781
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/health"
