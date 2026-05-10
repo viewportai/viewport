@@ -18,6 +18,11 @@
     "daemon:install:verify": "npm run verify:install -w @viewportai/daemon",
     "relay:test": "npm run test -w @viewportai/relay",
     "daemon:check": "npm run check -w @viewportai/daemon",
-    "relay:check": "npm run check -w @viewportai/relay"
+    "relay:check": "npm run check -w @viewportai/relay",
+    "version:packages": "changeset version",
+    "release:packages": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0"
   }
 }
