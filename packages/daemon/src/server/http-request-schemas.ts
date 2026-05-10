@@ -60,6 +60,19 @@ export const WorkflowRunBodySchema = z
     workflowPath: z.string().trim().min(1).optional(),
     workflowYaml: z.string().trim().min(1).max(256_000).optional(),
     workflowSourceRef: z.string().trim().min(1).optional(),
+    workflowContract: z
+      .object({
+        id: z.string().trim().min(1).max(128).optional(),
+        sourceConfigPath: z.string().trim().min(1).max(4096).optional(),
+        declaredPath: z.string().trim().min(1).max(4096).optional(),
+        resource: z.string().trim().min(1).max(256).optional(),
+        version: z.string().trim().min(1).max(64).optional(),
+        declaredDigest: z.string().trim().min(1).max(256).optional(),
+        status: z.enum(['verified', 'undeclared', 'digest_mismatch']),
+        reason: z.string().trim().min(1).max(512).optional(),
+      })
+      .strict()
+      .optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
     resourceId: z.string().trim().min(1).optional(),

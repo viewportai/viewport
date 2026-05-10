@@ -363,7 +363,7 @@ export function showHelp(): void {
   console.log('                               Worktree and git-step operator controls');
   console.log('  workflow validate <file> [--json]');
   console.log(
-    '  workflow run <file> [--directory <path>] [--input k=v] [--input-json k=json] [--json]',
+    '  workflow run <workflow-id|file> [--path <repo>] [--input k=v] [--input-json k=json] [--json]',
   );
   console.log('  workflow runs [--json]');
   console.log('  workflow show <run-id> [--json]');

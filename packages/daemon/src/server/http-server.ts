@@ -259,6 +259,7 @@ export function registerHttpRoutes(
         workflowPath: parsedBody.data.workflowPath,
         workflowYaml: parsedBody.data.workflowYaml,
         workflowSourceRef: parsedBody.data.workflowSourceRef,
+        workflowContract: parsedBody.data.workflowContract,
         directoryId: parsedBody.data.directoryId,
         inputs: parsedBody.data.inputs,
         resourceId: parsedBody.data.resourceId,

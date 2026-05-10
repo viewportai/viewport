@@ -5,6 +5,7 @@ import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
 import { buildWorkflowRunJsonOutput, type WorkflowRunJsonInput } from './workflow-run-json.js';
+import { resolveWorkflowRunTarget } from './workflow-contract-resolver.js';
 
 export { buildWorkflowRunJsonOutput } from './workflow-run-json.js';
 
@@ -83,14 +84,19 @@ async function runWorkflow(): Promise<void> {
   await ensureDaemonRunningOrThrow();
   const file = requiredArg(
     2,
-    'Usage: vpd workflow run <file> [--directory <path>] [--input k=v] [--input-json k=json] [--json]',
+    'Usage: vpd workflow run <workflow-id|file> [--path <repo>] [--directory <repo>] [--input k=v] [--input-json k=json] [--json]',
   );
-  const directoryId = await resolveDirectoryIdFromInput(getFlag('directory'));
+  const directory = await resolveDirectoryFromInput(getFlag('path') ?? getFlag('directory'));
+  const resolvedTarget = resolveWorkflowRunTarget({
+    workflowTarget: file,
+    directoryPath: directory.path,
+  });
   const inputs = parseInputs(getArgs());
 
   const started = (await postJson('/api/workflows/runs', {
-    workflowPath: path.resolve(file),
-    directoryId,
+    workflowPath: resolvedTarget.workflowPath,
+    workflowContract: resolvedTarget.workflowContract,
+    directoryId: directory.id,
     inputs,
     initiation: 'cli',
   })) as WorkflowRunResponse;
@@ -230,11 +236,11 @@ async function ensureDaemonRunningOrThrow(): Promise<void> {
   throw new Error('Daemon is not running. Start it first with `vpd start`.');
 }
 
-async function resolveDirectoryIdFromInput(rawInput: string | undefined): Promise<string> {
+async function resolveDirectoryFromInput(rawInput: string | undefined): Promise<DirectoryInfo> {
   const input = rawInput ?? process.cwd();
   const directories = (await getJson('/api/directories')) as DirectoryInfo[];
   const byId = directories.find((item) => item.id === input);
-  if (byId) return byId.id;
+  if (byId) return byId;
 
   const resolvedPath = path.resolve(input);
   const stat = await fs.stat(resolvedPath);
@@ -243,13 +249,13 @@ async function resolveDirectoryIdFromInput(rawInput: string | undefined): Promis
   }
 
   const byPath = directories.find((item) => item.path === resolvedPath);
-  if (byPath) return byPath.id;
+  if (byPath) return byPath;
 
   const created = (await postJson('/api/directories', { path: resolvedPath })) as { id?: unknown };
   if (typeof created.id !== 'string') {
     throw new Error(`Failed to register directory: ${resolvedPath}`);
   }
-  return created.id;
+  return { id: created.id, path: resolvedPath };
 }
 
 function requiredArg(index: number, usage: string): string {
