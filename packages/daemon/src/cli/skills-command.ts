@@ -50,6 +50,13 @@ truth for what this repo/session is allowed to use.
 Context proposals are candidates. They do not become shared context until a human
 approves them in Viewport Inbox.
 
+- Add approved context directly only when the user explicitly tells you to save a
+  specific note as accepted context:
+  \`vpd context add --provider <provider-id> --path . --title "<title>" --body "<body>" --json\`
+
+Use \`context propose\` for agent-learned suggestions. Use \`context add\` only for
+human-authored or explicitly human-approved context.
+
 ## Workflows
 
 - Run declared workflows with:
