@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,13 +21,24 @@ jobs:
           cache-dependency-path: package-lock.json
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - name: Create release PR or publish
-        uses: changesets/action@v1
-        with:
-          version: npm run version:packages
-          publish: npm run release:packages
-          commit: 'chore: release packages'
-          title: 'chore: release packages'
+      - name: Version packages
+        run: npm run version:packages
+      - name: Commit version changes
+        run: |
+          if git diff --quiet; then
+            echo "No version changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .changeset package.json package-lock.json packages services
+          git commit -m "chore: release packages [skip ci]"
+          git push
+      - name: Publish packages
+        run: |
+          npm run release:packages
+          git push --follow-tags
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
