@@ -6,12 +6,14 @@ import {
   type OutputFormat,
   type TableColumn,
 } from './command-shared.js';
+import type { SessionResourceManifest } from '../config-resolution/index.js';
 
 interface SessionListEntry {
   source: 'active' | 'discovered';
   sessionId: string;
   directoryId: string;
   directoryPath: string | null;
+  workingDirectory?: string | null;
   agentId: string;
   state: string;
   mode: string;
@@ -19,6 +21,7 @@ interface SessionListEntry {
   lastActivity: number | null;
   summary: string | null;
   messageCount: number | null;
+  resourceManifest?: SessionResourceManifest;
 }
 
 interface SessionListResponse {
@@ -48,7 +51,7 @@ function normalizeScope(raw: string | undefined): 'all' | 'active' | 'discovered
   throw new Error(`Invalid --scope value: ${raw}. Expected all|active|discovered.`);
 }
 
-function parseSessionId(): string {
+function parseStopSessionId(): string {
   const args = getArgs();
   const sessionId = args[2];
   if (!sessionId || sessionId.startsWith('--')) {
@@ -58,7 +61,13 @@ function parseSessionId(): string {
 }
 
 function sessionUsage(): string {
-  return 'Usage: vpd session <stop> ...';
+  return [
+    'Usage: vpd session <command>',
+    '',
+    'Commands:',
+    '  stop <session-id> [--json|--format <fmt>]',
+    '  manifest --session <session-id> [--json|--format <fmt>]',
+  ].join('\n');
 }
 
 export function showSessionHelp(): void {
@@ -176,7 +185,7 @@ export async function stopSession(): Promise<void> {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }
 
-  const sessionId = parseSessionId();
+  const sessionId = parseStopSessionId();
   const res = await daemonFetch(`/api/sessions/${sessionId}/stop`, { method: 'POST' });
 
   if (!res || !res.ok) {
@@ -201,4 +210,93 @@ export async function stopSession(): Promise<void> {
   }
 
   console.log(`Stopped session ${sessionId}`);
+}
+
+export async function sessionManifest(): Promise<void> {
+  const format = resolveOutputFormat();
+  if (!(await isDaemonRunning())) {
+    throw new Error('Daemon is not running. Start it first with `vpd start`.');
+  }
+
+  const sessionId = getFlag('session');
+  if (!sessionId) {
+    throw new Error(sessionUsage());
+  }
+
+  const res = await daemonFetch('/api/sessions?scope=all');
+  if (!res || !res.ok) {
+    throw new Error('Failed to list sessions');
+  }
+
+  const payload = (await res.json()) as SessionListResponse;
+  const session = payload.sessions.find((candidate) => candidate.sessionId === sessionId);
+  if (!session) {
+    const output = {
+      schema_version: 'viewport.cli.session_manifest/v1',
+      command: 'session manifest',
+      ok: false,
+      session_id: sessionId,
+      errors: [{ code: 'session_not_found', message: `Session not found: ${sessionId}` }],
+    };
+    if (format !== 'text') {
+      printStructured(output, { format });
+    }
+    throw new Error(`Session not found: ${sessionId}`);
+  }
+
+  const output = buildSessionManifestOutput(session);
+  if (format !== 'text') {
+    printStructured(output, { format });
+    return;
+  }
+
+  printSessionManifest(session, output);
+}
+
+function buildSessionManifestOutput(session: SessionListEntry): Record<string, unknown> {
+  const manifest = session.resourceManifest;
+  return {
+    schema_version: 'viewport.cli.session_manifest/v1',
+    command: 'session manifest',
+    ok: true,
+    session_id: session.sessionId,
+    source: session.source,
+    agent_id: session.agentId,
+    directory_id: session.directoryId,
+    working_directory: session.workingDirectory ?? session.directoryPath,
+    manifest_digest: manifest?.manifestDigest ?? null,
+    providers_used:
+      manifest?.contract.contextProviders.map((provider) => ({
+        id: provider.id,
+        provider: provider.provider,
+        privacy: provider.privacy,
+        capabilities: provider.capabilities,
+      })) ?? [],
+    workflows: manifest?.contract.workflows.map((workflow) => workflow.id) ?? [],
+    approvals:
+      manifest?.contract.riskyPathRules.map((rule) => ({
+        id: rule.id,
+        path: rule.path,
+        require: rule.require,
+        checks: rule.checks,
+        source: rule.sourceConfigPath,
+      })) ?? [],
+    context_entries: [],
+    resource_manifest: manifest ?? null,
+    errors: [],
+  };
+}
+
+function printSessionManifest(session: SessionListEntry, output: Record<string, unknown>): void {
+  console.log('Viewport session manifest');
+  console.log(`Session:  ${session.sessionId}`);
+  console.log(`Agent:    ${session.agentId}`);
+  console.log(`Source:   ${session.source}`);
+  console.log(`Manifest: ${String(output['manifest_digest'] ?? 'none')}`);
+  const providers = output['providers_used'] as unknown[];
+  console.log(`Providers: ${providers.length}`);
+  const workflows = output['workflows'] as unknown[];
+  console.log(`Workflows: ${workflows.length}`);
+  const approvals = output['approvals'] as unknown[];
+  console.log(`Approvals: ${approvals.length}`);
 }

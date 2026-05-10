@@ -340,6 +340,10 @@ export function showHelp(): void {
   );
   console.log('                               List active/discovered sessions');
   console.log('  session stop <sid> [--json|--format <fmt>]  Stop an active session');
+  console.log('  session manifest --session <sid> [--json|--format <fmt>]');
+  console.log(
+    '                               Print provider/workflow/approval manifest for a session',
+  );
   console.log('  send <sid> --prompt <text>   Send a prompt to an active session');
   console.log('  logs <sid> [--follow]        Replay or follow session updates');
   console.log('  wait <sid> [--timeout <s>]   Block until a session ends');

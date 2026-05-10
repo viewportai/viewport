@@ -27,7 +27,12 @@ export {
   waitCommand as wait,
   attachCommand as attach,
 } from './orchestration-commands.js';
-export { listSessions as ls, showSessionHelp, stopSession } from './session-commands.js';
+export {
+  listSessions as ls,
+  showSessionHelp,
+  stopSession,
+  sessionManifest,
+} from './session-commands.js';
 export { permit } from './permission-commands.js';
 export { agent } from './agent-commands.js';
 export { worktree } from './worktree-commands.js';

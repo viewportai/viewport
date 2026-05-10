@@ -44,6 +44,7 @@ import {
   ls,
   showSessionHelp,
   stopSession,
+  sessionManifest,
   permit,
   agent,
   worktree,
@@ -170,6 +171,7 @@ if (command === 'hook') {
         process.exit(0);
       }
       if (subcommand === 'stop') handler = stopSession;
+      if (subcommand === 'manifest') handler = sessionManifest;
     } else if (command === 'permit') {
       handler = permit;
     } else if (command === 'agent') {
