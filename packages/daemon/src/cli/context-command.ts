@@ -67,7 +67,7 @@ export async function context(): Promise<void> {
     return;
   }
   if (subcommand === 'propose') {
-    if (getFlag('provider')) {
+    if (getFlag('provider') || !getFlag('context')) {
       await contextProviderPropose();
       return;
     }

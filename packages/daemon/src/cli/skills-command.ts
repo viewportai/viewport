@@ -45,7 +45,11 @@ truth for what this repo/session is allowed to use.
   \`vpd context get <entry-id> --json\`
 - Propose reusable context only when the user asks or when a durable team rule was
   clearly learned:
-  \`vpd context propose --provider <provider-id> --title "<title>" --body "<body>" --json\`
+  \`vpd context propose --title "<title>" --body "<body>" --json\`
+
+  If the resolved repo contract has exactly one proposal-capable provider, vpd uses
+  it automatically. If more than one provider can accept proposals, pass
+  \`--provider <provider-id>\`.
 
 Context proposals are candidates. They do not become shared context until a human
 approves them in Viewport Inbox.

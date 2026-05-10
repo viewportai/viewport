@@ -28,6 +28,9 @@ describe('skills CLI command', () => {
     expect(body).toContain('Viewport Agent Contract');
     expect(body).toContain('vpd context search --query');
     expect(body).toContain('vpd context add --provider');
+    expect(body).toContain('vpd context propose --title');
+    expect(body).toContain('vpd uses');
+    expect(body).toContain('it automatically');
     expect(body).toContain('Use `context propose` for agent-learned suggestions');
 
     const output = parseLoggedJson(logSpy.mock.calls.map((call) => call.join(' ')).join('\n'));
