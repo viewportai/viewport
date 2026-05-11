@@ -1,4 +1,5 @@
 import type { RelayLaunchBinding } from './supervisor-protocol.js';
+import { createRelayMachineId } from './relay-binding-config.js';
 
 export function resolveRelayLaunchBindings(input: {
   configured:
@@ -29,7 +30,7 @@ export function resolveRelayLaunchBindings(input: {
       serverUrl: binding.serverUrl,
       workspaceId: binding.workspaceId,
       runtimeTargetId: binding.runtimeTargetId,
-      machineId: binding.machineId,
+      machineId: binding.machineId ?? createRelayMachineId(),
       issueToken: binding.issueToken,
       tlsVerify: binding.tlsVerify,
       caCertPath: binding.caCertPath,
@@ -47,7 +48,7 @@ export function resolveRelayLaunchBindings(input: {
     input.computed.workspaceId ||
     input.computed.issueToken
   ) {
-    return [input.computed];
+    return [{ ...input.computed, machineId: input.computed.machineId ?? createRelayMachineId() }];
   }
   return undefined;
 }

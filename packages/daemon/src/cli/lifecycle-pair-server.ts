@@ -4,7 +4,12 @@ import { sanitizeMachineDisplayName } from '../core/machine-name.js';
 import { getFlag, hasFlag } from './args.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 import { inferRelayEndpointFromServer } from './remote-commands.js';
-import { seedRelayBindings, upsertRelayBinding } from './relay-binding-config.js';
+import {
+  createRelayMachineId,
+  ensureRelayBindingMachineId,
+  seedRelayBindings,
+  upsertRelayBinding,
+} from './relay-binding-config.js';
 
 const DEFAULT_PAIRING_SERVER = 'https://getviewport.com';
 const DEFAULT_PAIRING_APP = 'https://app.getviewport.com';
@@ -106,7 +111,7 @@ export async function storePairingCredentials(
     (existingRelay.workspaceId !== data.workspace_id || existingRelay.serverUrl !== nextServerUrl);
   if (replacesExisting && !addBinding && !hasFlag('replace')) {
     throw new Error(
-      `This daemon is already paired to workspace ${existingRelay.workspaceId}. Re-run with --replace to replace it with ${data.workspace_id}.`,
+      `This daemon is already paired to workspace ${existingRelay.workspaceId}. Re-run with --replace to delete that binding and replace it with ${data.workspace_id}. Use --add to keep both organizations paired.`,
     );
   }
 
@@ -117,17 +122,31 @@ export async function storePairingCredentials(
 
   const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
   const machineName = sanitizeMachineDisplayName(data.daemon_name) ?? existingRelay.machineName;
-  const nextBinding = {
+  const seededBindings = seedRelayBindings(existingRelay);
+  const nextBinding = ensureRelayBindingMachineId({
     enabled: true,
     endpoint: relayEndpoint,
     serverUrl: nextServerUrl,
     workspaceId: data.workspace_id,
     installId: data.install_id,
     runtimeTargetId: data.runtime_target_id,
-    machineId: data.machine_id,
+    machineId: data.machine_id ?? createRelayMachineId(),
     machineName,
     issueToken: nextIssueToken,
-  };
+  });
+  const nextBindings = addBinding
+    ? upsertRelayBinding(seededBindings, nextBinding, hasFlag('replace'))
+    : [nextBinding];
+  const primaryBinding =
+    addBinding && existingRelay.workspaceId
+      ? (nextBindings.find(
+          (binding) =>
+            binding.workspaceId === existingRelay.workspaceId &&
+            binding.serverUrl === existingRelay.serverUrl,
+        ) ??
+        nextBindings[0] ??
+        nextBinding)
+      : nextBinding;
 
   await manager.setDaemonConfig({
     server: {
@@ -137,25 +156,15 @@ export async function storePairingCredentials(
     relay: {
       ...existingRelay,
       enabled: true,
-      bindings: addBinding
-        ? upsertRelayBinding(seedRelayBindings(existingRelay), nextBinding, hasFlag('replace'))
-        : undefined,
-      endpoint: addBinding && existingRelay.workspaceId ? existingRelay.endpoint : relayEndpoint,
-      serverUrl: addBinding && existingRelay.workspaceId ? existingRelay.serverUrl : nextServerUrl,
-      workspaceId:
-        addBinding && existingRelay.workspaceId ? existingRelay.workspaceId : data.workspace_id,
-      installId:
-        addBinding && existingRelay.workspaceId ? existingRelay.installId : data.install_id,
-      runtimeTargetId:
-        addBinding && existingRelay.workspaceId
-          ? existingRelay.runtimeTargetId
-          : data.runtime_target_id,
-      machineId:
-        addBinding && existingRelay.workspaceId ? existingRelay.machineId : data.machine_id,
-      machineName:
-        addBinding && existingRelay.workspaceId ? existingRelay.machineName : machineName,
-      issueToken:
-        addBinding && existingRelay.workspaceId ? existingRelay.issueToken : nextIssueToken,
+      bindings: nextBindings,
+      endpoint: primaryBinding.endpoint,
+      serverUrl: primaryBinding.serverUrl,
+      workspaceId: primaryBinding.workspaceId,
+      installId: primaryBinding.installId,
+      runtimeTargetId: primaryBinding.runtimeTargetId,
+      machineId: primaryBinding.machineId,
+      machineName: primaryBinding.machineName,
+      issueToken: primaryBinding.issueToken,
     },
   });
 }

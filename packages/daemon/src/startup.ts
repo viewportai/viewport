@@ -55,6 +55,7 @@ import { setupSessionPersistence } from './startup-session-persistence.js';
 import { validateRelayRuntimeSecurity } from './startup-relay-security.js';
 import { DaemonRelayBridge } from './relay/daemon-relay-bridge.js';
 import { createOrgRoutingFilter } from './relay/bridge-org-routing-filter.js';
+import { createRelayMachineId } from './cli/relay-binding-config.js';
 import { configDir } from './core/config.js';
 
 export { decodeAutoRegisterEntry };
@@ -138,7 +139,7 @@ function relayRuntimeBindings(config: RuntimeLaunchConfig): RelayLaunchBinding[]
         serverUrl: config.relayServerUrl,
         workspaceId: config.relayWorkspaceId,
         runtimeTargetId: config.relayRuntimeTargetId,
-        machineId: config.relayMachineId,
+        machineId: config.relayMachineId ?? createRelayMachineId(),
         issueToken: config.relayIssueToken,
         tlsVerify: config.relayTlsVerify,
         caCertPath: config.relayCaCertPath,

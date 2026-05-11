@@ -6,7 +6,12 @@ import {
   fetchContextCandidateDecisionKeys,
   parseDecisionSigningKeys,
 } from './remote-decision-keys.js';
-import { seedRelayBindings, upsertRelayBinding } from './relay-binding-config.js';
+import {
+  createRelayMachineId,
+  ensureRelayBindingMachineId,
+  seedRelayBindings,
+  upsertRelayBinding,
+} from './relay-binding-config.js';
 
 function boolLike(value: string | undefined): boolean {
   if (!value) return false;
@@ -174,6 +179,7 @@ export async function remote(): Promise<void> {
       relay: {
         ...relayConfig,
         enabled: false,
+        bindings: [],
         installId: undefined,
         runtimeTargetId: undefined,
         machineId: undefined,
@@ -218,7 +224,7 @@ export async function remote(): Promise<void> {
       !replaceExisting
     ) {
       throw new Error(
-        `Remote relay is already configured for workspace ${relayConfig.workspaceId}. Re-run with --replace to replace it with ${workspaceId}.`,
+        `Remote relay is already configured for workspace ${relayConfig.workspaceId}. Re-run with --replace to delete that binding and replace it with ${workspaceId}. Use --add to keep both organizations paired.`,
       );
     }
 
@@ -239,7 +245,14 @@ export async function remote(): Promise<void> {
     const nextIssueToken = preserveIssuedInstall ? relayConfig.issueToken : undefined;
     const nextInstallId = preserveIssuedInstall ? relayConfig.installId : undefined;
     const nextRuntimeTargetId = preserveIssuedInstall ? relayConfig.runtimeTargetId : undefined;
-    const nextMachineId = preserveIssuedInstall ? relayConfig.machineId : undefined;
+    const seededBindings = seedRelayBindings(relayConfig);
+    const existingBinding = seededBindings.find(
+      (binding) => binding.workspaceId === workspaceId && binding.serverUrl === serverUrl,
+    );
+    const nextMachineId =
+      (preserveIssuedInstall ? relayConfig.machineId : undefined) ??
+      existingBinding?.machineId ??
+      createRelayMachineId();
 
     if (!contextCandidateDecisionKeys) {
       contextCandidateDecisionKeys = await fetchContextCandidateDecisionKeys({
@@ -250,7 +263,7 @@ export async function remote(): Promise<void> {
       });
     }
 
-    const nextBinding = {
+    const nextBinding = ensureRelayBindingMachineId({
       enabled: enableNow,
       endpoint: relayEndpoint,
       serverUrl,
@@ -267,10 +280,20 @@ export async function remote(): Promise<void> {
       tokenJwksUrl: relayConfig.tokenJwksUrl,
       signingKeys: relayConfig.signingKeys,
       tokenClockSkewSec: relayConfig.tokenClockSkewSec,
-    };
+    });
     const nextBindings = addBinding
-      ? upsertRelayBinding(seedRelayBindings(relayConfig), nextBinding, replaceExisting)
-      : undefined;
+      ? upsertRelayBinding(seededBindings, nextBinding, replaceExisting)
+      : [nextBinding];
+    const primaryBinding =
+      addBinding && relayConfig.workspaceId
+        ? (nextBindings.find(
+            (binding) =>
+              binding.workspaceId === relayConfig.workspaceId &&
+              binding.serverUrl === relayConfig.serverUrl,
+          ) ??
+          nextBindings[0] ??
+          nextBinding)
+        : nextBinding;
 
     await manager.setDaemonConfig({
       server: {
@@ -282,20 +305,15 @@ export async function remote(): Promise<void> {
         ...relayConfig,
         enabled: enableNow,
         bindings: nextBindings,
-        endpoint: addBinding && relayConfig.workspaceId ? relayConfig.endpoint : relayEndpoint,
-        serverUrl: addBinding && relayConfig.workspaceId ? relayConfig.serverUrl : serverUrl,
-        workspaceId: addBinding && relayConfig.workspaceId ? relayConfig.workspaceId : workspaceId,
-        installId: addBinding && relayConfig.workspaceId ? relayConfig.installId : nextInstallId,
-        runtimeTargetId:
-          addBinding && relayConfig.workspaceId ? relayConfig.runtimeTargetId : nextRuntimeTargetId,
-        machineId: addBinding && relayConfig.workspaceId ? relayConfig.machineId : nextMachineId,
-        issueToken:
-          addBinding && relayConfig.workspaceId
-            ? relayConfig.issueToken
-            : issueToken.trim() || nextIssueToken,
-        tlsVerify: addBinding && relayConfig.workspaceId ? relayConfig.tlsVerify : relayTlsVerify,
-        caCertPath:
-          addBinding && relayConfig.workspaceId ? relayConfig.caCertPath : relayCaCertPath,
+        endpoint: primaryBinding.endpoint,
+        serverUrl: primaryBinding.serverUrl,
+        workspaceId: primaryBinding.workspaceId,
+        installId: primaryBinding.installId,
+        runtimeTargetId: primaryBinding.runtimeTargetId,
+        machineId: primaryBinding.machineId,
+        issueToken: primaryBinding.issueToken,
+        tlsVerify: primaryBinding.tlsVerify,
+        caCertPath: primaryBinding.caCertPath,
       },
     });
 

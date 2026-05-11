@@ -90,11 +90,12 @@ describe('remote CLI commands', () => {
     const output = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
     const payload = JSON.parse(output) as {
       ok: boolean;
-      relay: { endpoint: string; issueToken: string; enabled: boolean };
+      relay: { endpoint: string; issueToken: string; enabled: boolean; machineId: string };
     };
     expect(payload.ok).toBe(true);
     expect(payload.relay.endpoint).toBe('wss://relay.getviewport.com/ws');
     expect(payload.relay.issueToken).toContain('...');
+    expect(payload.relay.machineId).toMatch(/^machine_/);
 
     const manager = new ConfigManager();
     await manager.load();
@@ -103,6 +104,9 @@ describe('remote CLI commands', () => {
     expect(daemonConfig?.relay?.serverUrl).toBe('https://getviewport.com');
     expect(daemonConfig?.relay?.workspaceId).toBe('workspace_demo');
     expect(daemonConfig?.relay?.issueToken).toBe('install-issue-token');
+    expect(daemonConfig?.relay?.machineId).toMatch(/^machine_/);
+    expect(daemonConfig?.relay?.bindings?.[0]?.workspaceId).toBe('workspace_demo');
+    expect(daemonConfig?.relay?.bindings?.[0]?.machineId).toBe(daemonConfig?.relay?.machineId);
     expect(daemonConfig?.server?.contextCandidateDecisionKeys).toEqual({
       'local-v1': 'test-public-key',
     });
@@ -181,6 +185,10 @@ describe('remote CLI commands', () => {
     expect(relay?.workspaceId).toBe('workspace_new');
     expect(relay?.installId).toBeUndefined();
     expect(relay?.issueToken).toBe('install-issue-new');
+    expect(relay?.machineId).toMatch(/^machine_/);
+    expect(relay?.bindings).toHaveLength(1);
+    expect(relay?.bindings?.[0]?.workspaceId).toBe('workspace_new');
+    expect(relay?.bindings?.[0]?.machineId).toBe(relay?.machineId);
   });
 
   it('requires --replace before switching workspaces', async () => {
@@ -213,7 +221,7 @@ describe('remote CLI commands', () => {
     ];
 
     const { remote } = await import('../../src/cli/remote-commands.js');
-    await expect(remote()).rejects.toThrow('Re-run with --replace');
+    await expect(remote()).rejects.toThrow('Use --add to keep both organizations paired');
   });
 
   it('adds a second relay binding without replacing the existing workspace', async () => {
@@ -263,6 +271,9 @@ describe('remote CLI commands', () => {
     ]);
     expect(relay?.bindings?.[0]?.issueToken).toBe('install-issue-acme');
     expect(relay?.bindings?.[1]?.issueToken).toBe('install-issue-personal');
+    expect(relay?.bindings?.[0]?.machineId).toMatch(/^machine_/);
+    expect(relay?.bindings?.[1]?.machineId).toMatch(/^machine_/);
+    expect(relay?.bindings?.[0]?.machineId).not.toBe(relay?.bindings?.[1]?.machineId);
   });
 
   it('status redacts issue token in JSON output', async () => {
@@ -340,5 +351,6 @@ describe('remote CLI commands', () => {
     const relay = refreshed.getDaemonConfig()?.relay;
     expect(relay?.enabled).toBe(false);
     expect(relay?.issueToken).toBeUndefined();
+    expect(relay?.bindings).toEqual([]);
   });
 });

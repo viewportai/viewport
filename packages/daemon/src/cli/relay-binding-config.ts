@@ -1,7 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import type { ViewportConfig } from '../core/config.js';
 
 export type RelayConfig = NonNullable<NonNullable<ViewportConfig['daemon']>['relay']>;
 export type RelayBindingConfig = NonNullable<RelayConfig['bindings']>[number];
+
+export function createRelayMachineId(): string {
+  return `machine_${randomUUID()}`;
+}
+
+export function ensureRelayBindingMachineId(binding: RelayBindingConfig): RelayBindingConfig {
+  const machineId = binding.machineId?.trim();
+  if (machineId) return { ...binding, machineId };
+  return { ...binding, machineId: createRelayMachineId() };
+}
 
 export function seedRelayBindings(relayConfig: RelayConfig): RelayBindingConfig[] {
   const bindings = [...(relayConfig.bindings ?? [])];
@@ -17,27 +28,29 @@ export function seedRelayBindings(relayConfig: RelayConfig): RelayBindingConfig[
       binding.serverUrl === relayConfig.serverUrl,
   );
   if (!alreadySeeded) {
-    bindings.unshift({
-      enabled: relayConfig.enabled,
-      endpoint: relayConfig.endpoint,
-      serverUrl: relayConfig.serverUrl,
-      workspaceId: relayConfig.workspaceId,
-      installId: relayConfig.installId,
-      runtimeTargetId: relayConfig.runtimeTargetId,
-      machineId: relayConfig.machineId,
-      machineName: relayConfig.machineName,
-      issueToken: relayConfig.issueToken,
-      tlsVerify: relayConfig.tlsVerify,
-      caCertPath: relayConfig.caCertPath,
-      tlsPins: relayConfig.tlsPins,
-      tokenIssuer: relayConfig.tokenIssuer,
-      tokenAudience: relayConfig.tokenAudience,
-      tokenJwksUrl: relayConfig.tokenJwksUrl,
-      signingKeys: relayConfig.signingKeys,
-      tokenClockSkewSec: relayConfig.tokenClockSkewSec,
-    });
+    bindings.unshift(
+      ensureRelayBindingMachineId({
+        enabled: relayConfig.enabled,
+        endpoint: relayConfig.endpoint,
+        serverUrl: relayConfig.serverUrl,
+        workspaceId: relayConfig.workspaceId,
+        installId: relayConfig.installId,
+        runtimeTargetId: relayConfig.runtimeTargetId,
+        machineId: relayConfig.machineId,
+        machineName: relayConfig.machineName,
+        issueToken: relayConfig.issueToken,
+        tlsVerify: relayConfig.tlsVerify,
+        caCertPath: relayConfig.caCertPath,
+        tlsPins: relayConfig.tlsPins,
+        tokenIssuer: relayConfig.tokenIssuer,
+        tokenAudience: relayConfig.tokenAudience,
+        tokenJwksUrl: relayConfig.tokenJwksUrl,
+        signingKeys: relayConfig.signingKeys,
+        tokenClockSkewSec: relayConfig.tokenClockSkewSec,
+      }),
+    );
   }
-  return bindings;
+  return bindings.map(ensureRelayBindingMachineId);
 }
 
 export function upsertRelayBinding(
@@ -51,7 +64,7 @@ export function upsertRelayBinding(
   );
   if (exactIndex >= 0) {
     const copy = [...bindings];
-    copy[exactIndex] = { ...copy[exactIndex], ...next };
+    copy[exactIndex] = ensureRelayBindingMachineId({ ...copy[exactIndex], ...next });
     return copy;
   }
 
@@ -63,9 +76,9 @@ export function upsertRelayBinding(
   }
   if (workspaceIndex >= 0) {
     const copy = [...bindings];
-    copy[workspaceIndex] = next;
+    copy[workspaceIndex] = ensureRelayBindingMachineId(next);
     return copy;
   }
 
-  return [...bindings, next];
+  return [...bindings, ensureRelayBindingMachineId(next)];
 }
