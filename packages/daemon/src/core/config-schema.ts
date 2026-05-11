@@ -33,6 +33,28 @@ const PartialSessionConfigSchema = z
   })
   .strict();
 
+const PartialRelayBindingSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    endpoint: z.string().optional(),
+    serverUrl: z.string().optional(),
+    workspaceId: z.string().optional(),
+    installId: z.string().optional(),
+    runtimeTargetId: z.string().optional(),
+    machineId: z.string().optional(),
+    machineName: z.string().max(80).optional(),
+    issueToken: z.string().optional(),
+    tlsVerify: z.enum(['auto', '0', '1']).optional(),
+    caCertPath: z.string().optional(),
+    tlsPins: z.array(z.string()).optional(),
+    tokenIssuer: z.string().optional(),
+    tokenAudience: z.string().optional(),
+    tokenJwksUrl: z.string().optional(),
+    signingKeys: z.record(z.string(), z.string()).optional(),
+    tokenClockSkewSec: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
 export const ViewportConfigSchema = z
   .object({
     defaults: PartialSessionConfigSchema.optional(),
@@ -70,6 +92,7 @@ export const ViewportConfigSchema = z
         relay: z
           .object({
             enabled: z.boolean().optional(),
+            bindings: z.array(PartialRelayBindingSchema).optional(),
             endpoint: z.string().optional(),
             serverUrl: z.string().optional(),
             workspaceId: z.string().optional(),

@@ -16,6 +16,11 @@ function globalIdentityFilePath(): string {
   return path.join(configDir(), 'relay-daemon-identity.json');
 }
 
+function scopedIdentityFilePath(scope: string): string {
+  const safeScope = scope.replace(/[^A-Za-z0-9_.-]/g, '_');
+  return path.join(configDir(), 'relay-identities', `${safeScope}.json`);
+}
+
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
@@ -77,14 +82,14 @@ async function createIdentity(): Promise<DaemonRelayIdentity> {
   };
 }
 
-export async function loadOrCreateIdentity(): Promise<DaemonRelayIdentity> {
-  const globalPath = globalIdentityFilePath();
-  const existing = await readIdentityFile(globalPath);
+export async function loadOrCreateIdentity(scope?: string): Promise<DaemonRelayIdentity> {
+  const identityPath = scope ? scopedIdentityFilePath(scope) : globalIdentityFilePath();
+  const existing = await readIdentityFile(identityPath);
   if (existing) {
     return existing;
   }
 
   const identity = await createIdentity();
-  await writeIdentityFile(globalPath, identity);
+  await writeIdentityFile(identityPath, identity);
   return identity;
 }

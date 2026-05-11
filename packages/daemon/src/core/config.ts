@@ -176,6 +176,25 @@ export interface ViewportConfig {
     };
     relay?: {
       enabled?: boolean;
+      bindings?: Array<{
+        enabled?: boolean;
+        endpoint?: string;
+        serverUrl?: string;
+        workspaceId?: string;
+        installId?: string;
+        runtimeTargetId?: string;
+        machineId?: string;
+        machineName?: string;
+        issueToken?: string;
+        tlsVerify?: 'auto' | '0' | '1';
+        caCertPath?: string;
+        tlsPins?: string[];
+        tokenIssuer?: string;
+        tokenAudience?: string;
+        tokenJwksUrl?: string;
+        signingKeys?: Record<string, string>;
+        tokenClockSkewSec?: number;
+      }>;
       endpoint?: string;
       serverUrl?: string;
       workspaceId?: string;
@@ -533,6 +552,25 @@ export class ConfigManager {
         };
         relay?: {
           enabled?: boolean;
+          bindings?: Array<{
+            enabled?: boolean;
+            endpoint?: string;
+            serverUrl?: string;
+            workspaceId?: string;
+            installId?: string;
+            runtimeTargetId?: string;
+            machineId?: string;
+            machineName?: string;
+            issueToken?: string;
+            tlsVerify?: 'auto' | '0' | '1';
+            caCertPath?: string;
+            tlsPins?: string[];
+            tokenIssuer?: string;
+            tokenAudience?: string;
+            tokenJwksUrl?: string;
+            signingKeys?: Record<string, string>;
+            tokenClockSkewSec?: number;
+          }>;
           endpoint?: string;
           serverUrl?: string;
           workspaceId?: string;
@@ -546,6 +584,7 @@ export class ConfigManager {
           tlsPins?: string[];
           tokenIssuer?: string;
           tokenAudience?: string;
+          tokenJwksUrl?: string;
           signingKeys?: Record<string, string>;
           tokenClockSkewSec?: number;
         };

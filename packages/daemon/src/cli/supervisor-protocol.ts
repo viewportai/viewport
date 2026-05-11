@@ -4,6 +4,24 @@ export const WORKER_CONFIG_ENV = 'VPD_WORKER_CONFIG';
 export const WORKER_EXIT_SHUTDOWN = 64;
 export const WORKER_EXIT_RESTART = 75;
 
+export interface RelayLaunchBinding {
+  enabled?: boolean;
+  endpoint?: string;
+  serverUrl?: string;
+  workspaceId?: string;
+  runtimeTargetId?: string;
+  machineId?: string;
+  issueToken?: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+  tokenIssuer?: string;
+  tokenAudience?: string;
+  tokenJwksUrl?: string;
+  tokenSigningKeys?: Record<string, string>;
+  tokenClockSkewSec?: number;
+}
+
 export interface RuntimeLaunchConfig {
   listen: string;
   host: string;
@@ -35,4 +53,5 @@ export interface RuntimeLaunchConfig {
   relayTokenJwksUrl?: string;
   relayTokenSigningKeys?: Record<string, string>;
   relayTokenClockSkewSec?: number;
+  relayBindings?: RelayLaunchBinding[];
 }

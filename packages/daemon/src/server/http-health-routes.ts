@@ -10,6 +10,7 @@ export function registerHealthRoutes(
   daemon: Daemon,
   options: {
     getRelayStatus?: () => DaemonRelayBridgeStatus | null;
+    getRelayStatuses?: () => DaemonRelayBridgeStatus[];
     runtime?: DaemonRuntimeInfo;
     startedAtFallback: number;
   },
@@ -19,6 +20,8 @@ export function registerHealthRoutes(
     const memory = process.memoryUsage();
     const relayEnabled = runtime?.relayEnabled ?? false;
     const relayStatus = options.getRelayStatus?.() ?? null;
+    const relayStatuses =
+      options.getRelayStatuses?.() ?? (relayStatus !== null ? [relayStatus] : []);
     const machine = resolveDaemonRuntimeIdentity({
       daemonConfig: daemon.configManager.getDaemonConfig(),
       machineId: daemon.configManager.getMachineId(),
@@ -58,6 +61,16 @@ export function registerHealthRoutes(
               lastErrorMessage: relayStatus?.lastErrorMessage,
               lastErrorAt: relayStatus?.lastErrorAt,
               circuitOpenUntil: relayStatus?.circuitOpenUntil,
+              bindings: relayStatuses.map((status) => ({
+                workspaceId: status.workspaceId,
+                endpoint: status.relayEndpoint,
+                state: status.state,
+                reconnectAttempt: status.reconnectAttempt,
+                lastErrorCode: status.lastErrorCode,
+                lastErrorMessage: status.lastErrorMessage,
+                lastErrorAt: status.lastErrorAt,
+                circuitOpenUntil: status.circuitOpenUntil,
+              })),
             }
           : undefined,
     };

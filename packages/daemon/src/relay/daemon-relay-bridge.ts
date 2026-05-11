@@ -90,6 +90,7 @@ export interface DaemonRelayBridgeOptions {
   pairingChannelTtlMs?: number;
   pairingChannelMaxEntries?: number;
   relaySessionMaxEntries?: number;
+  filterDaemonPayload?: (payload: string) => string | null;
 }
 
 type RelayWs = WsType;
@@ -102,6 +103,8 @@ const DEFAULT_PAIRING_CHANNEL_MAX_ENTRIES = 2_048;
 const DEFAULT_RELAY_SESSION_MAX_ENTRIES = 4_096;
 
 export interface DaemonRelayBridgeStatus {
+  workspaceId: string;
+  relayEndpoint: string;
   state: 'stopped' | 'connecting' | 'connected' | 'waiting_retry' | 'circuit_open';
   reconnectAttempt: number;
   lastErrorCode?: BridgeErrorCode;
@@ -168,6 +171,8 @@ export class DaemonRelayBridge {
 
   getStatus(): DaemonRelayBridgeStatus {
     return {
+      workspaceId: this.options.workspaceId,
+      relayEndpoint: this.relayEndpoint,
       state: this.state,
       reconnectAttempt: this.reconnectAttempt,
       lastErrorCode: this.lastErrorCode,
@@ -201,7 +206,7 @@ export class DaemonRelayBridge {
 
   private async ensureKeyMaterial(): Promise<void> {
     if (!this.daemonIdentity) {
-      this.daemonIdentity = await loadOrCreateIdentity();
+      this.daemonIdentity = await loadOrCreateIdentity(this.options.workspaceId);
     }
   }
 
@@ -306,13 +311,19 @@ export class DaemonRelayBridge {
   private installSocketHandlers(daemonWs: RelayWs, relayWs: RelayWs): void {
     daemonWs.on('message', (raw) => {
       const payload = raw.toString('utf8');
-      logDaemonFrameSummary('daemon->relay', payload);
-      if (relayWs.readyState === WebSocket.OPEN) {
-        this.sendToAllRelaySessions(relayWs, payload);
+      const filteredPayload = this.options.filterDaemonPayload
+        ? this.options.filterDaemonPayload(payload)
+        : payload;
+      if (!filteredPayload) {
         return;
       }
-      const payloadBytes = Buffer.byteLength(payload);
-      this.pendingOutbound.push(payload);
+      logDaemonFrameSummary('daemon->relay', filteredPayload);
+      if (relayWs.readyState === WebSocket.OPEN) {
+        this.sendToAllRelaySessions(relayWs, filteredPayload);
+        return;
+      }
+      const payloadBytes = Buffer.byteLength(filteredPayload);
+      this.pendingOutbound.push(filteredPayload);
       this.pendingOutboundBytes += payloadBytes;
       const maxPendingOutbound = this.options.maxPendingOutbound ?? DEFAULT_MAX_PENDING_OUTBOUND;
       const maxPendingBytes =

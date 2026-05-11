@@ -58,6 +58,7 @@ import {
   service,
   setup,
   remote,
+  bind,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
 import { hookCapabilities, hookNotify, showHookHelp } from './cli/hook-command.js';
@@ -108,6 +109,7 @@ const commands: Record<string, () => Promise<void>> = {
   service,
   setup,
   remote,
+  bind,
 };
 
 const command = getCommand();
@@ -192,6 +194,8 @@ if (command === 'hook') {
       handler = skills;
     } else if (command === 'remote') {
       handler = remote;
+    } else if (command === 'bind') {
+      handler = bind;
     }
     if (!handler) {
       if (command !== 'help') {

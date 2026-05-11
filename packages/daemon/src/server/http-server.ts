@@ -50,6 +50,7 @@ export interface HttpServerOptions {
   onLifecycleShutdown?: () => Promise<void>;
   onLifecycleRestart?: () => Promise<void>;
   getRelayStatus?: () => DaemonRelayBridgeStatus | null;
+  getRelayStatuses?: () => DaemonRelayBridgeStatus[];
 }
 
 function isHookAuthBypassAllowed(securityProfile?: SecurityProfile): boolean {
@@ -138,6 +139,7 @@ export function registerHttpRoutes(
 
   registerHealthRoutes(app, daemon, {
     getRelayStatus: options?.getRelayStatus,
+    getRelayStatuses: options?.getRelayStatuses,
     runtime,
     startedAtFallback: startTime,
   });

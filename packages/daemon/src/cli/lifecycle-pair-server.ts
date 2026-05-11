@@ -1,9 +1,15 @@
 import { ConfigManager } from '../core/config.js';
 import type { ViewportConfig } from '../core/config.js';
 import { sanitizeMachineDisplayName } from '../core/machine-name.js';
-import { getFlag } from './args.js';
+import { getFlag, hasFlag } from './args.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 import { inferRelayEndpointFromServer } from './remote-commands.js';
+import {
+  createRelayMachineId,
+  ensureRelayBindingMachineId,
+  seedRelayBindings,
+  upsertRelayBinding,
+} from './relay-binding-config.js';
 
 const DEFAULT_PAIRING_SERVER = 'https://getviewport.com';
 const DEFAULT_PAIRING_APP = 'https://app.getviewport.com';
@@ -98,31 +104,67 @@ export async function storePairingCredentials(
   await manager.load();
   const existing = manager.getDaemonConfig() ?? {};
   const existingRelay = existing.relay ?? {};
+  const nextServerUrl = data.server_url ?? serverUrl;
+  const addBinding = hasFlag('add');
+  const replacesExisting =
+    Boolean(existingRelay.workspaceId) &&
+    (existingRelay.workspaceId !== data.workspace_id || existingRelay.serverUrl !== nextServerUrl);
+  if (replacesExisting && !addBinding && !hasFlag('replace')) {
+    throw new Error(
+      `This daemon is already paired to workspace ${existingRelay.workspaceId}. Re-run with --replace to delete that binding and replace it with ${data.workspace_id}. Use --add to keep both organizations paired.`,
+    );
+  }
 
   let relayEndpoint = data.relay_endpoint ?? existingRelay.endpoint;
   if (!relayEndpoint) {
-    relayEndpoint = inferRelayEndpointFromServer(data.server_url ?? serverUrl);
+    relayEndpoint = inferRelayEndpointFromServer(nextServerUrl);
   }
 
   const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
   const machineName = sanitizeMachineDisplayName(data.daemon_name) ?? existingRelay.machineName;
+  const seededBindings = seedRelayBindings(existingRelay);
+  const nextBinding = ensureRelayBindingMachineId({
+    enabled: true,
+    endpoint: relayEndpoint,
+    serverUrl: nextServerUrl,
+    workspaceId: data.workspace_id,
+    installId: data.install_id,
+    runtimeTargetId: data.runtime_target_id,
+    machineId: data.machine_id ?? createRelayMachineId(),
+    machineName,
+    issueToken: nextIssueToken,
+  });
+  const nextBindings = addBinding
+    ? upsertRelayBinding(seededBindings, nextBinding, hasFlag('replace'))
+    : [nextBinding];
+  const primaryBinding =
+    addBinding && existingRelay.workspaceId
+      ? (nextBindings.find(
+          (binding) =>
+            binding.workspaceId === existingRelay.workspaceId &&
+            binding.serverUrl === existingRelay.serverUrl,
+        ) ??
+        nextBindings[0] ??
+        nextBinding)
+      : nextBinding;
 
   await manager.setDaemonConfig({
     server: {
       ...(existing.server ?? {}),
-      url: data.server_url ?? serverUrl,
+      url: nextServerUrl,
     },
     relay: {
       ...existingRelay,
       enabled: true,
-      endpoint: relayEndpoint,
-      serverUrl: data.server_url ?? serverUrl,
-      workspaceId: data.workspace_id,
-      installId: data.install_id,
-      runtimeTargetId: data.runtime_target_id,
-      machineId: data.machine_id,
-      machineName,
-      issueToken: nextIssueToken,
+      bindings: nextBindings,
+      endpoint: primaryBinding.endpoint,
+      serverUrl: primaryBinding.serverUrl,
+      workspaceId: primaryBinding.workspaceId,
+      installId: primaryBinding.installId,
+      runtimeTargetId: primaryBinding.runtimeTargetId,
+      machineId: primaryBinding.machineId,
+      machineName: primaryBinding.machineName,
+      issueToken: primaryBinding.issueToken,
     },
   });
 }

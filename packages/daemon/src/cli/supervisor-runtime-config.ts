@@ -1,4 +1,5 @@
 import type { RuntimeLaunchConfig } from './supervisor-protocol.js';
+import type { RelayLaunchBinding } from './supervisor-protocol.js';
 
 export function encodeRuntimeConfig(config: RuntimeLaunchConfig): string {
   return Buffer.from(JSON.stringify(config), 'utf-8').toString('base64url');
@@ -81,5 +82,56 @@ export function decodeRuntimeConfig(raw: string | undefined): RuntimeLaunchConfi
       parsed.relayTokenClockSkewSec >= 0
         ? parsed.relayTokenClockSkewSec
         : undefined,
+    relayBindings: parseRelayLaunchBindings(parsed.relayBindings),
   };
+}
+
+function parseRelayLaunchBindings(value: unknown): RelayLaunchBinding[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const bindings = value.flatMap((item): RelayLaunchBinding[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    return [
+      {
+        enabled: typeof record['enabled'] === 'boolean' ? record['enabled'] : undefined,
+        endpoint: typeof record['endpoint'] === 'string' ? record['endpoint'] : undefined,
+        serverUrl: typeof record['serverUrl'] === 'string' ? record['serverUrl'] : undefined,
+        workspaceId: typeof record['workspaceId'] === 'string' ? record['workspaceId'] : undefined,
+        runtimeTargetId:
+          typeof record['runtimeTargetId'] === 'string' ? record['runtimeTargetId'] : undefined,
+        machineId: typeof record['machineId'] === 'string' ? record['machineId'] : undefined,
+        issueToken: typeof record['issueToken'] === 'string' ? record['issueToken'] : undefined,
+        tlsVerify:
+          record['tlsVerify'] === 'auto' ||
+          record['tlsVerify'] === '0' ||
+          record['tlsVerify'] === '1'
+            ? record['tlsVerify']
+            : undefined,
+        caCertPath: typeof record['caCertPath'] === 'string' ? record['caCertPath'] : undefined,
+        tlsPins:
+          Array.isArray(record['tlsPins']) &&
+          record['tlsPins'].every((entry) => typeof entry === 'string')
+            ? (record['tlsPins'] as string[])
+            : undefined,
+        tokenIssuer: typeof record['tokenIssuer'] === 'string' ? record['tokenIssuer'] : undefined,
+        tokenAudience:
+          typeof record['tokenAudience'] === 'string' ? record['tokenAudience'] : undefined,
+        tokenJwksUrl:
+          typeof record['tokenJwksUrl'] === 'string' ? record['tokenJwksUrl'] : undefined,
+        tokenSigningKeys:
+          record['tokenSigningKeys'] &&
+          typeof record['tokenSigningKeys'] === 'object' &&
+          !Array.isArray(record['tokenSigningKeys'])
+            ? (record['tokenSigningKeys'] as Record<string, string>)
+            : undefined,
+        tokenClockSkewSec:
+          typeof record['tokenClockSkewSec'] === 'number' &&
+          Number.isInteger(record['tokenClockSkewSec']) &&
+          record['tokenClockSkewSec'] >= 0
+            ? record['tokenClockSkewSec']
+            : undefined,
+      },
+    ];
+  });
+  return bindings.length > 0 ? bindings : undefined;
 }

@@ -6,6 +6,18 @@ import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import type { DaemonDirectoryInfo } from './daemon-client.js';
 import { isJsonMode, printJson, shortError } from './command-shared.js';
 
+function displayNameForDirectory(
+  dir: Pick<DaemonDirectoryInfo, 'id' | 'path'> & { name?: string },
+): string {
+  const configuredName = typeof dir.name === 'string' ? dir.name.trim() : '';
+  if (configuredName.length > 0) {
+    return configuredName;
+  }
+
+  const normalized = dir.path.replace(/\/+$/, '');
+  return path.basename(normalized) || normalized || dir.id;
+}
+
 export async function addDirectory(): Promise<void> {
   const asJson = isJsonMode();
   const args = getArgs();
@@ -171,7 +183,7 @@ export async function list(): Promise<void> {
       console.log('Registered directories:\n');
       for (const dir of dirs) {
         const sessions = dir.activeSessions?.length ?? 0;
-        console.log(`  ${dir.name}`);
+        console.log(`  ${displayNameForDirectory(dir)}`);
         console.log(`    path:     ${dir.path}`);
         console.log(`    id:       ${dir.id}`);
         console.log(`    sessions: ${sessions} active`);
@@ -196,7 +208,7 @@ export async function list(): Promise<void> {
 
   console.log('Registered directories (from config file):\n');
   for (const dir of dirs) {
-    const name = dir.path.split('/').pop() ?? dir.path;
+    const name = displayNameForDirectory(dir);
     console.log(`  ${name}`);
     console.log(`    path: ${dir.path}`);
     console.log(`    id:   ${dir.id}`);

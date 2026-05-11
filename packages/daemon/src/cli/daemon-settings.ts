@@ -4,6 +4,7 @@ import { resolveDisplayVersion } from '../core/package-meta.js';
 import { buildSecurityProfile } from '../server/security.js';
 import type { DeploymentProfile } from '../server/security.js';
 import { parseListenTarget, type DaemonListenTarget } from './listen-target.js';
+import { resolveRelayLaunchBindings } from './relay-launch-bindings.js';
 import type { RuntimeLaunchConfig } from './supervisor-protocol.js';
 
 export interface DaemonResolvedSettings {
@@ -271,6 +272,27 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     ) ??
     daemonConfig?.relay?.tokenClockSkewSec;
 
+  const relayBindings = resolveRelayLaunchBindings({
+    configured: daemonConfig?.relay?.bindings,
+    computed: {
+      enabled: true,
+      endpoint: relayEndpoint,
+      serverUrl: relayServerUrl,
+      workspaceId: relayWorkspaceId,
+      runtimeTargetId: relayRuntimeTargetId,
+      machineId: relayMachineId,
+      issueToken: relayIssueToken,
+      tlsVerify: relayTlsVerify,
+      caCertPath: relayCaCertPath,
+      tlsPins: relayTlsPins,
+      tokenIssuer: relayTokenIssuer,
+      tokenAudience: relayTokenAudience,
+      tokenJwksUrl: relayTokenJwksUrl,
+      tokenSigningKeys: relayTokenSigningKeys,
+      tokenClockSkewSec: relayTokenClockSkewSec,
+    },
+  });
+
   const launch: RuntimeLaunchConfig = {
     listen: listenTarget.listen,
     host: listenTarget.type === 'tcp' ? listenTarget.host : '127.0.0.1',
@@ -316,6 +338,7 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     relayTokenJwksUrl,
     relayTokenSigningKeys,
     relayTokenClockSkewSec,
+    relayBindings,
   };
 
   return {
