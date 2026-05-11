@@ -137,6 +137,18 @@ export async function remote(): Promise<void> {
       ok: true,
       relay: {
         enabled: relayConfig.enabled ?? false,
+        bindings: (relayConfig.bindings ?? []).map((binding) => ({
+          enabled: binding.enabled ?? true,
+          endpoint: binding.endpoint,
+          serverUrl: binding.serverUrl,
+          workspaceId: binding.workspaceId,
+          installId: binding.installId,
+          runtimeTargetId: binding.runtimeTargetId,
+          machineId: binding.machineId,
+          issueToken: redact(binding.issueToken),
+          tlsVerify: binding.tlsVerify ?? 'auto',
+          caCertPath: binding.caCertPath,
+        })),
         endpoint: relayConfig.endpoint,
         serverUrl: relayConfig.serverUrl,
         workspaceId: relayConfig.workspaceId,
@@ -157,6 +169,14 @@ export async function remote(): Promise<void> {
     }
 
     console.log(`Remote relay enabled: ${payload.relay.enabled ? 'yes' : 'no'}`);
+    if (payload.relay.bindings.length > 0) {
+      console.log(`Relay bindings:       ${payload.relay.bindings.length}`);
+      for (const binding of payload.relay.bindings) {
+        console.log(
+          `  - ${binding.workspaceId ?? '-'} ${binding.endpoint ?? '-'} (${binding.enabled ? 'enabled' : 'disabled'})`,
+        );
+      }
+    }
     console.log(`Relay endpoint:       ${payload.relay.endpoint ?? '-'}`);
     console.log(`Relay server:         ${payload.relay.serverUrl ?? '-'}`);
     console.log(`Workspace:            ${payload.relay.workspaceId ?? '-'}`);
@@ -215,6 +235,7 @@ export async function remote(): Promise<void> {
     const serverUrl = getFlag('server') ?? relayConfig.serverUrl;
     const workspaceId = getFlag('workspace') ?? relayConfig.workspaceId;
     const replaceExisting = hasFlag('replace');
+    const addBinding = hasFlag('add');
     const preserveIssuedInstall = relayConfig.workspaceId === workspaceId;
     const issueToken =
       getFlag('token') ??
@@ -233,6 +254,7 @@ export async function remote(): Promise<void> {
     }
     if (
       relayConfig.workspaceId &&
+      !addBinding &&
       (relayConfig.workspaceId !== workspaceId || relayConfig.serverUrl !== serverUrl) &&
       !replaceExisting
     ) {
@@ -269,6 +291,28 @@ export async function remote(): Promise<void> {
       });
     }
 
+    const nextBinding = {
+      enabled: enableNow,
+      endpoint: relayEndpoint,
+      serverUrl,
+      workspaceId,
+      installId: nextInstallId,
+      runtimeTargetId: nextRuntimeTargetId,
+      machineId: nextMachineId,
+      issueToken: issueToken.trim() || nextIssueToken,
+      tlsVerify: relayTlsVerify,
+      caCertPath: relayCaCertPath,
+      tlsPins: relayConfig.tlsPins,
+      tokenIssuer: relayConfig.tokenIssuer,
+      tokenAudience: relayConfig.tokenAudience,
+      tokenJwksUrl: relayConfig.tokenJwksUrl,
+      signingKeys: relayConfig.signingKeys,
+      tokenClockSkewSec: relayConfig.tokenClockSkewSec,
+    };
+    const nextBindings = addBinding
+      ? upsertRelayBinding(seedRelayBindings(relayConfig), nextBinding, replaceExisting)
+      : undefined;
+
     await manager.setDaemonConfig({
       server: {
         ...(daemonConfig.server ?? {}),
@@ -278,15 +322,20 @@ export async function remote(): Promise<void> {
       relay: {
         ...relayConfig,
         enabled: enableNow,
-        endpoint: relayEndpoint,
-        serverUrl,
-        workspaceId,
-        installId: nextInstallId,
-        runtimeTargetId: nextRuntimeTargetId,
-        machineId: nextMachineId,
-        issueToken: issueToken.trim() || nextIssueToken,
-        tlsVerify: relayTlsVerify,
-        caCertPath: relayCaCertPath,
+        bindings: nextBindings,
+        endpoint: addBinding && relayConfig.workspaceId ? relayConfig.endpoint : relayEndpoint,
+        serverUrl: addBinding && relayConfig.workspaceId ? relayConfig.serverUrl : serverUrl,
+        workspaceId: addBinding && relayConfig.workspaceId ? relayConfig.workspaceId : workspaceId,
+        installId: addBinding && relayConfig.workspaceId ? relayConfig.installId : nextInstallId,
+        runtimeTargetId:
+          addBinding && relayConfig.workspaceId ? relayConfig.runtimeTargetId : nextRuntimeTargetId,
+        machineId: addBinding && relayConfig.workspaceId ? relayConfig.machineId : nextMachineId,
+        issueToken:
+          addBinding && relayConfig.workspaceId
+            ? relayConfig.issueToken
+            : issueToken.trim() || nextIssueToken,
+        tlsVerify: addBinding && relayConfig.workspaceId ? relayConfig.tlsVerify : relayTlsVerify,
+        caCertPath: addBinding && relayConfig.workspaceId ? relayConfig.caCertPath : relayCaCertPath,
       },
     });
 
@@ -333,6 +382,71 @@ export async function remote(): Promise<void> {
   }
 
   throw new Error(usage());
+}
+
+type RelayConfig = NonNullable<NonNullable<Awaited<ReturnType<ConfigManager['getDaemonConfig']>>>['relay']>;
+type RelayBindingConfig = NonNullable<RelayConfig['bindings']>[number];
+
+function seedRelayBindings(relayConfig: RelayConfig): RelayBindingConfig[] {
+  const bindings = [...(relayConfig.bindings ?? [])];
+  const hasLegacyBinding =
+    relayConfig.workspaceId || relayConfig.endpoint || relayConfig.serverUrl || relayConfig.issueToken;
+  if (!hasLegacyBinding) return bindings;
+  const alreadySeeded = bindings.some(
+    (binding) =>
+      binding.workspaceId === relayConfig.workspaceId && binding.serverUrl === relayConfig.serverUrl,
+  );
+  if (!alreadySeeded) {
+    bindings.unshift({
+      enabled: relayConfig.enabled,
+      endpoint: relayConfig.endpoint,
+      serverUrl: relayConfig.serverUrl,
+      workspaceId: relayConfig.workspaceId,
+      installId: relayConfig.installId,
+      runtimeTargetId: relayConfig.runtimeTargetId,
+      machineId: relayConfig.machineId,
+      machineName: relayConfig.machineName,
+      issueToken: relayConfig.issueToken,
+      tlsVerify: relayConfig.tlsVerify,
+      caCertPath: relayConfig.caCertPath,
+      tlsPins: relayConfig.tlsPins,
+      tokenIssuer: relayConfig.tokenIssuer,
+      tokenAudience: relayConfig.tokenAudience,
+      tokenJwksUrl: relayConfig.tokenJwksUrl,
+      signingKeys: relayConfig.signingKeys,
+      tokenClockSkewSec: relayConfig.tokenClockSkewSec,
+    });
+  }
+  return bindings;
+}
+
+function upsertRelayBinding(
+  bindings: RelayBindingConfig[],
+  next: RelayBindingConfig,
+  replaceExisting: boolean,
+): RelayBindingConfig[] {
+  const exactIndex = bindings.findIndex(
+    (binding) => binding.workspaceId === next.workspaceId && binding.serverUrl === next.serverUrl,
+  );
+  if (exactIndex >= 0) {
+    const copy = [...bindings];
+    copy[exactIndex] = { ...copy[exactIndex], ...next };
+    return copy;
+  }
+
+  const workspaceIndex = bindings.findIndex((binding) => binding.workspaceId === next.workspaceId);
+  if (workspaceIndex >= 0 && !replaceExisting) {
+    throw new Error(
+      `Remote relay already has a binding for workspace ${next.workspaceId}. Re-run with --replace to replace that binding.`,
+    );
+  }
+  if (workspaceIndex >= 0) {
+    const copy = [...bindings];
+    copy[workspaceIndex] = next;
+    return copy;
+  }
+
+  return [...bindings, next];
 }
 
 function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {

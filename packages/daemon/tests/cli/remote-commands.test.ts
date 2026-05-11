@@ -216,6 +216,55 @@ describe('remote CLI commands', () => {
     await expect(remote()).rejects.toThrow('Re-run with --replace');
   });
 
+  it('adds a second relay binding without replacing the existing workspace', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://relay.acme.test/ws',
+        serverUrl: 'https://app.acme.test',
+        workspaceId: 'workspace_acme',
+        issueToken: 'install-issue-acme',
+        tlsVerify: 'auto',
+      },
+    });
+
+    process.argv = [
+      'node',
+      'vpd',
+      'remote',
+      'login',
+      '--json',
+      '--add',
+      '--server',
+      'https://app.personal.test',
+      '--relay-endpoint',
+      'wss://relay.personal.test/ws',
+      '--workspace',
+      'workspace_personal',
+      '--token',
+      'install-issue-personal',
+      '--context-decision-key',
+      'manual-v1:manual-public-key',
+    ];
+
+    const { remote } = await import('../../src/cli/remote-commands.js');
+    await remote();
+
+    const refreshed = new ConfigManager();
+    await refreshed.load();
+    const relay = refreshed.getDaemonConfig()?.relay;
+    expect(relay?.workspaceId).toBe('workspace_acme');
+    expect(relay?.bindings?.map((binding) => binding.workspaceId)).toEqual([
+      'workspace_acme',
+      'workspace_personal',
+    ]);
+    expect(relay?.bindings?.[0]?.issueToken).toBe('install-issue-acme');
+    expect(relay?.bindings?.[1]?.issueToken).toBe('install-issue-personal');
+  });
+
   it('status redacts issue token in JSON output', async () => {
     const { ConfigManager } = await import('../../src/core/config.js');
     const manager = new ConfigManager();

@@ -43,6 +43,7 @@ import { resolveLocalTlsState } from './cli/local-tls.js';
 import {
   WORKER_EXIT_RESTART,
   WORKER_EXIT_SHUTDOWN,
+  type RelayLaunchBinding,
   type RuntimeLaunchConfig,
 } from './cli/supervisor-protocol.js';
 import { buildSecurityProfile, isOriginAllowed } from './server/security.js';
@@ -101,6 +102,10 @@ export function localDaemonBridgeTlsOptions(): {
 }
 
 export function missingRelayRuntimeConfig(config: RuntimeLaunchConfig): string[] {
+  const binding = relayRuntimeBindings(config)[0];
+  if (binding) {
+    return missingRelayBindingRuntimeConfig(config, binding);
+  }
   const missing: string[] = [];
   if (!config.relayEndpoint) missing.push('relay endpoint');
   if (!config.relayServerUrl) missing.push('relay server URL');
@@ -109,6 +114,80 @@ export function missingRelayRuntimeConfig(config: RuntimeLaunchConfig): string[]
     missing.push('relay issue token');
   }
   if (!localDaemonWsUrl(config)) {
+    missing.push(
+      'tcp listen target (relay runtime currently requires tcp listen, not unix socket)',
+    );
+  }
+  return missing;
+}
+
+function relayRuntimeBindings(config: RuntimeLaunchConfig): RelayLaunchBinding[] {
+  if (config.relayBindings && config.relayBindings.length > 0) {
+    return config.relayBindings.filter((binding) => binding.enabled !== false);
+  }
+  if (
+    config.relayEndpoint ||
+    config.relayServerUrl ||
+    config.relayWorkspaceId ||
+    config.relayIssueToken
+  ) {
+    return [
+      {
+        enabled: true,
+        endpoint: config.relayEndpoint,
+        serverUrl: config.relayServerUrl,
+        workspaceId: config.relayWorkspaceId,
+        runtimeTargetId: config.relayRuntimeTargetId,
+        machineId: config.relayMachineId,
+        issueToken: config.relayIssueToken,
+        tlsVerify: config.relayTlsVerify,
+        caCertPath: config.relayCaCertPath,
+        tlsPins: config.relayTlsPins,
+        tokenIssuer: config.relayTokenIssuer,
+        tokenAudience: config.relayTokenAudience,
+        tokenJwksUrl: config.relayTokenJwksUrl,
+        tokenSigningKeys: config.relayTokenSigningKeys,
+        tokenClockSkewSec: config.relayTokenClockSkewSec,
+      },
+    ];
+  }
+  return [];
+}
+
+function runtimeConfigForRelayBinding(
+  config: RuntimeLaunchConfig,
+  binding: RelayLaunchBinding,
+): RuntimeLaunchConfig {
+  return {
+    ...config,
+    relayEndpoint: binding.endpoint,
+    relayServerUrl: binding.serverUrl,
+    relayWorkspaceId: binding.workspaceId,
+    relayRuntimeTargetId: binding.runtimeTargetId,
+    relayMachineId: binding.machineId,
+    relayIssueToken: binding.issueToken,
+    relayTlsVerify: binding.tlsVerify ?? config.relayTlsVerify,
+    relayCaCertPath: binding.caCertPath,
+    relayTlsPins: binding.tlsPins,
+    relayTokenIssuer: binding.tokenIssuer,
+    relayTokenAudience: binding.tokenAudience,
+    relayTokenJwksUrl: binding.tokenJwksUrl,
+    relayTokenSigningKeys: binding.tokenSigningKeys,
+    relayTokenClockSkewSec: binding.tokenClockSkewSec,
+  };
+}
+
+function missingRelayBindingRuntimeConfig(
+  config: RuntimeLaunchConfig,
+  binding: RelayLaunchBinding,
+): string[] {
+  const scoped = runtimeConfigForRelayBinding(config, binding);
+  const missing: string[] = [];
+  if (!scoped.relayEndpoint) missing.push('relay endpoint');
+  if (!scoped.relayServerUrl) missing.push('relay server URL');
+  if (!scoped.relayWorkspaceId) missing.push('relay workspace ID');
+  if (!scoped.relayIssueToken) missing.push('relay issue token');
+  if (!localDaemonWsUrl(scoped)) {
     missing.push(
       'tcp listen target (relay runtime currently requires tcp listen, not unix socket)',
     );
@@ -341,7 +420,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
   let shutdownExitCode = 0;
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
-  let relayBridge: DaemonRelayBridge | null = null;
+  let relayBridges: DaemonRelayBridge[] = [];
   let discoveryWatches: { stop: () => void } = { stop: () => undefined };
   let sessionPersistence: {
     flush: () => Promise<void>;
@@ -360,9 +439,9 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
     await sessionPersistence.flush();
     discoveryWatches.stop();
     hookRouter.shutdown();
-    if (relayBridge) {
-      await relayBridge.stop();
-      relayBridge = null;
+    if (relayBridges.length > 0) {
+      await Promise.all(relayBridges.map((bridge) => bridge.stop()));
+      relayBridges = [];
     }
     await daemon.shutdown();
     await sessionPersistence.clearPersistedState();
@@ -399,7 +478,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       }
       await shutdownPromise;
     },
-    getRelayStatus: () => relayBridge?.getStatus() ?? null,
+    getRelayStatus: () => relayBridges[0]?.getStatus() ?? null,
   });
   registerWsServer(app, daemon, registry, { hookRouter, supervision, auth, securityProfile });
 
@@ -438,45 +517,59 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       return;
     }
 
-    validateRelayRuntimeSecurity(config);
-    const missing = missingRelayRuntimeConfig(config);
     const daemonWsUrl = localDaemonWsUrl(config);
+    const bindings = relayRuntimeBindings(config);
 
-    if (missing.length > 0) {
-      logger.warn(`[relay] disabled due to incomplete config: ${missing.join(', ')}`);
+    if (bindings.length === 0) {
+      logger.warn('[relay] disabled due to missing relay binding config');
       return;
     }
 
     try {
       const daemonToken = securityProfile.requireAuth ? await readDaemonAuthToken() : null;
-      const orgRoutingFilter = createOrgRoutingFilter({
-        organizationId: config.relayWorkspaceId!,
-      });
-      relayBridge = new DaemonRelayBridge({
-        relayEndpoint: config.relayEndpoint!,
-        relayServerUrl: config.relayServerUrl!,
-        workspaceId: config.relayWorkspaceId!,
-        runtimeTargetId: config.relayRuntimeTargetId,
-        machineId: config.relayMachineId,
-        issueToken: config.relayIssueToken,
-        daemonWsUrl: daemonWsUrl!,
-        daemonAuthToken: daemonToken ?? undefined,
-        ...localDaemonBridgeTlsOptions(),
-        relayTlsVerify: config.relayTlsVerify ?? 'auto',
-        relayCaCertPath: config.relayCaCertPath,
-        relayTlsPins: config.relayTlsPins,
-        relayTokenIssuer: config.relayTokenIssuer,
-        relayTokenAudience: config.relayTokenAudience,
-        relayTokenJwksUrl: config.relayTokenJwksUrl,
-        relayTokenSigningKeys: config.relayTokenSigningKeys,
-        relayTokenClockSkewSec: config.relayTokenClockSkewSec,
-        filterDaemonPayload: (payload) => orgRoutingFilter.filter(payload),
-        keyRotateAfterMessages: parsePositiveIntEnv('VIEWPORT_RELAY_KEY_ROTATE_AFTER_MESSAGES'),
-      });
-      await relayBridge.start();
-      logger.log(
-        `[relay] enabled (workspace=${config.relayWorkspaceId}, endpoint=${config.relayEndpoint})`,
-      );
+      const started: DaemonRelayBridge[] = [];
+      for (const binding of bindings) {
+        const scopedConfig = runtimeConfigForRelayBinding(config, binding);
+        validateRelayRuntimeSecurity(scopedConfig);
+        const missing = missingRelayBindingRuntimeConfig(config, binding);
+        if (missing.length > 0) {
+          logger.warn(
+            `[relay] binding disabled due to incomplete config (workspace=${binding.workspaceId ?? '-'}): ${missing.join(', ')}`,
+          );
+          continue;
+        }
+
+        const orgRoutingFilter = createOrgRoutingFilter({
+          organizationId: scopedConfig.relayWorkspaceId!,
+        });
+        const bridge = new DaemonRelayBridge({
+          relayEndpoint: scopedConfig.relayEndpoint!,
+          relayServerUrl: scopedConfig.relayServerUrl!,
+          workspaceId: scopedConfig.relayWorkspaceId!,
+          runtimeTargetId: scopedConfig.relayRuntimeTargetId,
+          machineId: scopedConfig.relayMachineId,
+          issueToken: scopedConfig.relayIssueToken,
+          daemonWsUrl: daemonWsUrl!,
+          daemonAuthToken: daemonToken ?? undefined,
+          ...localDaemonBridgeTlsOptions(),
+          relayTlsVerify: scopedConfig.relayTlsVerify ?? 'auto',
+          relayCaCertPath: scopedConfig.relayCaCertPath,
+          relayTlsPins: scopedConfig.relayTlsPins,
+          relayTokenIssuer: scopedConfig.relayTokenIssuer,
+          relayTokenAudience: scopedConfig.relayTokenAudience,
+          relayTokenJwksUrl: scopedConfig.relayTokenJwksUrl,
+          relayTokenSigningKeys: scopedConfig.relayTokenSigningKeys,
+          relayTokenClockSkewSec: scopedConfig.relayTokenClockSkewSec,
+          filterDaemonPayload: (payload) => orgRoutingFilter.filter(payload),
+          keyRotateAfterMessages: parsePositiveIntEnv('VIEWPORT_RELAY_KEY_ROTATE_AFTER_MESSAGES'),
+        });
+        started.push(bridge);
+        await bridge.start();
+        logger.log(
+          `[relay] enabled (workspace=${scopedConfig.relayWorkspaceId}, endpoint=${scopedConfig.relayEndpoint})`,
+        );
+      }
+      relayBridges = started;
     } catch (err) {
       logger.warn('Relay bridge startup failed:', err);
     }

@@ -202,7 +202,7 @@ export class DaemonRelayBridge {
 
   private async ensureKeyMaterial(): Promise<void> {
     if (!this.daemonIdentity) {
-      this.daemonIdentity = await loadOrCreateIdentity();
+      this.daemonIdentity = await loadOrCreateIdentity(this.options.workspaceId);
     }
   }
 

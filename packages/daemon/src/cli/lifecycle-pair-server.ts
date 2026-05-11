@@ -99,10 +99,11 @@ export async function storePairingCredentials(
   const existing = manager.getDaemonConfig() ?? {};
   const existingRelay = existing.relay ?? {};
   const nextServerUrl = data.server_url ?? serverUrl;
+  const addBinding = hasFlag('add');
   const replacesExisting =
     Boolean(existingRelay.workspaceId) &&
     (existingRelay.workspaceId !== data.workspace_id || existingRelay.serverUrl !== nextServerUrl);
-  if (replacesExisting && !hasFlag('replace')) {
+  if (replacesExisting && !addBinding && !hasFlag('replace')) {
     throw new Error(
       `This daemon is already paired to workspace ${existingRelay.workspaceId}. Re-run with --replace to replace it with ${data.workspace_id}.`,
     );
@@ -115,6 +116,17 @@ export async function storePairingCredentials(
 
   const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
   const machineName = sanitizeMachineDisplayName(data.daemon_name) ?? existingRelay.machineName;
+  const nextBinding = {
+    enabled: true,
+    endpoint: relayEndpoint,
+    serverUrl: nextServerUrl,
+    workspaceId: data.workspace_id,
+    installId: data.install_id,
+    runtimeTargetId: data.runtime_target_id,
+    machineId: data.machine_id,
+    machineName,
+    issueToken: nextIssueToken,
+  };
 
   await manager.setDaemonConfig({
     server: {
@@ -124,16 +136,87 @@ export async function storePairingCredentials(
     relay: {
       ...existingRelay,
       enabled: true,
-      endpoint: relayEndpoint,
-      serverUrl: nextServerUrl,
-      workspaceId: data.workspace_id,
-      installId: data.install_id,
-      runtimeTargetId: data.runtime_target_id,
-      machineId: data.machine_id,
-      machineName,
-      issueToken: nextIssueToken,
+      bindings: addBinding
+        ? upsertRelayBinding(seedRelayBindings(existingRelay), nextBinding, hasFlag('replace'))
+        : undefined,
+      endpoint: addBinding && existingRelay.workspaceId ? existingRelay.endpoint : relayEndpoint,
+      serverUrl: addBinding && existingRelay.workspaceId ? existingRelay.serverUrl : nextServerUrl,
+      workspaceId: addBinding && existingRelay.workspaceId ? existingRelay.workspaceId : data.workspace_id,
+      installId: addBinding && existingRelay.workspaceId ? existingRelay.installId : data.install_id,
+      runtimeTargetId:
+        addBinding && existingRelay.workspaceId
+          ? existingRelay.runtimeTargetId
+          : data.runtime_target_id,
+      machineId: addBinding && existingRelay.workspaceId ? existingRelay.machineId : data.machine_id,
+      machineName: addBinding && existingRelay.workspaceId ? existingRelay.machineName : machineName,
+      issueToken: addBinding && existingRelay.workspaceId ? existingRelay.issueToken : nextIssueToken,
     },
   });
+}
+
+type RelayConfig = NonNullable<NonNullable<ViewportConfig['daemon']>['relay']>;
+type RelayBindingConfig = NonNullable<RelayConfig['bindings']>[number];
+
+function seedRelayBindings(relayConfig: RelayConfig): RelayBindingConfig[] {
+  const bindings = [...(relayConfig.bindings ?? [])];
+  const hasLegacyBinding =
+    relayConfig.workspaceId || relayConfig.endpoint || relayConfig.serverUrl || relayConfig.issueToken;
+  if (!hasLegacyBinding) return bindings;
+  const alreadySeeded = bindings.some(
+    (binding) =>
+      binding.workspaceId === relayConfig.workspaceId && binding.serverUrl === relayConfig.serverUrl,
+  );
+  if (!alreadySeeded) {
+    bindings.unshift({
+      enabled: relayConfig.enabled,
+      endpoint: relayConfig.endpoint,
+      serverUrl: relayConfig.serverUrl,
+      workspaceId: relayConfig.workspaceId,
+      installId: relayConfig.installId,
+      runtimeTargetId: relayConfig.runtimeTargetId,
+      machineId: relayConfig.machineId,
+      machineName: relayConfig.machineName,
+      issueToken: relayConfig.issueToken,
+      tlsVerify: relayConfig.tlsVerify,
+      caCertPath: relayConfig.caCertPath,
+      tlsPins: relayConfig.tlsPins,
+      tokenIssuer: relayConfig.tokenIssuer,
+      tokenAudience: relayConfig.tokenAudience,
+      tokenJwksUrl: relayConfig.tokenJwksUrl,
+      signingKeys: relayConfig.signingKeys,
+      tokenClockSkewSec: relayConfig.tokenClockSkewSec,
+    });
+  }
+  return bindings;
+}
+
+function upsertRelayBinding(
+  bindings: RelayBindingConfig[],
+  next: RelayBindingConfig,
+  replaceExisting: boolean,
+): RelayBindingConfig[] {
+  const exactIndex = bindings.findIndex(
+    (binding) => binding.workspaceId === next.workspaceId && binding.serverUrl === next.serverUrl,
+  );
+  if (exactIndex >= 0) {
+    const copy = [...bindings];
+    copy[exactIndex] = { ...copy[exactIndex], ...next };
+    return copy;
+  }
+
+  const workspaceIndex = bindings.findIndex((binding) => binding.workspaceId === next.workspaceId);
+  if (workspaceIndex >= 0 && !replaceExisting) {
+    throw new Error(
+      `This daemon already has a binding for workspace ${next.workspaceId}. Re-run with --replace to replace that binding.`,
+    );
+  }
+  if (workspaceIndex >= 0) {
+    const copy = [...bindings];
+    copy[workspaceIndex] = next;
+    return copy;
+  }
+
+  return [...bindings, next];
 }
 
 export async function pollForApproval(

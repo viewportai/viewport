@@ -4,7 +4,7 @@ import { resolveDisplayVersion } from '../core/package-meta.js';
 import { buildSecurityProfile } from '../server/security.js';
 import type { DeploymentProfile } from '../server/security.js';
 import { parseListenTarget, type DaemonListenTarget } from './listen-target.js';
-import type { RuntimeLaunchConfig } from './supervisor-protocol.js';
+import type { RelayLaunchBinding, RuntimeLaunchConfig } from './supervisor-protocol.js';
 
 export interface DaemonResolvedSettings {
   launch: RuntimeLaunchConfig;
@@ -271,6 +271,27 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     ) ??
     daemonConfig?.relay?.tokenClockSkewSec;
 
+  const relayBindings = resolveRelayLaunchBindings({
+    configured: daemonConfig?.relay?.bindings,
+    computed: {
+      enabled: true,
+      endpoint: relayEndpoint,
+      serverUrl: relayServerUrl,
+      workspaceId: relayWorkspaceId,
+      runtimeTargetId: relayRuntimeTargetId,
+      machineId: relayMachineId,
+      issueToken: relayIssueToken,
+      tlsVerify: relayTlsVerify,
+      caCertPath: relayCaCertPath,
+      tlsPins: relayTlsPins,
+      tokenIssuer: relayTokenIssuer,
+      tokenAudience: relayTokenAudience,
+      tokenJwksUrl: relayTokenJwksUrl,
+      tokenSigningKeys: relayTokenSigningKeys,
+      tokenClockSkewSec: relayTokenClockSkewSec,
+    },
+  });
+
   const launch: RuntimeLaunchConfig = {
     listen: listenTarget.listen,
     host: listenTarget.type === 'tcp' ? listenTarget.host : '127.0.0.1',
@@ -316,6 +337,7 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     relayTokenJwksUrl,
     relayTokenSigningKeys,
     relayTokenClockSkewSec,
+    relayBindings,
   };
 
   return {
@@ -323,4 +345,56 @@ export async function resolveDaemonSettingsFromSources(): Promise<DaemonResolved
     listenTarget,
     allowedOriginsRaw,
   };
+}
+
+function resolveRelayLaunchBindings(input: {
+  configured:
+    | Array<{
+        enabled?: boolean;
+        endpoint?: string;
+        serverUrl?: string;
+        workspaceId?: string;
+        runtimeTargetId?: string;
+        machineId?: string;
+        issueToken?: string;
+        tlsVerify?: 'auto' | '0' | '1';
+        caCertPath?: string;
+        tlsPins?: string[];
+        tokenIssuer?: string;
+        tokenAudience?: string;
+        tokenJwksUrl?: string;
+        signingKeys?: Record<string, string>;
+        tokenClockSkewSec?: number;
+      }>
+    | undefined;
+  computed: RelayLaunchBinding;
+}): RelayLaunchBinding[] | undefined {
+  if (input.configured && input.configured.length > 0) {
+    return input.configured.map((binding) => ({
+      enabled: binding.enabled,
+      endpoint: binding.endpoint,
+      serverUrl: binding.serverUrl,
+      workspaceId: binding.workspaceId,
+      runtimeTargetId: binding.runtimeTargetId,
+      machineId: binding.machineId,
+      issueToken: binding.issueToken,
+      tlsVerify: binding.tlsVerify,
+      caCertPath: binding.caCertPath,
+      tlsPins: binding.tlsPins,
+      tokenIssuer: binding.tokenIssuer,
+      tokenAudience: binding.tokenAudience,
+      tokenJwksUrl: binding.tokenJwksUrl,
+      tokenSigningKeys: binding.signingKeys,
+      tokenClockSkewSec: binding.tokenClockSkewSec,
+    }));
+  }
+  if (
+    input.computed.endpoint ||
+    input.computed.serverUrl ||
+    input.computed.workspaceId ||
+    input.computed.issueToken
+  ) {
+    return [input.computed];
+  }
+  return undefined;
 }
