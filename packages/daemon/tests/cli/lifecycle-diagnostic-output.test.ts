@@ -196,4 +196,35 @@ describe('lifecycle relay diagnostic output', () => {
       }),
     );
   });
+
+  it('prints per-organization relay health in status output', async () => {
+    mocks.readDaemonHealth.mockResolvedValue(
+      relayHealth({
+        bindings: [
+          {
+            workspaceId: 'org_acme',
+            endpoint: 'wss://relay.acme.test/ws',
+            state: 'connected',
+          },
+          {
+            workspaceId: 'org_personal',
+            endpoint: 'wss://relay.personal.test/ws',
+            state: 'disconnected',
+            lastErrorCode: 'WEBSOCKET_ERROR',
+          },
+        ],
+      }),
+    );
+    const output = captureConsole();
+    const { status } = await import('../../src/cli/lifecycle-status-command.js');
+
+    await status();
+
+    expect(output.lines).toContain('Relays:      2');
+    expect(output.lines).toContain('  - org_acme wss://relay.acme.test/ws connected');
+    expect(output.lines).toContain(
+      '  - org_personal wss://relay.personal.test/ws disconnected last=WEBSOCKET_ERROR',
+    );
+    output.restore();
+  });
 });

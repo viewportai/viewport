@@ -25,6 +25,15 @@ import {
 } from '../core/package-meta.js';
 import { resolveLocalOrgBindingSync, resolveWorkspaceOrgHintSync } from './org-binding.js';
 
+interface RelayBindingStatusView {
+  workspaceId?: string;
+  relayEndpoint?: string;
+  state?: string;
+  reconnectAttempt?: number;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+}
+
 function endpointHealthUrl(endpoint: DaemonEndpoint): string {
   if (endpoint.type === 'socket') {
     return `unix://${endpoint.socketPath}:/health`;
@@ -74,6 +83,24 @@ export async function status(): Promise<void> {
 
   const manager = new ConfigManager();
   await manager.load();
+  const daemonConfig = manager.getDaemonConfig();
+  const configuredRelayBindings = daemonConfig?.relay?.bindings ?? [];
+  const healthRelayBindings = readRelayBindingStatuses(health);
+  const relayBindingStatuses: RelayBindingStatusView[] =
+    healthRelayBindings.length > 0
+      ? healthRelayBindings
+      : configuredRelayBindings.map((binding) => ({
+          workspaceId: binding.workspaceId,
+          relayEndpoint: binding.endpoint,
+          state: binding.enabled === false ? 'stopped' : undefined,
+        }));
+  const activeRelayWorkspaceIds = new Set(
+    [
+      daemonConfig?.relay?.workspaceId,
+      ...configuredRelayBindings.map((binding) => binding.workspaceId),
+      ...relayBindingStatuses.map((binding) => binding.workspaceId),
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0),
+  );
   const cliVersion = resolveDisplayVersion();
   const cliSource = resolvePackageSourceInfo();
   const runtimeIdentity = resolveDaemonRuntimeIdentity({
@@ -134,14 +161,14 @@ export async function status(): Promise<void> {
       state?.relayServerUrl ??
       runtimeIdentity.relayServerUrl ??
       null,
-    relayWorkspaceId: manager.getDaemonConfig()?.relay?.workspaceId ?? null,
+    relayWorkspaceId: daemonConfig?.relay?.workspaceId ?? null,
+    relayBindings: relayBindingStatuses,
     cwdBinding: cwdBinding
       ? {
           directory: cwdBinding.directory,
           organizationId: cwdBinding.organizationId,
           streamEnabled: cwdBinding.streamEnabled,
-          matchesActiveOrg:
-            cwdBinding.organizationId === manager.getDaemonConfig()?.relay?.workspaceId,
+          matchesActiveOrg: activeRelayWorkspaceIds.has(cwdBinding.organizationId),
         }
       : null,
     cwdHint: cwdHint
@@ -207,6 +234,18 @@ export async function status(): Promise<void> {
   console.log(`Relay WS:    ${payload.relayEndpoint ?? '-'}`);
   console.log(`Relay API:   ${payload.relayServerUrl ?? '-'}`);
   console.log(`Relay state: ${payload.relayState ?? '-'}`);
+  if (payload.relayBindings.length > 0) {
+    console.log(`Relays:      ${payload.relayBindings.length}`);
+    for (const binding of payload.relayBindings) {
+      const last =
+        binding.lastErrorCode || binding.lastErrorMessage
+          ? ` last=${binding.lastErrorCode ?? 'UNKNOWN'}${binding.lastErrorMessage ? `:${binding.lastErrorMessage}` : ''}`
+          : '';
+      console.log(
+        `  - ${binding.workspaceId ?? '-'} ${binding.relayEndpoint ?? '-'} ${binding.state ?? 'configured'}${last}`,
+      );
+    }
+  }
   if (payload.relayReconnectAttempt) {
     console.log(`Relay tries: ${payload.relayReconnectAttempt}`);
   }
@@ -245,4 +284,34 @@ export async function status(): Promise<void> {
   if (payload.note) {
     console.log(`Note:        ${payload.note}`);
   }
+}
+
+function readRelayBindingStatuses(health: unknown): RelayBindingStatusView[] {
+  if (!health || typeof health !== 'object' || Array.isArray(health)) return [];
+  const relay = (health as { relay?: unknown }).relay;
+  if (!relay || typeof relay !== 'object' || Array.isArray(relay)) return [];
+  const bindings = (relay as { bindings?: unknown }).bindings;
+  if (!Array.isArray(bindings)) return [];
+  return bindings.flatMap((item): RelayBindingStatusView[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    return [
+      {
+        workspaceId: typeof record['workspaceId'] === 'string' ? record['workspaceId'] : undefined,
+        relayEndpoint:
+          typeof record['relayEndpoint'] === 'string'
+            ? record['relayEndpoint']
+            : typeof record['endpoint'] === 'string'
+              ? record['endpoint']
+              : undefined,
+        state: typeof record['state'] === 'string' ? record['state'] : undefined,
+        reconnectAttempt:
+          typeof record['reconnectAttempt'] === 'number' ? record['reconnectAttempt'] : undefined,
+        lastErrorCode:
+          typeof record['lastErrorCode'] === 'string' ? record['lastErrorCode'] : undefined,
+        lastErrorMessage:
+          typeof record['lastErrorMessage'] === 'string' ? record['lastErrorMessage'] : undefined,
+      },
+    ];
+  });
 }
