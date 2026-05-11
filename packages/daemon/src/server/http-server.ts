@@ -50,6 +50,7 @@ export interface HttpServerOptions {
   onLifecycleShutdown?: () => Promise<void>;
   onLifecycleRestart?: () => Promise<void>;
   getRelayStatus?: () => DaemonRelayBridgeStatus | null;
+  getRelayStatuses?: () => DaemonRelayBridgeStatus[];
 }
 
 function isHookAuthBypassAllowed(securityProfile?: SecurityProfile): boolean {

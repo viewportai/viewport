@@ -479,6 +479,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       await shutdownPromise;
     },
     getRelayStatus: () => relayBridges[0]?.getStatus() ?? null,
+    getRelayStatuses: () => relayBridges.map((bridge) => bridge.getStatus()),
   });
   registerWsServer(app, daemon, registry, { hookRouter, supervision, auth, securityProfile });
 

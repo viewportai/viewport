@@ -103,6 +103,8 @@ const DEFAULT_PAIRING_CHANNEL_MAX_ENTRIES = 2_048;
 const DEFAULT_RELAY_SESSION_MAX_ENTRIES = 4_096;
 
 export interface DaemonRelayBridgeStatus {
+  workspaceId: string;
+  relayEndpoint: string;
   state: 'stopped' | 'connecting' | 'connected' | 'waiting_retry' | 'circuit_open';
   reconnectAttempt: number;
   lastErrorCode?: BridgeErrorCode;
@@ -169,6 +171,8 @@ export class DaemonRelayBridge {
 
   getStatus(): DaemonRelayBridgeStatus {
     return {
+      workspaceId: this.options.workspaceId,
+      relayEndpoint: this.relayEndpoint,
       state: this.state,
       reconnectAttempt: this.reconnectAttempt,
       lastErrorCode: this.lastErrorCode,
