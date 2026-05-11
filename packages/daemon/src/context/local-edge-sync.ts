@@ -1,4 +1,5 @@
 import { configDir } from '../core/config.js';
+import { transportFetch, type TlsVerifyMode } from '../cli/network.js';
 import {
   assertCredentialsOrApprovedDevice,
   createVault,
@@ -20,8 +21,11 @@ export async function pushContextEvents(options: {
   workspaceId?: string;
   serverUrl: string;
   credential: string;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
   home?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: typeof transportFetch;
 }): Promise<{ accepted: number; pushed: number; repoId: string }> {
   const home = options.home ?? configDir();
   const metadata = await readContextMetadata(options.contextResourceId, home);
@@ -36,7 +40,7 @@ export async function pushContextEvents(options: {
   }
 
   const response = await postJson(
-    options.fetchImpl ?? fetch,
+    options.fetchImpl ?? transportFetch,
     contextRuntimeUrl(options.serverUrl, options.workspaceId ?? options.contextResourceId, 'push'),
     {
       credential: options.credential,
@@ -44,6 +48,11 @@ export async function pushContextEvents(options: {
       ...(candidateDecisionApplications.length > 0
         ? { candidate_decision_applications: candidateDecisionApplications }
         : {}),
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
     },
   );
 
@@ -59,12 +68,15 @@ export async function pullContextEvents(options: {
   workspaceId?: string;
   serverUrl: string;
   credential: string;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
   actorName: string;
   credentials: ContextCredentials;
   trustedDecisionKeys?: Record<string, string>;
   limit?: number;
   home?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: typeof transportFetch;
 }): Promise<{
   appliedCandidateDecisions: number;
   imported: number;
@@ -87,7 +99,7 @@ export async function pullContextEvents(options: {
   });
 
   const response = await postJson(
-    options.fetchImpl ?? fetch,
+    options.fetchImpl ?? transportFetch,
     contextRuntimeUrl(options.serverUrl, options.workspaceId ?? options.contextResourceId, 'pull'),
     {
       credential: options.credential,
@@ -97,6 +109,11 @@ export async function pullContextEvents(options: {
         ? { after_received_at: metadata.lastServerPullReceivedAt }
         : {}),
       limit: options.limit ?? 500,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
     },
   );
   const records = extractPulledRecords(response);
@@ -158,14 +175,21 @@ function contextRuntimeUrl(
 }
 
 async function postJson(
-  fetchImpl: typeof fetch,
+  fetchImpl: typeof transportFetch,
   url: string,
   body: Record<string, unknown>,
+  transportOptions: {
+    tlsVerify?: TlsVerifyMode;
+    caCertPath?: string;
+    tlsPins?: string[];
+  } = {},
 ): Promise<unknown> {
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),
+    timeoutMs: 5_000,
+    ...transportOptions,
   });
 
   let payload: unknown = null;

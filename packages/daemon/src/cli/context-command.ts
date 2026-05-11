@@ -7,7 +7,7 @@ import {
   resolveContextBundle,
   type ContextKeyStore,
 } from '../context/local-edge-store.js';
-import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
 import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
@@ -90,6 +90,10 @@ export async function context(): Promise<void> {
     await contextDecisions();
     return;
   }
+  if (subcommand === 'candidate-preview') {
+    await contextCandidatePreview();
+    return;
+  }
   if (subcommand === 'user-init') {
     await contextUserInit();
     return;
@@ -126,7 +130,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|candidate-preview|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -205,6 +209,33 @@ async function contextPropose(): Promise<void> {
   console.log('Title: [encrypted]');
 }
 
+async function contextCandidatePreview(): Promise<void> {
+  const contextResourceId = requiredContextId(
+    'vpd context candidate-preview --context <id> --event <event-id> --device <name>',
+  );
+  const candidate = await previewContextCandidate({
+    contextResourceId,
+    actorName:
+      getFlag('actor') ??
+      requiredFlag('device', 'vpd context candidate-preview --context <id> --device <name>'),
+    candidateEventId: getFlag('event') ?? getFlag('candidate-event'),
+    payloadDigest: getFlag('payload-digest'),
+    credentials: readCredentials({ required: false }),
+  });
+
+  if (isJsonMode()) {
+    printJson({
+      schema_version: 'viewport.cli.context_candidate_preview/v1',
+      command: 'context candidate-preview',
+      ok: true,
+      candidate,
+    });
+    return;
+  }
+  console.log(`# ${candidate.title}`);
+  console.log(candidate.body);
+}
+
 async function contextResolve(): Promise<void> {
   const contextResourceId = requiredContextId('vpd context resolve --context <id> --query <text>');
   let bundle;
@@ -248,6 +279,9 @@ async function contextSyncPush(): Promise<void> {
     workspaceId: target.workspaceId,
     serverUrl: target.serverUrl,
     credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
   });
 
   if (isJsonMode()) {
@@ -266,6 +300,9 @@ async function contextSyncPull(): Promise<void> {
     workspaceId: target.workspaceId,
     serverUrl: target.serverUrl,
     credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
     actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
     credentials: readCredentials(),
     trustedDecisionKeys: target.decisionSigningKeys,
@@ -306,7 +343,13 @@ async function contextDecisions(): Promise<void> {
   }
 }
 
-function readCredentials(): { passphrase: string; recoveryCode: string } {
+function readCredentials(options?: { required?: boolean }): { passphrase: string; recoveryCode: string } {
+  if (options?.required === false) {
+    return {
+      passphrase: getFlag('passphrase') ?? '',
+      recoveryCode: getFlag('recovery-code') ?? '',
+    };
+  }
   return {
     passphrase: requiredFlag('passphrase', 'Missing --passphrase'),
     recoveryCode: requiredFlag('recovery-code', 'Missing --recovery-code'),

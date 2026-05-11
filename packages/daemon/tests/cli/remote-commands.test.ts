@@ -15,6 +15,25 @@ describe('remote CLI commands', () => {
   beforeEach(async () => {
     vi.resetModules();
     logSpy.mockClear();
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/api/.well-known/context-candidate-decision-keys.json')) {
+        return new Response(
+          JSON.stringify({
+            schema_version: 'viewport.context_candidate_decision_keys/v1',
+            keys: [
+              {
+                kid: 'local-v1',
+                algorithm: 'Ed25519',
+                public_key: 'test-public-key',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-remote-cli-test-'));
     process.env['VIEWPORT_HOME'] = homeDir;
     process.chdir(homeDir);
@@ -84,6 +103,42 @@ describe('remote CLI commands', () => {
     expect(daemonConfig?.relay?.serverUrl).toBe('https://getviewport.com');
     expect(daemonConfig?.relay?.workspaceId).toBe('workspace_demo');
     expect(daemonConfig?.relay?.issueToken).toBe('install-issue-token');
+    expect(daemonConfig?.server?.contextCandidateDecisionKeys).toEqual({
+      'local-v1': 'test-public-key',
+    });
+  });
+
+  it('keeps explicitly provided context decision signing keys without discovery', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'remote',
+      'login',
+      '--json',
+      '--server',
+      'https://getviewport.com',
+      '--workspace',
+      'workspace_demo',
+      '--token',
+      'install-issue-token',
+      '--context-decision-key',
+      'manual-v1:manual-public-key',
+    ];
+
+    const { remote } = await import('../../src/cli/remote-commands.js');
+    const { ConfigManager } = await import('../../src/core/config.js');
+
+    await remote();
+
+    const manager = new ConfigManager();
+    await manager.load();
+    expect(manager.getDaemonConfig()?.server?.contextCandidateDecisionKeys).toEqual({
+      'manual-v1': 'manual-public-key',
+    });
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/.well-known/context-candidate-decision-keys.json'),
+      expect.anything(),
+    );
   });
 
   it('login clears stale issued-install credentials when switching workspaces', async () => {
@@ -132,6 +187,11 @@ describe('remote CLI commands', () => {
     const manager = new ConfigManager();
     await manager.load();
     await manager.setDaemonConfig({
+      server: {
+        contextCandidateDecisionKeys: {
+          'local-v1': 'test-public-key',
+        },
+      },
       relay: {
         enabled: true,
         endpoint: 'wss://relay.test/ws',
@@ -148,8 +208,11 @@ describe('remote CLI commands', () => {
     await remote();
 
     const output = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
-    const payload = JSON.parse(output) as { relay: { issueToken: string } };
+    const payload = JSON.parse(output) as {
+      relay: { issueToken: string; contextCandidateDecisionKeyIds: string[] };
+    };
     expect(payload.relay.issueToken).toBe('supe...oken');
+    expect(payload.relay.contextCandidateDecisionKeyIds).toEqual(['local-v1']);
   });
 
   it('throws actionable error when issue token is missing', async () => {
