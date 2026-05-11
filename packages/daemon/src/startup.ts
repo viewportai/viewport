@@ -525,10 +525,10 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       return;
     }
 
-    try {
-      const daemonToken = securityProfile.requireAuth ? await readDaemonAuthToken() : null;
-      const started: DaemonRelayBridge[] = [];
-      for (const binding of bindings) {
+    const daemonToken = securityProfile.requireAuth ? await readDaemonAuthToken() : null;
+    const started: DaemonRelayBridge[] = [];
+    for (const binding of bindings) {
+      try {
         const scopedConfig = runtimeConfigForRelayBinding(config, binding);
         validateRelayRuntimeSecurity(scopedConfig);
         const missing = missingRelayBindingRuntimeConfig(config, binding);
@@ -563,16 +563,19 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
           filterDaemonPayload: (payload) => orgRoutingFilter.filter(payload),
           keyRotateAfterMessages: parsePositiveIntEnv('VIEWPORT_RELAY_KEY_ROTATE_AFTER_MESSAGES'),
         });
-        started.push(bridge);
         await bridge.start();
+        started.push(bridge);
         logger.log(
           `[relay] enabled (workspace=${scopedConfig.relayWorkspaceId}, endpoint=${scopedConfig.relayEndpoint})`,
         );
+      } catch (err) {
+        logger.warn(
+          `[relay] binding startup failed (workspace=${binding.workspaceId ?? '-'}):`,
+          err,
+        );
       }
-      relayBridges = started;
-    } catch (err) {
-      logger.warn('Relay bridge startup failed:', err);
     }
+    relayBridges = started;
   })();
 
   void (async () => {
