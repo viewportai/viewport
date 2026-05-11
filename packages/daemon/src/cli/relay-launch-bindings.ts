@@ -1,6 +1,12 @@
 import type { RelayLaunchBinding } from './supervisor-protocol.js';
 import { createRelayMachineId } from './relay-binding-config.js';
 
+function inferRelayTokenJwksUrl(serverUrl: string | undefined): string | undefined {
+  const trimmed = serverUrl?.trim();
+  if (!trimmed) return undefined;
+  return `${trimmed.replace(/\/+$/, '')}/api/.well-known/jwks.json`;
+}
+
 export function resolveRelayLaunchBindings(input: {
   configured:
     | Array<{
@@ -37,7 +43,7 @@ export function resolveRelayLaunchBindings(input: {
       tlsPins: binding.tlsPins,
       tokenIssuer: binding.tokenIssuer,
       tokenAudience: binding.tokenAudience,
-      tokenJwksUrl: binding.tokenJwksUrl,
+      tokenJwksUrl: binding.tokenJwksUrl ?? inferRelayTokenJwksUrl(binding.serverUrl),
       tokenSigningKeys: binding.signingKeys,
       tokenClockSkewSec: binding.tokenClockSkewSec,
     }));

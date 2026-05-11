@@ -36,7 +36,7 @@ vpd status
 To attach the daemon to the managed control plane after you approve pairing in the app:
 
 ```bash
-vpd remote login --server https://getviewport.com --workspace <workspace-id> --token <issue-token> --enable
+vpd remote login --server https://api.getviewport.com --workspace <workspace-id> --token <issue-token> --enable
 vpd restart
 ```
 
@@ -44,7 +44,7 @@ The daemon defaults to the managed relay and control-plane topology unless you e
 
 Use `vpd pair --app-url <url>` only when the browser pairing app is hosted at a different origin than the API server. The managed defaults are:
 
-- API server: `https://getviewport.com`
+- API server: `https://api.getviewport.com`
 - browser app: `https://app.getviewport.com`
 
 ### Relay (self-hosted)

@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && node dist/index.js",
     "start:prod": "node dist/index.js",
-    "dev": "tsx src/index.ts",
+    "dev": "node --import ./scripts/load-env.mjs --import tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src tests --ext .ts --no-error-on-unmatched-pattern",
     "test": "vitest run",

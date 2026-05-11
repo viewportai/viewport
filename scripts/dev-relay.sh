@@ -36,11 +36,11 @@ detect_cert_dir() {
   return 1
 }
 
-SERVER_URL="${SERVER_URL:-https://getviewport.test}"
+SERVER_URL="${SERVER_URL:-https://api.getviewport.test}"
 RELAY_HOST="${RELAY_HOST:-127.0.0.1}"
 RELAY_PORT="${RELAY_PORT:-7781}"
 RELAY_MODE="${RELAY_MODE:-dev}"
-RELAY_TLS_HOST="${RELAY_TLS_HOST:-getviewport.test}"
+RELAY_TLS_HOST="${RELAY_TLS_HOST:-relay.getviewport.test}"
 RELAY_BACKPLANE_MODE="${RELAY_BACKPLANE_MODE:-single}"
 RELAY_ENABLE_ADMIN_HTTP="${RELAY_ENABLE_ADMIN_HTTP:-1}"
 RELAY_ADMIN_TOKEN="${RELAY_ADMIN_TOKEN:-dev-relay-admin-token}"

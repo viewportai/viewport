@@ -33,7 +33,7 @@ Session config resolution is separate:
     "relay": {
       "enabled": false,
       "endpoint": "wss://relay.getviewport.com/ws",
-      "serverUrl": "https://getviewport.com",
+      "serverUrl": "https://api.getviewport.com",
       "workspaceId": "workspace_demo",
       "issueToken": "install_daemon_issue_...",
       "tlsVerify": "auto",
@@ -56,7 +56,7 @@ Optional pairing-browser override:
 {
   "daemon": {
     "server": {
-      "url": "https://getviewport.com",
+      "url": "https://api.getviewport.com",
       "appUrl": "https://app.getviewport.com"
     }
   }
@@ -65,7 +65,7 @@ Optional pairing-browser override:
 
 Use `appUrl` only when the browser pairing app is intentionally hosted at a different origin than the API server. For the managed topology:
 
-- API server: `https://getviewport.com`
+- API server: `https://api.getviewport.com`
 - browser app: `https://app.getviewport.com`
 
 ## Environment variables
@@ -125,7 +125,7 @@ Pairing-only flags:
 - Configure relay credentials:
 
 ```bash
-vpd remote login --server https://app.getviewport.com --workspace workspace_demo --token <issue-token> --enable
+vpd remote login --server https://api.getviewport.com --workspace workspace_demo --token <issue-token> --enable
 ```
 
 - `--token` should be the daemon issue token the control plane returns after pairing approval.
