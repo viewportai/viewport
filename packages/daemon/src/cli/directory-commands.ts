@@ -6,7 +6,9 @@ import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import type { DaemonDirectoryInfo } from './daemon-client.js';
 import { isJsonMode, printJson, shortError } from './command-shared.js';
 
-function displayNameForDirectory(dir: Pick<DaemonDirectoryInfo, 'id' | 'path'> & { name?: string }): string {
+function displayNameForDirectory(
+  dir: Pick<DaemonDirectoryInfo, 'id' | 'path'> & { name?: string },
+): string {
   const configuredName = typeof dir.name === 'string' ? dir.name.trim() : '';
   if (configuredName.length > 0) {
     return configuredName;
