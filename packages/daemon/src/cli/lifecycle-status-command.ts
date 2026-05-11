@@ -86,14 +86,17 @@ export async function status(): Promise<void> {
   const daemonConfig = manager.getDaemonConfig();
   const configuredRelayBindings = daemonConfig?.relay?.bindings ?? [];
   const healthRelayBindings = readRelayBindingStatuses(health);
-  const relayBindingStatuses: RelayBindingStatusView[] =
-    healthRelayBindings.length > 0
-      ? healthRelayBindings
-      : configuredRelayBindings.map((binding) => ({
-          workspaceId: binding.workspaceId,
-          relayEndpoint: binding.endpoint,
-          state: binding.enabled === false ? 'stopped' : undefined,
-        }));
+  const configuredRelayBindingStatuses: RelayBindingStatusView[] = configuredRelayBindings.map(
+    (binding) => ({
+      workspaceId: binding.workspaceId,
+      relayEndpoint: binding.endpoint,
+      state: binding.enabled === false ? 'stopped' : undefined,
+    }),
+  );
+  const relayBindingStatuses = mergeRelayBindingStatuses(
+    configuredRelayBindingStatuses,
+    healthRelayBindings,
+  );
   const activeRelayWorkspaceIds = new Set(
     [
       daemonConfig?.relay?.workspaceId,
@@ -314,4 +317,39 @@ function readRelayBindingStatuses(health: unknown): RelayBindingStatusView[] {
       },
     ];
   });
+}
+
+function mergeRelayBindingStatuses(
+  configured: RelayBindingStatusView[],
+  health: RelayBindingStatusView[],
+): RelayBindingStatusView[] {
+  if (configured.length === 0) {
+    return health;
+  }
+
+  const healthByWorkspace = new Map(
+    health
+      .filter((binding) => binding.workspaceId)
+      .map((binding) => [binding.workspaceId as string, binding]),
+  );
+  const merged: RelayBindingStatusView[] = configured.map((binding) => {
+    const live = binding.workspaceId ? healthByWorkspace.get(binding.workspaceId) : undefined;
+    return {
+      ...binding,
+      ...live,
+      workspaceId: binding.workspaceId ?? live?.workspaceId,
+      relayEndpoint: live?.relayEndpoint ?? binding.relayEndpoint,
+      state: live?.state ?? binding.state,
+    };
+  });
+  const configuredKeys = new Set(configured.map((binding) => binding.workspaceId).filter(Boolean));
+
+  for (const binding of health) {
+    if (binding.workspaceId && configuredKeys.has(binding.workspaceId)) {
+      continue;
+    }
+    merged.push(binding);
+  }
+
+  return merged;
 }

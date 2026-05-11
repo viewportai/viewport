@@ -62,6 +62,42 @@ describe('HTTP Server', () => {
     expect(body.process?.memoryRss).toBeGreaterThan(0);
   });
 
+  it('GET /health reports all relay binding statuses', async () => {
+    await app.close();
+    app = Fastify();
+    registerHttpRoutes(app, daemon, undefined, {
+      getRelayStatus: () => ({
+        workspaceId: 'org-a',
+        relayEndpoint: 'wss://relay-a.test/ws',
+        state: 'connected',
+        reconnectAttempt: 0,
+      }),
+      getRelayStatuses: () => [
+        {
+          workspaceId: 'org-a',
+          relayEndpoint: 'wss://relay-a.test/ws',
+          state: 'connected',
+          reconnectAttempt: 0,
+        },
+        {
+          workspaceId: 'org-b',
+          relayEndpoint: 'wss://relay-b.test/ws',
+          state: 'waiting_retry',
+          reconnectAttempt: 2,
+        },
+      ],
+    });
+    await app.ready();
+
+    const res = await app.inject({ method: 'GET', url: '/health' });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).relay.bindings).toMatchObject([
+      { workspaceId: 'org-a', state: 'connected' },
+      { workspaceId: 'org-b', state: 'waiting_retry', reconnectAttempt: 2 },
+    ]);
+  });
+
   // ---------------------------------------------------------------------------
   // Directories
   // ---------------------------------------------------------------------------

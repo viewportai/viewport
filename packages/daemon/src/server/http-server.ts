@@ -139,6 +139,7 @@ export function registerHttpRoutes(
 
   registerHealthRoutes(app, daemon, {
     getRelayStatus: options?.getRelayStatus,
+    getRelayStatuses: options?.getRelayStatuses,
     runtime,
     startedAtFallback: startTime,
   });
