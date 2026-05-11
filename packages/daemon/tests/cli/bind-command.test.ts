@@ -51,6 +51,9 @@ describe('bind CLI command', () => {
     await expect(
       fs.readFile(path.join(repoDir, '.viewport/.gitignore'), 'utf8'),
     ).resolves.toContain('/local.yaml');
+    await expect(
+      fs.readFile(path.join(repoDir, '.viewport/.gitignore'), 'utf8'),
+    ).resolves.toContain('/hint-declines.json');
   });
 
   it('uses committed workspace hint when org id is omitted', async () => {
@@ -77,5 +80,22 @@ describe('bind CLI command', () => {
     process.argv = ['node', 'vpd', 'bind', '.', '--org', '01SECOND', '--json'];
     const { bind: bindAgain } = await import('../../src/cli/bind-command.js');
     await expect(bindAgain()).rejects.toThrow('Re-run with --yes');
+  });
+
+  it('records declined workspace hints as gitignored local-only state', async () => {
+    const { recordWorkspaceOrgHintDecline, workspaceOrgHintDeclinedSync } =
+      await import('../../src/cli/org-binding.js');
+
+    await recordWorkspaceOrgHintDecline({ directory: repoDir, organizationId: '01HINT' });
+
+    expect(workspaceOrgHintDeclinedSync({ directory: repoDir, organizationId: '01HINT' })).toBe(
+      true,
+    );
+    expect(workspaceOrgHintDeclinedSync({ directory: repoDir, organizationId: '01OTHER' })).toBe(
+      false,
+    );
+    await expect(
+      fs.readFile(path.join(repoDir, '.viewport/.gitignore'), 'utf8'),
+    ).resolves.toContain('/hint-declines.json');
   });
 });
