@@ -31,8 +31,7 @@ import { DirectoryManager } from '../directories/manager.js';
 import { SessionManager } from './session-manager.js';
 import { PermissionCoordinator } from './permission-coordinator.js';
 import { logger } from './logger.js';
-import { dedupeDiscoveredSessions } from './discovered-sessions.js';
-import { addWorkflowLinkedDiscoveredSessions } from './workflow-linked-discovery.js';
+import { discoverDirectorySessions } from './session-discovery-runner.js';
 import { WorkflowRunner } from '../workflows/runner.js';
 import { WorkflowSessionLinkStore } from '../workflows/session-links.js';
 
@@ -141,7 +140,6 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
 
   private async runDiscoveryOnce(): Promise<void> {
     const directories = this.directoryManager.list();
-    const nextDiscovered = new Map<string, DiscoveredSession[]>();
 
     log.debug(
       {
@@ -152,48 +150,10 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
       'Starting discovery run',
     );
 
-    for (const dir of directories) {
-      const allSessions: DiscoveredSession[] = [];
-
-      for (const [agentId, discovery] of this.discoveries) {
-        try {
-          const sessions = await discovery.discoverSessions(dir.path);
-          log.debug(
-            {
-              directoryId: dir.id,
-              directoryPath: dir.path,
-              agentId,
-              sessions: sessions.length,
-            },
-            'Discovery result',
-          );
-          allSessions.push(...sessions);
-        } catch (err) {
-          log.warn({ err, agentId, directory: dir.path }, 'Discovery failed for directory');
-        }
-      }
-
-      const dedupedSessions = dedupeDiscoveredSessions(allSessions);
-      log.debug(
-        {
-          directoryId: dir.id,
-          directoryPath: dir.path,
-          totalSessions: allSessions.length,
-          dedupedSessions: dedupedSessions.length,
-        },
-        'Discovery aggregate result',
-      );
-      if (dedupedSessions.length > 0) {
-        // Sort by most recent first
-        nextDiscovered.set(dir.id, dedupedSessions);
-      }
-    }
-
-    await addWorkflowLinkedDiscoveredSessions({
-      discoveredByDirectory: nextDiscovered,
+    const nextDiscovered = await discoverDirectorySessions({
       directories,
       discoveries: this.discoveries,
-      links: await this.workflowSessionLinks.list(),
+      links: this.workflowSessionLinks,
       log,
     });
 

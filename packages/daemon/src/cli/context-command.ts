@@ -7,7 +7,7 @@ import {
   resolveContextBundle,
   type ContextKeyStore,
 } from '../context/local-edge-store.js';
-import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
 import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
@@ -17,6 +17,7 @@ import { contextAdd } from './context-add-command.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
 import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
 import { contextVaultUse } from './context-vault-use-command.js';
+import { contextCandidatePreview } from './context-candidate-preview-command.js';
 import {
   contextDeviceAccept,
   contextDeviceApprove,
@@ -207,33 +208,6 @@ async function contextPropose(): Promise<void> {
   }
   console.log(`Context candidate proposed: ${candidate.id}`);
   console.log('Title: [encrypted]');
-}
-
-async function contextCandidatePreview(): Promise<void> {
-  const contextResourceId = requiredContextId(
-    'vpd context candidate-preview --context <id> --event <event-id> --device <name>',
-  );
-  const candidate = await previewContextCandidate({
-    contextResourceId,
-    actorName:
-      getFlag('actor') ??
-      requiredFlag('device', 'vpd context candidate-preview --context <id> --device <name>'),
-    candidateEventId: getFlag('event') ?? getFlag('candidate-event'),
-    payloadDigest: getFlag('payload-digest'),
-    credentials: readCredentials({ required: false }),
-  });
-
-  if (isJsonMode()) {
-    printJson({
-      schema_version: 'viewport.cli.context_candidate_preview/v1',
-      command: 'context candidate-preview',
-      ok: true,
-      candidate,
-    });
-    return;
-  }
-  console.log(`# ${candidate.title}`);
-  console.log(candidate.body);
 }
 
 async function contextResolve(): Promise<void> {
