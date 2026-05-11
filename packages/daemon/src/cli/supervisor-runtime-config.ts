@@ -96,26 +96,24 @@ function parseRelayLaunchBindings(value: unknown): RelayLaunchBinding[] | undefi
         enabled: typeof record['enabled'] === 'boolean' ? record['enabled'] : undefined,
         endpoint: typeof record['endpoint'] === 'string' ? record['endpoint'] : undefined,
         serverUrl: typeof record['serverUrl'] === 'string' ? record['serverUrl'] : undefined,
-        workspaceId:
-          typeof record['workspaceId'] === 'string' ? record['workspaceId'] : undefined,
+        workspaceId: typeof record['workspaceId'] === 'string' ? record['workspaceId'] : undefined,
         runtimeTargetId:
           typeof record['runtimeTargetId'] === 'string' ? record['runtimeTargetId'] : undefined,
         machineId: typeof record['machineId'] === 'string' ? record['machineId'] : undefined,
-        issueToken:
-          typeof record['issueToken'] === 'string' ? record['issueToken'] : undefined,
+        issueToken: typeof record['issueToken'] === 'string' ? record['issueToken'] : undefined,
         tlsVerify:
-          record['tlsVerify'] === 'auto' || record['tlsVerify'] === '0' || record['tlsVerify'] === '1'
+          record['tlsVerify'] === 'auto' ||
+          record['tlsVerify'] === '0' ||
+          record['tlsVerify'] === '1'
             ? record['tlsVerify']
             : undefined,
-        caCertPath:
-          typeof record['caCertPath'] === 'string' ? record['caCertPath'] : undefined,
+        caCertPath: typeof record['caCertPath'] === 'string' ? record['caCertPath'] : undefined,
         tlsPins:
           Array.isArray(record['tlsPins']) &&
           record['tlsPins'].every((entry) => typeof entry === 'string')
             ? (record['tlsPins'] as string[])
             : undefined,
-        tokenIssuer:
-          typeof record['tokenIssuer'] === 'string' ? record['tokenIssuer'] : undefined,
+        tokenIssuer: typeof record['tokenIssuer'] === 'string' ? record['tokenIssuer'] : undefined,
         tokenAudience:
           typeof record['tokenAudience'] === 'string' ? record['tokenAudience'] : undefined,
         tokenJwksUrl:

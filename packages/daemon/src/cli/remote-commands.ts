@@ -2,7 +2,11 @@ import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { resolveDisplayVersion } from '../core/package-meta.js';
 import { resolveDaemonRuntimeIdentity, toInstallCapabilities } from '../core/runtime-identity.js';
-import { transportFetch } from './network.js';
+import {
+  fetchContextCandidateDecisionKeys,
+  parseDecisionSigningKeys,
+} from './remote-decision-keys.js';
+import { seedRelayBindings, upsertRelayBinding } from './relay-binding-config.js';
 
 function boolLike(value: string | undefined): boolean {
   if (!value) return false;
@@ -70,51 +74,6 @@ function resolveInstallMetadata(serverUrl: string, relayEndpoint: string, manage
     relayEndpoint,
     relayServerUrl: serverUrl,
   });
-}
-
-async function fetchContextCandidateDecisionKeys(options: {
-  serverUrl: string;
-  tlsVerify?: 'auto' | '0' | '1';
-  caCertPath?: string;
-  tlsPins?: string[];
-}): Promise<Record<string, string> | undefined> {
-  const url = `${options.serverUrl.replace(/\/+$/, '')}/api/.well-known/context-candidate-decision-keys.json`;
-  const res = await transportFetch(url, {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-    tlsVerify: options.tlsVerify ?? 'auto',
-    caCertPath: options.caCertPath,
-    tlsPins: options.tlsPins,
-    timeoutMs: 3_000,
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch context candidate decision keys: HTTP ${res.status}`);
-  }
-  const body = (await res.json()) as unknown;
-  if (!body || typeof body !== 'object') {
-    throw new Error('Context candidate decision key response must be an object');
-  }
-  const keys = (body as { keys?: unknown }).keys;
-  if (!Array.isArray(keys)) {
-    throw new Error('Context candidate decision key response must include keys');
-  }
-
-  const parsed: Record<string, string> = {};
-  for (const key of keys) {
-    if (!key || typeof key !== 'object') continue;
-    const item = key as { kid?: unknown; algorithm?: unknown; public_key?: unknown };
-    if (
-      typeof item.kid === 'string' &&
-      item.kid.length > 0 &&
-      item.algorithm === 'Ed25519' &&
-      typeof item.public_key === 'string' &&
-      item.public_key.length > 0
-    ) {
-      parsed[item.kid] = item.public_key;
-    }
-  }
-
-  return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
 export async function remote(): Promise<void> {
@@ -335,7 +294,8 @@ export async function remote(): Promise<void> {
             ? relayConfig.issueToken
             : issueToken.trim() || nextIssueToken,
         tlsVerify: addBinding && relayConfig.workspaceId ? relayConfig.tlsVerify : relayTlsVerify,
-        caCertPath: addBinding && relayConfig.workspaceId ? relayConfig.caCertPath : relayCaCertPath,
+        caCertPath:
+          addBinding && relayConfig.workspaceId ? relayConfig.caCertPath : relayCaCertPath,
       },
     });
 
@@ -382,96 +342,4 @@ export async function remote(): Promise<void> {
   }
 
   throw new Error(usage());
-}
-
-type RelayConfig = NonNullable<NonNullable<Awaited<ReturnType<ConfigManager['getDaemonConfig']>>>['relay']>;
-type RelayBindingConfig = NonNullable<RelayConfig['bindings']>[number];
-
-function seedRelayBindings(relayConfig: RelayConfig): RelayBindingConfig[] {
-  const bindings = [...(relayConfig.bindings ?? [])];
-  const hasLegacyBinding =
-    relayConfig.workspaceId || relayConfig.endpoint || relayConfig.serverUrl || relayConfig.issueToken;
-  if (!hasLegacyBinding) return bindings;
-  const alreadySeeded = bindings.some(
-    (binding) =>
-      binding.workspaceId === relayConfig.workspaceId && binding.serverUrl === relayConfig.serverUrl,
-  );
-  if (!alreadySeeded) {
-    bindings.unshift({
-      enabled: relayConfig.enabled,
-      endpoint: relayConfig.endpoint,
-      serverUrl: relayConfig.serverUrl,
-      workspaceId: relayConfig.workspaceId,
-      installId: relayConfig.installId,
-      runtimeTargetId: relayConfig.runtimeTargetId,
-      machineId: relayConfig.machineId,
-      machineName: relayConfig.machineName,
-      issueToken: relayConfig.issueToken,
-      tlsVerify: relayConfig.tlsVerify,
-      caCertPath: relayConfig.caCertPath,
-      tlsPins: relayConfig.tlsPins,
-      tokenIssuer: relayConfig.tokenIssuer,
-      tokenAudience: relayConfig.tokenAudience,
-      tokenJwksUrl: relayConfig.tokenJwksUrl,
-      signingKeys: relayConfig.signingKeys,
-      tokenClockSkewSec: relayConfig.tokenClockSkewSec,
-    });
-  }
-  return bindings;
-}
-
-function upsertRelayBinding(
-  bindings: RelayBindingConfig[],
-  next: RelayBindingConfig,
-  replaceExisting: boolean,
-): RelayBindingConfig[] {
-  const exactIndex = bindings.findIndex(
-    (binding) => binding.workspaceId === next.workspaceId && binding.serverUrl === next.serverUrl,
-  );
-  if (exactIndex >= 0) {
-    const copy = [...bindings];
-    copy[exactIndex] = { ...copy[exactIndex], ...next };
-    return copy;
-  }
-
-  const workspaceIndex = bindings.findIndex((binding) => binding.workspaceId === next.workspaceId);
-  if (workspaceIndex >= 0 && !replaceExisting) {
-    throw new Error(
-      `Remote relay already has a binding for workspace ${next.workspaceId}. Re-run with --replace to replace that binding.`,
-    );
-  }
-  if (workspaceIndex >= 0) {
-    const copy = [...bindings];
-    copy[workspaceIndex] = next;
-    return copy;
-  }
-
-  return [...bindings, next];
-}
-
-function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return undefined;
-
-  if (trimmed.startsWith('{')) {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Context candidate decision key JSON must be an object');
-    }
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).flatMap(([kid, key]) =>
-        typeof key === 'string' && key.length > 0 ? [[kid, key]] : [],
-      ),
-    );
-  }
-
-  const separator = trimmed.indexOf(':');
-  if (separator <= 0 || separator === trimmed.length - 1) {
-    throw new Error('Context candidate decision key must use kid:base64-public-key format');
-  }
-
-  return {
-    [trimmed.slice(0, separator)]: trimmed.slice(separator + 1),
-  };
 }
