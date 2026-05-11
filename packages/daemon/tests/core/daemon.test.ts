@@ -368,11 +368,7 @@ describe('Daemon', () => {
     const discovery = new MockDiscovery('claude', [], { delayMs: 25 });
     daemon.registerDiscovery(discovery);
 
-    await Promise.all([
-      daemon.runDiscovery(),
-      daemon.runDiscovery(),
-      daemon.runDiscovery(),
-    ]);
+    await Promise.all([daemon.runDiscovery(), daemon.runDiscovery(), daemon.runDiscovery()]);
 
     expect(discovery.calls).toBe(4);
   });

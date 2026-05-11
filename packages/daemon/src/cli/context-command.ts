@@ -317,7 +317,10 @@ async function contextDecisions(): Promise<void> {
   }
 }
 
-function readCredentials(options?: { required?: boolean }): { passphrase: string; recoveryCode: string } {
+function readCredentials(options?: { required?: boolean }): {
+  passphrase: string;
+  recoveryCode: string;
+} {
   if (options?.required === false) {
     return {
       passphrase: getFlag('passphrase') ?? '',

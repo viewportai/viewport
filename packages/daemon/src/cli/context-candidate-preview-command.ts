@@ -29,7 +29,10 @@ export async function contextCandidatePreview(): Promise<void> {
   console.log(candidate.body);
 }
 
-function readCredentials(options?: { required?: boolean }): { passphrase: string; recoveryCode: string } {
+function readCredentials(options?: { required?: boolean }): {
+  passphrase: string;
+  recoveryCode: string;
+} {
   if (options?.required === false) {
     return {
       passphrase: getFlag('passphrase') ?? '',
