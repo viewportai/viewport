@@ -244,6 +244,17 @@ describe('Config I/O', () => {
     expect(stat.mode & 0o777).toBe(0o600);
   });
 
+  it('saveConfig tightens permissions on an existing config file', async () => {
+    const configPath = path.join(tmpDir, '.viewport', 'config.json');
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.writeFile(configPath, '{}\n', { encoding: 'utf-8', mode: 0o644 });
+
+    await saveConfig({ machineId: 'test-machine' });
+
+    const stat = await fs.stat(configPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
   it('loadConfig reads back what saveConfig wrote', async () => {
     await saveConfig({ machineId: 'roundtrip' });
     const config = await loadConfig();

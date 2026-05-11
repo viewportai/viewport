@@ -393,6 +393,7 @@ async function saveConfigToPath(filePath: string, config: ViewportConfig): Promi
     encoding: 'utf-8',
     mode: 0o600,
   });
+  await fs.chmod(filePath, 0o600);
 }
 
 // ---------------------------------------------------------------------------
