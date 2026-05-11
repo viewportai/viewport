@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.3.0...@viewportai/daemon@0.4.0) (2026-05-11)
+
+
+### Features
+
+* add explicit org directory bindings ([c13208a](https://github.com/viewportai/viewport/commit/c13208a78ed53341d4815893a5aec3f4daba340f))
+
 # [0.3.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.2.1...@viewportai/daemon@0.3.0) (2026-05-11)
 
 
