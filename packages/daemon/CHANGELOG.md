@@ -1,3 +1,18 @@
+# [0.3.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.2.1...@viewportai/daemon@0.3.0) (2026-05-11)
+
+
+### Bug Fixes
+
+* **daemon:** allow hosted app origins in local profile ([9b326cf](https://github.com/viewportai/viewport/commit/9b326cf150f48786761be88d4903fae95e2e379d))
+* **daemon:** coalesce overlapping discovery runs ([8df8b27](https://github.com/viewportai/viewport/commit/8df8b27691f905a5d98fe103f18a1b202812572e))
+* **daemon:** enforce private config file permissions ([b1422b1](https://github.com/viewportai/viewport/commit/b1422b1a34b9a5b9b7b973d34187fb281bd9f9d8))
+* **relay:** publish image under org package ([#84](https://github.com/viewportai/viewport/issues/84)) ([4753793](https://github.com/viewportai/viewport/commit/4753793d57a69b1db5804d698db1776d7df8e993))
+
+
+### Features
+
+* **daemon:** preview context candidates locally ([42f3a96](https://github.com/viewportai/viewport/commit/42f3a966fe4b403513f082ff2ea230879946b0ce))
+
 ## [0.2.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.2.0...@viewportai/daemon@0.2.1) (2026-05-10)
 
 
