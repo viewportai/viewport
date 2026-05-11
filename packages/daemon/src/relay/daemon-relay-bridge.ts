@@ -90,6 +90,7 @@ export interface DaemonRelayBridgeOptions {
   pairingChannelTtlMs?: number;
   pairingChannelMaxEntries?: number;
   relaySessionMaxEntries?: number;
+  filterDaemonPayload?: (payload: string) => string | null;
 }
 
 type RelayWs = WsType;
@@ -306,13 +307,19 @@ export class DaemonRelayBridge {
   private installSocketHandlers(daemonWs: RelayWs, relayWs: RelayWs): void {
     daemonWs.on('message', (raw) => {
       const payload = raw.toString('utf8');
-      logDaemonFrameSummary('daemon->relay', payload);
-      if (relayWs.readyState === WebSocket.OPEN) {
-        this.sendToAllRelaySessions(relayWs, payload);
+      const filteredPayload = this.options.filterDaemonPayload
+        ? this.options.filterDaemonPayload(payload)
+        : payload;
+      if (!filteredPayload) {
         return;
       }
-      const payloadBytes = Buffer.byteLength(payload);
-      this.pendingOutbound.push(payload);
+      logDaemonFrameSummary('daemon->relay', filteredPayload);
+      if (relayWs.readyState === WebSocket.OPEN) {
+        this.sendToAllRelaySessions(relayWs, filteredPayload);
+        return;
+      }
+      const payloadBytes = Buffer.byteLength(filteredPayload);
+      this.pendingOutbound.push(filteredPayload);
       this.pendingOutboundBytes += payloadBytes;
       const maxPendingOutbound = this.options.maxPendingOutbound ?? DEFAULT_MAX_PENDING_OUTBOUND;
       const maxPendingBytes =

@@ -214,6 +214,7 @@ export async function remote(): Promise<void> {
   if (subcommand === 'login') {
     const serverUrl = getFlag('server') ?? relayConfig.serverUrl;
     const workspaceId = getFlag('workspace') ?? relayConfig.workspaceId;
+    const replaceExisting = hasFlag('replace');
     const preserveIssuedInstall = relayConfig.workspaceId === workspaceId;
     const issueToken =
       getFlag('token') ??
@@ -228,6 +229,15 @@ export async function remote(): Promise<void> {
     if (!issueToken) {
       throw new Error(
         'Missing relay issue token. Pass --token <issue-token> or --issue-token <issue-token>.',
+      );
+    }
+    if (
+      relayConfig.workspaceId &&
+      (relayConfig.workspaceId !== workspaceId || relayConfig.serverUrl !== serverUrl) &&
+      !replaceExisting
+    ) {
+      throw new Error(
+        `Remote relay is already configured for workspace ${relayConfig.workspaceId}. Re-run with --replace to replace it with ${workspaceId}.`,
       );
     }
 

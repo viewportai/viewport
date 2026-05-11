@@ -1,7 +1,7 @@
 import { ConfigManager } from '../core/config.js';
 import type { ViewportConfig } from '../core/config.js';
 import { sanitizeMachineDisplayName } from '../core/machine-name.js';
-import { getFlag } from './args.js';
+import { getFlag, hasFlag } from './args.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 import { inferRelayEndpointFromServer } from './remote-commands.js';
 
@@ -98,10 +98,19 @@ export async function storePairingCredentials(
   await manager.load();
   const existing = manager.getDaemonConfig() ?? {};
   const existingRelay = existing.relay ?? {};
+  const nextServerUrl = data.server_url ?? serverUrl;
+  const replacesExisting =
+    Boolean(existingRelay.workspaceId) &&
+    (existingRelay.workspaceId !== data.workspace_id || existingRelay.serverUrl !== nextServerUrl);
+  if (replacesExisting && !hasFlag('replace')) {
+    throw new Error(
+      `This daemon is already paired to workspace ${existingRelay.workspaceId}. Re-run with --replace to replace it with ${data.workspace_id}.`,
+    );
+  }
 
   let relayEndpoint = data.relay_endpoint ?? existingRelay.endpoint;
   if (!relayEndpoint) {
-    relayEndpoint = inferRelayEndpointFromServer(data.server_url ?? serverUrl);
+    relayEndpoint = inferRelayEndpointFromServer(nextServerUrl);
   }
 
   const nextIssueToken = data.token?.trim() ? data.token.trim() : existingRelay.issueToken;
@@ -110,13 +119,13 @@ export async function storePairingCredentials(
   await manager.setDaemonConfig({
     server: {
       ...(existing.server ?? {}),
-      url: data.server_url ?? serverUrl,
+      url: nextServerUrl,
     },
     relay: {
       ...existingRelay,
       enabled: true,
       endpoint: relayEndpoint,
-      serverUrl: data.server_url ?? serverUrl,
+      serverUrl: nextServerUrl,
       workspaceId: data.workspace_id,
       installId: data.install_id,
       runtimeTargetId: data.runtime_target_id,

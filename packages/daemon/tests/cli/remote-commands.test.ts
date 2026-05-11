@@ -169,6 +169,7 @@ describe('remote CLI commands', () => {
       'workspace_new',
       '--token',
       'install-issue-new',
+      '--replace',
     ];
 
     const { remote } = await import('../../src/cli/remote-commands.js');
@@ -180,6 +181,39 @@ describe('remote CLI commands', () => {
     expect(relay?.workspaceId).toBe('workspace_new');
     expect(relay?.installId).toBeUndefined();
     expect(relay?.issueToken).toBe('install-issue-new');
+  });
+
+  it('requires --replace before switching workspaces', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: true,
+        endpoint: 'wss://relay.getviewport.com/ws',
+        serverUrl: 'https://getviewport.com',
+        workspaceId: 'workspace_old',
+        issueToken: 'install-issue-old',
+        tlsVerify: 'auto',
+      },
+    });
+
+    process.argv = [
+      'node',
+      'vpd',
+      'remote',
+      'login',
+      '--json',
+      '--server',
+      'https://getviewport.com',
+      '--workspace',
+      'workspace_new',
+      '--token',
+      'install-issue-new',
+    ];
+
+    const { remote } = await import('../../src/cli/remote-commands.js');
+    await expect(remote()).rejects.toThrow('Re-run with --replace');
   });
 
   it('status redacts issue token in JSON output', async () => {

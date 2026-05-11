@@ -44,3 +44,4 @@ export { skills } from './skills-command.js';
 export { service } from './service-commands.js';
 export { setup } from './setup-command.js';
 export { remote } from './remote-commands.js';
+export { bind } from './bind-command.js';

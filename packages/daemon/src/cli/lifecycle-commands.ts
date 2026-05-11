@@ -323,6 +323,10 @@ export function showHelp(): void {
   );
   console.log('  setup [--yes|--choose]       First-run guided setup (recommended or custom)');
   console.log('  install [--json]             Detect available agents and install hooks');
+  console.log('  bind [path] [--org <organization-id>] [--yes] [--json]');
+  console.log(
+    '                               Authorize a local directory tree to stream to a paired organization',
+  );
   console.log('  add <path> [--json]          Register a directory');
   console.log('  remove <path> [--json]       Unregister a directory');
   console.log('  list [--json]                List directories + active sessions');

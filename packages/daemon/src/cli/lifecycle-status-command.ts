@@ -23,6 +23,7 @@ import {
   resolvePackageName,
   resolvePackageSourceInfo,
 } from '../core/package-meta.js';
+import { resolveLocalOrgBindingSync, resolveWorkspaceOrgHintSync } from './org-binding.js';
 
 function endpointHealthUrl(endpoint: DaemonEndpoint): string {
   if (endpoint.type === 'socket') {
@@ -80,6 +81,8 @@ export async function status(): Promise<void> {
     machineId: manager.getMachineId(),
     daemonVersion: health?.machine?.daemonVersion ?? state?.version ?? cliVersion,
   });
+  const cwdBinding = resolveLocalOrgBindingSync(process.cwd());
+  const cwdHint = resolveWorkspaceOrgHintSync(process.cwd());
   const configPaths = manager.getConfigPaths();
   let latestCliVersion = 'skipped';
   let updateStatus = 'skipped (use --check-updates)';
@@ -131,6 +134,22 @@ export async function status(): Promise<void> {
       state?.relayServerUrl ??
       runtimeIdentity.relayServerUrl ??
       null,
+    relayWorkspaceId: manager.getDaemonConfig()?.relay?.workspaceId ?? null,
+    cwdBinding: cwdBinding
+      ? {
+          directory: cwdBinding.directory,
+          organizationId: cwdBinding.organizationId,
+          streamEnabled: cwdBinding.streamEnabled,
+          matchesActiveOrg:
+            cwdBinding.organizationId === manager.getDaemonConfig()?.relay?.workspaceId,
+        }
+      : null,
+    cwdHint: cwdHint
+      ? {
+          directory: cwdHint.directory,
+          organizationId: cwdHint.organizationId,
+        }
+      : null,
     runtimeNode: `${resolvedNode.nodePath} (${resolvedNode.source})`,
     runtimeNpm,
     cliVersion,
@@ -184,6 +203,7 @@ export async function status(): Promise<void> {
   );
   console.log(`Profile:     ${payload.profile ?? '-'}`);
   console.log(`Server:      ${payload.serverUrl ?? '-'}`);
+  console.log(`Org:         ${payload.relayWorkspaceId ?? '-'}`);
   console.log(`Relay WS:    ${payload.relayEndpoint ?? '-'}`);
   console.log(`Relay API:   ${payload.relayServerUrl ?? '-'}`);
   console.log(`Relay state: ${payload.relayState ?? '-'}`);
@@ -206,6 +226,17 @@ export async function status(): Promise<void> {
   console.log(`Update:      ${payload.updateStatus}`);
   console.log(`Config:      ${payload.configSource}`);
   console.log(`Reason:      ${payload.configReason}`);
+  if (payload.cwdBinding) {
+    console.log(
+      `Binding:     ${payload.cwdBinding.directory} -> ${payload.cwdBinding.organizationId} (${payload.cwdBinding.streamEnabled ? 'streaming' : 'disabled'}${payload.cwdBinding.matchesActiveOrg ? ', active' : ', not active'})`,
+    );
+  } else if (payload.cwdHint) {
+    console.log(
+      `Binding:     unbound; repo hint ${payload.cwdHint.organizationId} at ${payload.cwdHint.directory}`,
+    );
+  } else {
+    console.log('Binding:     unbound (remote streaming disabled for this directory)');
+  }
   if (payload.health) {
     console.log(`Sessions:    ${payload.health.sessions}`);
     console.log(`Directories: ${payload.health.directories}`);
