@@ -160,10 +160,13 @@ class MockTracker implements RunTracker {
 class MockDiscovery implements SessionDiscovery {
   readonly agentId: string;
   private sessions: DiscoveredSession[];
+  calls = 0;
+  private delayMs = 0;
 
-  constructor(agentId: string, sessions: DiscoveredSession[]) {
+  constructor(agentId: string, sessions: DiscoveredSession[], options: { delayMs?: number } = {}) {
     this.agentId = agentId;
     this.sessions = sessions;
+    this.delayMs = options.delayMs ?? 0;
   }
 
   setSessions(sessions: DiscoveredSession[]): void {
@@ -171,6 +174,10 @@ class MockDiscovery implements SessionDiscovery {
   }
 
   async discoverSessions(_projectPath: string): Promise<DiscoveredSession[]> {
+    this.calls += 1;
+    if (this.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    }
     return this.sessions;
   }
 }
@@ -351,6 +358,23 @@ describe('Daemon', () => {
     discovery.setSessions([]);
     await daemon.runDiscovery();
     expect(daemon.getDiscoveredSessions(dirId).get(dirId)).toBeUndefined();
+  });
+
+  it('coalesces concurrent discovery requests into one follow-up run', async () => {
+    const { daemon } = await setupDaemon();
+    const secondProject = path.join(tempHome, 'second-project');
+    await fs.mkdir(secondProject, { recursive: true });
+    await daemon.directoryManager.register(secondProject);
+    const discovery = new MockDiscovery('claude', [], { delayMs: 25 });
+    daemon.registerDiscovery(discovery);
+
+    await Promise.all([
+      daemon.runDiscovery(),
+      daemon.runDiscovery(),
+      daemon.runDiscovery(),
+    ]);
+
+    expect(discovery.calls).toBe(4);
   });
 
   // ---------------------------------------------------------------------------
