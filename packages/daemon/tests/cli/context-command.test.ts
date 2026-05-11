@@ -400,6 +400,91 @@ describe('context CLI command', () => {
     expect(output).not.toContain('Candidate-only notes must wait for Inbox review.');
   });
 
+  it('previews a candidate locally without promoting it into approved context', async () => {
+    await runContext([
+      'context',
+      'init',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--user',
+      'alice',
+      '--device',
+      'alice-laptop',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'propose',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--device',
+      'alice-laptop',
+      '--title',
+      'Incident file warning',
+      '--body',
+      'Files under apps/api/Auth caused an incident last week; run session rotation tests.',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    const proposeOutput = parseLastJsonLog() as { candidate: { id: string; bodyDigest: string } };
+    logSpy.mockClear();
+
+    await runContext([
+      'context',
+      'candidate-preview',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--device',
+      'alice-laptop',
+      '--event',
+      proposeOutput.candidate.id,
+      '--json',
+    ]);
+
+    const previewOutput = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(previewOutput).toContain('"command": "context candidate-preview"');
+    expect(previewOutput).toContain('"title": "Incident file warning"');
+    expect(previewOutput).toContain(
+      'Files under apps/api/Auth caused an incident last week; run session rotation tests.',
+    );
+
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'resolve',
+      '--home',
+      tempHome,
+      '--context',
+      'context-alpha',
+      '--device',
+      'alice-laptop',
+      '--query',
+      'incident',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--json',
+    ]);
+    const resolveOutput = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(resolveOutput).not.toContain('Files under apps/api/Auth caused an incident');
+  });
+
   it('lists recent context candidate decision applications from the trusted edge journal', async () => {
     const { recordCandidateDecisionApplication } =
       await import('../../src/context/local-edge-decision-applications.js');
@@ -1074,6 +1159,9 @@ describe('context CLI command', () => {
       decided_by_user_id: 'user_42',
     });
     decisionState.current = decision;
+    await writeRelayConfig(tempHome, {
+      [decision.platform_signature.kid]: decision.platform_signature.public_key,
+    });
 
     await runContext([
       'context',
@@ -1088,8 +1176,6 @@ describe('context CLI command', () => {
       'alice-passphrase',
       '--recovery-code',
       'alice-recovery',
-      '--context-decision-key',
-      `${decision.platform_signature.kid}:${decision.platform_signature.public_key}`,
       '--json',
     ]);
     const pullOutput = parseLastJsonLog() as { appliedCandidateDecisions: number };
@@ -1356,7 +1442,7 @@ describe('context CLI command', () => {
         serverUrl: 'https://app.getviewport.test',
         workspaceId: 'workspace-alpha',
         issueToken: 'runtime-token',
-        tlsVerify: 'auto',
+        tlsVerify: '1',
       },
     });
 
@@ -1445,7 +1531,10 @@ describe('context CLI command', () => {
     await context();
   }
 
-  async function writeRelayConfig(home: string): Promise<void> {
+  async function writeRelayConfig(
+    home: string,
+    contextCandidateDecisionKeys?: Record<string, string>,
+  ): Promise<void> {
     const previous = process.env['VIEWPORT_HOME'];
     process.env['VIEWPORT_HOME'] = home;
     vi.resetModules();
@@ -1453,14 +1542,18 @@ describe('context CLI command', () => {
     const manager = new ConfigManager();
     await manager.load();
     await manager.setDaemonConfig({
-      server: { url: 'https://app.getviewport.test' },
+      server: {
+        url: 'https://app.getviewport.test',
+        tlsVerify: '1',
+        ...(contextCandidateDecisionKeys ? { contextCandidateDecisionKeys } : {}),
+      },
       relay: {
         enabled: true,
         endpoint: 'wss://getviewport.test:7781/ws',
         serverUrl: 'https://app.getviewport.test',
         workspaceId: 'workspace-alpha',
         issueToken: 'runtime-token',
-        tlsVerify: 'auto',
+        tlsVerify: '1',
       },
     });
     if (previous === undefined) {

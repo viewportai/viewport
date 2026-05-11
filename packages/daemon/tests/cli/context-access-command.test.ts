@@ -448,7 +448,7 @@ describe('context access lifecycle CLI commands', () => {
         serverUrl: 'https://app.getviewport.test',
         workspaceId,
         issueToken: 'runtime-token',
-        tlsVerify: 'auto',
+        tlsVerify: '1',
       },
     });
     if (previous === undefined) {

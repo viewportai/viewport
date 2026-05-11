@@ -2,6 +2,7 @@ import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { resolveDisplayVersion } from '../core/package-meta.js';
 import { resolveDaemonRuntimeIdentity, toInstallCapabilities } from '../core/runtime-identity.js';
+import { transportFetch } from './network.js';
 
 function boolLike(value: string | undefined): boolean {
   if (!value) return false;
@@ -71,6 +72,51 @@ function resolveInstallMetadata(serverUrl: string, relayEndpoint: string, manage
   });
 }
 
+async function fetchContextCandidateDecisionKeys(options: {
+  serverUrl: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+}): Promise<Record<string, string> | undefined> {
+  const url = `${options.serverUrl.replace(/\/+$/, '')}/api/.well-known/context-candidate-decision-keys.json`;
+  const res = await transportFetch(url, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    tlsVerify: options.tlsVerify ?? 'auto',
+    caCertPath: options.caCertPath,
+    tlsPins: options.tlsPins,
+    timeoutMs: 3_000,
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch context candidate decision keys: HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as unknown;
+  if (!body || typeof body !== 'object') {
+    throw new Error('Context candidate decision key response must be an object');
+  }
+  const keys = (body as { keys?: unknown }).keys;
+  if (!Array.isArray(keys)) {
+    throw new Error('Context candidate decision key response must include keys');
+  }
+
+  const parsed: Record<string, string> = {};
+  for (const key of keys) {
+    if (!key || typeof key !== 'object') continue;
+    const item = key as { kid?: unknown; algorithm?: unknown; public_key?: unknown };
+    if (
+      typeof item.kid === 'string' &&
+      item.kid.length > 0 &&
+      item.algorithm === 'Ed25519' &&
+      typeof item.public_key === 'string' &&
+      item.public_key.length > 0
+    ) {
+      parsed[item.kid] = item.public_key;
+    }
+  }
+
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
 export async function remote(): Promise<void> {
   const args = getArgs();
   const subcommand = args[1];
@@ -100,6 +146,9 @@ export async function remote(): Promise<void> {
         issueToken: redact(relayConfig.issueToken),
         tlsVerify: relayConfig.tlsVerify ?? 'auto',
         caCertPath: relayConfig.caCertPath,
+        contextCandidateDecisionKeyIds: daemonConfig.server?.contextCandidateDecisionKeys
+          ? Object.keys(daemonConfig.server.contextCandidateDecisionKeys)
+          : [],
       },
     };
     if (asJson) {
@@ -117,6 +166,9 @@ export async function remote(): Promise<void> {
     console.log(`Issue token:          ${payload.relay.issueToken ?? '-'}`);
     console.log(`TLS verify:           ${payload.relay.tlsVerify}`);
     console.log(`CA cert path:         ${payload.relay.caCertPath ?? '-'}`);
+    console.log(
+      `Context decision keys: ${payload.relay.contextCandidateDecisionKeyIds.join(', ') || '-'}`,
+    );
     return;
   }
 
@@ -189,7 +241,7 @@ export async function remote(): Promise<void> {
       | '0'
       | '1';
     const relayCaCertPath = getFlag('relay-ca-cert') ?? relayConfig.caCertPath;
-    const contextCandidateDecisionKeys =
+    let contextCandidateDecisionKeys =
       parseDecisionSigningKeys(getFlag('context-decision-key')) ??
       daemonConfig.server?.contextCandidateDecisionKeys;
     const enableNow = hasFlag('enable') || !boolLike(getFlag('no-enable'));
@@ -197,6 +249,15 @@ export async function remote(): Promise<void> {
     const nextInstallId = preserveIssuedInstall ? relayConfig.installId : undefined;
     const nextRuntimeTargetId = preserveIssuedInstall ? relayConfig.runtimeTargetId : undefined;
     const nextMachineId = preserveIssuedInstall ? relayConfig.machineId : undefined;
+
+    if (!contextCandidateDecisionKeys) {
+      contextCandidateDecisionKeys = await fetchContextCandidateDecisionKeys({
+        serverUrl,
+        tlsVerify: relayTlsVerify,
+        caCertPath: relayCaCertPath,
+        tlsPins: relayConfig.tlsPins,
+      });
+    }
 
     await manager.setDaemonConfig({
       server: {

@@ -6,6 +6,7 @@ import {
   readContextStatus,
   resolveContextBundle,
 } from '../context/local-edge-store.js';
+import { previewContextCandidate } from '../context/local-edge-candidates.js';
 
 const CredentialsSchema = z.object({
   passphrase: z.string().min(1),
@@ -41,6 +42,15 @@ const ResolveBodySchema = CredentialsSchema.extend({
       digest: z.string().min(1).optional(),
     })
     .optional(),
+});
+
+const CandidatePreviewBodySchema = z.object({
+  contextResourceId: z.string().min(1).optional(),
+  actorName: z.string().min(1),
+  candidateEventId: z.string().min(1).optional(),
+  payloadDigest: z.string().min(1).optional(),
+  passphrase: z.string().optional(),
+  recoveryCode: z.string().optional(),
 });
 
 export function registerContextRoutes(app: FastifyInstance): void {
@@ -125,6 +135,33 @@ export function registerContextRoutes(app: FastifyInstance): void {
       },
     });
     return { bundle };
+  });
+
+  app.post('/api/context/candidates/preview', async (request, reply) => {
+    const parsed = CandidatePreviewBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: parsed.error.issues[0]?.message ?? 'Invalid payload' });
+    }
+    const contextResourceId = contextResourceIdFrom(parsed.data);
+    if (!contextResourceId) {
+      return reply.status(400).send({ error: 'contextResourceId is required' });
+    }
+    if (!parsed.data.candidateEventId && !parsed.data.payloadDigest) {
+      return reply.status(400).send({ error: 'candidateEventId or payloadDigest is required' });
+    }
+    const candidate = await previewContextCandidate({
+      contextResourceId,
+      actorName: parsed.data.actorName,
+      candidateEventId: parsed.data.candidateEventId,
+      payloadDigest: parsed.data.payloadDigest,
+      credentials: {
+        passphrase: parsed.data.passphrase ?? '',
+        recoveryCode: parsed.data.recoveryCode ?? '',
+      },
+    });
+    return { candidate };
   });
 }
 

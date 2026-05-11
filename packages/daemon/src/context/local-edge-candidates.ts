@@ -62,6 +62,68 @@ export async function proposeContextEntry(options: {
   };
 }
 
+export async function previewContextCandidate(options: {
+  contextResourceId: string;
+  actorName: string;
+  candidateEventId?: string;
+  payloadDigest?: string;
+  credentials?: ContextCredentials;
+  home?: string;
+}): Promise<{
+  candidateId: string;
+  proposalEventId: string;
+  payloadDigest: string | null;
+  title: string;
+  body: string;
+  source: string | null;
+  status: string;
+  actorName: string;
+}> {
+  const home = options.home ?? configDir();
+  const metadata = await readContextMetadata(options.contextResourceId, home);
+  const vault = createVault(home, metadata.keyStore);
+  const credentials = options.credentials ?? { passphrase: '', recoveryCode: '' };
+  assertCredentialsOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials,
+  });
+  await ensureUserOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials,
+  });
+
+  const candidates = vault.allCandidates({ repoId: metadata.repoId, actorName: options.actorName });
+  const candidate = candidates.find((item) => {
+    if (
+      options.candidateEventId &&
+      (item.id === options.candidateEventId || item.proposal_event_id === options.candidateEventId)
+    ) {
+      return true;
+    }
+    if (options.payloadDigest && item.payload_digest === options.payloadDigest) {
+      return true;
+    }
+    return false;
+  });
+
+  if (!candidate) {
+    throw new Error('Context candidate is not available on this trusted edge.');
+  }
+
+  return {
+    candidateId: candidate.id,
+    proposalEventId: candidate.proposal_event_id ?? candidate.id,
+    payloadDigest: candidate.payload_digest ?? null,
+    title: candidate.title,
+    body: candidate.body,
+    source: candidate.source ?? null,
+    status: candidate.status,
+    actorName: options.actorName,
+  };
+}
+
 export async function applyContextCandidateDecision(options: {
   contextResourceId: string;
   actorName: string;

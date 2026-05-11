@@ -6,6 +6,9 @@ export interface ContextSyncTarget {
   workspaceId: string;
   serverUrl: string;
   credential: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
   decisionSigningKeys?: Record<string, string>;
 }
 
@@ -49,7 +52,16 @@ export async function resolveContextSyncTarget(
     );
   }
 
-  return { contextResourceId, workspaceId, serverUrl, credential, decisionSigningKeys };
+  return {
+    contextResourceId,
+    workspaceId,
+    serverUrl,
+    credential,
+    tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
+    caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
+    tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
+    decisionSigningKeys,
+  };
 }
 
 function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {
