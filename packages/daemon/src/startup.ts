@@ -277,11 +277,16 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
   // When TLS is enabled, automatically allow the configured TLS hostname and subdomains
   // so browser clients can reach the local daemon over WSS.
   const tlsHostAllowance = tls ? `,${tls.tlsHost},.${tls.tlsHost}` : '';
+  const viewportWebOriginAllowance =
+    config.profile === 'local'
+      ? ',getviewport.com,.getviewport.com,getviewport.test,.getviewport.test'
+      : '';
   const securityProfile = buildSecurityProfile({
     profile: config.profile,
     host: config.host,
     allowedHostsRaw: (config.allowedHostsRaw ?? '') + tlsHostAllowance,
-    allowedOriginsRaw: (config.allowedOriginsRaw ?? '') + tlsHostAllowance,
+    allowedOriginsRaw:
+      (config.allowedOriginsRaw ?? '') + tlsHostAllowance + viewportWebOriginAllowance,
     explicitAuthFlag: config.authEnabled,
   });
 
