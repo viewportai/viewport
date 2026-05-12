@@ -191,6 +191,55 @@ describe('HookRouter', () => {
     expect(events[0]).toMatchObject({ toolName: 'Bash' });
   });
 
+  it('extracts Claude plan mode drafts from ExitPlanMode PreToolUse hooks', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      tool_name: 'ExitPlanMode',
+      tool_input: {
+        plan: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+        planFilePath: '/tmp/claude/plan.md',
+        allowedPrompts: [],
+      },
+    });
+
+    expect(result).toEqual({ passthrough: false });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Migrate auth',
+      body: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+      source: 'claude-exit-plan-mode',
+      sourceRef: 'hook://exit-plan-mode/s1',
+      metadata: {
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        extractedFrom: 'exit-plan-mode',
+        planFilePath: '/tmp/claude/plan.md',
+      },
+    });
+  });
+
+  it('ignores non-plan PreToolUse hooks for plan draft extraction', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+    });
+
+    expect(events).toHaveLength(0);
+  });
+
   it('handles PostToolUseFailure — emits hook:tool-failed', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:tool-failed', (data) => events.push(data));

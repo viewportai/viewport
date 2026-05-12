@@ -24,7 +24,7 @@ describe('ClaudeHookInstaller', () => {
 
   const defaultConfig = {
     vpdBinaryPath: '/usr/local/bin/vpd',
-    daemonPort: 7070,
+    daemonListen: '127.0.0.1:7070',
     events: [...HOOK_EVENT_KINDS],
   };
 
@@ -49,7 +49,7 @@ describe('ClaudeHookInstaller', () => {
     const sessionStartHook = settings.hooks.SessionStart[0].hooks[0];
     expect(sessionStartHook.command).toContain('--viewport-hook');
     expect(sessionStartHook.command).toContain('--event SessionStart');
-    expect(sessionStartHook.command).toContain('--port 7070');
+    expect(sessionStartHook.command).toContain("--listen '127.0.0.1:7070'");
 
     // PermissionRequest should have longer timeout
     const permHook = settings.hooks.PermissionRequest[0].hooks[0];
@@ -94,9 +94,9 @@ describe('ClaudeHookInstaller', () => {
     expect(changed).toBe(false);
   });
 
-  it('updates on reinstall with different port', async () => {
+  it('updates on reinstall with different listen target', async () => {
     await installer.install(defaultConfig);
-    const changed = await installer.install({ ...defaultConfig, daemonPort: 8080 });
+    const changed = await installer.install({ ...defaultConfig, daemonListen: '127.0.0.1:8080' });
     expect(changed).toBe(true);
 
     const settings = JSON.parse(
@@ -104,7 +104,38 @@ describe('ClaudeHookInstaller', () => {
     );
 
     const cmd = settings.hooks.SessionStart[0].hooks[0].command;
-    expect(cmd).toContain('--port 8080');
+    expect(cmd).toContain("--listen '127.0.0.1:8080'");
+  });
+
+  it('quotes vpd paths with spaces', async () => {
+    await installer.install({
+      ...defaultConfig,
+      vpdBinaryPath: '/Users/mehr/Library/Application Support/Herd/bin/vpd',
+    });
+
+    const settings = JSON.parse(
+      await fs.readFile(path.join(tempHome, '.claude', 'settings.json'), 'utf-8'),
+    );
+
+    const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+    expect(cmd).toContain("'/Users/mehr/Library/Application Support/Herd/bin/vpd'");
+    expect(cmd).toContain("--listen '127.0.0.1:7070'");
+  });
+
+  it('quotes dev tsx entrypoints without breaking the command prefix', async () => {
+    await installer.install({
+      ...defaultConfig,
+      vpdBinaryPath: 'npx tsx /Users/mehr/Herd/viewportai/viewport/packages/daemon/src/index.ts',
+    });
+
+    const settings = JSON.parse(
+      await fs.readFile(path.join(tempHome, '.claude', 'settings.json'), 'utf-8'),
+    );
+
+    const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+    expect(cmd).toContain(
+      "npx tsx '/Users/mehr/Herd/viewportai/viewport/packages/daemon/src/index.ts'",
+    );
   });
 
   it('isInstalled detects installed hooks', async () => {
@@ -168,5 +199,49 @@ describe('ClaudeHookInstaller', () => {
     expect(settings.hooks.PermissionRequest).toBeDefined();
     expect(settings.hooks.SessionEnd).toBeUndefined();
     expect(settings.hooks.Notification).toBeUndefined();
+  });
+
+  it('does not install Claude-unsupported internal events', async () => {
+    await installer.install({
+      ...defaultConfig,
+      events: ['Stop', 'PlanProposed'],
+    });
+
+    const settings = JSON.parse(
+      await fs.readFile(path.join(tempHome, '.claude', 'settings.json'), 'utf-8'),
+    );
+
+    expect(settings.hooks.Stop).toBeDefined();
+    expect(settings.hooks.PlanProposed).toBeUndefined();
+  });
+
+  it('removes stale viewport hooks from unsupported events on reinstall', async () => {
+    const claudeDir = path.join(tempHome, '.claude');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(
+      path.join(claudeDir, 'settings.json'),
+      JSON.stringify({
+        hooks: {
+          PlanProposed: [
+            {
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/usr/local/bin/vpd hook notify --event PlanProposed --viewport-hook',
+                },
+              ],
+            },
+          ],
+          Stop: [{ hooks: [{ type: 'command', command: 'user-stop-hook' }] }],
+        },
+      }),
+    );
+
+    await installer.install(defaultConfig);
+
+    const settings = JSON.parse(await fs.readFile(path.join(claudeDir, 'settings.json'), 'utf-8'));
+    expect(settings.hooks.PlanProposed).toBeUndefined();
+    expect(settings.hooks.Stop[0].hooks[0].command).toBe('user-stop-hook');
+    expect(settings.hooks.Stop[1].hooks[0].command).toContain('--viewport-hook');
   });
 });

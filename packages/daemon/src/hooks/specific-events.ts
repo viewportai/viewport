@@ -55,6 +55,9 @@ export function emitSpecificHookEvent(
         toolResponse: data.tool_response,
       });
       break;
+    case 'PreToolUse':
+      emitPlanProposalFromExitPlanMode(eventBus, data, ctx);
+      break;
     case 'PostToolUseFailure':
       eventBus.emit('hook:tool-failed', {
         sessionId: ctx.sessionId,
@@ -110,6 +113,34 @@ export function emitSpecificHookEvent(
   }
 }
 
+function emitPlanProposalFromExitPlanMode(
+  eventBus: TypedEventEmitter<DaemonEvents>,
+  data: Record<string, unknown>,
+  ctx: SpecificEventContext,
+): void {
+  if (data.tool_name !== 'ExitPlanMode') return;
+  const toolInput = readRecord(data.tool_input);
+  const plan = toolInput?.plan;
+  if (typeof plan !== 'string' || plan.trim().length === 0) return;
+  const planFilePath =
+    typeof toolInput?.planFilePath === 'string' ? toolInput.planFilePath : undefined;
+
+  eventBus.emit('hook:plan-proposed', {
+    sessionId: ctx.sessionId,
+    adapter: ctx.adapter,
+    cwd: ctx.cwd,
+    title: titleFromMarkdown(plan),
+    body: plan.trim(),
+    source: `${ctx.adapter}-exit-plan-mode`,
+    sourceRef: `hook://exit-plan-mode/${ctx.sessionId}`,
+    metadata: {
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+      extractedFrom: 'exit-plan-mode',
+      planFilePath,
+    },
+  });
+}
+
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
 
@@ -123,6 +154,14 @@ function planBodyFromData(data: Record<string, unknown>): string {
   }
 
   return '';
+}
+
+function titleFromMarkdown(markdown: string): string | undefined {
+  const firstHeading = markdown
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /^#{1,3}\s+\S/.test(line));
+  return firstHeading?.replace(/^#{1,3}\s+/, '').trim();
 }
 
 function emitExplicitPlanProposalFromStop(
