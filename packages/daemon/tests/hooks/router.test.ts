@@ -353,6 +353,55 @@ describe('HookRouter', () => {
     });
   });
 
+  it('opens Claude plan-mode Stop responses as unsaved plan drafts when no explicit block is present', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      permission_mode: 'plan',
+      last_assistant_message: [
+        '## Plan: localStorage to Firebase',
+        '',
+        '### Phase 0 — Audit',
+        'Goal: find every localStorage key.',
+        '',
+        '### Key Risks',
+        '- Async UI bugs.',
+      ].join('\n'),
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Plan: localStorage to Firebase',
+      body: expect.stringContaining('### Phase 0'),
+      source: 'claude-plan-mode-stop',
+      sourceRef: 'hook://stop/s1',
+      metadata: {
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        extractedFrom: 'claude-plan-mode-stop',
+      },
+    });
+  });
+
+  it('does not convert ordinary Stop prose into a plan draft outside Claude plan mode', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      last_assistant_message: '## Plan: this heading alone should not be enough outside plan mode',
+    });
+
+    expect(events).toHaveLength(0);
+  });
+
   it('does not infer plans from unmarked Stop prose', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:plan-proposed', (data) => events.push(data));
