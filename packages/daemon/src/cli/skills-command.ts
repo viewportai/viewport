@@ -75,7 +75,10 @@ personal data, or facts that are already present in existing context.
 ## Plans
 
 When the user asks for a plan, or before starting multi-step implementation work,
-open a Viewport plan draft instead of leaving the plan only in chat.
+open a Viewport plan draft instead of leaving the plan only in chat. The browser
+encrypts and saves the draft to Viewport as soon as it receives the local draft
+from the daemon. Keep waiting until the user continues, rejects, shares, or asks
+for changes in the web app.
 
 Preferred path:
 
@@ -92,10 +95,9 @@ Preferred path:
 }
 \`\`\`
 
-The daemon keeps the draft local first, opens Viewport, and the web app saves an
-encrypted draft through the trusted edge. Do not put secrets in the plan body.
-After emitting the block, wait for the user to review, share, approve, or request
-changes in Viewport before beginning risky or broad implementation work.
+Do not put secrets in the plan body. After emitting the block, wait for the user
+to review, share, continue, reject, or request changes in Viewport before
+beginning risky or broad implementation work.
 
 ## Workflows
 
