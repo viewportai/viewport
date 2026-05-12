@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.4.0...@viewportai/daemon@0.4.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* **daemon:** align relay defaults with api origin ([4f28f16](https://github.com/viewportai/viewport/commit/4f28f1654467bb7291001a2c893bc1021eae63ad))
+
 # [0.4.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.3.0...@viewportai/daemon@0.4.0) (2026-05-11)
 
 
