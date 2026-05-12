@@ -34,6 +34,7 @@ describe('PlatformPlanHookSync', () => {
         source: 'claude',
         sourceRef: 'claude://session/session_1',
         metadata: {
+          hookRequestId: 'hk-1',
           resourceId: 'workspace_2',
           secret: 'do-not-forward',
           workflowRunId: 'run_1',
@@ -56,7 +57,8 @@ describe('PlatformPlanHookSync', () => {
       source: 'claude',
       source_ref: 'claude://session/session_1',
       session_id: 'session_1',
-      metadata: { workflowRunId: 'run_1' },
+      hook_request_id: 'hk-1',
+      metadata: { hookRequestId: 'hk-1', workflowRunId: 'run_1' },
     });
     expect(draft.metadata).not.toHaveProperty('secret');
     expect(draft.metadata).not.toHaveProperty('resourceId');

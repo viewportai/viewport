@@ -10,7 +10,12 @@ export interface ExtractedPlanProposal {
 export const PLAN_PROPOSAL_MARKER = 'viewport-plan';
 export const PLAN_PROPOSAL_SCHEMA_VERSION = 'viewport.plan_proposal/v1';
 const PLAN_BODY_FIELDS = ['body', 'plan', 'plan_markdown'] as const;
-const PLAN_METADATA_ALLOWLIST = new Set(['providerModel', 'workflowNodeId', 'workflowRunId']);
+const PLAN_METADATA_ALLOWLIST = new Set([
+  'hookRequestId',
+  'providerModel',
+  'workflowNodeId',
+  'workflowRunId',
+]);
 
 const FENCE_PATTERN = /```viewport-plan\s*\n([\s\S]*?)```/i;
 const COMMENT_PATTERN = /<!--\s*viewport-plan\s*\n([\s\S]*?)-->/i;

@@ -97,7 +97,7 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
 
     // Return the decision (PermissionRequest) or acknowledgment
     if (result.decision) {
-      process.stdout.write(JSON.stringify({ decision: result.decision }) + '\n');
+      process.stdout.write(JSON.stringify(formatHookDecision(event, result.decision)) + '\n');
     } else if (result.hookSpecificOutput) {
       process.stdout.write(
         JSON.stringify({
@@ -112,6 +112,36 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
     // Exit 1 so the agent falls through to its local UI
     process.exit(1);
   }
+}
+
+function formatHookDecision(
+  event: string,
+  decision: unknown,
+): Record<string, unknown> {
+  if (!isDecisionObject(decision)) {
+    return { decision };
+  }
+
+  if (event !== 'PermissionRequest') {
+    return { decision };
+  }
+
+  const behavior = decision.behavior === 'deny' ? 'deny' : 'allow';
+  const outputDecision: { behavior: 'allow' | 'deny'; message?: string } = { behavior };
+  if (behavior === 'deny' && typeof decision.message === 'string' && decision.message.trim()) {
+    outputDecision.message = decision.message.trim();
+  }
+
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: outputDecision,
+    },
+  };
+}
+
+function isDecisionObject(value: unknown): value is { behavior?: unknown; message?: unknown } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function hookCapabilities(): Promise<void> {

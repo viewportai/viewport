@@ -225,6 +225,52 @@ describe('HookRouter', () => {
     });
   });
 
+  it('holds Claude ExitPlanMode PermissionRequest hooks and opens a plan draft even without supervision', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const resultPromise = router.handleEvent({
+      hook_event_name: 'PermissionRequest',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      tool_name: 'ExitPlanMode',
+      tool_input: {
+        plan: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+        planFilePath: '/tmp/claude/plan.md',
+        allowedPrompts: [],
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Migrate auth',
+      body: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+      source: 'claude-exit-plan-mode',
+      metadata: {
+        extractedFrom: 'exit-plan-mode',
+        hookRequestId: expect.stringMatching(/^hk-/),
+      },
+    });
+
+    const hookRequestId = (
+      (events[0] as Record<string, unknown>).metadata as Record<string, unknown>
+    ).hookRequestId as string;
+    expect(router.getPendingPermissions().has(hookRequestId)).toBe(true);
+
+    eventBus.emit('hook:permission-response', {
+      hookRequestId,
+      decision: { behavior: 'allow' },
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      passthrough: false,
+      decision: { behavior: 'allow' },
+    });
+  });
+
   it('ignores non-plan PreToolUse hooks for plan draft extraction', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:plan-proposed', (data) => events.push(data));

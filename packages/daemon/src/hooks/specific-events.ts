@@ -58,6 +58,9 @@ export function emitSpecificHookEvent(
     case 'PreToolUse':
       emitPlanProposalFromExitPlanMode(eventBus, data, ctx);
       break;
+    case 'PermissionRequest':
+      emitPlanProposalFromExitPlanMode(eventBus, data, ctx);
+      break;
     case 'PostToolUseFailure':
       eventBus.emit('hook:tool-failed', {
         sessionId: ctx.sessionId,
@@ -137,6 +140,8 @@ function emitPlanProposalFromExitPlanMode(
       schema: PLAN_PROPOSAL_SCHEMA_VERSION,
       extractedFrom: 'exit-plan-mode',
       planFilePath,
+      hookRequestId:
+        typeof data.hook_request_id === 'string' ? data.hook_request_id : undefined,
     },
   });
 }
