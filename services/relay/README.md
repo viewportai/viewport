@@ -45,7 +45,7 @@ docker run --rm -p 7781:7781 \
   -e PORT=7781 \
   -e RELAY_MODE=prod \
   -e RELAY_BACKPLANE_MODE=single \
-  -e SERVER_URL=https://getviewport.com \
+  -e SERVER_URL=https://api.getviewport.com \
   -e RELAY_ADMIN_TOKEN=change-me \
   -e RELAY_INTERNAL_KEY=change-me-change-me-change-me \
   -e RELAY_SERVER_MTLS=1 \
@@ -64,7 +64,7 @@ docker run --rm -p 7781:7781 \
   -e PORT=7781 \
   -e RELAY_MODE=prod \
   -e RELAY_BACKPLANE_MODE=redis \
-  -e SERVER_URL=https://getviewport.com \
+  -e SERVER_URL=https://api.getviewport.com \
   -e RELAY_ADMIN_TOKEN=change-me \
   -e RELAY_INTERNAL_KEY=change-me \
   -e RELAY_SERVER_MTLS=1 \
@@ -78,3 +78,14 @@ docker run --rm -p 7781:7781 \
 ```
 
 This repo intentionally keeps docs minimal. Full operational and product docs should live in the dedicated docs repo.
+
+## Local development
+
+`npm run dev` loads `services/relay/.env` and `services/relay/.env.local` when present. Keep
+real local values in `.env.local`; it is gitignored. Start from `.env.example` for the
+production-style Herd setup:
+
+```bash
+cp .env.example .env.local
+npm run dev
+```

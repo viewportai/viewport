@@ -57,11 +57,17 @@ describe('remote CLI commands', () => {
     expect(inferRelayEndpointFromServer('https://app.getviewport.com')).toBe(
       'wss://relay.getviewport.com/ws',
     );
+    expect(inferRelayEndpointFromServer('https://api.getviewport.com')).toBe(
+      'wss://relay.getviewport.com/ws',
+    );
     expect(inferRelayEndpointFromServer('https://getviewport.test')).toBe(
       'wss://getviewport.test:7781/ws',
     );
     expect(inferRelayEndpointFromServer('https://app.getviewport.test')).toBe(
-      'wss://getviewport.test:7781/ws',
+      'wss://relay.getviewport.test:7781/ws',
+    );
+    expect(inferRelayEndpointFromServer('https://api.getviewport.test')).toBe(
+      'wss://relay.getviewport.test:7781/ws',
     );
     expect(inferRelayEndpointFromServer('http://127.0.0.1:7780')).toBe('ws://127.0.0.1:7781/ws');
   });
@@ -107,6 +113,9 @@ describe('remote CLI commands', () => {
     expect(daemonConfig?.relay?.machineId).toMatch(/^machine_/);
     expect(daemonConfig?.relay?.bindings?.[0]?.workspaceId).toBe('workspace_demo');
     expect(daemonConfig?.relay?.bindings?.[0]?.machineId).toBe(daemonConfig?.relay?.machineId);
+    expect(daemonConfig?.relay?.bindings?.[0]?.tokenJwksUrl).toBe(
+      'https://getviewport.com/api/.well-known/jwks.json',
+    );
     expect(daemonConfig?.server?.contextCandidateDecisionKeys).toEqual({
       'local-v1': 'test-public-key',
     });
@@ -274,6 +283,9 @@ describe('remote CLI commands', () => {
     expect(relay?.bindings?.[0]?.machineId).toMatch(/^machine_/);
     expect(relay?.bindings?.[1]?.machineId).toMatch(/^machine_/);
     expect(relay?.bindings?.[0]?.machineId).not.toBe(relay?.bindings?.[1]?.machineId);
+    expect(relay?.bindings?.[1]?.tokenJwksUrl).toBe(
+      'https://app.personal.test/api/.well-known/jwks.json',
+    );
   });
 
   it('status redacts issue token in JSON output', async () => {

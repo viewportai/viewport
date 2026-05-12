@@ -19,6 +19,10 @@ function boolLike(value: string | undefined): boolean {
   return lowered === '1' || lowered === 'true' || lowered === 'yes' || lowered === 'on';
 }
 
+function inferRelayTokenJwksUrl(serverUrl: string): string {
+  return `${serverUrl.replace(/\/+$/, '')}/api/.well-known/jwks.json`;
+}
+
 function asJsonMode(): boolean {
   return hasFlag('json') || getFlag('format') === 'json';
 }
@@ -31,18 +35,21 @@ export function inferRelayEndpointFromServer(serverUrl: string): string {
   const parsed = new URL(serverUrl);
   const scheme = parsed.protocol === 'https:' ? 'wss' : 'ws';
   let relayHost = parsed.hostname;
+
+  if (relayHost.startsWith('app.')) {
+    const appBaseHost = relayHost.slice(4);
+    relayHost = `relay.${appBaseHost}`;
+  } else if (relayHost.startsWith('api.')) {
+    const apiBaseHost = relayHost.slice(4);
+    relayHost = `relay.${apiBaseHost}`;
+  } else if (relayHost === 'getviewport.com' || relayHost === 'getviewport.dev') {
+    relayHost = `relay.${relayHost}`;
+  }
   const isLocalHost =
     relayHost === '127.0.0.1' ||
     relayHost === 'localhost' ||
     relayHost === '::1' ||
     relayHost.endsWith('.test');
-
-  if (relayHost.startsWith('app.')) {
-    const appBaseHost = relayHost.slice(4);
-    relayHost = appBaseHost.endsWith('.test') ? appBaseHost : `relay.${appBaseHost}`;
-  } else if (relayHost === 'getviewport.com' || relayHost === 'getviewport.dev') {
-    relayHost = `relay.${relayHost}`;
-  }
   if (relayHost === 'relay.getviewport.com') {
     return `${scheme}://${relayHost}/ws`;
   }
@@ -277,7 +284,7 @@ export async function remote(): Promise<void> {
       tlsPins: relayConfig.tlsPins,
       tokenIssuer: relayConfig.tokenIssuer,
       tokenAudience: relayConfig.tokenAudience,
-      tokenJwksUrl: relayConfig.tokenJwksUrl,
+      tokenJwksUrl: relayConfig.tokenJwksUrl ?? inferRelayTokenJwksUrl(serverUrl),
       signingKeys: relayConfig.signingKeys,
       tokenClockSkewSec: relayConfig.tokenClockSkewSec,
     });

@@ -11,7 +11,7 @@ import {
   upsertRelayBinding,
 } from './relay-binding-config.js';
 
-const DEFAULT_PAIRING_SERVER = 'https://getviewport.com';
+const DEFAULT_PAIRING_SERVER = 'https://api.getviewport.com';
 const DEFAULT_PAIRING_APP = 'https://app.getviewport.com';
 const PAIRING_POLL_INTERVAL_MS = 2_000;
 const PAIRING_POLL_MAX_ATTEMPTS = 150;
@@ -47,6 +47,10 @@ interface PairingPollTerminalData {
 }
 
 type PairingPollData = PairingPollApprovedData | PairingPollPendingData | PairingPollTerminalData;
+
+function inferRelayTokenJwksUrl(serverUrl: string): string {
+  return `${serverUrl.replace(/\/+$/, '')}/api/.well-known/jwks.json`;
+}
 
 export function joinPairingUrl(base: string, pathname: string): string {
   return `${base.replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
@@ -133,6 +137,11 @@ export async function storePairingCredentials(
     machineId: data.machine_id ?? createRelayMachineId(),
     machineName,
     issueToken: nextIssueToken,
+    tokenIssuer: existingRelay.tokenIssuer,
+    tokenAudience: existingRelay.tokenAudience,
+    tokenJwksUrl: existingRelay.tokenJwksUrl ?? inferRelayTokenJwksUrl(nextServerUrl),
+    signingKeys: existingRelay.signingKeys,
+    tokenClockSkewSec: existingRelay.tokenClockSkewSec,
   });
   const nextBindings = addBinding
     ? upsertRelayBinding(seededBindings, nextBinding, hasFlag('replace'))
@@ -262,11 +271,11 @@ function resolvePairingAppUrl(input: { serverUrl: string; explicitAppUrl?: strin
 
   try {
     const url = new URL(input.serverUrl);
-    if (url.hostname === 'getviewport.test') {
+    if (url.hostname === 'getviewport.test' || url.hostname === 'api.getviewport.test') {
       url.hostname = 'app.getviewport.test';
       return url.toString().replace(/\/$/, '');
     }
-    if (url.hostname === 'getviewport.dev') {
+    if (url.hostname === 'getviewport.dev' || url.hostname === 'api.getviewport.dev') {
       url.hostname = 'app.getviewport.dev';
       return url.toString().replace(/\/$/, '');
     }
