@@ -259,6 +259,16 @@
       "integrationTests": ["tests/e2e/protocol-discovery-hooks.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": false
+    },
+    {
+      "type": "get-hook-plan-draft",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#GetHookPlanDraftSchema",
+      "handler": "src/server/ws-command-handlers.ts#get-hook-plan-draft",
+      "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
+      "integrationTests": ["tests/e2e/protocol-discovery-hooks.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
     }
   ]
 }

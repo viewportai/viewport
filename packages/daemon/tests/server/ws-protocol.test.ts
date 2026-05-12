@@ -20,6 +20,7 @@ import {
   WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
+  GetHookPlanDraftSchema,
   IncomingMessageSchema,
 } from '../../src/server/ws-protocol.js';
 
@@ -556,6 +557,25 @@ describe('RespondHookPermissionSchema', () => {
   });
 });
 
+describe('GetHookPlanDraftSchema', () => {
+  it('accepts valid draft lookup requests', () => {
+    const result = GetHookPlanDraftSchema.safeParse({
+      type: 'get-hook-plan-draft',
+      draftId: 'draft-1',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects missing draft ids', () => {
+    const result = GetHookPlanDraftSchema.safeParse({
+      type: 'get-hook-plan-draft',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('IncomingMessageSchema discriminated union', () => {
   it('dispatches to correct schema by type', () => {
     const launch = IncomingMessageSchema.safeParse({ type: 'launch', directoryId: 'd1' });
@@ -579,6 +599,12 @@ describe('IncomingMessageSchema discriminated union', () => {
       decision: { behavior: 'deny' },
     });
     expect(respond.success).toBe(true);
+
+    const planDraft = IncomingMessageSchema.safeParse({
+      type: 'get-hook-plan-draft',
+      draftId: 'draft-1',
+    });
+    expect(planDraft.success).toBe(true);
   });
 
   it('rejects unknown type', () => {

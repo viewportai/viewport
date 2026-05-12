@@ -34,6 +34,10 @@ import { logger } from './logger.js';
 import { discoverDirectorySessions } from './session-discovery-runner.js';
 import { WorkflowRunner } from '../workflows/runner.js';
 import { WorkflowSessionLinkStore } from '../workflows/session-links.js';
+import {
+  EphemeralPlanDraftStore,
+  type EphemeralPlanDraft,
+} from '../hooks/ephemeral-plan-drafts.js';
 
 const log = logger.child({ module: 'daemon' });
 
@@ -54,6 +58,7 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   private readonly permissionCoordinator: PermissionCoordinator;
   private readonly sessionManager: SessionManager;
   private readonly workflowSessionLinks = new WorkflowSessionLinkStore();
+  private readonly ephemeralPlanDrafts = new EphemeralPlanDraftStore();
   private discoveryRunPromise: Promise<void> | null = null;
   private discoveryRerunRequested = false;
 
@@ -352,6 +357,21 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
 
   getSessionMode(sessionId: string): SessionAgentMode {
     return this.sessionManager.getSessionMode(sessionId);
+  }
+
+  createEphemeralPlanDraft(
+    workspaceId: string,
+    event: DaemonEvents['hook:plan-proposed'],
+  ): EphemeralPlanDraft {
+    return this.ephemeralPlanDrafts.create(workspaceId, event);
+  }
+
+  getEphemeralPlanDraft(draftId: string): EphemeralPlanDraft | null {
+    return this.ephemeralPlanDrafts.get(draftId);
+  }
+
+  deleteEphemeralPlanDraft(draftId: string): void {
+    this.ephemeralPlanDrafts.delete(draftId);
   }
 
   // ---------------------------------------------------------------------------

@@ -385,7 +385,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
   // Hook system — enables remote supervision of terminal-started sessions
   const supervision = new SupervisionManager();
   const hookRouter = new HookRouter(daemon, supervision);
-  const platformPlanHookSync = new PlatformPlanHookSync(daemon.configManager);
+  const platformPlanHookSync = new PlatformPlanHookSync(daemon);
   daemon.on('hook:plan-proposed', (event) => {
     void platformPlanHookSync.send(event).catch((error) => {
       logger.warn(

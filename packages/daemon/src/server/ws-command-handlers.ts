@@ -236,6 +236,37 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
       sendAck(client, msg.requestId, 'ok');
     },
+
+    'get-hook-plan-draft': async (client, msg) => {
+      const draft = daemon.getEphemeralPlanDraft(msg.draftId);
+      if (!draft) {
+        sendAck(client, msg.requestId, 'error', 'Plan draft not found', {
+          errorCode: ErrorCodes.INVALID_INPUT,
+        });
+        return;
+      }
+
+      client.send(
+        JSON.stringify({
+          type: 'hook-plan-draft',
+          draftId: draft.draftId,
+          schema: draft.schema,
+          workspaceId: draft.workspaceId,
+          title: draft.title,
+          summary: draft.summary,
+          body: draft.body,
+          source: draft.source,
+          sourceRef: draft.sourceRef,
+          sessionId: draft.sessionId,
+          hookRequestId: draft.hookRequestId,
+          metadata: draft.metadata,
+          createdAt: draft.createdAt,
+          expiresAt: draft.expiresAt,
+          timestamp: Date.now(),
+        }),
+      );
+      sendAck(client, msg.requestId, 'ok');
+    },
   };
 }
 
