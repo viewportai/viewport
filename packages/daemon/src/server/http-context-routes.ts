@@ -6,7 +6,9 @@ import {
   readContextStatus,
   resolveContextBundle,
 } from '../context/local-edge-store.js';
-import { previewContextCandidate } from '../context/local-edge-candidates.js';
+import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
+import { pushContextEvents } from '../context/local-edge-sync.js';
+import { ConfigManager } from '../core/config.js';
 
 const CredentialsSchema = z.object({
   passphrase: z.string().min(1),
@@ -29,7 +31,7 @@ const AddBodySchema = CredentialsSchema.extend({
   scope: z.enum(['private', 'resource', 'team', 'organization']).optional(),
 });
 
-const ResolveBodySchema = CredentialsSchema.extend({
+const ResolveBodySchema = z.object({
   contextResourceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   query: z.string().default(''),
@@ -42,6 +44,8 @@ const ResolveBodySchema = CredentialsSchema.extend({
       digest: z.string().min(1).optional(),
     })
     .optional(),
+  passphrase: z.string().optional(),
+  recoveryCode: z.string().optional(),
 });
 
 const CandidatePreviewBodySchema = z.object({
@@ -51,6 +55,18 @@ const CandidatePreviewBodySchema = z.object({
   payloadDigest: z.string().min(1).optional(),
   passphrase: z.string().optional(),
   recoveryCode: z.string().optional(),
+});
+
+const CandidateProposeBodySchema = z.object({
+  contextResourceId: z.string().min(1).optional(),
+  actorName: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string().min(1),
+  source: z.string().optional(),
+  sourceKind: z.enum(['workflow', 'plan', 'integration']).optional(),
+  passphrase: z.string().optional(),
+  recoveryCode: z.string().optional(),
+  sync: z.boolean().optional(),
 });
 
 export function registerContextRoutes(app: FastifyInstance): void {
@@ -130,8 +146,8 @@ export function registerContextRoutes(app: FastifyInstance): void {
       profile: parsed.data.profile,
       profilePin: parsed.data.profilePin,
       credentials: {
-        passphrase: parsed.data.passphrase,
-        recoveryCode: parsed.data.recoveryCode,
+        passphrase: parsed.data.passphrase ?? '',
+        recoveryCode: parsed.data.recoveryCode ?? '',
       },
     });
     return { bundle };
@@ -163,8 +179,94 @@ export function registerContextRoutes(app: FastifyInstance): void {
     });
     return { candidate };
   });
+
+  app.post('/api/context/candidates', async (request, reply) => {
+    const parsed = CandidateProposeBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: parsed.error.issues[0]?.message ?? 'Invalid payload' });
+    }
+    const contextResourceId = contextResourceIdFrom(parsed.data);
+    if (!contextResourceId) {
+      return reply.status(400).send({ error: 'contextResourceId is required' });
+    }
+
+    const candidate = await proposeContextEntry({
+      contextResourceId,
+      actorName: parsed.data.actorName,
+      title: parsed.data.title,
+      body: parsed.data.body,
+      source: parsed.data.source ?? 'web://vault-detail',
+      sourceKind: parsed.data.sourceKind ?? 'integration',
+      credentials: {
+        passphrase: parsed.data.passphrase ?? '',
+        recoveryCode: parsed.data.recoveryCode ?? '',
+      },
+    });
+
+    let sync:
+      | { ok: true; accepted: number; pushed: number; repoId: string }
+      | { ok: false; error: string }
+      | null = null;
+    if (parsed.data.sync !== false) {
+      try {
+        const target = await resolveSavedSyncTarget(contextResourceId);
+        if (!target) {
+          sync = {
+            ok: false,
+            error: 'No saved remote workspace credentials are available on this daemon.',
+          };
+        } else {
+          const result = await pushContextEvents({
+            contextResourceId,
+            workspaceId: target.workspaceId,
+            serverUrl: target.serverUrl,
+            credential: target.credential,
+            tlsVerify: target.tlsVerify,
+            caCertPath: target.caCertPath,
+            tlsPins: target.tlsPins,
+          });
+          sync = { ok: true, ...result };
+        }
+      } catch (error) {
+        sync = {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Context sync failed',
+        };
+      }
+    }
+
+    return reply.status(201).send({ candidate, sync });
+  });
 }
 
 function contextResourceIdFrom(input: { contextResourceId?: string }): string | null {
   return input.contextResourceId ?? null;
+}
+
+async function resolveSavedSyncTarget(contextResourceId: string): Promise<{
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+} | null> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const daemon = manager.getDaemonConfig() ?? {};
+  const relay = daemon.relay ?? {};
+  const workspaceId = relay.workspaceId ?? contextResourceId;
+  const serverUrl = relay.serverUrl ?? daemon.server?.url;
+  const credential = relay.issueToken;
+  if (!workspaceId || !serverUrl || !credential) return null;
+  return {
+    workspaceId,
+    serverUrl,
+    credential,
+    tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
+    caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
+    tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
+  };
 }

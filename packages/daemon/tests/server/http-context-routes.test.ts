@@ -96,6 +96,41 @@ describe('HTTP context routes', () => {
       title: 'Review standard',
       body: 'Every risky change needs regression proof.',
     });
+
+    const resolvedFromApprovedDevice = await app.inject({
+      method: 'POST',
+      url: '/api/context/resolve',
+      payload: {
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        query: 'regression',
+      },
+    });
+    expect(resolvedFromApprovedDevice.statusCode).toBe(200);
+    expect(JSON.parse(resolvedFromApprovedDevice.payload).bundle.items[0]).toMatchObject({
+      title: 'Review standard',
+      body: 'Every risky change needs regression proof.',
+    });
+
+    const proposal = await app.inject({
+      method: 'POST',
+      url: '/api/context/candidates',
+      payload: {
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Candidate standard',
+        body: 'Retry flaky browser paths with trace proof before merge.',
+        sync: false,
+      },
+    });
+    expect(proposal.statusCode).toBe(201);
+    expect(JSON.parse(proposal.payload)).toMatchObject({
+      candidate: {
+        trustState: 'candidate',
+        actorName: 'alice-laptop',
+      },
+      sync: null,
+    });
   });
 
   it('rejects context writes without a context resource id', async () => {

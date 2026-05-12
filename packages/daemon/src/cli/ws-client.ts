@@ -130,6 +130,7 @@ export class DaemonWsClient {
 function safeTerminate(socket: WebSocket): void {
   try {
     if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      socket.once('error', ignoreSocketCleanupError);
       socket.terminate();
     }
   } catch {
@@ -140,9 +141,14 @@ function safeTerminate(socket: WebSocket): void {
 function safeClose(socket: WebSocket): void {
   try {
     if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      socket.once('error', ignoreSocketCleanupError);
       socket.close();
     }
   } catch {
     // Best-effort cleanup for CLI commands; callers only care that the handle is released.
   }
+}
+
+function ignoreSocketCleanupError(): void {
+  // ws may emit an asynchronous error when a CONNECTING socket is closed.
 }
