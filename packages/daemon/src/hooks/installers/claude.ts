@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import type { HookInstaller, HookInstallerConfig } from './base.js';
-import type { HookEventKind } from '../types.js';
+import { CLAUDE_HOOK_EVENT_KINDS, type HookEventKind } from '../types.js';
 
 const VIEWPORT_MARKER = '--viewport-hook';
 
@@ -51,7 +51,9 @@ export class ClaudeHookInstaller implements HookInstaller {
 
     let changed = false;
 
+    const claudeEvents = new Set<HookEventKind>(CLAUDE_HOOK_EVENT_KINDS);
     for (const event of config.events) {
+      if (!claudeEvents.has(event)) continue;
       const hookEntry = {
         type: 'command' as const,
         command: buildCommand(config.vpdBinaryPath, config.daemonPort, event),

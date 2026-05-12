@@ -37,6 +37,16 @@ export const HOOK_EVENT_KINDS = [
 
 export type HookEventKind = (typeof HOOK_EVENT_KINDS)[number];
 
+/**
+ * Claude Code only accepts documented lifecycle hook events in settings.json.
+ * Viewport still supports PlanProposed as an internal/direct CLI event, but
+ * installing it as a Claude hook causes Claude to ignore the entry with a
+ * settings warning.
+ */
+export const CLAUDE_HOOK_EVENT_KINDS = HOOK_EVENT_KINDS.filter(
+  (event): event is Exclude<HookEventKind, 'PlanProposed'> => event !== 'PlanProposed',
+);
+
 // ---------------------------------------------------------------------------
 // Base input — all hook events include these fields
 // ---------------------------------------------------------------------------
@@ -193,6 +203,16 @@ export interface HookResponse {
   passthrough: boolean;
   /** Permission decision (only for PermissionRequest). */
   decision?: { behavior: 'allow' | 'deny'; message?: string };
+  /**
+   * Claude Code hook-specific output. Used for context injection without
+   * rendering noisy stdout in the user's terminal.
+   */
+  hookSpecificOutput?: {
+    hookEventName: HookEventKind;
+    additionalContext?: string;
+  };
+  /** Suppress hook stdout in Claude debug surfaces when supported. */
+  suppressOutput?: boolean;
 }
 
 // ---------------------------------------------------------------------------

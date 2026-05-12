@@ -124,6 +124,64 @@ export async function previewContextCandidate(options: {
   };
 }
 
+export async function listLocalPendingContextCandidates(options: {
+  contextResourceId: string;
+  actorName: string;
+  query?: string;
+  maxItems?: number;
+  credentials?: ContextCredentials;
+  home?: string;
+}): Promise<
+  Array<{
+    id: string;
+    proposalEventId: string;
+    payloadDigest: string | null;
+    title: string;
+    body: string;
+    source: string | null;
+    status: string;
+    actorName: string;
+  }>
+> {
+  const home = options.home ?? configDir();
+  const metadata = await readContextMetadata(options.contextResourceId, home);
+  const vault = createVault(home, metadata.keyStore);
+  const credentials = options.credentials ?? { passphrase: '', recoveryCode: '' };
+  assertCredentialsOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials,
+  });
+  await ensureUserOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials,
+  });
+
+  const queryTokens = tokenize(options.query ?? '');
+  const candidates = vault
+    .allCandidates({ repoId: metadata.repoId, actorName: options.actorName })
+    .filter((candidate) => !['approved', 'rejected'].includes(candidate.status))
+    .map((candidate) => ({
+      candidate,
+      score: scoreCandidate(candidate.title, candidate.body, queryTokens),
+    }))
+    .filter((item) => queryTokens.length === 0 || item.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, options.maxItems ?? 3);
+
+  return candidates.map(({ candidate }) => ({
+    id: candidate.id,
+    proposalEventId: candidate.proposal_event_id ?? candidate.id,
+    payloadDigest: candidate.payload_digest ?? null,
+    title: candidate.title,
+    body: candidate.body,
+    source: candidate.source ?? null,
+    status: candidate.status,
+    actorName: options.actorName,
+  }));
+}
+
 export async function applyContextCandidateDecision(options: {
   contextResourceId: string;
   actorName: string;
@@ -294,4 +352,22 @@ async function recordAndReturnDecisionApplication(options: {
     ...(options.candidateId ? { candidateId: options.candidateId } : {}),
     emitted: options.emitted,
   };
+}
+
+function tokenize(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/g)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3),
+    ),
+  ];
+}
+
+function scoreCandidate(title: string, body: string, queryTokens: string[]): number {
+  if (queryTokens.length === 0) return 1;
+  const haystack = `${title}\n${body}`.toLowerCase();
+  return queryTokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
 }

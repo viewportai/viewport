@@ -39,20 +39,27 @@ truth for what this repo/session is allowed to use.
 
 ## Context
 
+Viewport may inject approved repo context automatically when a prompt is submitted.
+Use that injected context as local, repo-specific operating context. It is not
+server plaintext.
+
 - Search local/trusted-edge context with:
-  \`vpd context search --query "<topic>" --json\`
+  \`vpd context search --path . --query "<topic>" --json\`
 - Fetch one result with:
-  \`vpd context get <entry-id> --json\`
-- Propose reusable context only when the user asks or when a durable team rule was
-  clearly learned:
-  \`vpd context propose --title "<title>" --body "<body>" --json\`
+  \`vpd context get <entry-id> --path . --json\`
+- Propose reusable context only after asking the user once. Propose only durable
+  team knowledge: conventions, decisions, incident learnings, architectural facts,
+  and workflow rules that should help future runs in this repo.
+  \`vpd context propose --path . --title "<title>" --body "<body>" --json\`
 
   If the resolved repo contract has exactly one proposal-capable provider, vpd uses
   it automatically. If more than one provider can accept proposals, pass
   \`--provider <provider-id>\`.
 
 Context proposals are candidates. They do not become shared context until a human
-approves them in Viewport Inbox.
+approves them in Viewport Inbox. Pending local candidates from this device may be
+visible in injected context as author-local working notes. Do not present them as
+approved team policy.
 
 - Add approved context directly only when the user explicitly tells you to save a
   specific note as accepted context:
@@ -60,6 +67,10 @@ approves them in Viewport Inbox.
 
 Use \`context propose\` for agent-learned suggestions. Use \`context add\` only for
 human-authored or explicitly human-approved context.
+
+Avoid context spam. Do not ask to save routine task status, temporary debugging
+notes, commands that are obvious from package scripts, secrets, credentials,
+personal data, or facts that are already present in existing context.
 
 ## Workflows
 
