@@ -33,6 +33,10 @@ describe('skills CLI command', () => {
     expect(body).toContain('vpd uses');
     expect(body).toContain('it automatically');
     expect(body).toContain('Use `context propose` for agent-learned suggestions');
+    expect(body).toContain('## Plans');
+    expect(body).toContain('```viewport-plan');
+    expect(body).toContain('viewport.plan_proposal/v1');
+    expect(body).toContain('the web plan review screen');
 
     const output = parseLoggedJson(logSpy.mock.calls.map((call) => call.join(' ')).join('\n'));
     expect(output).toMatchObject({

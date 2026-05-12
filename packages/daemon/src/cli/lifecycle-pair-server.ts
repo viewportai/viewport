@@ -161,6 +161,10 @@ export async function storePairingCredentials(
     server: {
       ...(existing.server ?? {}),
       url: nextServerUrl,
+      appUrl: resolvePairingAppUrl({
+        serverUrl: nextServerUrl,
+        explicitAppUrl: existing.server?.appUrl,
+      }),
     },
     relay: {
       ...existingRelay,

@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { resolveDaemonRuntimeIdentity, toInstallCapabilities } from '../core/runtime-identity.js';
 import { resolveDisplayVersion } from '../core/package-meta.js';
 import { loadOrCreateIdentity as loadOrCreateRelayIdentity } from '../relay/bridge-key-exchange.js';
@@ -6,6 +5,7 @@ import { getOrCreateTrustAnchor, rotateAuthToken } from '../server/pairing-offer
 import { getArgs } from './args.js';
 import { isJsonMode, printJson, waitForDaemonReady } from './command-shared.js';
 import { transportFetch } from './network.js';
+import { openUrl } from './open-url.js';
 import { resolveDefaultPairingName } from './pairing-name-resolver.js';
 import {
   joinPairingUrl,
@@ -79,28 +79,6 @@ export async function runPairCommand(options: PairingCommandOptions): Promise<vo
   } else {
     await pairWithoutCode(undefined, asJson, options.restartDaemon);
   }
-}
-
-function openPairingUrl(url: string): void {
-  const platform = process.platform;
-  if (platform === 'darwin') {
-    const child = spawn('open', [url], { detached: true, stdio: 'ignore' });
-    child.unref();
-    return;
-  }
-
-  if (platform === 'win32') {
-    const child = spawn('cmd', ['/c', 'start', '', url], {
-      detached: true,
-      stdio: 'ignore',
-      windowsVerbatimArguments: true,
-    });
-    child.unref();
-    return;
-  }
-
-  const child = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
-  child.unref();
 }
 
 async function autoRestartDaemon(
@@ -317,7 +295,7 @@ async function pairWithoutCode(
   }
 
   try {
-    openPairingUrl(pairUrl);
+    openUrl(pairUrl);
   } catch {
     // Opening the browser is best effort.
   }

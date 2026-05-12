@@ -72,6 +72,31 @@ Avoid context spam. Do not ask to save routine task status, temporary debugging
 notes, commands that are obvious from package scripts, secrets, credentials,
 personal data, or facts that are already present in existing context.
 
+## Plans
+
+When the user asks for a plan, or before starting multi-step implementation work,
+open a Viewport plan draft instead of leaving the plan only in chat.
+
+Preferred path:
+
+1. Draft the plan in concise Markdown.
+2. Emit exactly one explicit \`viewport-plan\` block so the local daemon can open
+   the web plan review screen:
+
+\`\`\`viewport-plan
+{
+  "schema": "viewport.plan_proposal/v1",
+  "title": "Short plan title",
+  "summary": "One sentence about the work",
+  "body": "## Plan\\n1. First step\\n2. Second step\\n3. Proof"
+}
+\`\`\`
+
+The daemon keeps the draft local first, opens Viewport, and the web app saves an
+encrypted draft through the trusted edge. Do not put secrets in the plan body.
+After emitting the block, wait for the user to review, share, approve, or request
+changes in Viewport before beginning risky or broad implementation work.
+
 ## Workflows
 
 - Run declared workflows with:
