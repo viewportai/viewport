@@ -7,7 +7,10 @@ import {
   resolveContextBundle,
 } from '../context/local-edge-store.js';
 import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
-import { pushContextEvents } from '../context/local-edge-sync.js';
+import {
+  pushContextEvents,
+  recordContextCandidatePreviewProof,
+} from '../context/local-edge-sync.js';
 import { ConfigManager } from '../core/config.js';
 import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
 
@@ -51,6 +54,7 @@ const ResolveBodySchema = z.object({
 
 const CandidatePreviewBodySchema = z.object({
   contextResourceId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   candidateEventId: z.string().min(1).optional(),
   payloadDigest: z.string().min(1).optional(),
@@ -179,7 +183,43 @@ export function registerContextRoutes(app: FastifyInstance): void {
         recoveryCode: parsed.data.recoveryCode ?? '',
       },
     });
-    return { candidate };
+
+    let previewProof:
+      | { ok: true; previewProofId: string; expiresAt: string | null; workspaceId: string }
+      | { ok: false; error: string }
+      | null = null;
+    try {
+      const target = await resolveSavedSyncTarget(contextResourceId, parsed.data.workspaceId);
+      if (!target) {
+        previewProof = {
+          ok: false,
+          error: parsed.data.workspaceId
+            ? `No saved remote credentials are available for workspace ${parsed.data.workspaceId}.`
+            : 'Preview proof requires an explicit workspace when this daemon has multiple remote bindings.',
+        };
+      } else {
+        const proof = await recordContextCandidatePreviewProof({
+          workspaceId: target.workspaceId,
+          serverUrl: target.serverUrl,
+          credential: target.credential,
+          contextResourceId,
+          candidateEventId: candidate.proposalEventId,
+          payloadDigest: candidate.payloadDigest,
+          previewDigest: candidate.payloadDigest,
+          tlsVerify: target.tlsVerify,
+          caCertPath: target.caCertPath,
+          tlsPins: target.tlsPins,
+        });
+        previewProof = { ok: true, workspaceId: target.workspaceId, ...proof };
+      }
+    } catch (error) {
+      previewProof = {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Context preview proof failed',
+      };
+    }
+
+    return { candidate: { ...candidate, previewProof }, previewProof };
   });
 
   app.post('/api/context/candidates', async (request, reply) => {

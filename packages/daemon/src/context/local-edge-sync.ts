@@ -166,6 +166,51 @@ export async function pullContextEvents(options: {
   };
 }
 
+export async function recordContextCandidatePreviewProof(options: {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  contextResourceId: string;
+  candidateEventId: string;
+  payloadDigest?: string | null;
+  previewDigest?: string | null;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ previewProofId: string; expiresAt: string | null }> {
+  const response = await postJson(
+    options.fetchImpl ?? transportFetch,
+    contextCandidatePreviewProofUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+      candidate_event_id: options.candidateEventId,
+      ...(options.payloadDigest ? { payload_digest: options.payloadDigest } : {}),
+      ...(options.previewDigest ? { preview_digest: options.previewDigest } : {}),
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  if (!response || typeof response !== 'object') {
+    throw new Error('Context preview proof response was not an object');
+  }
+  const previewProofId = (response as { preview_proof_id?: unknown }).preview_proof_id;
+  if (typeof previewProofId !== 'string' || previewProofId === '') {
+    throw new Error('Context preview proof response did not include preview_proof_id');
+  }
+
+  const expiresAt = (response as { expires_at?: unknown }).expires_at;
+  return {
+    previewProofId,
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+  };
+}
+
 function contextRuntimeUrl(
   serverUrl: string,
   workspaceId: string,
@@ -173,6 +218,11 @@ function contextRuntimeUrl(
 ): string {
   const base = serverUrl.replace(/\/+$/, '');
   return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/events/${operation}`;
+}
+
+function contextCandidatePreviewProofUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/candidates/preview-proof`;
 }
 
 async function postJson(
