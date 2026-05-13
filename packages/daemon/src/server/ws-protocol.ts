@@ -318,35 +318,25 @@ export const RespondHookPermissionSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
-const TrustedEdgePlanBodyKeyGrantSchema = z.union([
-  z.object({
-    schema: z.literal('viewport.plan_body_key_grant/v1'),
-    algorithm: z.literal('RSA-OAEP-256'),
-    recipient_user_id: z.number().int(),
-    recipient_key_id: z.string().min(1).max(256),
-    key_ref: z.string().min(1).max(256),
-    encrypted_key: z.string().min(1),
+const TrustedEdgePlanBodyKeyGrantSchema = z.object({
+  schema: z.literal('viewport.plan_body_key_grant/v2'),
+  algorithm: z.literal('x25519-hkdf-sha256-aes-256-gcm'),
+  recipient_type: z.union([z.literal('user_epoch'), z.literal('team_epoch')]),
+  recipient_epoch_id: z.string().min(1).max(256),
+  recipient_fingerprint: z.string().min(1).max(256),
+  key_ref: z.string().min(1).max(256),
+  aad: z.record(z.string(), z.unknown()),
+  encrypted_payload: z.object({
+    schema: z.literal('viewport.wrapped_key_envelope/v1'),
+    alg: z.literal('x25519-hkdf-sha256-aes-256-gcm'),
+    ephemeralPublicKeyJwk: z.record(z.string(), z.unknown()),
+    iv: z.string().min(1),
+    ciphertext: z.string().min(1),
+    tag: z.string().min(1),
+    aadDigest: z.string().min(1),
+    createdAt: z.string().min(1),
   }),
-  z.object({
-    schema: z.literal('viewport.plan_body_key_grant/v2'),
-    algorithm: z.literal('x25519-hkdf-sha256-aes-256-gcm'),
-    recipient_type: z.union([z.literal('user_epoch'), z.literal('team_epoch')]),
-    recipient_epoch_id: z.string().min(1).max(256),
-    recipient_fingerprint: z.string().min(1).max(256),
-    key_ref: z.string().min(1).max(256),
-    aad: z.record(z.string(), z.unknown()),
-    encrypted_payload: z.object({
-      schema: z.literal('viewport.wrapped_key_envelope/v1'),
-      alg: z.literal('x25519-hkdf-sha256-aes-256-gcm'),
-      ephemeralPublicKeyJwk: z.record(z.string(), z.unknown()),
-      iv: z.string().min(1),
-      ciphertext: z.string().min(1),
-      tag: z.string().min(1),
-      aadDigest: z.string().min(1),
-      createdAt: z.string().min(1),
-    }),
-  }),
-]);
+});
 
 export const TrustedEdgePlanDecryptSchema = z.object({
   type: z.literal('trusted-edge-plan-decrypt'),
@@ -411,19 +401,12 @@ export const TrustedEdgePlanWrapKeySchema = z.object({
   bodyKeyGrants: TrustedEdgePlanDecryptSchema.shape.bodyKeyGrants,
   recipients: z
     .array(
-      z.union([
-        z.object({
-          user_id: z.number().int().positive(),
-          key_id: z.string().min(1).max(256),
-          public_key_jwk: z.record(z.string(), z.unknown()),
-        }),
-        z.object({
-          recipient_type: z.union([z.literal('user_epoch'), z.literal('team_epoch')]),
-          recipient_epoch_id: z.string().min(1).max(256),
-          recipient_fingerprint: z.string().min(1).max(256),
-          encryption_public_key_jwk: z.record(z.string(), z.unknown()),
-        }),
-      ]),
+      z.object({
+        recipient_type: z.union([z.literal('user_epoch'), z.literal('team_epoch')]),
+        recipient_epoch_id: z.string().min(1).max(256),
+        recipient_fingerprint: z.string().min(1).max(256),
+        encryption_public_key_jwk: z.record(z.string(), z.unknown()),
+      }),
     )
     .min(1)
     .max(500),

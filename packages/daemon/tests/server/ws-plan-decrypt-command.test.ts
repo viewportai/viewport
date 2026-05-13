@@ -343,12 +343,23 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
     const sendAck = vi.fn();
     vi.mocked(wrapTrustedEdgePlanBodyKey).mockResolvedValue([
       {
-        schema: 'viewport.plan_body_key_grant/v1',
-        algorithm: 'RSA-OAEP-256',
-        recipient_user_id: 42,
-        recipient_key_id: 'recipient-key',
+        schema: 'viewport.plan_body_key_grant/v2',
+        algorithm: 'x25519-hkdf-sha256-aes-256-gcm',
+        recipient_type: 'user_epoch',
+        recipient_epoch_id: 'user_epoch_42_1',
+        recipient_fingerprint: 'sha256:user-epoch',
         key_ref: 'trusted-edge-plan-key',
-        encrypted_key: 'wrapped-key',
+        aad: { purpose: 'plan-body-key' },
+        encrypted_payload: {
+          schema: 'viewport.wrapped_key_envelope/v1',
+          alg: 'x25519-hkdf-sha256-aes-256-gcm',
+          ephemeralPublicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'ephemeral' },
+          iv: 'iv',
+          ciphertext: 'wrapped-key',
+          tag: 'tag',
+          aadDigest: 'digest',
+          createdAt: '2026-05-13T00:00:00.000Z',
+        },
       },
     ]);
     const handlers = createWsCommandHandlers({
@@ -376,9 +387,10 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       },
       recipients: [
         {
-          user_id: 42,
-          key_id: 'recipient-key',
-          public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: 'user_epoch_42_1',
+          recipient_fingerprint: 'sha256:user-epoch',
+          encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public' },
         },
       ],
       capabilityToken: capabilityToken('trusted-edge-plan-wrap-key'),
@@ -393,9 +405,10 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       bodyKeyGrants: undefined,
       recipients: [
         {
-          user_id: 42,
-          key_id: 'recipient-key',
-          public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: 'user_epoch_42_1',
+          recipient_fingerprint: 'sha256:user-epoch',
+          encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public' },
         },
       ],
     });
@@ -407,8 +420,11 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       expect.objectContaining({
         bodyKeyGrants: [
           expect.objectContaining({
-            recipient_user_id: 42,
-            encrypted_key: 'wrapped-key',
+            recipient_type: 'user_epoch',
+            recipient_epoch_id: 'user_epoch_42_1',
+            encrypted_payload: expect.objectContaining({
+              ciphertext: 'wrapped-key',
+            }),
           }),
         ],
       }),
