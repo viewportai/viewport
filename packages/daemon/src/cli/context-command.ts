@@ -34,6 +34,10 @@ import {
 } from '../security/epoch-enrollment.js';
 import { ensureTeamCryptoEpoch, ensureUserCryptoEpoch } from '../security/epoch-sync.js';
 import {
+  acceptTeamEpochMemberGrants,
+  grantTeamEpochToUserEpoch,
+} from '../security/team-epoch-grants.js';
+import {
   contextDeviceAccept,
   contextDeviceApprove,
   contextDeviceRequest,
@@ -126,6 +130,14 @@ export async function context(): Promise<void> {
     await contextDeviceEnrollAccept();
     return;
   }
+  if (subcommand === 'team-grant-create') {
+    await contextTeamGrantCreate();
+    return;
+  }
+  if (subcommand === 'team-grants-accept') {
+    await contextTeamGrantsAccept();
+    return;
+  }
   if (subcommand === 'grants-process') {
     await contextGrantsProcess();
     return;
@@ -182,7 +194,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|device-enroll-request|device-enroll-approve|device-enroll-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -566,6 +578,52 @@ async function contextDeviceEnrollAccept(): Promise<void> {
   }
 
   console.log(`Device enrollment accepted. User crypto epoch ready: ${epoch.fingerprint}`);
+}
+
+async function contextTeamGrantCreate(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('team-grant-create');
+  const grant = await grantTeamEpochToUserEpoch({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    teamCryptoEpochId: requiredFlag('team-epoch', 'vpd context team-grant-create --team-epoch <id> --recipient-epoch <id>'),
+    recipientUserCryptoEpochId: requiredFlag('recipient-epoch', 'vpd context team-grant-create --team-epoch <id> --recipient-epoch <id>'),
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context team-grant-create', ok: true, grant });
+    return;
+  }
+
+  console.log(`Team epoch member grant created: ${grant.id}`);
+}
+
+async function contextTeamGrantsAccept(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('team-grants-accept');
+  const result = await acceptTeamEpochMemberGrants({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context team-grants-accept', ok: true, ...result });
+    return;
+  }
+
+  console.log(`Team epoch grants accepted: ${result.accepted}`);
 }
 
 async function contextGrantsProcess(): Promise<void> {
