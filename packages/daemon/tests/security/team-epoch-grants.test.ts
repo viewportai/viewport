@@ -72,58 +72,61 @@ describe('team epoch member grants', () => {
     );
 
     let grantPayload: Record<string, unknown> | null = null;
-    const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
-      if (init?.method === 'GET' && url.includes('/crypto/epochs')) {
-        return responseJson({
-          data: {
-            user_epochs: [
-              {
-                id: 'user-epoch-platform-1',
-                workspace_id: 'workspace-1',
-                user_id: 42,
-                epoch: 1,
-                fingerprint: epochFingerprint(userMaterial.descriptor),
-                encryption_public_key_jwk: userMaterial.descriptor.encryptionPublicKeyJwk,
-                signing_public_key_jwk: userMaterial.descriptor.signingPublicKeyJwk,
-                previous_epoch_fingerprint: null,
-              },
-            ],
-            team_epochs: [],
-          },
-        });
-      }
+    const fetchImpl = vi.fn(
+      async (url: string, init?: { method?: string; body?: string; headers?: unknown }) => {
+        expectCryptoProtocolHeader(init?.headers);
+        if (init?.method === 'GET' && url.includes('/crypto/epochs')) {
+          return responseJson({
+            data: {
+              user_epochs: [
+                {
+                  id: 'user-epoch-platform-1',
+                  workspace_id: 'workspace-1',
+                  user_id: 42,
+                  epoch: 1,
+                  fingerprint: epochFingerprint(userMaterial.descriptor),
+                  encryption_public_key_jwk: userMaterial.descriptor.encryptionPublicKeyJwk,
+                  signing_public_key_jwk: userMaterial.descriptor.signingPublicKeyJwk,
+                  previous_epoch_fingerprint: null,
+                },
+              ],
+              team_epochs: [],
+            },
+          });
+        }
 
-      if (
-        init?.method === 'POST' &&
-        url.endsWith('/crypto/team-epochs/team-epoch-platform-1/member-grants')
-      ) {
-        const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
-        expect(body.recipient_user_crypto_epoch_id).toBe('user-epoch-platform-1');
-        expect(JSON.stringify(body)).not.toContain('encryptionPrivateKeyJwk');
-        expect(JSON.stringify(body)).not.toContain('signingPrivateKeyJwk');
-        grantPayload = {
-          id: 'team-grant-1',
-          team_crypto_epoch_id: 'team-epoch-platform-1',
-          recipient_user_crypto_epoch_id: 'user-epoch-platform-1',
-          aad: body.aad,
-          encrypted_payload: body.encrypted_payload,
-        };
-        return responseJson({ ok: true, data: grantPayload });
-      }
+        if (
+          init?.method === 'POST' &&
+          url.endsWith('/crypto/team-epochs/team-epoch-platform-1/member-grants')
+        ) {
+          const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          expect(body.recipient_user_crypto_epoch_id).toBe('user-epoch-platform-1');
+          expect(JSON.stringify(body)).not.toContain('encryptionPrivateKeyJwk');
+          expect(JSON.stringify(body)).not.toContain('signingPrivateKeyJwk');
+          grantPayload = {
+            id: 'team-grant-1',
+            team_crypto_epoch_id: 'team-epoch-platform-1',
+            recipient_user_crypto_epoch_id: 'user-epoch-platform-1',
+            aad: body.aad,
+            encrypted_payload: body.encrypted_payload,
+          };
+          return responseJson({ ok: true, data: grantPayload });
+        }
 
-      if (init?.method === 'GET' && url.includes('/crypto/team-epoch-member-grants')) {
-        return responseJson({ data: grantPayload ? [grantPayload] : [] });
-      }
+        if (init?.method === 'GET' && url.includes('/crypto/team-epoch-member-grants')) {
+          return responseJson({ data: grantPayload ? [grantPayload] : [] });
+        }
 
-      if (
-        init?.method === 'POST' &&
-        url.endsWith('/crypto/team-epoch-member-grants/team-grant-1/materialized')
-      ) {
-        return responseJson({ ok: true, data: grantPayload });
-      }
+        if (
+          init?.method === 'POST' &&
+          url.endsWith('/crypto/team-epoch-member-grants/team-grant-1/materialized')
+        ) {
+          return responseJson({ ok: true, data: grantPayload });
+        }
 
-      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
-    });
+        throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+      },
+    );
 
     const target = {
       workspaceId: 'workspace-1',
@@ -164,4 +167,10 @@ function responseJson(payload: unknown, status = 200): Response {
     statusText: 'OK',
     json: async () => payload,
   } as Response;
+}
+
+function expectCryptoProtocolHeader(headers: unknown): void {
+  expect(headers).toMatchObject({
+    'X-Viewport-Crypto-Protocol': 'viewport.trusted_edge_crypto/v2',
+  });
 }

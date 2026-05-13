@@ -30,7 +30,8 @@ describe('epoch sync', () => {
 
   it('generates private user epoch material locally and publishes public material only', async () => {
     const home = await tempHome();
-    const fetchImpl = vi.fn(async (_url: string, init?: { body?: string }) => {
+    const fetchImpl = vi.fn(async (_url: string, init?: { body?: string; headers?: unknown }) => {
+      expectCryptoProtocolHeader(init?.headers);
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
       expect(JSON.stringify(body)).not.toContain('private');
       expect(JSON.stringify(body)).not.toContain('"d"');
@@ -791,6 +792,12 @@ function responseJson(payload: unknown): Response {
     statusText: 'OK',
     json: async () => payload,
   } as Response;
+}
+
+function expectCryptoProtocolHeader(headers: unknown): void {
+  expect(headers).toMatchObject({
+    'X-Viewport-Crypto-Protocol': 'viewport.trusted_edge_crypto/v2',
+  });
 }
 
 function createRecipientUserEpochFixture(): {

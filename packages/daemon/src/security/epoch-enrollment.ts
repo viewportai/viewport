@@ -13,6 +13,8 @@ import {
   DEVICE_ENROLLMENT_SCHEMA,
   signDeviceEnrollmentRequest,
   signUserEpochDeviceMaterialization,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
   unwrapJsonFromX25519Envelope,
   userEpochDeviceMaterializationPayload,
   wrapJsonForX25519Recipient,
@@ -296,7 +298,7 @@ async function postJson(
 ): Promise<unknown> {
   const response = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: trustedEdgeCryptoHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(body),
     timeoutMs: 5_000,
     tlsVerify: transportOptions.tlsVerify,
@@ -317,7 +319,7 @@ async function getJson(
   requestUrl.searchParams.set('credential', transportOptions.credential);
   const response = await fetchImpl(requestUrl.toString(), {
     method: 'GET',
-    headers: { accept: 'application/json' },
+    headers: trustedEdgeCryptoHeaders(),
     timeoutMs: 5_000,
     tlsVerify: transportOptions.tlsVerify,
     caCertPath: transportOptions.caCertPath,
@@ -326,6 +328,14 @@ async function getJson(
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(responseError(payload, response));
   return payload;
+}
+
+function trustedEdgeCryptoHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    accept: 'application/json',
+    [TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER]: TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+    ...extra,
+  };
 }
 
 function responseError(payload: unknown, response: Response): string {

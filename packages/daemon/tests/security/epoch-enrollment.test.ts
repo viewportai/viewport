@@ -49,129 +49,135 @@ describe('epoch device enrollment', () => {
 
     let enrollmentPublicKeys: Record<string, unknown> | null = null;
     let approvedGrant: Record<string, unknown> | null = null;
-    const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
-      if (init?.method === 'POST' && url.endsWith('/crypto/device-enrollments')) {
-        const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
-        expect(JSON.stringify(body)).not.toContain('"d"');
-        expect(body.request_payload).toMatchObject({
-          schema: 'viewport.device_enrollment/v1',
-          workspaceId: 'workspace-1',
-          deviceId: 'new-vps',
-          deviceLabel: 'New VPS',
-          nonce: body.nonce,
-        });
-        expect(body.request_signature).toEqual(expect.any(String));
-        enrollmentPublicKeys = body;
-        return responseJson(
-          {
+    const fetchImpl = vi.fn(
+      async (url: string, init?: { method?: string; body?: string; headers?: unknown }) => {
+        expectCryptoProtocolHeader(init?.headers);
+        if (init?.method === 'POST' && url.endsWith('/crypto/device-enrollments')) {
+          const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          expect(JSON.stringify(body)).not.toContain('"d"');
+          expect(body.request_payload).toMatchObject({
+            schema: 'viewport.device_enrollment/v1',
+            workspaceId: 'workspace-1',
+            deviceId: 'new-vps',
+            deviceLabel: 'New VPS',
+            nonce: body.nonce,
+          });
+          expect(body.request_signature).toEqual(expect.any(String));
+          enrollmentPublicKeys = body;
+          return responseJson(
+            {
+              ok: true,
+              data: {
+                id: 'enroll-1',
+                workspace_id: 'workspace-1',
+                user_id: 42,
+                device_id: body.device_id,
+                device_label: body.device_label,
+                encryption_public_key_jwk: body.encryption_public_key_jwk,
+                signing_public_key_jwk: body.signing_public_key_jwk,
+                fingerprint: 'sha256:enrollment',
+                nonce: body.nonce,
+                status: 'pending',
+                grants: [],
+              },
+            },
+            201,
+          );
+        }
+
+        if (init?.method === 'GET' && url.includes('/crypto/device-enrollments/enroll-1')) {
+          return responseJson({
+            data: {
+              id: 'enroll-1',
+              workspace_id: 'workspace-1',
+              user_id: 42,
+              device_id: 'new-vps',
+              device_label: 'New VPS',
+              encryption_public_key_jwk: enrollmentPublicKeys?.encryption_public_key_jwk,
+              signing_public_key_jwk: enrollmentPublicKeys?.signing_public_key_jwk,
+              fingerprint: 'sha256:enrollment',
+              nonce: enrollmentPublicKeys?.nonce,
+              status: approvedGrant ? 'approved' : 'pending',
+              grants: approvedGrant ? [approvedGrant] : [],
+            },
+          });
+        }
+
+        if (
+          init?.method === 'POST' &&
+          url.endsWith('/crypto/device-enrollments/enroll-1/approve')
+        ) {
+          const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          expect(body.user_crypto_epoch_id).toBe('epoch-platform-1');
+          expect(JSON.stringify(body)).not.toContain('user-epoch-secret');
+          expect(JSON.stringify(body)).not.toContain('encryptionPrivateKeyJwk');
+          approvedGrant = {
+            id: 'grant-1',
+            user_crypto_epoch_id: body.user_crypto_epoch_id,
+            recipient_fingerprint: 'sha256:enrollment',
+            aad: body.aad,
+            encrypted_payload: body.encrypted_payload,
+          };
+          return responseJson({
             ok: true,
             data: {
               id: 'enroll-1',
               workspace_id: 'workspace-1',
               user_id: 42,
-              device_id: body.device_id,
-              device_label: body.device_label,
-              encryption_public_key_jwk: body.encryption_public_key_jwk,
-              signing_public_key_jwk: body.signing_public_key_jwk,
+              device_id: 'new-vps',
+              device_label: 'New VPS',
+              encryption_public_key_jwk: enrollmentPublicKeys?.encryption_public_key_jwk,
+              signing_public_key_jwk: enrollmentPublicKeys?.signing_public_key_jwk,
               fingerprint: 'sha256:enrollment',
-              nonce: body.nonce,
-              status: 'pending',
-              grants: [],
+              nonce: enrollmentPublicKeys?.nonce,
+              status: 'approved',
+              grants: [approvedGrant],
             },
-          },
-          201,
-        );
-      }
+            grant: approvedGrant,
+          });
+        }
 
-      if (init?.method === 'GET' && url.includes('/crypto/device-enrollments/enroll-1')) {
-        return responseJson({
-          data: {
-            id: 'enroll-1',
-            workspace_id: 'workspace-1',
-            user_id: 42,
-            device_id: 'new-vps',
-            device_label: 'New VPS',
-            encryption_public_key_jwk: enrollmentPublicKeys?.encryption_public_key_jwk,
-            signing_public_key_jwk: enrollmentPublicKeys?.signing_public_key_jwk,
-            fingerprint: 'sha256:enrollment',
-            nonce: enrollmentPublicKeys?.nonce,
-            status: approvedGrant ? 'approved' : 'pending',
-            grants: approvedGrant ? [approvedGrant] : [],
-          },
-        });
-      }
+        if (
+          init?.method === 'POST' &&
+          url.endsWith('/crypto/device-enrollments/enroll-1/materialized')
+        ) {
+          const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          expect(body.grant_id).toBe('grant-1');
+          expect(body.receipt).toMatchObject({
+            payload: {
+              schema: 'viewport.user_epoch_device_materialization/v1',
+              workspaceId: 'workspace-1',
+              userId: '42',
+              enrollmentId: 'enroll-1',
+              grantId: 'grant-1',
+              userCryptoEpochId: 'epoch-platform-1',
+              userEpochFingerprint: 'sha256:user-epoch',
+              recipientFingerprint: 'sha256:enrollment',
+            },
+            signature: expect.any(String),
+            signedByUserEpochFingerprint: 'sha256:user-epoch',
+          });
+          return responseJson({
+            ok: true,
+            data: {
+              id: 'enroll-1',
+              workspace_id: 'workspace-1',
+              user_id: 42,
+              device_id: 'new-vps',
+              device_label: 'New VPS',
+              encryption_public_key_jwk: enrollmentPublicKeys?.encryption_public_key_jwk,
+              signing_public_key_jwk: enrollmentPublicKeys?.signing_public_key_jwk,
+              fingerprint: 'sha256:enrollment',
+              nonce: enrollmentPublicKeys?.nonce,
+              status: 'accepted',
+              grants: [approvedGrant],
+            },
+          });
+        }
 
-      if (init?.method === 'POST' && url.endsWith('/crypto/device-enrollments/enroll-1/approve')) {
-        const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
-        expect(body.user_crypto_epoch_id).toBe('epoch-platform-1');
-        expect(JSON.stringify(body)).not.toContain('user-epoch-secret');
-        expect(JSON.stringify(body)).not.toContain('encryptionPrivateKeyJwk');
-        approvedGrant = {
-          id: 'grant-1',
-          user_crypto_epoch_id: body.user_crypto_epoch_id,
-          recipient_fingerprint: 'sha256:enrollment',
-          aad: body.aad,
-          encrypted_payload: body.encrypted_payload,
-        };
-        return responseJson({
-          ok: true,
-          data: {
-            id: 'enroll-1',
-            workspace_id: 'workspace-1',
-            user_id: 42,
-            device_id: 'new-vps',
-            device_label: 'New VPS',
-            encryption_public_key_jwk: enrollmentPublicKeys?.encryption_public_key_jwk,
-            signing_public_key_jwk: enrollmentPublicKeys?.signing_public_key_jwk,
-            fingerprint: 'sha256:enrollment',
-            nonce: enrollmentPublicKeys?.nonce,
-            status: 'approved',
-            grants: [approvedGrant],
-          },
-          grant: approvedGrant,
-        });
-      }
-
-      if (
-        init?.method === 'POST' &&
-        url.endsWith('/crypto/device-enrollments/enroll-1/materialized')
-      ) {
-        const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
-        expect(body.grant_id).toBe('grant-1');
-        expect(body.receipt).toMatchObject({
-          payload: {
-            schema: 'viewport.user_epoch_device_materialization/v1',
-            workspaceId: 'workspace-1',
-            userId: '42',
-            enrollmentId: 'enroll-1',
-            grantId: 'grant-1',
-            userCryptoEpochId: 'epoch-platform-1',
-            userEpochFingerprint: 'sha256:user-epoch',
-            recipientFingerprint: 'sha256:enrollment',
-          },
-          signature: expect.any(String),
-          signedByUserEpochFingerprint: 'sha256:user-epoch',
-        });
-        return responseJson({
-          ok: true,
-          data: {
-            id: 'enroll-1',
-            workspace_id: 'workspace-1',
-            user_id: 42,
-            device_id: 'new-vps',
-            device_label: 'New VPS',
-            encryption_public_key_jwk: enrollmentPublicKeys?.encryption_public_key_jwk,
-            signing_public_key_jwk: enrollmentPublicKeys?.signing_public_key_jwk,
-            fingerprint: 'sha256:enrollment',
-            nonce: enrollmentPublicKeys?.nonce,
-            status: 'accepted',
-            grants: [approvedGrant],
-          },
-        });
-      }
-
-      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
-    });
+        throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`);
+      },
+    );
 
     const target = {
       workspaceId: 'workspace-1',
@@ -282,4 +288,10 @@ function responseJson(payload: unknown, status = 200): Response {
     statusText: status === 201 ? 'Created' : 'OK',
     json: async () => payload,
   } as Response;
+}
+
+function expectCryptoProtocolHeader(headers: unknown): void {
+  expect(headers).toMatchObject({
+    'X-Viewport-Crypto-Protocol': 'viewport.trusted_edge_crypto/v2',
+  });
 }

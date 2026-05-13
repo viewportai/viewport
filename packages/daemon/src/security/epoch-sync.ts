@@ -13,6 +13,8 @@ import {
 import {
   epochTransitionPayload,
   signEpochTransition,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
   type EpochTransitionPayload,
   type JsonValue,
 } from './epoch-protocol.js';
@@ -390,7 +392,7 @@ async function getJson(
   requestUrl.searchParams.set('credential', transportOptions.credential);
   const response = await fetchImpl(requestUrl.toString(), {
     method: 'GET',
-    headers: { accept: 'application/json' },
+    headers: trustedEdgeCryptoHeaders(),
     timeoutMs: 5_000,
     tlsVerify: transportOptions.tlsVerify,
     caCertPath: transportOptions.caCertPath,
@@ -457,7 +459,7 @@ async function postJson(
 ): Promise<unknown> {
   const response = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: trustedEdgeCryptoHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(body),
     timeoutMs: 5_000,
     tlsVerify: transportOptions.tlsVerify,
@@ -473,6 +475,14 @@ async function postJson(
     throw new Error(`Crypto epoch sync failed: ${message}`);
   }
   return payload;
+}
+
+function trustedEdgeCryptoHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    accept: 'application/json',
+    [TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER]: TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+    ...extra,
+  };
 }
 
 function objectField(value: unknown, field: string): Record<string, unknown> {

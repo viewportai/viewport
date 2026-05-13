@@ -5,6 +5,8 @@ export const TEAM_EPOCH_SCHEMA = 'viewport.team_crypto_epoch/v1';
 export const DEVICE_ENROLLMENT_SCHEMA = 'viewport.device_enrollment/v1';
 export const RESOURCE_GRANT_SCHEMA = 'viewport.resource_key_grant/v1';
 export const WRAPPED_KEY_ENVELOPE_SCHEMA = 'viewport.wrapped_key_envelope/v1';
+export const TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER = 'X-Viewport-Crypto-Protocol';
+export const TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION = 'viewport.trusted_edge_crypto/v2';
 
 export type JsonValue =
   | null
