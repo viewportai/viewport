@@ -23,6 +23,7 @@ import {
   WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
+  TrustedEdgeTeamEpochPublishSchema,
   IncomingMessageSchema,
 } from '../../src/server/ws-protocol.js';
 
@@ -149,6 +150,29 @@ describe('ContextCandidatePreviewSchema', () => {
       candidateEventId: 'event-1',
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('TrustedEdgeTeamEpochPublishSchema', () => {
+  it('accepts a trusted-edge team epoch publish command', () => {
+    const result = TrustedEdgeTeamEpochPublishSchema.safeParse({
+      type: 'trusted-edge-team-epoch-publish',
+      workspaceId: 'workspace-1',
+      teamId: 'team-public-1',
+      capabilityToken: 'capability-token',
+      requestId: 'req-1',
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      IncomingMessageSchema.safeParse({
+        type: 'trusted-edge-team-epoch-publish',
+        workspaceId: 'workspace-1',
+        teamId: 'team-public-1',
+        capabilityToken: 'capability-token',
+        requestId: 'req-1',
+      }).success,
+    ).toBe(true);
   });
 });
 

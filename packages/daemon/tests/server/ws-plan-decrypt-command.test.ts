@@ -9,6 +9,11 @@ vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
   wrapTrustedEdgePlanBodyKey: vi.fn(),
 }));
 
+vi.mock('../../src/security/epoch-sync.js', () => ({
+  ensureTeamCryptoEpoch: vi.fn(),
+  processPendingCryptoRotationRequests: vi.fn(),
+}));
+
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import {
   decryptTrustedEdgePlanBody,
@@ -16,6 +21,10 @@ import {
   encryptTrustedEdgePlanFeedbackField,
   wrapTrustedEdgePlanBodyKey,
 } from '../../src/hooks/trusted-edge-plan-artifacts.js';
+import {
+  ensureTeamCryptoEpoch,
+  processPendingCryptoRotationRequests,
+} from '../../src/security/epoch-sync.js';
 
 function createClient(): ConnectedClient {
   return {
@@ -35,6 +44,8 @@ function createDaemon(runtimeTargetId = 'runtime-target-1'): any {
         relay: {
           workspaceId: 'workspace-1',
           runtimeTargetId,
+          serverUrl: 'https://api.test',
+          issueToken: 'issue-token-1',
           tokenIssuer: 'viewport-server',
           tokenAudience: 'viewport-relay',
           signingKeys: { v1: TEST_SIGNING_KEY },
@@ -63,6 +74,7 @@ function capabilityToken(
       purpose,
       planId,
       trustedEdgeUnlockSessionId: 'unlock-session-1',
+      runtimeTargetId: 'runtime-target-1',
       iss: 'viewport-server',
       aud: 'viewport-relay',
       iat: now,
@@ -82,6 +94,80 @@ function capabilityToken(
 describe('trusted-edge-plan-decrypt websocket command', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('publishes a team epoch through the trusted-edge command channel without returning private keys', async () => {
+    const sendAck = vi.fn();
+    vi.mocked(ensureTeamCryptoEpoch).mockResolvedValue({
+      workspaceId: 'workspace-1',
+      teamId: 'team-public-1',
+      platformTeamId: '4',
+      platformEpochId: 'team-epoch-1',
+      epoch: 1,
+      schema: 'viewport.team_crypto_epoch/v1',
+      status: 'active',
+      encryptionPublicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'public-x' },
+      encryptionPrivateKeyJwk: { kty: 'OKP', crv: 'X25519', d: 'secret-d', x: 'public-x' },
+      signingPublicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'sign-public-x' },
+      signingPrivateKeyJwk: { kty: 'OKP', crv: 'Ed25519', d: 'sign-secret-d', x: 'sign-public-x' },
+      fingerprint: 'sha256:team-fingerprint',
+      previousEpochFingerprint: null,
+      createdAt: '2026-05-13T00:00:00.000Z',
+      updatedAt: '2026-05-13T00:00:00.000Z',
+    });
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-team-epoch-publish'](createClient(), {
+      type: 'trusted-edge-team-epoch-publish',
+      workspaceId: 'workspace-1',
+      teamId: 'team-public-1',
+      capabilityToken: capabilityToken('trusted-edge-team-epoch-publish', 'plan-1', {
+        teamId: 'team-public-1',
+      }),
+      requestId: 'team-epoch-req',
+    });
+
+    expect(ensureTeamCryptoEpoch).toHaveBeenCalledWith({
+      target: expect.objectContaining({
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token-1',
+      }),
+      teamId: 'team-public-1',
+    });
+    expect(processPendingCryptoRotationRequests).toHaveBeenCalledWith({
+      target: expect.objectContaining({
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token-1',
+      }),
+    });
+    expect(
+      vi.mocked(processPendingCryptoRotationRequests).mock.invocationCallOrder[0],
+    ).toBeLessThan(vi.mocked(ensureTeamCryptoEpoch).mock.invocationCallOrder[0]);
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'team-epoch-req',
+      'ok',
+      undefined,
+      expect.objectContaining({
+        teamId: 'team-public-1',
+        teamEpoch: expect.objectContaining({
+          teamId: 'team-public-1',
+          platformEpochId: 'team-epoch-1',
+          fingerprint: 'sha256:team-fingerprint',
+        }),
+      }),
+    );
+    expect(JSON.stringify(sendAck.mock.calls.at(-1))).not.toContain('secret-d');
+    expect(JSON.stringify(sendAck.mock.calls.at(-1))).not.toContain('sign-secret-d');
   });
 
   it('rejects decrypt requests without a scoped command capability', async () => {
@@ -178,7 +264,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
     );
   });
 
-  it('rejects capabilities unlocked for a different runtime target', async () => {
+  it('rejects command capabilities without a runtime target binding', async () => {
     const sendAck = vi.fn();
     const handlers = createWsCommandHandlers({
       daemon: createDaemon('runtime-target-1'),
@@ -204,17 +290,17 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
         aad: {},
       },
       capabilityToken: capabilityToken('trusted-edge-plan-decrypt', 'plan-1', {
-        runtimeTargetId: 'runtime-target-2',
+        runtimeTargetId: '',
       }),
-      requestId: 'plan-decrypt-target-mismatch',
+      requestId: 'plan-decrypt-missing-target',
     });
 
     expect(decryptTrustedEdgePlanBody).not.toHaveBeenCalled();
     expect(sendAck).toHaveBeenCalledWith(
       expect.any(Object),
-      'plan-decrypt-target-mismatch',
+      'plan-decrypt-missing-target',
       'error',
-      'Trusted-edge command capability runtimeTargetId mismatch.',
+      'Trusted-edge command capability runtimeTargetId is required.',
       { errorCode: 'INVALID_INPUT' },
     );
   });

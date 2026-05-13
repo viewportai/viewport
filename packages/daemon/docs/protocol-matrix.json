@@ -357,6 +357,19 @@
       "integrationTests": ["tests/server/ws-plan-decrypt-command.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": false
+    },
+    {
+      "type": "trusted-edge-team-epoch-publish",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#TrustedEdgeTeamEpochPublishSchema",
+      "handler": "src/server/ws-command-handlers.ts#trusted-edge-team-epoch-publish",
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-plan-decrypt-command.test.ts"
+      ],
+      "integrationTests": ["tests/server/ws-plan-decrypt-command.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
     }
   ]
 }

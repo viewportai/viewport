@@ -58,6 +58,8 @@ export async function registerDaemonPublicKeyWithControlPlane(input: {
     reason?: string;
     error?: string;
     daemonIssueToken?: string;
+    runtimeTargetId?: string;
+    installId?: string;
   } | null;
 
   if (!res.ok || !parsed?.ok) {
@@ -69,8 +71,15 @@ export async function registerDaemonPublicKeyWithControlPlane(input: {
   }
 
   const issuedToken = parsed.daemonIssueToken?.trim() ?? '';
+  const runtimeTargetId = parsed.runtimeTargetId?.trim() ?? input.options.runtimeTargetId;
+  const installId = parsed.installId?.trim();
+  await persistRegisteredBinding({
+    workspaceId: input.options.workspaceId,
+    issueToken: issuedToken.length > 0 ? issuedToken : input.daemonIssueToken,
+    runtimeTargetId,
+    installId,
+  });
   if (issuedToken.length > 0) {
-    await persistIssueToken(issuedToken);
     return issuedToken;
   }
   if (input.daemonIssueToken && input.daemonIssueToken.trim().length > 0) {
@@ -83,24 +92,45 @@ export async function registerDaemonPublicKeyWithControlPlane(input: {
   );
 }
 
-async function persistIssueToken(issueToken: string): Promise<void> {
-  const normalized = issueToken.trim();
-  if (normalized.length === 0) return;
+async function persistRegisteredBinding(input: {
+  workspaceId: string;
+  issueToken?: string | null;
+  runtimeTargetId?: string;
+  installId?: string;
+}): Promise<void> {
+  const normalizedIssueToken = input.issueToken?.trim() ?? '';
+  const normalizedRuntimeTargetId = input.runtimeTargetId?.trim() ?? '';
+  const normalizedInstallId = input.installId?.trim() ?? '';
   try {
     const manager = new ConfigManager();
     await manager.load();
     const daemonConfig = manager.getDaemonConfig() ?? {};
     const relayConfig = daemonConfig.relay ?? {};
+    const bindings = relayConfig.bindings?.map((binding) => {
+      if (binding.workspaceId !== input.workspaceId) return binding;
+      return {
+        ...binding,
+        ...(normalizedIssueToken ? { issueToken: normalizedIssueToken } : {}),
+        ...(normalizedRuntimeTargetId ? { runtimeTargetId: normalizedRuntimeTargetId } : {}),
+        ...(normalizedInstallId ? { installId: normalizedInstallId } : {}),
+      };
+    });
+
     await manager.setDaemonConfig({
       ...daemonConfig,
       relay: {
         ...relayConfig,
-        issueToken: normalized,
+        ...(normalizedIssueToken ? { issueToken: normalizedIssueToken } : {}),
+        ...(normalizedRuntimeTargetId ? { runtimeTargetId: normalizedRuntimeTargetId } : {}),
+        ...(normalizedInstallId ? { installId: normalizedInstallId } : {}),
+        ...(bindings ? { bindings } : {}),
       },
     });
   } catch (error) {
     out.warn(
-      `[relay] failed to persist daemon issue token: ${error instanceof Error ? error.message : String(error)}`,
+      `[relay] failed to persist daemon registration data: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
 }

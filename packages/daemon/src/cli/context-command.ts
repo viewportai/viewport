@@ -52,6 +52,7 @@ import {
 } from '../security/team-epoch-grants.js';
 import { contextJoin, contextUserInit } from './context-access-command.js';
 import { configDir } from '../core/config.js';
+import type { LocalTeamCryptoEpoch, LocalUserCryptoEpoch } from '../security/epoch-store.js';
 
 export async function context(): Promise<void> {
   const subcommand = getArgs()[1];
@@ -454,7 +455,10 @@ async function contextSyncAll(): Promise<void> {
       workspaceId: target.workspaceId,
       ...summary,
       rotations,
-      acceptedTeamGrants,
+      acceptedTeamGrants: {
+        accepted: acceptedTeamGrants.accepted,
+        teamEpochs: acceptedTeamGrants.teamEpochs.map(publicEpochForOutput),
+      },
       results,
     });
     return;
@@ -529,7 +533,10 @@ async function fetchVisibleContextVaults(target: {
     `${target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(target.workspaceId)}/context-vaults?${query.toString()}`,
     {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        'X-Viewport-Crypto-Protocol': 'viewport.trusted_edge_crypto/v2',
+      },
       timeoutMs: 5_000,
       tlsVerify: target.tlsVerify,
       caCertPath: target.caCertPath,
@@ -583,13 +590,32 @@ async function contextEpochPublish(): Promise<void> {
       command: 'context epoch-publish',
       ok: true,
       scope: teamId ? 'team' : 'user',
-      epoch,
+      epoch: publicEpochForOutput(epoch),
     });
     return;
   }
 
   console.log(`${teamId ? 'Team' : 'User'} crypto epoch ready: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
+}
+
+function publicEpochForOutput(epoch: LocalTeamCryptoEpoch | LocalUserCryptoEpoch): Record<string, unknown> {
+  return {
+    workspaceId: epoch.workspaceId,
+    userId: 'userId' in epoch ? epoch.userId : undefined,
+    teamId: 'teamId' in epoch ? epoch.teamId : undefined,
+    platformTeamId: 'platformTeamId' in epoch ? epoch.platformTeamId ?? null : undefined,
+    platformEpochId: epoch.platformEpochId ?? null,
+    epoch: epoch.epoch,
+    schema: epoch.schema,
+    status: epoch.status,
+    encryptionPublicKeyJwk: epoch.encryptionPublicKeyJwk,
+    signingPublicKeyJwk: epoch.signingPublicKeyJwk,
+    fingerprint: epoch.fingerprint,
+    previousEpochFingerprint: epoch.previousEpochFingerprint ?? null,
+    createdAt: epoch.createdAt,
+    updatedAt: epoch.updatedAt,
+  };
 }
 
 async function contextEpochRotate(): Promise<void> {
@@ -900,7 +926,12 @@ async function contextTeamGrantsAccept(): Promise<void> {
   });
 
   if (isJsonMode()) {
-    printJson({ command: 'context team-grants-accept', ok: true, ...result });
+    printJson({
+      command: 'context team-grants-accept',
+      ok: true,
+      accepted: result.accepted,
+      teamEpochs: result.teamEpochs.map(publicEpochForOutput),
+    });
     return;
   }
 
