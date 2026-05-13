@@ -387,6 +387,9 @@ export async function processPendingContextGrants(options: {
           crypto_grant_id: stringField(record, 'id'),
           grant_event_id: grantEventId,
           recipient_identity_name: recipientName,
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: userEpochId,
+          recipient_fingerprint: fingerprint,
           ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
         },
         {
@@ -464,6 +467,9 @@ export async function processPendingContextGrants(options: {
           crypto_grant_id: stringField(record, 'id'),
           grant_event_id: grantEventId,
           recipient_identity_name: recipientName,
+          recipient_type: 'team_epoch',
+          recipient_epoch_id: teamEpochId,
+          recipient_fingerprint: fingerprint,
           ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
         },
         {
