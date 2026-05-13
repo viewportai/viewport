@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.4.1...@viewportai/daemon@0.5.0) (2026-05-13)
+
+
+### Features
+
+* add automatic context injection and trusted-edge routes ([#90](https://github.com/viewportai/viewport/issues/90)) ([af0fbec](https://github.com/viewportai/viewport/commit/af0fbec6842cc4c0147ebb611b44e996c5d94399))
+
 ## [0.4.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.4.0...@viewportai/daemon@0.4.1) (2026-05-12)
 
 
