@@ -57,6 +57,7 @@ function capabilityToken(purpose: string, planId = 'plan-1'): string {
       workspaceId: 'workspace-1',
       purpose,
       planId,
+      trustedEdgeUnlockSessionId: 'unlock-session-1',
       iss: 'viewport-server',
       aud: 'viewport-relay',
       iat: now,

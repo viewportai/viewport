@@ -461,6 +461,7 @@ describe('HTTP context routes', () => {
       JSON.stringify({
         role: 'trusted-edge-client',
         scope: 'trusted-edge-command',
+        trustedEdgeUnlockSessionId: 'unlock-session-1',
         iss: 'viewport-server',
         aud: 'viewport-relay',
         iat: now,

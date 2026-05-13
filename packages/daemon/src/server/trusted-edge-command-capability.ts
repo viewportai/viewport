@@ -62,6 +62,7 @@ export async function verifyTrustedEdgeCommandCapability(
   requireClaim(claimMap['role'], 'trusted-edge-client', 'role');
   requireClaim(claimMap['workspaceId'], input.workspaceId, 'workspaceId');
   requireClaim(claimMap['purpose'], input.purpose, 'purpose');
+  requireStringClaim(claimMap['trustedEdgeUnlockSessionId'], 'trustedEdgeUnlockSessionId');
 
   if (input.contextResourceId) {
     requireClaim(claimMap['contextResourceId'], input.contextResourceId, 'contextResourceId');
@@ -80,6 +81,12 @@ export async function verifyTrustedEdgeCommandCapability(
 function requireClaim(actual: unknown, expected: string, name: string): void {
   if (typeof actual !== 'string' || actual !== expected) {
     throw new Error(`Trusted-edge command capability ${name} mismatch.`);
+  }
+}
+
+function requireStringClaim(actual: unknown, name: string): void {
+  if (typeof actual !== 'string' || actual.trim() === '') {
+    throw new Error(`Trusted-edge command capability ${name} is required.`);
   }
 }
 

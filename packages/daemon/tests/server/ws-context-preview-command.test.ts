@@ -52,6 +52,7 @@ function capabilityToken(claims: Record<string, unknown>): string {
       role: 'trusted-edge-client',
       scope: 'trusted-edge-command',
       workspaceId: 'workspace-1',
+      trustedEdgeUnlockSessionId: 'unlock-session-1',
       iss: 'viewport-server',
       aud: 'viewport-relay',
       iat: now,

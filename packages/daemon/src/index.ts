@@ -18,6 +18,7 @@
  *   vpd guard ...             Check repo-local approval/risk gates
  *   vpd config ...            Resolve repo-local Viewport resources
  *   vpd context ...           Local trusted-edge context commands
+ *   vpd unlock <id>           Activate a short-lived hosted-web trusted-edge session
  *   vpd skills ...            Install agent skills that call vpd
  */
 
@@ -59,6 +60,7 @@ import {
   setup,
   remote,
   bind,
+  unlock,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
 import { hookCapabilities, hookNotify, showHookHelp } from './cli/hook-command.js';
@@ -110,6 +112,7 @@ const commands: Record<string, () => Promise<void>> = {
   setup,
   remote,
   bind,
+  unlock,
 };
 
 const command = getCommand();
