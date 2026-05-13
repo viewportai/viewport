@@ -6,10 +6,11 @@ import {
   readContextStatus,
   resolveContextBundle,
 } from '../context/local-edge-store.js';
-import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { pushContextEvents } from '../context/local-edge-sync.js';
-import { ConfigManager } from '../core/config.js';
 import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
+import { ConfigManager } from '../core/config.js';
+import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 
 const CredentialsSchema = z.object({
   passphrase: z.string().min(1),
@@ -51,6 +52,7 @@ const ResolveBodySchema = z.object({
 
 const CandidatePreviewBodySchema = z.object({
   contextResourceId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   candidateEventId: z.string().min(1).optional(),
   payloadDigest: z.string().min(1).optional(),
@@ -166,20 +168,21 @@ export function registerContextRoutes(app: FastifyInstance): void {
     if (!contextResourceId) {
       return reply.status(400).send({ error: 'contextResourceId is required' });
     }
-    if (!parsed.data.candidateEventId && !parsed.data.payloadDigest) {
-      return reply.status(400).send({ error: 'candidateEventId or payloadDigest is required' });
+    try {
+      return await previewContextCandidateForTrustedEdge({
+        contextResourceId,
+        workspaceId: parsed.data.workspaceId,
+        actorName: parsed.data.actorName,
+        candidateEventId: parsed.data.candidateEventId,
+        payloadDigest: parsed.data.payloadDigest,
+        passphrase: parsed.data.passphrase,
+        recoveryCode: parsed.data.recoveryCode,
+      });
+    } catch (error) {
+      return reply
+        .status(400)
+        .send({ error: error instanceof Error ? error.message : 'Context preview failed' });
     }
-    const candidate = await previewContextCandidate({
-      contextResourceId,
-      actorName: parsed.data.actorName,
-      candidateEventId: parsed.data.candidateEventId,
-      payloadDigest: parsed.data.payloadDigest,
-      credentials: {
-        passphrase: parsed.data.passphrase ?? '',
-        recoveryCode: parsed.data.recoveryCode ?? '',
-      },
-    });
-    return { candidate };
   });
 
   app.post('/api/context/candidates', async (request, reply) => {

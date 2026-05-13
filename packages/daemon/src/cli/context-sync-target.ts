@@ -23,9 +23,7 @@ export interface WorkspaceSyncTarget {
   tlsPins?: string[];
 }
 
-export async function resolveContextSyncTarget(
-  commandName: 'sync-push' | 'sync-pull',
-): Promise<ContextSyncTarget> {
+export async function resolveContextSyncTarget(commandName: string): Promise<ContextSyncTarget> {
   const manager = new ConfigManager();
   await manager.load();
   const daemon = manager.getDaemonConfig() ?? {};
@@ -68,6 +66,45 @@ export async function resolveContextSyncTarget(
     explicitServerUrl,
     explicitCredential,
     decisionSigningKeys,
+  });
+
+  if (!target) {
+    throw new Error(
+      `vpd context ${commandName} requires an unambiguous remote workspace. Pass --workspace <id>, run from a bound repo, or keep exactly one saved remote workspace binding.`,
+    );
+  }
+
+  return target;
+}
+
+export async function resolveWorkspaceSyncTarget(
+  commandName: string,
+): Promise<WorkspaceSyncTarget> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const daemon = manager.getDaemonConfig() ?? {};
+  const relay = daemon.relay ?? {};
+
+  const explicitWorkspaceId = getFlag('workspace');
+  const explicitServerUrl = getFlag('server-url');
+  const explicitCredential = getFlag('credential');
+
+  if (explicitWorkspaceId && explicitServerUrl && explicitCredential) {
+    return {
+      workspaceId: explicitWorkspaceId,
+      serverUrl: explicitServerUrl,
+      credential: explicitCredential,
+      tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
+      caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
+      tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
+    };
+  }
+
+  const target = resolveConfiguredWorkspaceSyncTarget(daemon, {
+    requestedWorkspaceId:
+      explicitWorkspaceId ?? resolveLocalOrgBindingSync(process.cwd())?.organizationId,
+    explicitServerUrl,
+    explicitCredential,
   });
 
   if (!target) {

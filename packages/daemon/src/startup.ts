@@ -20,6 +20,7 @@ import { registerHttpRoutes } from './server/http-server.js';
 import { registerWsServer } from './server/ws-server.js';
 import { HookRouter, SupervisionManager } from './hooks/index.js';
 import { PlatformPlanHookSync } from './hooks/platform-plan-sync.js';
+import { publishTrustedEdgePlanWrappingKey } from './hooks/trusted-edge-plan-artifacts.js';
 import { LocalAuthProvider } from './server/auth.js';
 import type { AuthProvider } from './server/auth.js';
 import type { GitTrackerConfig } from './core/types.js';
@@ -566,6 +567,27 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
           keyRotateAfterMessages: parsePositiveIntEnv('VIEWPORT_RELAY_KEY_ROTATE_AFTER_MESSAGES'),
         });
         await bridge.start();
+        if (
+          scopedConfig.relayServerUrl &&
+          scopedConfig.relayWorkspaceId &&
+          scopedConfig.relayIssueToken
+        ) {
+          void publishTrustedEdgePlanWrappingKey({
+            target: {
+              workspaceId: scopedConfig.relayWorkspaceId,
+              serverUrl: scopedConfig.relayServerUrl,
+              credential: scopedConfig.relayIssueToken,
+              tlsVerify: scopedConfig.relayTlsVerify,
+              caCertPath: scopedConfig.relayCaCertPath,
+              tlsPins: scopedConfig.relayTlsPins,
+            },
+          }).catch((error) => {
+            logger.warn(
+              `[relay] trusted-edge plan key publish failed (workspace=${scopedConfig.relayWorkspaceId}):`,
+              error,
+            );
+          });
+        }
         started.push(bridge);
         logger.log(
           `[relay] enabled (workspace=${scopedConfig.relayWorkspaceId}, endpoint=${scopedConfig.relayEndpoint})`,

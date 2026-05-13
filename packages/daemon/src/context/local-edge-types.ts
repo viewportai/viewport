@@ -202,6 +202,11 @@ export interface ContextVaultInstance {
     actorName: string;
     recipientName: string;
   }): Promise<unknown>;
+  revokeRepoHpke(options: { repoId: string; actorName: string; recipientName: string }): Promise<{
+    revokeEvent: ContextSyncEvent;
+    rotateEvent?: ContextSyncEvent;
+    rotateEvents: ContextSyncEvent[];
+  }>;
   allCandidates(options: { repoId: string; actorName?: string }): Array<{
     id: string;
     proposal_event_id?: string | null;

@@ -9,12 +9,20 @@ import { applyContextCandidateDecision } from './local-edge-candidates.js';
 import { readCandidateDecisionApplications } from './local-edge-decision-applications.js';
 import { verifyContextCandidateDecision } from './local-edge-decision-signature.js';
 import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
+import {
+  exportContextIdentity,
+  grantContextUser,
+  importContextIdentity,
+  revokeContextUser,
+} from './local-edge-store.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
   ContextSyncEvent,
   ContextSyncPullRecord,
 } from './local-edge-types.js';
+
+const CONTEXT_GRANT_EVENT_TYPES = new Set(['member.granted', 'key.rotated']);
 
 export async function pushContextEvents(options: {
   contextResourceId: string;
@@ -81,6 +89,7 @@ export async function pullContextEvents(options: {
 }): Promise<{
   appliedCandidateDecisions: number;
   imported: number;
+  materializedGrants: number;
   pendingCandidateDecisions: number;
   pulled: number;
   repoId: string;
@@ -124,6 +133,23 @@ export async function pullContextEvents(options: {
     events,
     actorName: options.actorName,
   });
+  const materializedGrantEventIds = events
+    .filter((event) => isGrantEventForUser(event, metadata.userName))
+    .map((event) => event.id);
+  const materializedGrants =
+    materializedGrantEventIds.length > 0
+      ? await recordContextGrantMaterialization({
+          workspaceId: options.workspaceId ?? options.contextResourceId,
+          serverUrl: options.serverUrl,
+          credential: options.credential,
+          contextResourceId: options.contextResourceId,
+          grantEventIds: materializedGrantEventIds,
+          tlsVerify: options.tlsVerify,
+          caCertPath: options.caCertPath,
+          tlsPins: options.tlsPins,
+          fetchImpl: options.fetchImpl,
+        })
+      : 0;
   const candidateDecisions = extractPulledCandidateDecisions(response, options.trustedDecisionKeys);
   const candidateDecisionResults = [];
   for (const decision of candidateDecisions) {
@@ -160,9 +186,330 @@ export async function pullContextEvents(options: {
   return {
     appliedCandidateDecisions,
     imported: imported.imported.length,
+    materializedGrants,
     pendingCandidateDecisions,
     pulled: events.length,
     repoId: metadata.repoId,
+  };
+}
+
+export async function recordContextGrantMaterialization(options: {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  contextResourceId: string;
+  grantEventIds: string[];
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  fetchImpl?: typeof transportFetch;
+}): Promise<number> {
+  if (options.grantEventIds.length === 0) {
+    return 0;
+  }
+  const response = await postJson(
+    options.fetchImpl ?? transportFetch,
+    contextGrantMaterializedUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+      grant_event_ids: options.grantEventIds,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  return numberField(response, 'materialized');
+}
+
+export async function recordContextCandidatePreviewProof(options: {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  contextResourceId: string;
+  candidateEventId: string;
+  payloadDigest?: string | null;
+  previewDigest?: string | null;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ previewProofId: string; expiresAt: string | null }> {
+  const response = await postJson(
+    options.fetchImpl ?? transportFetch,
+    contextCandidatePreviewProofUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+      candidate_event_id: options.candidateEventId,
+      ...(options.payloadDigest ? { payload_digest: options.payloadDigest } : {}),
+      ...(options.previewDigest ? { preview_digest: options.previewDigest } : {}),
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  if (!response || typeof response !== 'object') {
+    throw new Error('Context preview proof response was not an object');
+  }
+  const previewProofId = (response as { preview_proof_id?: unknown }).preview_proof_id;
+  if (typeof previewProofId !== 'string' || previewProofId === '') {
+    throw new Error('Context preview proof response did not include preview_proof_id');
+  }
+
+  const expiresAt = (response as { expires_at?: unknown }).expires_at;
+  return {
+    previewProofId,
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+  };
+}
+
+export async function publishContextPublicIdentity(options: {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  identityName: string;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ identityId: string; fingerprint: string | null }> {
+  const publicIdentity = exportContextIdentity({
+    name: options.identityName,
+    home: options.home,
+  });
+  const response = await postJson(
+    options.fetchImpl ?? transportFetch,
+    contextPublicIdentityUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      name: options.identityName,
+      public_identity: publicIdentity,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+  const identity = objectField(response, 'identity');
+  return {
+    identityId: stringField(identity, 'id'),
+    fingerprint: nullableStringField(identity, 'fingerprint'),
+  };
+}
+
+export async function processPendingContextGrants(options: {
+  contextResourceId: string;
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  actorName: string;
+  credentials: ContextCredentials;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ emitted: number; missingIdentity: number; pushed: number }> {
+  const fetchImpl = options.fetchImpl ?? transportFetch;
+  const response = await postJson(
+    fetchImpl,
+    contextPendingGrantsUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  const grants = arrayField(response, 'grants');
+  let emitted = 0;
+  let missingIdentity = 0;
+  let pushed = 0;
+
+  for (const grant of grants) {
+    const record = objectValue(grant);
+    const recipient = objectField(record, 'recipient_identity', false);
+    if (!recipient) {
+      missingIdentity++;
+      continue;
+    }
+    const publicIdentity = objectField(recipient, 'public_identity');
+    const recipientName = stringField(recipient, 'name');
+    importContextIdentity({ identity: publicIdentity, home: options.home });
+
+    const result = await grantContextUser({
+      contextResourceId: options.contextResourceId,
+      actorName: options.actorName,
+      recipientName,
+      credentials: options.credentials,
+      home: options.home,
+    });
+    const event = objectValue(result.event);
+    const grantEventId = stringField(event, 'id');
+    const grantPayload = objectField(event, 'grant', false);
+    const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
+
+    const pushResult = await pushContextEvents({
+      contextResourceId: options.contextResourceId,
+      workspaceId: options.workspaceId,
+      serverUrl: options.serverUrl,
+      credential: options.credential,
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+      home: options.home,
+      fetchImpl,
+    });
+    pushed += pushResult.accepted;
+
+    await postJson(
+      fetchImpl,
+      contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
+      {
+        credential: options.credential,
+        crypto_grant_id: stringField(record, 'id'),
+        grant_event_id: grantEventId,
+        recipient_identity_name: recipientName,
+        ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
+      },
+      {
+        tlsVerify: options.tlsVerify,
+        caCertPath: options.caCertPath,
+        tlsPins: options.tlsPins,
+      },
+    );
+    emitted++;
+  }
+
+  return { emitted, missingIdentity, pushed };
+}
+
+export async function processPendingContextRevocations(options: {
+  contextResourceId: string;
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  actorName: string;
+  credentials: ContextCredentials;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ revoked: number; missingIdentity: number; pushed: number }> {
+  const fetchImpl = options.fetchImpl ?? transportFetch;
+  const response = await postJson(
+    fetchImpl,
+    contextPendingRevocationsUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  const revocations = arrayField(response, 'revocations');
+  let revoked = 0;
+  let missingIdentity = 0;
+  let pushed = 0;
+
+  for (const revocation of revocations) {
+    const record = objectValue(revocation);
+    const recipient = objectField(record, 'recipient_identity', false);
+    const recipientName =
+      nullableStringField(record, 'recipient_identity_name') ??
+      (recipient ? nullableStringField(recipient, 'name') : null);
+    if (!recipientName) {
+      missingIdentity++;
+      continue;
+    }
+
+    const result = await revokeContextUser({
+      contextResourceId: options.contextResourceId,
+      actorName: options.actorName,
+      recipientName,
+      credentials: options.credentials,
+      home: options.home,
+    });
+    const revokeEventId = stringField(objectValue(result.revokeEvent), 'id');
+    const rotationEventIds = result.rotateEvents.map((event) =>
+      stringField(objectValue(event), 'id'),
+    );
+    const rotationEvents = result.rotateEvents.map((event) => contextGrantRotationReceipt(event));
+    const maxKeyEpoch = maxEventEpoch([result.revokeEvent, ...result.rotateEvents]);
+
+    const pushResult = await pushContextEvents({
+      contextResourceId: options.contextResourceId,
+      workspaceId: options.workspaceId,
+      serverUrl: options.serverUrl,
+      credential: options.credential,
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+      home: options.home,
+      fetchImpl,
+    });
+    pushed += pushResult.accepted;
+
+    await postJson(
+      fetchImpl,
+      contextMarkRevokedUrl(options.serverUrl, options.workspaceId),
+      {
+        credential: options.credential,
+        crypto_grant_id: stringField(record, 'id'),
+        revoke_event_id: revokeEventId,
+        rotation_event_ids: rotationEventIds,
+        rotation_events: rotationEvents,
+        ...(maxKeyEpoch !== null ? { key_epoch: maxKeyEpoch } : {}),
+      },
+      {
+        tlsVerify: options.tlsVerify,
+        caCertPath: options.caCertPath,
+        tlsPins: options.tlsPins,
+      },
+    );
+    revoked++;
+  }
+
+  return { revoked, missingIdentity, pushed };
+}
+
+function maxEventEpoch(events: unknown[]): number | null {
+  let max: number | null = null;
+  for (const event of events) {
+    const epoch = numberField(objectValue(event), 'keyEpoch', false);
+    if (epoch !== null) max = max === null ? epoch : Math.max(max, epoch);
+  }
+  return max;
+}
+
+function contextGrantRotationReceipt(event: unknown): {
+  event_id: string;
+  recipient_identity_name?: string;
+} {
+  const object = objectValue(event);
+  const grant = objectField(object, 'grant', false);
+  const recipientName = grant ? nullableStringField(grant, 'recipientName') : null;
+  return {
+    event_id: stringField(object, 'id'),
+    ...(recipientName ? { recipient_identity_name: recipientName } : {}),
   };
 }
 
@@ -173,6 +520,41 @@ function contextRuntimeUrl(
 ): string {
   const base = serverUrl.replace(/\/+$/, '');
   return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/events/${operation}`;
+}
+
+function contextCandidatePreviewProofUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/candidates/preview-proof`;
+}
+
+function contextPublicIdentityUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/identities`;
+}
+
+function contextPendingGrantsUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/pending`;
+}
+
+function contextMarkGrantEmittedUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/mark-emitted`;
+}
+
+function contextPendingRevocationsUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/revocations/pending`;
+}
+
+function contextMarkRevokedUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/mark-revoked`;
+}
+
+function contextGrantMaterializedUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/materialized`;
 }
 
 async function postJson(
@@ -239,6 +621,60 @@ function extractPulledRecords(response: unknown): ContextSyncPullRecord[] {
   });
 }
 
+function objectValue(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Expected object value');
+  }
+  return value as Record<string, unknown>;
+}
+
+function objectField(
+  value: unknown,
+  field: string,
+  required: false,
+): Record<string, unknown> | null;
+function objectField(value: unknown, field: string, required?: true): Record<string, unknown>;
+function objectField(
+  value: unknown,
+  field: string,
+  required = true,
+): Record<string, unknown> | null {
+  const object = objectValue(value);
+  const child = object[field];
+  if (child === undefined || child === null) {
+    if (!required) return null;
+  }
+  return objectValue(child);
+}
+
+function arrayField(value: unknown, field: string): unknown[] {
+  const object = objectValue(value);
+  const child = object[field];
+  if (!Array.isArray(child)) {
+    throw new Error(`Expected ${field} to be an array`);
+  }
+  return child;
+}
+
+function nullableStringField(value: unknown, field: string): string | null {
+  const object = objectValue(value);
+  const child = object[field];
+  if (child === undefined || child === null) return null;
+  if (typeof child !== 'string') {
+    throw new Error(`Expected ${field} to be a string`);
+  }
+  return child;
+}
+
+function stringField(value: unknown, field: string): string {
+  const object = objectValue(value);
+  const child = object[field];
+  if (typeof child !== 'string' || child.length === 0) {
+    throw new Error(`Expected ${field} to be a non-empty string`);
+  }
+  return child;
+}
+
 function extractPulledCandidateDecisions(
   response: unknown,
   trustedDecisionKeys?: Record<string, string>,
@@ -274,6 +710,13 @@ function extractPulledCandidateDecisions(
   });
 }
 
+function isGrantEventForUser(event: ContextSyncEvent, userName: string): boolean {
+  if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return false;
+  const grant = (event as { grant?: unknown }).grant;
+  if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return false;
+  return (grant as Record<string, unknown>).recipientName === userName;
+}
+
 function latestReceivedAt(
   records: ContextSyncPullRecord[],
   decisions: ContextCandidateDecisionPullRecord[] = [],
@@ -290,11 +733,15 @@ function latestReceivedAt(
     .at(-1);
 }
 
-function numberField(response: unknown, field: string): number {
-  if (!response || typeof response !== 'object') {
+function numberField(response: unknown, field: string, required: false): number | null;
+function numberField(response: unknown, field: string, required?: true): number;
+function numberField(response: unknown, field: string, required = true): number | null {
+  const object = objectValue(response);
+  const value = object[field];
+  if (value === undefined || value === null) {
+    if (!required) return null;
     throw new Error(`Context sync response did not include ${field}`);
   }
-  const value = (response as Record<string, unknown>)[field];
   if (typeof value !== 'number') {
     throw new Error(`Context sync response ${field} must be a number`);
   }

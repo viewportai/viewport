@@ -385,6 +385,18 @@ export const ReadSessionMessagesCommandSchema = z.object({
   requestId: z.string().optional(),
 });
 
+export const ContextCandidatePreviewCommandSchema = z.object({
+  type: z.literal('context-candidate-preview'),
+  contextResourceId: z.string(),
+  workspaceId: z.string().optional(),
+  actorName: z.string(),
+  candidateEventId: z.string().optional(),
+  payloadDigest: z.string().optional(),
+  passphrase: z.string().optional(),
+  recoveryCode: z.string().optional(),
+  requestId: z.string().optional(),
+});
+
 export const DiscoveredSessionTailMessageSchema = z.object({
   type: z.literal('discovered-session-tail'),
   sessionId: z.string(),
@@ -666,6 +678,7 @@ export const OutgoingMessageSchema = z.discriminatedUnion('type', [
   SquashMergeCommandSchema,
   ResumeCommandSchema,
   ReadSessionMessagesCommandSchema,
+  ContextCandidatePreviewCommandSchema,
   WatchDiscoveredSessionCommandSchema,
   UnwatchDiscoveredSessionCommandSchema,
   SuperviseCommandSchema,

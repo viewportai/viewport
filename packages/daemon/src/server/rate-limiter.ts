@@ -18,6 +18,10 @@ export const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
   // every registered directory when the web app opens `/sessions`.
   'list-sessions': { maxTokens: 60, refillRate: 2.0 },
   'read-session-messages': { maxTokens: 20, refillRate: 0.5 },
+  'context-candidate-preview': { maxTokens: 20, refillRate: 0.5 },
+  'trusted-edge-plan-decrypt': { maxTokens: 20, refillRate: 0.5 },
+  'trusted-edge-plan-encrypt-field': { maxTokens: 40, refillRate: 1.0 },
+  'trusted-edge-plan-wrap-key': { maxTokens: 20, refillRate: 0.5 },
   resume: { maxTokens: 3, refillRate: 0.05 },
   subscribe: { maxTokens: 40, refillRate: 1.0 },
   unsubscribe: { maxTokens: 40, refillRate: 1.0 },

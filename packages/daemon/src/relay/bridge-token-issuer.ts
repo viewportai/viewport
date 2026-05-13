@@ -197,7 +197,9 @@ async function parseRelayIssueResponse(res: Response): Promise<RelayTokenRespons
   return json;
 }
 
-function parseJwksSigningKeys(entries: Array<Record<string, unknown>>): Record<string, string> {
+export function parseJwksSigningKeys(
+  entries: Array<Record<string, unknown>>,
+): Record<string, string> {
   const keys: Record<string, string> = {};
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;

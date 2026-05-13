@@ -137,6 +137,19 @@ export const ReadSessionMessagesSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const ContextCandidatePreviewSchema = z.object({
+  type: z.literal('context-candidate-preview'),
+  contextResourceId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(256).optional(),
+  actorName: z.string().min(1).max(256),
+  candidateEventId: z.string().min(1).max(256).optional(),
+  payloadDigest: z.string().min(1).max(256).optional(),
+  passphrase: z.string().max(4096).optional(),
+  recoveryCode: z.string().max(4096).optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const ResumeSchema = z
   .object({
     type: z.literal('resume'),
@@ -274,6 +287,72 @@ export const GetHookPlanDraftSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const TrustedEdgePlanDecryptSchema = z.object({
+  type: z.literal('trusted-edge-plan-decrypt'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: z.object({
+    schema: z.literal('viewport.plan_body_encrypted/v1'),
+    algorithm: z.literal('AES-GCM-256'),
+    key_ref: z.string().min(1).max(256),
+    ciphertext: z.string().min(1),
+    iv: z.string().min(1),
+    tag: z.string().min(1),
+    digest: z.string().min(1).max(256),
+    aad: z.record(z.string(), z.unknown()).optional(),
+  }),
+  bodyKeyGrants: z
+    .array(
+      z.object({
+        schema: z.literal('viewport.plan_body_key_grant/v1'),
+        algorithm: z.literal('RSA-OAEP-256'),
+        recipient_user_id: z.number().int(),
+        recipient_key_id: z.string().min(1).max(256),
+        key_ref: z.string().min(1).max(256),
+        encrypted_key: z.string().min(1),
+      }),
+    )
+    .max(500)
+    .optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const TrustedEdgePlanEncryptFieldSchema = z.object({
+  type: z.literal('trusted-edge-plan-encrypt-field'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: TrustedEdgePlanDecryptSchema.shape.bodyEncryption,
+  bodyKeyGrants: TrustedEdgePlanDecryptSchema.shape.bodyKeyGrants,
+  text: z.string().min(1).max(20000),
+  aad: z.record(z.string(), z.unknown()).optional(),
+  capabilityToken: TrustedEdgePlanDecryptSchema.shape.capabilityToken,
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const TrustedEdgePlanWrapKeySchema = z.object({
+  type: z.literal('trusted-edge-plan-wrap-key'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: TrustedEdgePlanDecryptSchema.shape.bodyEncryption,
+  bodyKeyGrants: TrustedEdgePlanDecryptSchema.shape.bodyKeyGrants,
+  recipients: z
+    .array(
+      z.object({
+        user_id: z.number().int().positive(),
+        key_id: z.string().min(1).max(256),
+        public_key_jwk: z.record(z.string(), z.unknown()),
+      }),
+    )
+    .min(1)
+    .max(500),
+  capabilityToken: TrustedEdgePlanDecryptSchema.shape.capabilityToken,
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Discriminated union of all incoming messages
 // ---------------------------------------------------------------------------
@@ -290,6 +369,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   SquashMergeSchema,
   ListSessionsSchema,
   ReadSessionMessagesSchema,
+  ContextCandidatePreviewSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
@@ -302,6 +382,9 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   SuperviseSchema,
   RespondHookPermissionSchema,
   GetHookPlanDraftSchema,
+  TrustedEdgePlanDecryptSchema,
+  TrustedEdgePlanEncryptFieldSchema,
+  TrustedEdgePlanWrapKeySchema,
 ]);
 
 export type IncomingMessage = z.infer<typeof IncomingMessageSchema>;

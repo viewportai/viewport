@@ -8,10 +8,17 @@ import type { IncomingMessage } from './ws-protocol.js';
 import { ErrorCodes } from '../core/error-codes.js';
 import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
 import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
+import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
+import {
+  decryptTrustedEdgePlanBody,
+  encryptTrustedEdgePlanFeedbackField,
+  wrapTrustedEdgePlanBodyKey,
+} from '../hooks/trusted-edge-plan-artifacts.js';
 import {
   resolveSessionResourceManifestSync,
   type SessionResourceManifest,
 } from '../config-resolution/index.js';
+import { verifyTrustedEdgeCommandCapability } from './trusted-edge-command-capability.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
 
@@ -194,6 +201,135 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       getOrCreateBuffer,
       addBoundedSetEntry,
     }),
+
+    'context-candidate-preview': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId ?? '',
+          purpose: 'context-candidate-preview',
+          contextResourceId: msg.contextResourceId,
+          candidateEventId: msg.candidateEventId,
+          payloadDigest: msg.payloadDigest,
+        });
+        const result = await previewContextCandidateForTrustedEdge({
+          contextResourceId: msg.contextResourceId,
+          workspaceId: msg.workspaceId,
+          actorName: msg.actorName,
+          candidateEventId: msg.candidateEventId,
+          payloadDigest: msg.payloadDigest,
+          passphrase: msg.passphrase,
+          recoveryCode: msg.recoveryCode,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, result);
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Context preview failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-decrypt': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-decrypt',
+          planId: msg.planId,
+        });
+        const result = await decryptTrustedEdgePlanBody({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          body: result.body,
+          bodySha256: result.bodySha256,
+          keyRef: result.keyRef,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan decrypt failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-encrypt-field': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-encrypt-field',
+          planId: msg.planId,
+        });
+        const field = await encryptTrustedEdgePlanFeedbackField({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
+          text: msg.text,
+          aad: msg.aad,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          field,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan feedback encryption failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-wrap-key': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-wrap-key',
+          planId: msg.planId,
+        });
+        const bodyKeyGrants = await wrapTrustedEdgePlanBodyKey({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
+          recipients: msg.recipients,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          bodyKeyGrants,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan key wrap failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
 
     'sync-request': async (client, msg) => {
       sendSyncSnapshot(client, daemon, registry);
