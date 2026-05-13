@@ -43,6 +43,7 @@ describe('ClaudeHookInstaller', () => {
     expect(settings.hooks.SessionStart).toBeDefined();
     expect(settings.hooks.PermissionRequest).toBeDefined();
     expect(settings.hooks.SessionEnd).toBeDefined();
+    expect(settings.hooks.PlanProposed).toBeUndefined();
 
     // Check the command format
     const sessionStartHook = settings.hooks.SessionStart[0].hooks[0];

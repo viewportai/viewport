@@ -26,9 +26,10 @@ describe('skills CLI command', () => {
 
     const body = await fs.readFile(target, 'utf8');
     expect(body).toContain('Viewport Agent Contract');
-    expect(body).toContain('vpd context search --query');
+    expect(body).toContain('vpd context search --path . --query');
     expect(body).toContain('vpd context add --provider');
-    expect(body).toContain('vpd context propose --title');
+    expect(body).toContain('vpd context propose --path . --title');
+    expect(body).toContain('Viewport may inject approved repo context automatically');
     expect(body).toContain('vpd uses');
     expect(body).toContain('it automatically');
     expect(body).toContain('Use `context propose` for agent-learned suggestions');

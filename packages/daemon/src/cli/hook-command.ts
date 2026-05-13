@@ -82,7 +82,12 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
       return;
     }
 
-    const result = (await res.json()) as { passthrough?: boolean; decision?: unknown };
+    const result = (await res.json()) as {
+      passthrough?: boolean;
+      decision?: unknown;
+      hookSpecificOutput?: unknown;
+      suppressOutput?: boolean;
+    };
 
     if (result.passthrough) {
       // Daemon says: not supervised or timed out — let agent handle locally
@@ -93,6 +98,13 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
     // Return the decision (PermissionRequest) or acknowledgment
     if (result.decision) {
       process.stdout.write(JSON.stringify({ decision: result.decision }) + '\n');
+    } else if (result.hookSpecificOutput) {
+      process.stdout.write(
+        JSON.stringify({
+          hookSpecificOutput: result.hookSpecificOutput,
+          suppressOutput: result.suppressOutput ?? true,
+        }) + '\n',
+      );
     }
 
     process.exit(0);

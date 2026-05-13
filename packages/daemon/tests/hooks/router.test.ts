@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { HookRouter, safeHookLogInput } from '../../src/hooks/router.js';
 import { SupervisionManager } from '../../src/hooks/supervision.js';
 import { TypedEventEmitter } from '../../src/core/events.js';
@@ -53,6 +56,94 @@ describe('HookRouter', () => {
       cwd: '/tmp/project',
       source: 'startup',
     });
+  });
+
+  it('injects Claude session guidance when a repo has Viewport context configured', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-hook-context-repo-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      ['version: 1', 'resources:', '  contexts:', '    - ctx-team', ''].join('\n'),
+      'utf8',
+    );
+
+    const result = await router.handleEvent({
+      hook_event_name: 'SessionStart',
+      session_id: 's1',
+      cwd: repo,
+      source: 'startup',
+    });
+
+    expect(result.passthrough).toBe(false);
+    expect(result.hookSpecificOutput).toMatchObject({
+      hookEventName: 'SessionStart',
+    });
+    expect(result.hookSpecificOutput?.additionalContext).toContain(
+      'Viewport context is configured for this repo.',
+    );
+    expect(result.suppressOutput).toBe(true);
+
+    await fs.rm(repo, { recursive: true, force: true });
+  });
+
+  it('injects resolved approved context into UserPromptSubmit hook output', async () => {
+    const previousHome = process.env['HOME'];
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-hook-context-home-'));
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-hook-context-repo-'));
+    process.env['HOME'] = home;
+
+    try {
+      await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+      await fs.writeFile(
+        path.join(repo, '.viewport', 'config.json'),
+        JSON.stringify({ version: 1, resources: { contexts: ['ctx-auth'] } }),
+        'utf8',
+      );
+
+      const { initContextResource, addContextEntry } =
+        await import('../../src/context/local-edge-store.js');
+      const credentials = { passphrase: 'alice-passphrase', recoveryCode: 'alice-recovery' };
+      await initContextResource({
+        contextResourceId: 'ctx-auth',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        credentials,
+        home: path.join(home, '.viewport'),
+      });
+      await addContextEntry({
+        contextResourceId: 'ctx-auth',
+        actorName: 'alice-laptop',
+        title: 'Auth rule',
+        body: 'Dashboard auth changes require session rotation tests.',
+        credentials,
+        home: path.join(home, '.viewport'),
+      });
+
+      const result = await router.handleEvent({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: 's1',
+        cwd: repo,
+        prompt: 'Change dashboard auth middleware.',
+      });
+
+      expect(result.passthrough).toBe(false);
+      expect(result.hookSpecificOutput).toMatchObject({
+        hookEventName: 'UserPromptSubmit',
+      });
+      expect(result.hookSpecificOutput?.additionalContext).toContain('<viewport_context>');
+      expect(result.hookSpecificOutput?.additionalContext).toContain('### Auth rule');
+      expect(result.hookSpecificOutput?.additionalContext).toContain(
+        'Dashboard auth changes require session rotation tests.',
+      );
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env['HOME'];
+      } else {
+        process.env['HOME'] = previousHome;
+      }
+      await fs.rm(repo, { recursive: true, force: true });
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 
   it('handles SessionEnd — emits hook:session-end', async () => {

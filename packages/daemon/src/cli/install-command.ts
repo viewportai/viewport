@@ -4,7 +4,7 @@ import { AgentRegistry } from '../core/agent-registry.js';
 import { configDir } from '../core/config.js';
 import { getDaemonPort } from './args.js';
 import { BUILT_IN_AGENTS } from '../agents/built-in.js';
-import { ClaudeHookInstaller, HOOK_EVENT_KINDS } from '../hooks/index.js';
+import { ClaudeHookInstaller, CLAUDE_HOOK_EVENT_KINDS } from '../hooks/index.js';
 import type { HookInstaller } from '../hooks/index.js';
 import { isJsonMode, printJson, shortError } from './command-shared.js';
 
@@ -51,7 +51,7 @@ export async function install(): Promise<void> {
       const changed = await installer.install({
         vpdBinaryPath: vpdPath,
         daemonPort: port,
-        events: [...HOOK_EVENT_KINDS],
+        events: [...CLAUDE_HOOK_EVENT_KINDS],
       });
       hookResults.push({
         adapter: installer.adapterName,

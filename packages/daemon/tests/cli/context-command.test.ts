@@ -282,6 +282,28 @@ describe('context CLI command', () => {
     expect(output).toContain('"manifest_digest"');
   });
 
+  it('installs a repo-local Claude rule for configured Viewport context', async () => {
+    const repo = path.join(tempHome, 'rules-repo');
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      ['version: 1', 'resources:', '  contexts:', '    - ctx-team', ''].join('\n'),
+      'utf8',
+    );
+
+    await runContext(['context', 'rules', 'install', '--path', repo, '--json']);
+
+    const rulePath = path.join(repo, '.claude', 'rules', 'viewport-context.md');
+    const rule = await fs.readFile(rulePath, 'utf8');
+    expect(rule).toContain('viewport-generated-context-rule');
+    expect(rule).toContain('vpd context search --path . --query');
+    expect(rule).toContain('vpd context propose --path .');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context rules install"');
+    expect(output).toContain('"installed": true');
+  });
+
   it('attaches a platform Context Vault provider to repo config', async () => {
     const repo = path.join(tempHome, 'use-repo');
 

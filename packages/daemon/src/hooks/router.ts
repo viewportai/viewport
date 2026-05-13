@@ -27,6 +27,7 @@ import {
 import { logger } from '../core/logger.js';
 import { workflowHookRegistry } from '../workflows/hook-registry.js';
 import { emitSpecificHookEvent } from './specific-events.js';
+import { buildContextHookResponse } from './context-injector.js';
 
 const log = logger.child({ module: 'hook-router' });
 const MAX_PENDING_PERMISSION_REQUESTS = 512;
@@ -158,6 +159,12 @@ export class HookRouter {
       adapter,
       cwd,
     });
+    const contextResponse = await buildContextHookResponse({
+      kind,
+      data: parsed.data as Record<string, unknown>,
+      cwd,
+    });
+    if (contextResponse) return contextResponse;
     return { passthrough: false };
   }
 
