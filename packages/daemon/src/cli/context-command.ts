@@ -13,7 +13,6 @@ import { readCandidateDecisionApplications } from '../context/local-edge-decisio
 import {
   processPendingContextGrants,
   processPendingContextRevocations,
-  publishContextPublicIdentity,
   pullContextEvents,
   pushContextEvents,
 } from '../context/local-edge-sync.js';
@@ -43,16 +42,7 @@ import {
   acceptTeamEpochMemberGrants,
   grantTeamEpochToUserEpoch,
 } from '../security/team-epoch-grants.js';
-import {
-  contextDeviceAccept,
-  contextDeviceApprove,
-  contextDeviceRequest,
-  contextGrant,
-  contextIdentityExport,
-  contextIdentityImport,
-  contextJoin,
-  contextUserInit,
-} from './context-access-command.js';
+import { contextJoin, contextUserInit } from './context-access-command.js';
 
 export async function context(): Promise<void> {
   const subcommand = getArgs()[1];
@@ -116,10 +106,6 @@ export async function context(): Promise<void> {
     await contextSyncAll();
     return;
   }
-  if (subcommand === 'identity-publish') {
-    await contextIdentityPublish();
-    return;
-  }
   if (subcommand === 'epoch-publish') {
     await contextEpochPublish();
     return;
@@ -180,35 +166,11 @@ export async function context(): Promise<void> {
     await contextJoin();
     return;
   }
-  if (subcommand === 'identity-export') {
-    await contextIdentityExport();
-    return;
-  }
-  if (subcommand === 'identity-import') {
-    await contextIdentityImport();
-    return;
-  }
-  if (subcommand === 'device-request') {
-    await contextDeviceRequest();
-    return;
-  }
-  if (subcommand === 'device-approve') {
-    await contextDeviceApprove();
-    return;
-  }
-  if (subcommand === 'device-accept') {
-    await contextDeviceAccept();
-    return;
-  }
-  if (subcommand === 'grant') {
-    await contextGrant();
-    return;
-  }
   throw new Error(contextUsage());
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
 }
 
 function showContextHelp(): void {
@@ -530,28 +492,6 @@ async function fetchVisibleContextVaults(target: {
           : null,
     }))
     .filter((item) => item.vault_id.length > 0);
-}
-
-async function contextIdentityPublish(): Promise<void> {
-  const target = await resolveWorkspaceSyncTarget('identity-publish');
-  const result = await publishContextPublicIdentity({
-    workspaceId: target.workspaceId,
-    serverUrl: target.serverUrl,
-    credential: target.credential,
-    identityName: requiredFlag('name', 'vpd context identity-publish --name <identity>'),
-    tlsVerify: target.tlsVerify,
-    caCertPath: target.caCertPath,
-    tlsPins: target.tlsPins,
-    home: getFlag('home'),
-  });
-
-  if (isJsonMode()) {
-    printJson({ command: 'context identity-publish', ok: true, ...result });
-    return;
-  }
-
-  console.log(`Context public identity published: ${result.identityId}`);
-  if (result.fingerprint) console.log(`Fingerprint: ${result.fingerprint}`);
 }
 
 async function contextEpochPublish(): Promise<void> {

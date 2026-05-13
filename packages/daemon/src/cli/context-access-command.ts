@@ -2,12 +2,6 @@ import fs from 'node:fs/promises';
 import { getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
-  acceptContextDeviceApproval,
-  approveContextDeviceRequest,
-  createContextDeviceRequest,
-  exportContextIdentity,
-  grantContextUser,
-  importContextIdentity,
   initContextUser,
   joinContextResource,
   type ContextKeyStore,
@@ -44,118 +38,6 @@ export async function contextJoin(): Promise<void> {
     { context: result },
     `Context joined: ${result.contextResourceId}`,
   );
-}
-
-export async function contextIdentityExport(): Promise<void> {
-  const identity = exportContextIdentity({
-    name: requiredFlag('name', 'vpd context identity-export --name <identity>'),
-    home: getFlag('home'),
-  });
-  await writeOutput(
-    'context identity-export',
-    { identity },
-    `Context identity exported: ${identity.name}`,
-  );
-}
-
-export async function contextIdentityImport(): Promise<void> {
-  const identity = unwrapRecord(await readJsonArg('identity', 'identity-file'), 'identity');
-  const imported = importContextIdentity({ identity, home: getFlag('home') });
-  await writeOutput(
-    'context identity-import',
-    { identity: imported },
-    `Context identity imported: ${imported.name}`,
-  );
-}
-
-export async function contextDeviceRequest(): Promise<void> {
-  const request = createContextDeviceRequest({
-    deviceName: requiredFlag('device', 'vpd context device-request --device <name> --code <code>'),
-    code: requiredFlag('code', 'vpd context device-request --device <name> --code <code>'),
-    keyStore: parseKeyStore(getFlag('key-store')),
-    home: getFlag('home'),
-  });
-  await writeOutput(
-    'context device-request',
-    { request },
-    'Context device approval request created',
-  );
-}
-
-export async function contextDeviceApprove(): Promise<void> {
-  const approval = await approveContextDeviceRequest({
-    userName: requiredFlag(
-      'user',
-      'vpd context device-approve --user <name> --request-file <path> --code <code>',
-    ),
-    request: unwrapRecord(await readJsonArg('request', 'request-file'), 'request'),
-    code: requiredFlag(
-      'code',
-      'vpd context device-approve --user <name> --request-file <path> --code <code>',
-    ),
-    credentials: readCredentials(),
-    home: getFlag('home'),
-  });
-  await writeOutput('context device-approve', { approval }, 'Context device approval created');
-}
-
-export async function contextDeviceAccept(): Promise<void> {
-  const device = await acceptContextDeviceApproval({
-    userName: requiredFlag(
-      'user',
-      'vpd context device-accept --user <name> --device <name> --approval-file <path> --code <code>',
-    ),
-    deviceName: requiredFlag(
-      'device',
-      'vpd context device-accept --user <name> --device <name> --approval-file <path> --code <code>',
-    ),
-    approval: unwrapRecord(await readJsonArg('approval', 'approval-file'), 'approval'),
-    code: requiredFlag(
-      'code',
-      'vpd context device-accept --user <name> --device <name> --approval-file <path> --code <code>',
-    ),
-    keyStore: parseKeyStore(getFlag('key-store')),
-    home: getFlag('home'),
-  });
-  await writeOutput('context device-accept', { device }, 'Context device approval accepted');
-}
-
-function unwrapRecord(value: unknown, key: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object') {
-    throw new Error(`Expected JSON object for ${key}`);
-  }
-  const record = value as Record<string, unknown>;
-  const nested = record[key];
-  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-    return nested as Record<string, unknown>;
-  }
-  return record;
-}
-
-export async function contextGrant(): Promise<void> {
-  const result = await grantContextUser({
-    contextResourceId: requiredContextId(
-      'vpd context grant --context <id> --actor <device> --recipient <user>',
-    ),
-    actorName: requiredFlag(
-      'actor',
-      'vpd context grant --context <id> --actor <device> --recipient <user>',
-    ),
-    recipientName: requiredFlag(
-      'recipient',
-      'vpd context grant --context <id> --actor <device> --recipient <user>',
-    ),
-    credentials: readCredentials(),
-    home: getFlag('home'),
-  });
-  await writeOutput('context grant', result, `Context grant created: ${result.repoId}`);
-}
-
-async function readJsonArg(flagName: string, fileFlagName: string): Promise<unknown> {
-  const inline = getFlag(flagName);
-  if (inline) return JSON.parse(inline) as unknown;
-  const file = requiredFlag(fileFlagName, `Missing --${flagName} or --${fileFlagName}`);
-  return JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
 }
 
 function readCredentials(): { passphrase: string; recoveryCode: string } {

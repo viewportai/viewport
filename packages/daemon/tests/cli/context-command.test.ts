@@ -1526,155 +1526,6 @@ describe('context CLI command', () => {
     expect(output).toContain('"pulled"');
   });
 
-  it('publishes recipient identities and processes pending context grants through CLI commands', async () => {
-    const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-cli-bob-'));
-    try {
-      await runContext([
-        'context',
-        'init',
-        '--home',
-        tempHome,
-        '--context',
-        'context-alpha',
-        '--user',
-        'alice',
-        '--device',
-        'alice-laptop',
-        '--passphrase',
-        'alice-passphrase',
-        '--recovery-code',
-        'alice-recovery',
-        '--key-store',
-        'file',
-        '--json',
-      ]);
-      await runContext([
-        'context',
-        'init',
-        '--home',
-        bobHome,
-        '--context',
-        'bob-bootstrap',
-        '--user',
-        'bob',
-        '--device',
-        'bob-vps',
-        '--passphrase',
-        'bob-passphrase',
-        '--recovery-code',
-        'bob-recovery',
-        '--key-store',
-        'file',
-        '--json',
-      ]);
-
-      let publishedBobIdentity: Record<string, unknown> | null = null;
-      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        const requestUrl = String(url);
-        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-
-        if (requestUrl.endsWith('/identities')) {
-          publishedBobIdentity = body.public_identity as Record<string, unknown>;
-          expect(JSON.stringify(body)).toContain('"hpkePublicKey"');
-          expect(JSON.stringify(body)).not.toContain('privateKey');
-          expect(JSON.stringify(body)).not.toContain('bob-passphrase');
-          return jsonResponse({
-            identity: {
-              id: 'ctxid_bob',
-              fingerprint: 'sha256:bob-public-fingerprint',
-            },
-          });
-        }
-
-        if (requestUrl.endsWith('/grants/pending')) {
-          expect(publishedBobIdentity).toBeTruthy();
-          return jsonResponse({
-            grants: [
-              {
-                id: 'cvcg_cli_pending_1',
-                context_resource_id: 'context-alpha',
-                recipient_identity: {
-                  name: 'bob',
-                  public_identity: publishedBobIdentity,
-                },
-              },
-            ],
-          });
-        }
-
-        if (requestUrl.endsWith('/events/push')) {
-          const payload = String(init?.body ?? '');
-          expect(payload).toContain('member.granted');
-          expect(payload).toContain('ciphertext');
-          expect(payload).not.toContain('alice-passphrase');
-          expect(payload).not.toContain('bob-passphrase');
-          return jsonResponse({
-            ok: true,
-            accepted: Array.isArray(body.events) ? body.events.length : 0,
-          });
-        }
-
-        if (requestUrl.endsWith('/grants/mark-emitted')) {
-          expect(body).toMatchObject({
-            crypto_grant_id: 'cvcg_cli_pending_1',
-            credential: 'runtime-token',
-          });
-          expect(typeof body.grant_event_id).toBe('string');
-          return jsonResponse({ ok: true });
-        }
-
-        throw new Error(`Unexpected URL ${requestUrl}`);
-      }) as typeof fetch;
-
-      logSpy.mockClear();
-      await runContext([
-        'context',
-        'identity-publish',
-        '--home',
-        bobHome,
-        '--name',
-        'bob',
-        '--workspace',
-        'workspace-alpha',
-        '--server-url',
-        'http://app.getviewport.test',
-        '--credential',
-        'runtime-token',
-        '--json',
-      ]);
-
-      await runContext([
-        'context',
-        'grants-process',
-        '--home',
-        tempHome,
-        '--context',
-        'context-alpha',
-        '--actor',
-        'alice-laptop',
-        '--workspace',
-        'workspace-alpha',
-        '--server-url',
-        'http://app.getviewport.test',
-        '--credential',
-        'runtime-token',
-        '--passphrase',
-        'alice-passphrase',
-        '--recovery-code',
-        'alice-recovery',
-        '--json',
-      ]);
-
-      const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-      expect(output).toContain('"command": "context identity-publish"');
-      expect(output).toContain('"identityId": "ctxid_bob"');
-      expect(output).toContain('"command": "context grants-process"');
-      expect(output).toContain('"emitted": 1');
-    } finally {
-      await fs.rm(bobHome, { recursive: true, force: true });
-    }
-  });
-
   it('syncs every visible context vault for an approved user device in one command', async () => {
     await runContext([
       'context',
@@ -1705,6 +1556,22 @@ describe('context CLI command', () => {
             { vault_id: 'context-hidden', access: { can_view: false } },
           ],
         });
+      }
+
+      if (requestUrl.includes('/crypto/rotation-requests')) {
+        return jsonResponse({ data: [] });
+      }
+
+      if (requestUrl.includes('/team-epoch-member-grants')) {
+        return jsonResponse({ data: [] });
+      }
+
+      if (requestUrl.endsWith('/grants/revocations/pending')) {
+        return jsonResponse({ revocations: [] });
+      }
+
+      if (requestUrl.endsWith('/grants/pending')) {
+        return jsonResponse({ grants: [] });
       }
 
       if (requestUrl.endsWith('/events/pull')) {

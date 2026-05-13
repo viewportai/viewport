@@ -9,13 +9,7 @@ import { applyContextCandidateDecision } from './local-edge-candidates.js';
 import { readCandidateDecisionApplications } from './local-edge-decision-applications.js';
 import { verifyContextCandidateDecision } from './local-edge-decision-signature.js';
 import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
-import {
-  exportContextIdentity,
-  grantContextHpkeRecipient,
-  grantContextUser,
-  importContextIdentity,
-  revokeContextUser,
-} from './local-edge-store.js';
+import { grantContextHpkeRecipient, revokeContextUser } from './local-edge-store.js';
 import { getActiveLocalUserEpoch, listActiveLocalTeamEpochs } from '../security/epoch-store.js';
 import type {
   ContextCandidateDecisionPullRecord,
@@ -277,42 +271,6 @@ export async function recordContextCandidatePreviewProof(options: {
   };
 }
 
-export async function publishContextPublicIdentity(options: {
-  workspaceId: string;
-  serverUrl: string;
-  credential: string;
-  identityName: string;
-  tlsVerify?: TlsVerifyMode;
-  caCertPath?: string;
-  tlsPins?: string[];
-  home?: string;
-  fetchImpl?: typeof transportFetch;
-}): Promise<{ identityId: string; fingerprint: string | null }> {
-  const publicIdentity = exportContextIdentity({
-    name: options.identityName,
-    home: options.home,
-  });
-  const response = await postJson(
-    options.fetchImpl ?? transportFetch,
-    contextPublicIdentityUrl(options.serverUrl, options.workspaceId),
-    {
-      credential: options.credential,
-      name: options.identityName,
-      public_identity: publicIdentity,
-    },
-    {
-      tlsVerify: options.tlsVerify,
-      caCertPath: options.caCertPath,
-      tlsPins: options.tlsPins,
-    },
-  );
-  const identity = objectField(response, 'identity');
-  return {
-    identityId: stringField(identity, 'id'),
-    fingerprint: nullableStringField(identity, 'fingerprint'),
-  };
-}
-
 export async function processPendingContextGrants(options: {
   contextResourceId: string;
   workspaceId: string;
@@ -452,57 +410,7 @@ export async function processPendingContextGrants(options: {
       continue;
     }
 
-    const recipient = objectField(record, 'recipient_identity', false);
-    if (!recipient) {
-      missingIdentity++;
-      continue;
-    }
-    const publicIdentity = objectField(recipient, 'public_identity');
-    const recipientName = stringField(recipient, 'name');
-    importContextIdentity({ identity: publicIdentity, home: options.home });
-
-    const result = await grantContextUser({
-      contextResourceId: options.contextResourceId,
-      actorName: options.actorName,
-      recipientName,
-      credentials: options.credentials,
-      home: options.home,
-    });
-    const event = objectValue(result.event);
-    const grantEventId = stringField(event, 'id');
-    const grantPayload = objectField(event, 'grant', false);
-    const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
-
-    const pushResult = await pushContextEvents({
-      contextResourceId: options.contextResourceId,
-      workspaceId: options.workspaceId,
-      serverUrl: options.serverUrl,
-      credential: options.credential,
-      tlsVerify: options.tlsVerify,
-      caCertPath: options.caCertPath,
-      tlsPins: options.tlsPins,
-      home: options.home,
-      fetchImpl,
-    });
-    pushed += pushResult.accepted;
-
-    await postJson(
-      fetchImpl,
-      contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
-      {
-        credential: options.credential,
-        crypto_grant_id: stringField(record, 'id'),
-        grant_event_id: grantEventId,
-        recipient_identity_name: recipientName,
-        ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
-      },
-      {
-        tlsVerify: options.tlsVerify,
-        caCertPath: options.caCertPath,
-        tlsPins: options.tlsPins,
-      },
-    );
-    emitted++;
+    missingIdentity++;
   }
 
   return { emitted, missingIdentity, pushed };
@@ -543,10 +451,7 @@ export async function processPendingContextRevocations(options: {
 
   for (const revocation of revocations) {
     const record = objectValue(revocation);
-    const recipient = objectField(record, 'recipient_identity', false);
-    const recipientName =
-      nullableStringField(record, 'recipient_identity_name') ??
-      (recipient ? nullableStringField(recipient, 'name') : null);
+    const recipientName = nullableStringField(record, 'recipient_identity_name');
     if (!recipientName) {
       missingIdentity++;
       continue;
@@ -689,11 +594,6 @@ function contextRuntimeUrl(
 function contextCandidatePreviewProofUrl(serverUrl: string, workspaceId: string): string {
   const base = serverUrl.replace(/\/+$/, '');
   return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/candidates/preview-proof`;
-}
-
-function contextPublicIdentityUrl(serverUrl: string, workspaceId: string): string {
-  const base = serverUrl.replace(/\/+$/, '');
-  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/identities`;
 }
 
 function contextPendingGrantsUrl(serverUrl: string, workspaceId: string): string {
