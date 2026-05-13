@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "securityNotice": "Public deterministic test vector. All privateKey, pairingSecret, nonce, proof, and sessionKey values in this file are synthetic fixtures for conformance tests only. They must never be used by runtime configuration, production deployments, pairing, or relay authentication.",
   "generatedAt": "2026-03-04",
   "notes": "Deterministic vectors for relay handshake profile validation (noise-ik / noise-ikpsk2).",
   "vectors": [

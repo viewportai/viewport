@@ -92,6 +92,49 @@ describe('ws-command-handlers', () => {
     expect(sendAck).toHaveBeenCalledWith(client, 'req-1', 'ok');
   });
 
+  it('returns ephemeral plan drafts over websocket without persisting them', async () => {
+    const { client, sent } = createClient();
+    const draft = {
+      schema: 'viewport.plan_proposal/v1',
+      draftId: 'draft-1',
+      workspaceId: 'workspace-1',
+      title: 'Review plan',
+      summary: null,
+      body: '## Plan\nPrivate local text',
+      source: 'claude',
+      sourceRef: 'claude://session/s1',
+      sessionId: 's1',
+      hookRequestId: 'hk-1',
+      metadata: { hookRequestId: 'hk-1' },
+      createdAt: 100,
+      expiresAt: 200,
+    };
+    const daemon = {
+      getEphemeralPlanDraft: vi.fn().mockReturnValue(draft),
+    };
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: daemon as any,
+      sendAck,
+      getOrCreateBuffer: getOrCreateBuffer as any,
+    });
+
+    await handlers['get-hook-plan-draft'](client, {
+      type: 'get-hook-plan-draft',
+      draftId: 'draft-1',
+      requestId: 'req-draft',
+    });
+
+    expect(sent[0]).toMatchObject({
+      type: 'hook-plan-draft',
+      draftId: 'draft-1',
+      workspaceId: 'workspace-1',
+      body: '## Plan\nPrivate local text',
+      hookRequestId: 'hk-1',
+    });
+    expect(sendAck).toHaveBeenCalledWith(client, 'req-draft', 'ok');
+  });
+
   it('resume rejects missing discovered session', async () => {
     const { client } = createClient();
     const daemon = {

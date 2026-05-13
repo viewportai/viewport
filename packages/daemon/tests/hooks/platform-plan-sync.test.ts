@@ -2,76 +2,79 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { PlatformPlanHookSync } from '../../src/hooks/platform-plan-sync.js';
-import type { TransportFetchOptions } from '../../src/cli/network.js';
-import { PLAN_PROPOSAL_SCHEMA_VERSION } from '../../src/hooks/plan-extractor.js';
 import { writeLocalOrgBinding } from '../../src/cli/org-binding.js';
+import { PlatformPlanHookSync } from '../../src/hooks/platform-plan-sync.js';
 
 describe('PlatformPlanHookSync', () => {
-  it('sends plan proposals to the daemon-authenticated platform ingestion endpoint', async () => {
-    const requests: Array<{ url: string; options: TransportFetchOptions }> = [];
-    const fetcher = vi.fn(async (url: string, options: TransportFetchOptions) => {
-      requests.push({ url, options });
-      return new Response(JSON.stringify({ data: { id: 'plan_1' } }), { status: 201 });
-    });
+  it('opens an ephemeral web plan draft without putting plan content in the URL', async () => {
+    const opener = vi.fn();
+    const createEphemeralPlanDraft = vi.fn(() => ({ draftId: 'draft_1' }));
     const sync = new PlatformPlanHookSync(
       {
-        getDaemonConfig: () => ({
-          server: { url: 'https://getviewport.test', tlsVerify: '0' },
-          relay: { workspaceId: 'workspace_1', issueToken: 'issue-token' },
-        }),
+        configManager: {
+          getDaemonConfig: () => ({
+            server: {
+              url: 'https://getviewport.test',
+              appUrl: 'https://app.getviewport.test',
+              tlsVerify: '0',
+            },
+            relay: { workspaceId: 'workspace_1', issueToken: 'issue-token' },
+          }),
+        },
+        createEphemeralPlanDraft,
       },
-      fetcher,
+      opener,
     );
 
     await expect(
       sync.send({
         sessionId: 'session_1',
         adapter: 'claude',
-        cwd: '/repo',
         title: 'Review plan',
         summary: 'Inspect the diff',
         body: '## Plan\n1. Inspect diff\n2. Report risks',
         source: 'claude',
         sourceRef: 'claude://session/session_1',
         metadata: {
+          hookRequestId: 'hk-1',
           resourceId: 'workspace_2',
           secret: 'do-not-forward',
           workflowRunId: 'run_1',
         },
       }),
-    ).resolves.toEqual({ synced: true });
+    ).resolves.toMatchObject({ opened: true });
 
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe(
-      'https://getviewport.test/api/runtime/workspaces/workspace_1/agent-hooks/plans',
+    const opened = opener.mock.calls[0]?.[0] as string;
+    const url = new URL(opened);
+    expect(`${url.origin}${url.pathname}`).toBe('https://app.getviewport.test/plans');
+    expect(url.searchParams.get('resource_id')).toBe('workspace_1');
+    expect(url.searchParams.get('draft')).toBeNull();
+    expect(url.hash).toBe('#viewport-plan-draft=draft_1');
+    expect(opened).not.toContain('Inspect%20diff');
+    expect(opened).not.toContain('Inspect diff');
+    expect(opened).not.toContain('do-not-forward');
+    expect(createEphemeralPlanDraft).toHaveBeenCalledWith(
+      'workspace_1',
+      expect.objectContaining({
+        body: '## Plan\n1. Inspect diff\n2. Report risks',
+        metadata: expect.objectContaining({ secret: 'do-not-forward' }),
+      }),
     );
-    expect(requests[0]?.options.tlsVerify).toBe('0');
-    expect(JSON.parse(String(requests[0]?.options.body))).toMatchObject({
-      credential: 'issue-token',
-      hook_event_name: 'PlanProposed',
-      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
-      session_id: 'session_1',
-      title: 'Review plan',
-      summary: 'Inspect the diff',
-      body: '## Plan\n1. Inspect diff\n2. Report risks',
-      source: 'claude',
-      source_ref: 'claude://session/session_1',
-      payload: { workflowRunId: 'run_1' },
-    });
-    expect(JSON.parse(String(requests[0]?.options.body))).not.toHaveProperty('cwd');
   });
 
-  it('skips sync when no relay issue token or runtime target is configured', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
+  it('skips opening when no relay workspace is configured', async () => {
+    const opener = vi.fn();
     const sync = new PlatformPlanHookSync(
       {
-        getDaemonConfig: () => ({
-          server: { url: 'https://getviewport.test' },
-          relay: {},
-        }),
+        configManager: {
+          getDaemonConfig: () => ({
+            server: { url: 'https://getviewport.test' },
+            relay: {},
+          }),
+        },
+        createEphemeralPlanDraft: vi.fn(),
       },
-      fetcher,
+      opener,
     );
 
     await expect(
@@ -80,116 +83,92 @@ describe('PlatformPlanHookSync', () => {
         adapter: 'codex',
         body: 'Plan',
       }),
-    ).resolves.toEqual({ synced: false, reason: 'missing_platform_target' });
-    expect(fetcher).not.toHaveBeenCalled();
+    ).resolves.toEqual({ opened: false, reason: 'missing_platform_target' });
+    expect(opener).not.toHaveBeenCalled();
   });
 
-  it('routes only to the active relay project, not agent-controlled metadata', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
+  it('routes cwd-scoped plan drafts through the matching local organization binding', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-plan-sync-bound-'));
+    await writeLocalOrgBinding({ directory: tempDir, organizationId: 'workspace_2' });
+    const opener = vi.fn();
+    const createEphemeralPlanDraft = vi.fn(() => ({ draftId: 'draft_2' }));
     const sync = new PlatformPlanHookSync(
       {
-        getDaemonConfig: () => ({
-          server: { url: 'https://getviewport.test' },
-          relay: { workspaceId: 'workspace_1', issueToken: 'issue-token' },
-        }),
+        configManager: {
+          getDaemonConfig: () => ({
+            server: { url: 'https://api.getviewport.test', appUrl: 'https://app.getviewport.test' },
+            relay: {
+              bindings: [
+                {
+                  workspaceId: 'workspace_1',
+                  serverUrl: 'https://api.getviewport.test',
+                  issueToken: 'issue-token-1',
+                },
+                {
+                  workspaceId: 'workspace_2',
+                  serverUrl: 'https://api.getviewport.test',
+                  issueToken: 'issue-token-2',
+                },
+              ],
+            },
+          }),
+        },
+        createEphemeralPlanDraft,
       },
-      fetcher,
-    );
-
-    await expect(
-      sync.send({
-        sessionId: 'session_1',
-        adapter: 'viewport-workflow',
-        body: 'Plan',
-        metadata: { resourceId: 'workspace_2' },
-      }),
-    ).resolves.toEqual({ synced: true });
-    expect(fetcher).toHaveBeenCalledOnce();
-  });
-
-  it('routes plan proposals to the repo-bound workspace when multiple relay bindings exist', async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-plan-sync-'));
-    await writeLocalOrgBinding({ directory: cwd, organizationId: 'workspace_2' });
-
-    const requests: Array<{ url: string; options: TransportFetchOptions }> = [];
-    const fetcher = vi.fn(async (url: string, options: TransportFetchOptions) => {
-      requests.push({ url, options });
-      return new Response(JSON.stringify({ data: { id: 'plan_1' } }), { status: 201 });
-    });
-    const sync = new PlatformPlanHookSync(
-      {
-        getDaemonConfig: () => ({
-          server: { url: 'https://fallback.getviewport.test' },
-          relay: {
-            bindings: [
-              {
-                workspaceId: 'workspace_1',
-                serverUrl: 'https://api.getviewport.test',
-                issueToken: 'token-1',
-              },
-              {
-                workspaceId: 'workspace_2',
-                serverUrl: 'https://api.getviewport.test',
-                issueToken: 'token-2',
-              },
-            ],
-          },
-        }),
-      },
-      fetcher,
+      opener,
     );
 
     await expect(
       sync.send({
         sessionId: 'session_1',
         adapter: 'claude',
-        cwd,
+        cwd: tempDir,
         body: 'Plan',
       }),
-    ).resolves.toEqual({ synced: true });
+    ).resolves.toMatchObject({ opened: true });
 
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe(
-      'https://api.getviewport.test/api/runtime/workspaces/workspace_2/agent-hooks/plans',
+    const opened = opener.mock.calls[0]?.[0] as string;
+    const url = new URL(opened);
+    expect(url.searchParams.get('resource_id')).toBe('workspace_2');
+    expect(url.hash).toBe('#viewport-plan-draft=draft_2');
+    expect(createEphemeralPlanDraft).toHaveBeenCalledWith(
+      'workspace_2',
+      expect.objectContaining({ body: 'Plan' }),
     );
-    expect(JSON.parse(String(requests[0]?.options.body))).toMatchObject({
-      credential: 'token-2',
-      hook_event_name: 'PlanProposed',
-    });
+
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it('does not guess a plan workspace when multiple relay bindings exist without a repo binding', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
+  it('does not open a cwd-scoped plan draft from a directory with streaming disabled', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-plan-sync-disabled-'));
+    await writeLocalOrgBinding({
+      directory: tempDir,
+      organizationId: 'workspace_1',
+      streamEnabled: false,
+    });
+    const opener = vi.fn();
     const sync = new PlatformPlanHookSync(
       {
-        getDaemonConfig: () => ({
-          relay: {
-            bindings: [
-              {
-                workspaceId: 'workspace_1',
-                serverUrl: 'https://api.getviewport.test',
-                issueToken: 'token-1',
-              },
-              {
-                workspaceId: 'workspace_2',
-                serverUrl: 'https://api.getviewport.test',
-                issueToken: 'token-2',
-              },
-            ],
-          },
-        }),
+        configManager: {
+          getDaemonConfig: () => ({
+            server: { url: 'https://getviewport.test' },
+            relay: { workspaceId: 'workspace_1', issueToken: 'issue-token' },
+          }),
+        },
+        createEphemeralPlanDraft: vi.fn(),
       },
-      fetcher,
+      opener,
     );
 
     await expect(
       sync.send({
         sessionId: 'session_1',
         adapter: 'claude',
-        cwd: '/no/local/binding',
+        cwd: tempDir,
         body: 'Plan',
       }),
-    ).resolves.toEqual({ synced: false, reason: 'missing_platform_target' });
-    expect(fetcher).not.toHaveBeenCalled();
+    ).resolves.toEqual({ opened: false, reason: 'missing_platform_target' });
+    expect(opener).not.toHaveBeenCalled();
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 });

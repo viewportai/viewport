@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "securityNotice": "Public deterministic test vector. All privateKey, pairingSecret, and sessionKey values in this file are synthetic fixtures for conformance tests only. They must never be used by runtime configuration, production deployments, pairing, or relay authentication.",
   "notes": "Deterministic canonical Noise v3 vectors (IK + IKpsk2 over P256/AESGCM/SHA256).",
   "daemonIdentity": {
     "publicKey": "BEjeT9qtvf7dbK9yPDuvSgIT_gIuC9_8DdJNtM6yu70uaCxRVd08fy2qBFGWRo_HfQ_Ic8IWNb0I-PaM9El6Bxw",

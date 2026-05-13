@@ -11,8 +11,8 @@ import type { HookEventKind } from '../types.js';
 export interface HookInstallerConfig {
   /** The vpd binary path to use in hook commands. */
   vpdBinaryPath: string;
-  /** The daemon port for hook HTTP calls. */
-  daemonPort: number;
+  /** The daemon listen target for hook HTTP calls. */
+  daemonListen: string;
   /** Which hook events to install. */
   events: HookEventKind[];
 }

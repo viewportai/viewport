@@ -1,12 +1,14 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { AgentRegistry } from '../core/agent-registry.js';
-import { configDir } from '../core/config.js';
-import { getDaemonPort } from './args.js';
+import { ConfigManager, configDir } from '../core/config.js';
+import { getDaemonPort, getFlag } from './args.js';
 import { BUILT_IN_AGENTS } from '../agents/built-in.js';
-import { ClaudeHookInstaller, CLAUDE_HOOK_EVENT_KINDS } from '../hooks/index.js';
+import { ClaudeHookInstaller, HOOK_EVENT_KINDS } from '../hooks/index.js';
 import type { HookInstaller } from '../hooks/index.js';
 import { isJsonMode, printJson, shortError } from './command-shared.js';
+import { readDaemonRuntimeState } from './daemon-lifecycle.js';
+import { parseListenTarget } from './listen-target.js';
 
 /** Hook installers for each supported agent. */
 const HOOK_INSTALLERS: HookInstaller[] = [new ClaudeHookInstaller()];
@@ -27,6 +29,33 @@ function resolveVpdPath(): string {
   return arg1;
 }
 
+async function resolveHookDaemonListen(): Promise<string> {
+  const explicitListen = getFlag('listen');
+  if (explicitListen) {
+    return parseListenTarget(explicitListen).listen;
+  }
+
+  const explicitPort = getFlag('port');
+  if (explicitPort) {
+    const host = getFlag('host') ?? '127.0.0.1';
+    return parseListenTarget(`${host}:${explicitPort}`).listen;
+  }
+
+  const runtimeState = await readDaemonRuntimeState();
+  if (runtimeState?.listen) {
+    return runtimeState.listen;
+  }
+
+  const manager = new ConfigManager();
+  await manager.load();
+  const configuredListen = manager.getDaemonConfig()?.listen;
+  if (configuredListen) {
+    return parseListenTarget(configuredListen).listen;
+  }
+
+  return parseListenTarget(`${getFlag('host') ?? '127.0.0.1'}:${getDaemonPort()}`).listen;
+}
+
 export async function install(): Promise<void> {
   const asJson = isJsonMode();
 
@@ -38,7 +67,7 @@ export async function install(): Promise<void> {
   const availability = await registry.detectAvailable();
 
   const vpdPath = resolveVpdPath();
-  const port = getDaemonPort();
+  const daemonListen = await resolveHookDaemonListen();
 
   const hookResults: Array<{
     adapter: string;
@@ -50,8 +79,8 @@ export async function install(): Promise<void> {
     try {
       const changed = await installer.install({
         vpdBinaryPath: vpdPath,
-        daemonPort: port,
-        events: [...CLAUDE_HOOK_EVENT_KINDS],
+        daemonListen,
+        events: [...HOOK_EVENT_KINDS],
       });
       hookResults.push({
         adapter: installer.adapterName,
@@ -80,6 +109,7 @@ export async function install(): Promise<void> {
         detection: def.detection.description,
       })),
       hooks: hookResults,
+      daemonListen,
     });
     return;
   }

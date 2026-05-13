@@ -34,7 +34,7 @@ type VectorDoc = {
   }>;
 };
 
-const FIXTURE_PATH = path.join(process.cwd(), 'docs', 'relay-noise-v3-conformance-vectors.json');
+const FIXTURE_PATH = path.join(process.cwd(), 'docs', 'test-vectors', 'relay-noise-v3.json');
 
 function loadFixture(): VectorDoc {
   const raw = fs.readFileSync(FIXTURE_PATH, 'utf8');

@@ -33,7 +33,7 @@ interface RelayConformanceDoc {
   vectors: RelayConformanceVector[];
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), 'docs', 'relay-noise-conformance-vectors.json');
+const FIXTURE_PATH = path.join(process.cwd(), 'docs', 'test-vectors', 'relay-noise-v2.json');
 
 function loadVectors(): RelayConformanceVector[] {
   const raw = fs.readFileSync(FIXTURE_PATH, 'utf8');

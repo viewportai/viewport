@@ -191,6 +191,101 @@ describe('HookRouter', () => {
     expect(events[0]).toMatchObject({ toolName: 'Bash' });
   });
 
+  it('extracts Claude plan mode drafts from ExitPlanMode PreToolUse hooks', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const result = await router.handleEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      tool_name: 'ExitPlanMode',
+      tool_input: {
+        plan: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+        planFilePath: '/tmp/claude/plan.md',
+        allowedPrompts: [],
+      },
+    });
+
+    expect(result).toEqual({ passthrough: false });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Migrate auth',
+      body: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+      source: 'claude-exit-plan-mode',
+      sourceRef: 'hook://exit-plan-mode/s1',
+      metadata: {
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        extractedFrom: 'exit-plan-mode',
+        planFilePath: '/tmp/claude/plan.md',
+      },
+    });
+  });
+
+  it('holds Claude ExitPlanMode PermissionRequest hooks and opens a plan draft even without supervision', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    const resultPromise = router.handleEvent({
+      hook_event_name: 'PermissionRequest',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      tool_name: 'ExitPlanMode',
+      tool_input: {
+        plan: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+        planFilePath: '/tmp/claude/plan.md',
+        allowedPrompts: [],
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Migrate auth',
+      body: '## Migrate auth\n\n1. Inspect routes\n2. Add tests',
+      source: 'claude-exit-plan-mode',
+      metadata: {
+        extractedFrom: 'exit-plan-mode',
+        hookRequestId: expect.stringMatching(/^hk-/),
+      },
+    });
+
+    const hookRequestId = (
+      (events[0] as Record<string, unknown>).metadata as Record<string, unknown>
+    ).hookRequestId as string;
+    expect(router.getPendingPermissions().has(hookRequestId)).toBe(true);
+
+    eventBus.emit('hook:permission-response', {
+      hookRequestId,
+      decision: { behavior: 'allow' },
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      passthrough: false,
+      decision: { behavior: 'allow' },
+    });
+  });
+
+  it('ignores non-plan PreToolUse hooks for plan draft extraction', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+    });
+
+    expect(events).toHaveLength(0);
+  });
+
   it('handles PostToolUseFailure — emits hook:tool-failed', async () => {
     const events: unknown[] = [];
     eventBus.on('hook:tool-failed', (data) => events.push(data));
@@ -256,6 +351,55 @@ describe('HookRouter', () => {
       sourceRef: 'claude://session/s1',
       metadata: { extractedFrom: 'explicit-marker' },
     });
+  });
+
+  it('opens Claude plan-mode Stop responses as unsaved plan drafts when no explicit block is present', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      cwd: '/tmp/project',
+      permission_mode: 'plan',
+      last_assistant_message: [
+        '## Plan: localStorage to Firebase',
+        '',
+        '### Phase 0 — Audit',
+        'Goal: find every localStorage key.',
+        '',
+        '### Key Risks',
+        '- Async UI bugs.',
+      ].join('\n'),
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sessionId: 's1',
+      adapter: 'claude',
+      cwd: '/tmp/project',
+      title: 'Plan: localStorage to Firebase',
+      body: expect.stringContaining('### Phase 0'),
+      source: 'claude-plan-mode-stop',
+      sourceRef: 'hook://stop/s1',
+      metadata: {
+        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+        extractedFrom: 'claude-plan-mode-stop',
+      },
+    });
+  });
+
+  it('does not convert ordinary Stop prose into a plan draft outside Claude plan mode', async () => {
+    const events: unknown[] = [];
+    eventBus.on('hook:plan-proposed', (data) => events.push(data));
+
+    await router.handleEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      last_assistant_message: '## Plan: this heading alone should not be enough outside plan mode',
+    });
+
+    expect(events).toHaveLength(0);
   });
 
   it('does not infer plans from unmarked Stop prose', async () => {

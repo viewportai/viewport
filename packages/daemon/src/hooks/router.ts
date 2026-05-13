@@ -227,6 +227,10 @@ export class HookRouter {
     data: Record<string, unknown>,
     ctx: { sessionId: string; adapter: string; cwd?: string; timeoutMs: number },
   ): Promise<HookResponse> {
+    if (kind === 'PermissionRequest' && isExitPlanModeRequest(data)) {
+      return this.holdPermissionRequest(data, ctx);
+    }
+
     // If not supervised, fall through immediately
     if (!this.supervision.isSupervised(ctx.sessionId)) {
       log.debug({ kind, sessionId: ctx.sessionId }, 'Not supervised — passthrough');
@@ -266,6 +270,7 @@ export class HookRouter {
     const hookRequestId = `hk-${++this.hookRequestCounter}-${Date.now()}`;
     const toolName = (data.tool_name as string) ?? 'unknown';
     const toolInput = data.tool_input;
+    const dataWithHookRequestId = { ...data, hook_request_id: hookRequestId };
 
     // Emit the permission request event so WS server can broadcast
     this.eventBus.emit('hook:permission-request', {
@@ -276,6 +281,7 @@ export class HookRouter {
       toolInput,
       cwd: ctx.cwd,
     });
+    this.emitSpecificEvent('PermissionRequest', dataWithHookRequestId, ctx);
 
     return new Promise<HookResponse>((resolve) => {
       const timer = setTimeout(() => {
@@ -306,6 +312,14 @@ export class HookRouter {
   ): void {
     emitSpecificHookEvent(this.eventBus, kind, data, ctx);
   }
+}
+
+function isExitPlanModeRequest(data: Record<string, unknown>): boolean {
+  if (data.tool_name !== 'ExitPlanMode') return false;
+  const toolInput = data.tool_input;
+  if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) return false;
+  const plan = (toolInput as Record<string, unknown>).plan;
+  return typeof plan === 'string' && plan.trim().length > 0;
 }
 
 export function safeHookLogInput(input: Record<string, unknown>): Record<string, unknown> {

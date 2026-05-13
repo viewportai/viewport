@@ -1,78 +1,85 @@
-import type { ConfigManager } from '../core/config.js';
-import type { DaemonEvents } from '../core/events.js';
-import { transportFetch } from '../cli/network.js';
+import { openUrl } from '../cli/open-url.js';
 import { resolveConfiguredWorkspaceSyncTarget } from '../cli/context-sync-target.js';
 import { resolveLocalOrgBindingSync } from '../cli/org-binding.js';
-import { PLAN_PROPOSAL_SCHEMA_VERSION, sanitizePlanProposalMetadata } from './plan-extractor.js';
+import type { Daemon } from '../core/daemon.js';
+import type { DaemonEvents } from '../core/events.js';
 
-type Fetcher = typeof transportFetch;
 type PlanProposedEvent = DaemonEvents['hook:plan-proposed'];
+type UrlOpener = (url: string) => void;
 
 export interface PlatformPlanHookSyncResult {
-  synced: boolean;
+  opened: boolean;
   reason?: string;
-  status?: number;
+  planUrl?: string;
 }
 
 export class PlatformPlanHookSync {
   constructor(
-    private readonly configManager: Pick<ConfigManager, 'getDaemonConfig'>,
-    private readonly fetcher: Fetcher = transportFetch,
+    private readonly daemon: Pick<Daemon, 'configManager' | 'createEphemeralPlanDraft'>,
+    private readonly urlOpener: UrlOpener = openUrl,
   ) {}
 
   async send(event: PlanProposedEvent): Promise<PlatformPlanHookSyncResult> {
     const target = this.targetFor(event);
-    if (!target) return { synced: false, reason: 'missing_platform_target' };
+    if (!target) return { opened: false, reason: 'missing_platform_target' };
 
-    const res = await this.fetcher(target.url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        credential: target.issueToken,
-        hook_event_name: 'PlanProposed',
-        schema: PLAN_PROPOSAL_SCHEMA_VERSION,
-        session_id: event.sessionId,
-        title: event.title ?? null,
-        summary: event.summary ?? null,
-        body: event.body,
-        source: event.source ?? event.adapter,
-        source_ref: event.sourceRef ?? `agent-hook:${event.sessionId}`,
-        payload: sanitizePlanProposalMetadata(event.metadata),
-      }),
-      timeoutMs: 5_000,
-      tlsVerify: target.tlsVerify,
-      caCertPath: target.caCertPath,
-      tlsPins: target.tlsPins,
-    });
-
-    if (!res.ok) {
-      return { synced: false, reason: 'platform_rejected_plan_hook', status: res.status };
+    const draft = this.daemon.createEphemeralPlanDraft(target.workspaceId, event);
+    const planUrl = buildDraftPlanUrl(target.appUrl, target.workspaceId, draft.draftId);
+    try {
+      this.urlOpener(planUrl);
+    } catch {
+      return { opened: false, reason: 'browser_open_failed', planUrl };
     }
 
-    return { synced: true };
+    return { opened: true, planUrl };
   }
 
-  private targetFor(event: PlanProposedEvent): {
-    url: string;
-    issueToken: string;
-    tlsVerify?: 'auto' | '0' | '1';
-    caCertPath?: string;
-    tlsPins?: string[];
-  } | null {
-    const daemonConfig = this.configManager.getDaemonConfig();
+  private targetFor(event: PlanProposedEvent): { appUrl: string; workspaceId: string } | null {
+    const daemonConfig = this.daemon.configManager.getDaemonConfig();
     if (!daemonConfig) return null;
 
-    const cwd = typeof event.cwd === 'string' && event.cwd.length > 0 ? event.cwd : process.cwd();
-    const requestedWorkspaceId = resolveLocalOrgBindingSync(cwd)?.organizationId;
+    const explicitCwd = typeof event.cwd === 'string' && event.cwd.length > 0;
+    const cwd = explicitCwd ? event.cwd! : process.cwd();
+    const binding = resolveLocalOrgBindingSync(cwd);
+    if (explicitCwd && !binding) return null;
+    if (binding && !binding.streamEnabled) return null;
+    const requestedWorkspaceId = binding?.organizationId;
     const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, { requestedWorkspaceId });
     if (!target) return null;
 
     return {
-      url: `${target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(target.workspaceId)}/agent-hooks/plans`,
-      issueToken: target.credential,
-      tlsVerify: target.tlsVerify,
-      caCertPath: target.caCertPath,
-      tlsPins: target.tlsPins,
+      appUrl: inferAppUrl(daemonConfig.server?.appUrl, target.serverUrl),
+      workspaceId: target.workspaceId,
     };
+  }
+}
+
+function buildDraftPlanUrl(appUrl: string, workspaceId: string, draftId: string): string {
+  const url = new URL('/plans', appUrl);
+  url.searchParams.set('resource_id', workspaceId);
+  url.hash = `viewport-plan-draft=${encodeURIComponent(draftId)}`;
+  return url.toString();
+}
+
+function inferAppUrl(configuredAppUrl: string | undefined, serverUrl: string): string {
+  if (configuredAppUrl?.trim()) return configuredAppUrl.trim().replace(/\/+$/, '');
+
+  try {
+    const url = new URL(serverUrl);
+    if (url.hostname === 'api.getviewport.com') {
+      url.hostname = 'app.getviewport.com';
+      return url.toString().replace(/\/+$/, '');
+    }
+    if (url.hostname === 'getviewport.test' || url.hostname === 'api.getviewport.test') {
+      url.hostname = 'app.getviewport.test';
+      return url.toString().replace(/\/+$/, '');
+    }
+    if (url.hostname === 'getviewport.dev' || url.hostname === 'api.getviewport.dev') {
+      url.hostname = 'app.getviewport.dev';
+      return url.toString().replace(/\/+$/, '');
+    }
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return serverUrl.replace(/\/+$/, '');
   }
 }

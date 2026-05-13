@@ -55,6 +55,12 @@ export function emitSpecificHookEvent(
         toolResponse: data.tool_response,
       });
       break;
+    case 'PreToolUse':
+      emitPlanProposalFromExitPlanMode(eventBus, data, ctx);
+      break;
+    case 'PermissionRequest':
+      emitPlanProposalFromExitPlanMode(eventBus, data, ctx);
+      break;
     case 'PostToolUseFailure':
       eventBus.emit('hook:tool-failed', {
         sessionId: ctx.sessionId,
@@ -70,7 +76,9 @@ export function emitSpecificHookEvent(
         adapter: ctx.adapter,
         lastMessage: data.last_assistant_message as string | undefined,
       });
-      emitExplicitPlanProposalFromStop(eventBus, data, ctx);
+      if (!emitExplicitPlanProposalFromStop(eventBus, data, ctx)) {
+        emitPlanModeProposalFromStop(eventBus, data, ctx);
+      }
       break;
     case 'SubagentStart':
       eventBus.emit('hook:subagent-start', {
@@ -110,6 +118,35 @@ export function emitSpecificHookEvent(
   }
 }
 
+function emitPlanProposalFromExitPlanMode(
+  eventBus: TypedEventEmitter<DaemonEvents>,
+  data: Record<string, unknown>,
+  ctx: SpecificEventContext,
+): void {
+  if (data.tool_name !== 'ExitPlanMode') return;
+  const toolInput = readRecord(data.tool_input);
+  const plan = toolInput?.plan;
+  if (typeof plan !== 'string' || plan.trim().length === 0) return;
+  const planFilePath =
+    typeof toolInput?.planFilePath === 'string' ? toolInput.planFilePath : undefined;
+
+  eventBus.emit('hook:plan-proposed', {
+    sessionId: ctx.sessionId,
+    adapter: ctx.adapter,
+    cwd: ctx.cwd,
+    title: titleFromMarkdown(plan),
+    body: plan.trim(),
+    source: `${ctx.adapter}-exit-plan-mode`,
+    sourceRef: `hook://exit-plan-mode/${ctx.sessionId}`,
+    metadata: {
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+      extractedFrom: 'exit-plan-mode',
+      planFilePath,
+      hookRequestId: typeof data.hook_request_id === 'string' ? data.hook_request_id : undefined,
+    },
+  });
+}
+
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
 
@@ -125,13 +162,21 @@ function planBodyFromData(data: Record<string, unknown>): string {
   return '';
 }
 
+function titleFromMarkdown(markdown: string): string | undefined {
+  const firstHeading = markdown
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /^#{1,3}\s+\S/.test(line));
+  return firstHeading?.replace(/^#{1,3}\s+/, '').trim();
+}
+
 function emitExplicitPlanProposalFromStop(
   eventBus: TypedEventEmitter<DaemonEvents>,
   data: Record<string, unknown>,
   ctx: SpecificEventContext,
-): void {
+): boolean {
   const proposal = extractPlanProposalFromText(data.last_assistant_message as string | undefined);
-  if (!proposal) return;
+  if (!proposal) return false;
 
   eventBus.emit('hook:plan-proposed', {
     sessionId: ctx.sessionId,
@@ -147,4 +192,43 @@ function emitExplicitPlanProposalFromStop(
       extractedFrom: 'explicit-marker',
     },
   });
+  return true;
+}
+
+function emitPlanModeProposalFromStop(
+  eventBus: TypedEventEmitter<DaemonEvents>,
+  data: Record<string, unknown>,
+  ctx: SpecificEventContext,
+): void {
+  if (ctx.adapter !== 'claude') return;
+  if (data.permission_mode !== 'plan') return;
+  const body = data.last_assistant_message;
+  if (typeof body !== 'string') return;
+  const trimmed = body.trim();
+  if (!looksLikePlanMarkdown(trimmed)) return;
+
+  eventBus.emit('hook:plan-proposed', {
+    sessionId: ctx.sessionId,
+    adapter: ctx.adapter,
+    cwd: ctx.cwd,
+    title: titleFromMarkdown(trimmed) ?? 'Claude plan',
+    body: trimmed,
+    source: `${ctx.adapter}-plan-mode-stop`,
+    sourceRef: `hook://stop/${ctx.sessionId}`,
+    metadata: {
+      schema: PLAN_PROPOSAL_SCHEMA_VERSION,
+      extractedFrom: 'claude-plan-mode-stop',
+    },
+  });
+}
+
+function looksLikePlanMarkdown(markdown: string): boolean {
+  if (!markdown) return false;
+  const lower = markdown.toLowerCase();
+  if (/^#{1,3}\s+plan\b/m.test(markdown)) return true;
+  if (/^plan\s*:/i.test(markdown)) return true;
+  return (
+    lower.includes('phase') &&
+    (lower.includes('goal') || lower.includes('recommended order') || lower.includes('risk'))
+  );
 }

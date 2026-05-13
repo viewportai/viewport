@@ -21,16 +21,26 @@ function settingsPath(): string {
   return path.join(os.homedir(), '.claude', 'settings.json');
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildVpdCommand(vpdPath: string): string {
+  if (vpdPath.startsWith('npx tsx ')) {
+    return `npx tsx ${shellQuote(vpdPath.slice('npx tsx '.length))}`;
+  }
+
+  return shellQuote(vpdPath);
+}
+
 /** Build the hook command string for a given event. */
-function buildCommand(vpdPath: string, port: number, event: HookEventKind): string {
-  // vpdPath may be multi-word in dev mode (e.g. "npx tsx /path/to/index.ts")
-  // Only quote single-word paths that might contain spaces
-  const cmd = vpdPath.includes(' ') ? vpdPath : `"${vpdPath}"`;
-  return `${cmd} hook notify --event ${event} --port ${port} ${VIEWPORT_MARKER}`;
+function buildCommand(vpdPath: string, listen: string, event: string): string {
+  const cmd = buildVpdCommand(vpdPath);
+  return `${cmd} hook notify --event ${event} --listen ${shellQuote(listen)} ${VIEWPORT_MARKER}`;
 }
 
 /** Determine the timeout for a hook event. */
-function timeoutForEvent(event: HookEventKind): number {
+function timeoutForEvent(event: string): number {
   // PermissionRequest blocks waiting for supervisor response — long timeout
   if (event === 'PermissionRequest') return 120;
   return 5;
@@ -49,37 +59,37 @@ export class ClaudeHookInstaller implements HookInstaller {
     >;
     settings.hooks = hooks;
 
-    let changed = false;
+    const before = JSON.stringify(settings);
 
-    const claudeEvents = new Set<HookEventKind>(CLAUDE_HOOK_EVENT_KINDS);
-    for (const event of config.events) {
-      if (!claudeEvents.has(event)) continue;
+    for (const [event, entries] of Object.entries(hooks)) {
+      const filtered = removeViewportHookEntries(entries);
+      if (filtered.length !== entries.length) {
+        if (filtered.length === 0) {
+          delete hooks[event];
+        } else {
+          hooks[event] = filtered;
+        }
+      }
+    }
+
+    for (const event of config.events.filter(isClaudeHookEventKind)) {
       const hookEntry = {
         type: 'command' as const,
-        command: buildCommand(config.vpdBinaryPath, config.daemonPort, event),
+        command: buildCommand(config.vpdBinaryPath, config.daemonListen, event),
         timeout: timeoutForEvent(event),
       };
 
       const existing = hooks[event] ?? [];
+      const filtered = removeViewportHookEntries(existing);
 
-      // Remove any existing Viewport entries
-      const filtered = existing.filter(
-        (entry) =>
-          !entry.hooks?.some(
-            (h: Record<string, unknown>) =>
-              typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
-          ),
-      );
-
-      // Add our entry
       filtered.push({ hooks: [hookEntry] });
 
       if (JSON.stringify(filtered) !== JSON.stringify(existing)) {
         hooks[event] = filtered;
-        changed = true;
       }
     }
 
+    const changed = JSON.stringify(settings) !== before;
     if (changed) {
       await writeSettings(filePath, settings);
     }
@@ -98,19 +108,14 @@ export class ClaudeHookInstaller implements HookInstaller {
 
     const hooks = settings.hooks as Record<
       string,
-      Array<{ hooks: Array<Record<string, unknown>> }>
+      Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>
     >;
     if (!hooks) return false;
 
     let changed = false;
 
     for (const [event, entries] of Object.entries(hooks)) {
-      const filtered = entries.filter(
-        (entry) =>
-          !entry.hooks?.some(
-            (h) => typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
-          ),
-      );
+      const filtered = removeViewportHookEntries(entries);
 
       if (filtered.length !== entries.length) {
         if (filtered.length === 0) {
@@ -148,6 +153,24 @@ export class ClaudeHookInstaller implements HookInstaller {
       return false;
     }
   }
+}
+
+function isClaudeHookEventKind(
+  event: HookEventKind,
+): event is (typeof CLAUDE_HOOK_EVENT_KINDS)[number] {
+  return (CLAUDE_HOOK_EVENT_KINDS as readonly HookEventKind[]).includes(event);
+}
+
+function removeViewportHookEntries(
+  entries: Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>,
+): Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }> {
+  return entries.filter(
+    (entry) =>
+      !entry.hooks?.some(
+        (h: Record<string, unknown>) =>
+          typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
+      ),
+  );
 }
 
 // ---------------------------------------------------------------------------
