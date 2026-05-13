@@ -693,9 +693,10 @@ async function contextRotationsProcess(): Promise<void> {
 
 function epochRotationReason(
   value: string,
-): 'device_revoked' | 'member_revoked' | 'manual_rotation' | 'recovery' {
+): 'device_revoked' | 'member_added' | 'member_revoked' | 'manual_rotation' | 'recovery' {
   if (
     value === 'device_revoked' ||
+    value === 'member_added' ||
     value === 'member_revoked' ||
     value === 'manual_rotation' ||
     value === 'recovery'
@@ -703,7 +704,7 @@ function epochRotationReason(
     return value;
   }
   throw new Error(
-    'Epoch rotation reason must be device_revoked, member_revoked, manual_rotation, or recovery.',
+    'Epoch rotation reason must be device_revoked, member_added, member_revoked, manual_rotation, or recovery.',
   );
 }
 

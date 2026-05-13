@@ -186,6 +186,7 @@ function reasonField(
     child === 'initial' ||
     child === 'device_enrolled' ||
     child === 'device_revoked' ||
+    child === 'member_added' ||
     child === 'member_revoked' ||
     child === 'manual_rotation' ||
     child === 'recovery'

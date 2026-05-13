@@ -438,6 +438,7 @@ function rotationRequestPayload(value: unknown): {
 function rotationReason(value: string): EpochTransitionPayload['reason'] {
   if (
     value === 'device_revoked' ||
+    value === 'member_added' ||
     value === 'member_revoked' ||
     value === 'manual_rotation' ||
     value === 'recovery'

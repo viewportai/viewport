@@ -473,7 +473,7 @@ describe('epoch sync', () => {
     expect(active?.epoch).toBe(2);
   });
 
-  it('processes pending team rotations and regrants the new epoch to remaining user epochs', async () => {
+  it('processes pending team rotations and grants the new epoch to current user epochs', async () => {
     const home = await tempHome();
     const recipientKey = createRecipientUserEpochFixture();
     const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> =
@@ -490,7 +490,7 @@ describe('epoch sync', () => {
               subject_type: 'team',
               subject_id: '77',
               team_public_id: 'team_public_1',
-              reason: 'member_revoked',
+              reason: 'member_added',
               recipient_user_crypto_epoch_ids: ['recipient-user-epoch-1'],
             },
           ],
@@ -596,6 +596,19 @@ describe('epoch sync', () => {
         recipientUserEpochId: 'recipient-user-epoch-1',
       }),
       encrypted_payload: expect.any(Object),
+    });
+    const rotationPost = requests.find(
+      (request) =>
+        request.url.endsWith('/crypto/teams/team_public_1/epochs') && request.body?.epoch === 2,
+    );
+    expect(rotationPost?.body).toMatchObject({
+      continuity: {
+        payload: expect.objectContaining({
+          reason: 'member_added',
+          fromEpoch: 1,
+          toEpoch: 2,
+        }),
+      },
     });
     const active = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
     expect(active?.epoch).toBe(2);

@@ -121,6 +121,7 @@ export interface EpochTransitionPayload {
     | 'initial'
     | 'device_enrolled'
     | 'device_revoked'
+    | 'member_added'
     | 'member_revoked'
     | 'manual_rotation'
     | 'recovery';
