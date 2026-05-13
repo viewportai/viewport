@@ -100,6 +100,38 @@ export async function getActiveLocalTeamEpoch(
   );
 }
 
+export async function getLocalTeamEpochByPlatformId(
+  workspaceId: string,
+  platformEpochId: string,
+  home = configDir(),
+): Promise<LocalTeamCryptoEpoch | null> {
+  const store = await readLocalEpochStore(home);
+  return (
+    store.teamEpochs.find(
+      (epoch) =>
+        epoch.workspaceId === workspaceId &&
+        epoch.platformEpochId === platformEpochId &&
+        epoch.status === 'active',
+    ) ?? null
+  );
+}
+
+export async function getLocalUserEpochByPlatformId(
+  workspaceId: string,
+  platformEpochId: string,
+  home = configDir(),
+): Promise<LocalUserCryptoEpoch | null> {
+  const store = await readLocalEpochStore(home);
+  return (
+    store.userEpochs.find(
+      (epoch) =>
+        epoch.workspaceId === workspaceId &&
+        epoch.platformEpochId === platformEpochId &&
+        epoch.status === 'active',
+    ) ?? null
+  );
+}
+
 export async function getLocalDeviceEnrollment(
   workspaceId: string,
   enrollmentIdOrFingerprint: string,
