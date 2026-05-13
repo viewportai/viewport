@@ -244,4 +244,42 @@ describe('ClaudeHookInstaller', () => {
     expect(settings.hooks.Stop[0].hooks[0].command).toBe('user-stop-hook');
     expect(settings.hooks.Stop[1].hooks[0].command).toContain('--viewport-hook');
   });
+
+  it('removes stale exec-form viewport hooks on reinstall', async () => {
+    const claudeDir = path.join(tempHome, '.claude');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(
+      path.join(claudeDir, 'settings.json'),
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/usr/local/bin/vpd',
+                  args: [
+                    'hook',
+                    'notify',
+                    '--event',
+                    'Stop',
+                    '--port',
+                    '7070',
+                    '--viewport-hook',
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await installer.install(defaultConfig);
+
+    const settings = JSON.parse(await fs.readFile(path.join(claudeDir, 'settings.json'), 'utf-8'));
+    expect(settings.hooks.Stop).toHaveLength(1);
+    expect(settings.hooks.Stop[0].hooks[0].command).toContain("--listen '127.0.0.1:7070'");
+    expect(settings.hooks.Stop[0].hooks[0].args).toBeUndefined();
+  });
 });
