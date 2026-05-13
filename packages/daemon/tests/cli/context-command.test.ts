@@ -1675,6 +1675,72 @@ describe('context CLI command', () => {
     }
   });
 
+  it('syncs every visible context vault for an approved user device in one command', async () => {
+    await runContext([
+      'context',
+      'user-init',
+      '--home',
+      tempHome,
+      '--user',
+      'alice',
+      '--device',
+      'alice-vps',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--key-store',
+      'file',
+      '--json',
+    ]);
+
+    const pulledContexts: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/context-vaults?credential=runtime-token')) {
+        return jsonResponse({
+          data: [
+            { vault_id: 'context-alpha', access: { can_view: true } },
+            { vault_id: 'context-beta', access: { can_view: true } },
+            { vault_id: 'context-hidden', access: { can_view: false } },
+          ],
+        });
+      }
+
+      if (requestUrl.endsWith('/events/pull')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        pulledContexts.push(String(body.context_resource_id));
+        return jsonResponse({ data: [], candidate_decisions: [] });
+      }
+
+      throw new Error(`Unexpected sync-all URL ${requestUrl}`);
+    }) as typeof fetch;
+
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'sync-all',
+      '--home',
+      tempHome,
+      '--user',
+      'alice',
+      '--device',
+      'alice-vps',
+      '--workspace',
+      'workspace-alpha',
+      '--server-url',
+      'http://app.getviewport.test',
+      '--credential',
+      'runtime-token',
+      '--json',
+    ]);
+
+    expect(pulledContexts).toEqual(['context-alpha', 'context-beta']);
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context sync-all"');
+    expect(output).toContain('"vaults": 2');
+  });
+
   it('does not treat saved remote workspace id as an implicit context resource id', async () => {
     const { ConfigManager } = await import('../../src/core/config.js');
     const manager = new ConfigManager();

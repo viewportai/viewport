@@ -3,6 +3,7 @@ import { isJsonMode, printJson } from './command-shared.js';
 import {
   initContextResource,
   isResolverPinMismatch,
+  joinContextResource,
   readContextStatus,
   resolveContextBundle,
   type ContextKeyStore,
@@ -19,6 +20,7 @@ import {
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveContextSyncTarget, resolveWorkspaceSyncTarget } from './context-sync-target.js';
 import { parseLimit, parseMaxItems, parseSince } from './context-command-parsers.js';
+import { transportFetch } from './network.js';
 import { contextAdd } from './context-add-command.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
 import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
@@ -94,6 +96,10 @@ export async function context(): Promise<void> {
     await contextSyncPull();
     return;
   }
+  if (subcommand === 'sync-all') {
+    await contextSyncAll();
+    return;
+  }
   if (subcommand === 'identity-publish') {
     await contextIdentityPublish();
     return;
@@ -154,7 +160,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|identity-publish|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -313,6 +319,102 @@ async function contextSyncPull(): Promise<void> {
 
   console.log(`Context events pulled: ${result.imported}/${result.pulled}`);
   console.log(`Repo: ${result.repoId}`);
+}
+
+async function contextSyncAll(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('sync-all');
+  const home = getFlag('home');
+  const userName = requiredFlag('user', 'vpd context sync-all --user <name> --device <name>');
+  const deviceName = requiredFlag('device', 'vpd context sync-all --user <name> --device <name>');
+  const credentials = readCredentials({ required: false });
+  const keyStore = parseKeyStore(getFlag('key-store'));
+  const vaults = await fetchVisibleContextVaults(target);
+  const results = [];
+
+  for (const vault of vaults) {
+    const contextResourceId = vault.vault_id;
+    if (!contextResourceId || vault.access?.can_view === false) continue;
+    const status = await readContextStatus({ contextResourceId, home });
+    if (status.contexts.length === 0) {
+      await joinContextResource({
+        contextResourceId,
+        userName,
+        deviceName,
+        credentials,
+        keyStore,
+        home,
+      });
+    }
+    const pulled = await pullContextEvents({
+      contextResourceId,
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+      actorName: deviceName,
+      credentials,
+      limit: parseLimit(getFlag('limit')),
+      home,
+    });
+    results.push({ contextResourceId, ...pulled });
+  }
+
+  const summary = {
+    vaults: results.length,
+    pulled: results.reduce((total, item) => total + item.pulled, 0),
+    imported: results.reduce((total, item) => total + item.imported, 0),
+    materializedGrants: results.reduce((total, item) => total + item.materializedGrants, 0),
+  };
+
+  if (isJsonMode()) {
+    printJson({ command: 'context sync-all', ok: true, workspaceId: target.workspaceId, ...summary, results });
+    return;
+  }
+
+  console.log(`Context vaults synced: ${summary.vaults}`);
+  console.log(`Context events pulled: ${summary.imported}/${summary.pulled}`);
+  if (summary.materializedGrants > 0) {
+    console.log(`Context grants materialized: ${summary.materializedGrants}`);
+  }
+}
+
+async function fetchVisibleContextVaults(target: {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+}): Promise<Array<{ vault_id: string; access?: { can_view?: boolean } | null }>> {
+  const query = new URLSearchParams({ credential: target.credential });
+  const response = await transportFetch(
+    `${target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(target.workspaceId)}/context-vaults?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      timeoutMs: 5_000,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+  );
+  const payload = (await response.json()) as { data?: unknown };
+  if (!response.ok) {
+    throw new Error(`Failed to list context vaults for sync-all: HTTP ${response.status}`);
+  }
+  if (!Array.isArray(payload.data)) return [];
+  return payload.data
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => ({
+      vault_id: String(item.vault_id ?? ''),
+      access:
+        item.access && typeof item.access === 'object' && !Array.isArray(item.access)
+          ? (item.access as { can_view?: boolean })
+          : null,
+    }))
+    .filter((item) => item.vault_id.length > 0);
 }
 
 async function contextIdentityPublish(): Promise<void> {
