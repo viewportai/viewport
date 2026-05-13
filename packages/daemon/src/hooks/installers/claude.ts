@@ -30,6 +30,10 @@ function buildVpdCommand(vpdPath: string): string {
     return `npx tsx ${shellQuote(vpdPath.slice('npx tsx '.length))}`;
   }
 
+  if (vpdPath.startsWith('node ')) {
+    return `node ${shellQuote(vpdPath.slice('node '.length))}`;
+  }
+
   return shellQuote(vpdPath);
 }
 

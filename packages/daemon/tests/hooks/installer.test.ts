@@ -138,6 +138,22 @@ describe('ClaudeHookInstaller', () => {
     );
   });
 
+  it('quotes local node js entrypoints without requiring executable file mode', async () => {
+    await installer.install({
+      ...defaultConfig,
+      vpdBinaryPath: 'node /Users/mehr/Herd/viewportai/viewport/packages/daemon/dist/index.js',
+    });
+
+    const settings = JSON.parse(
+      await fs.readFile(path.join(tempHome, '.claude', 'settings.json'), 'utf-8'),
+    );
+
+    const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+    expect(cmd).toContain(
+      "node '/Users/mehr/Herd/viewportai/viewport/packages/daemon/dist/index.js'",
+    );
+  });
+
   it('isInstalled detects installed hooks', async () => {
     expect(await installer.isInstalled()).toBe(false);
     await installer.install(defaultConfig);
