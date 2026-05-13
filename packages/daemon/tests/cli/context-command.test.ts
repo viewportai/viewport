@@ -139,6 +139,9 @@ describe('context CLI command', () => {
       const requestUrl = String(url);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       requests.push({ url: requestUrl, method: init?.method, body });
+      expect((init?.headers as Record<string, string>)['X-Viewport-Crypto-Protocol']).toBe(
+        'viewport.trusted_edge_crypto/v2',
+      );
       if (requestUrl.includes('/context-vaults?')) {
         expect(requestUrl).toBe(
           'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults?credential=runtime-token',
@@ -268,6 +271,9 @@ describe('context CLI command', () => {
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe(
         'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults',
+      );
+      expect((init?.headers as Record<string, string>)['X-Viewport-Crypto-Protocol']).toBe(
+        'viewport.trusted_edge_crypto/v2',
       );
       const body = JSON.parse(String(init?.body ?? '{}'));
       expect(body).toMatchObject({
