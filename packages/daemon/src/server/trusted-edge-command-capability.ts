@@ -31,6 +31,7 @@ interface VerificationConfig {
   audience?: string;
   jwksUrl?: string;
   signingKeys?: Record<string, string>;
+  runtimeTargetId?: string;
   clockSkewSec?: number;
   tlsVerify?: 'auto' | '0' | '1';
   caCertPath?: string;
@@ -64,6 +65,12 @@ export async function verifyTrustedEdgeCommandCapability(
   requireClaim(claimMap['workspaceId'], input.workspaceId, 'workspaceId');
   requireClaim(claimMap['purpose'], input.purpose, 'purpose');
   requireStringClaim(claimMap['trustedEdgeUnlockSessionId'], 'trustedEdgeUnlockSessionId');
+  if (
+    typeof claimMap['runtimeTargetId'] === 'string' &&
+    claimMap['runtimeTargetId'].trim() !== ''
+  ) {
+    requireClaim(config.runtimeTargetId, claimMap['runtimeTargetId'], 'runtimeTargetId');
+  }
 
   if (input.contextResourceId) {
     requireClaim(claimMap['contextResourceId'], input.contextResourceId, 'contextResourceId');
@@ -107,6 +114,7 @@ function resolveVerificationConfig(daemon: Daemon, workspaceId: string): Verific
     audience: source.tokenAudience,
     jwksUrl: source.tokenJwksUrl,
     signingKeys: source.signingKeys,
+    runtimeTargetId: source.runtimeTargetId,
     clockSkewSec: source.tokenClockSkewSec,
     tlsVerify: source.tlsVerify,
     caCertPath: source.caCertPath,

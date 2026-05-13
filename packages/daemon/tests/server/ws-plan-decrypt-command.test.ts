@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 
 vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
@@ -28,12 +28,13 @@ function createClient(): ConnectedClient {
 
 const TEST_SIGNING_KEY = 'trusted-edge-command-test-secret';
 
-function createDaemon(): any {
+function createDaemon(runtimeTargetId = 'runtime-target-1'): any {
   return {
     configManager: {
       getDaemonConfig: () => ({
         relay: {
           workspaceId: 'workspace-1',
+          runtimeTargetId,
           tokenIssuer: 'viewport-server',
           tokenAudience: 'viewport-relay',
           signingKeys: { v1: TEST_SIGNING_KEY },
@@ -44,7 +45,11 @@ function createDaemon(): any {
   };
 }
 
-function capabilityToken(purpose: string, planId = 'plan-1'): string {
+function capabilityToken(
+  purpose: string,
+  planId = 'plan-1',
+  extraClaims: Record<string, unknown> = {},
+): string {
   const header = Buffer.from(
     JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: 'v1' }),
     'utf8',
@@ -63,6 +68,7 @@ function capabilityToken(purpose: string, planId = 'plan-1'): string {
       iat: now,
       exp: now + 60,
       jti: crypto.randomUUID(),
+      ...extraClaims,
     }),
     'utf8',
   ).toString('base64url');
@@ -74,6 +80,10 @@ function capabilityToken(purpose: string, planId = 'plan-1'): string {
 }
 
 describe('trusted-edge-plan-decrypt websocket command', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('rejects decrypt requests without a scoped command capability', async () => {
     const sendAck = vi.fn();
     const handlers = createWsCommandHandlers({
@@ -165,6 +175,47 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
         bodySha256: 'sha256:plaintext',
         keyRef: 'trusted-edge-plan-key',
       }),
+    );
+  });
+
+  it('rejects capabilities unlocked for a different runtime target', async () => {
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon('runtime-target-1'),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-plan-decrypt'](createClient(), {
+      type: 'trusted-edge-plan-decrypt',
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      bodyEncryption: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:ciphertext',
+        aad: {},
+      },
+      capabilityToken: capabilityToken('trusted-edge-plan-decrypt', 'plan-1', {
+        runtimeTargetId: 'runtime-target-2',
+      }),
+      requestId: 'plan-decrypt-target-mismatch',
+    });
+
+    expect(decryptTrustedEdgePlanBody).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'plan-decrypt-target-mismatch',
+      'error',
+      'Trusted-edge command capability runtimeTargetId mismatch.',
+      { errorCode: 'INVALID_INPUT' },
     );
   });
 
