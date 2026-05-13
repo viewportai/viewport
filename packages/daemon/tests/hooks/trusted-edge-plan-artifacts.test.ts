@@ -8,6 +8,11 @@ import {
   saveTrustedEdgePlanDraft,
   wrapTrustedEdgePlanBodyKey,
 } from '../../src/hooks/trusted-edge-plan-artifacts.js';
+import {
+  createLocalUserEpochKeyMaterial,
+  upsertLocalUserEpoch,
+} from '../../src/security/epoch-store.js';
+import { epochFingerprint } from '../../src/security/epoch-protocol.js';
 
 describe('trusted-edge plan artifacts', () => {
   it('encrypts plan hook bodies before upload and decrypts only with the local edge key', async () => {
@@ -137,6 +142,98 @@ describe('trusted-edge plan artifacts', () => {
       bodyKeyGrants: grants,
     });
     expect(decrypted.body).toContain('Only recipient daemon should unwrap this.');
+
+    await fs.rm(ownerHome, { recursive: true, force: true });
+    await fs.rm(recipientHome, { recursive: true, force: true });
+  });
+
+  it('wraps trusted-edge plan keys to recipient user epochs', async () => {
+    const ownerHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-plan-epoch-owner-'));
+    const recipientHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-plan-epoch-recipient-'));
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: { id: 'plan-trusted-edge-epoch' } }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      });
+
+    const target = {
+      workspaceId: 'workspace-1',
+      serverUrl: 'https://api.getviewport.test',
+      credential: 'issue-token',
+    };
+    const saved = await saveTrustedEdgePlanDraft({
+      home: ownerHome,
+      fetchImpl: fetchImpl as any,
+      target,
+      event: {
+        sessionId: 'session-epoch',
+        adapter: 'claude',
+        title: 'Epoch shared plan',
+        summary: 'Recipient user epoch decrypts locally.',
+        body: '## Epoch Plan\nPlan sharing uses user epoch private material.',
+        source: 'claude',
+        sourceRef: 'agent-hook:session-epoch',
+        metadata: {},
+      },
+    });
+    const material = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '42',
+      epoch: 1,
+    });
+    const fingerprint = epochFingerprint(material.descriptor);
+    await upsertLocalUserEpoch(
+      {
+        workspaceId: 'workspace-1',
+        userId: '42',
+        platformEpochId: 'user_epoch_42_1',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        status: 'active',
+        encryptionPublicKeyJwk: material.descriptor.encryptionPublicKeyJwk,
+        encryptionPrivateKeyJwk: material.encryptionPrivateKeyJwk,
+        signingPublicKeyJwk: material.descriptor.signingPublicKeyJwk,
+        signingPrivateKeyJwk: material.signingPrivateKeyJwk,
+        fingerprint,
+        previousEpochFingerprint: null,
+      },
+      recipientHome,
+    );
+
+    const grants = await wrapTrustedEdgePlanBodyKey({
+      home: ownerHome,
+      workspaceId: 'workspace-1',
+      planId: saved.planId,
+      sourceRef: saved.sourceRef,
+      envelope: saved.envelope,
+      recipients: [
+        {
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: 'user_epoch_42_1',
+          recipient_fingerprint: fingerprint,
+          encryption_public_key_jwk: material.descriptor.encryptionPublicKeyJwk,
+        },
+      ],
+    });
+
+    expect(grants).toHaveLength(1);
+    expect(grants[0]).toMatchObject({
+      schema: 'viewport.plan_body_key_grant/v2',
+      recipient_type: 'user_epoch',
+      recipient_epoch_id: 'user_epoch_42_1',
+      recipient_fingerprint: fingerprint,
+    });
+    expect(JSON.stringify(grants)).not.toContain('Epoch Plan');
+
+    const decrypted = await decryptTrustedEdgePlanBody({
+      home: recipientHome,
+      workspaceId: 'workspace-1',
+      planId: saved.planId,
+      sourceRef: saved.sourceRef,
+      envelope: saved.envelope,
+      bodyKeyGrants: grants,
+    });
+    expect(decrypted.body).toContain('Plan sharing uses user epoch private material.');
 
     await fs.rm(ownerHome, { recursive: true, force: true });
     await fs.rm(recipientHome, { recursive: true, force: true });

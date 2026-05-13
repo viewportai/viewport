@@ -14,6 +14,8 @@ import {
   decryptTrustedEdgePlanBody,
   decryptTrustedEdgePlanFeedbackField,
   encryptTrustedEdgePlanFeedbackField,
+  type TrustedEdgePlanAnyBodyKeyGrant,
+  type TrustedEdgePlanGrantRecipient,
   wrapTrustedEdgePlanBodyKey,
 } from '../hooks/trusted-edge-plan-artifacts.js';
 import {
@@ -281,7 +283,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
         });
         sendAck(client, msg.requestId, 'ok', undefined, {
           planId: msg.planId,
@@ -314,7 +316,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
           text: msg.text,
           aad: msg.aad,
         });
@@ -348,7 +350,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           sourceRef: msg.sourceRef,
           bodyEnvelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
           fieldEnvelope: { ...msg.fieldEncryption, aad: msg.fieldEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
         });
         sendAck(client, msg.requestId, 'ok', undefined, {
           planId: msg.planId,
@@ -379,8 +381,8 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
-          recipients: msg.recipients,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
+          recipients: msg.recipients as TrustedEdgePlanGrantRecipient[],
         });
         sendAck(client, msg.requestId, 'ok', undefined, {
           planId: msg.planId,
