@@ -7,6 +7,8 @@ import {
   type LocalTeamCryptoEpoch,
 } from './epoch-store.js';
 import {
+  signTeamEpochMemberMaterialization,
+  teamEpochMemberMaterializationPayload,
   TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
   TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
   unwrapJsonFromX25519Envelope,
@@ -139,7 +141,21 @@ export async function acceptTeamEpochMemberGrants(options: {
       `${runtimeBaseUrl(options.target)}/crypto/team-epoch-member-grants/${encodeURIComponent(
         grant.id,
       )}/materialized`,
-      { credential: options.target.credential },
+      {
+        credential: options.target.credential,
+        receipt: signTeamEpochMemberMaterialization({
+          payload: teamEpochMemberMaterializationPayload({
+            workspaceId: material.workspaceId,
+            grantId: grant.id,
+            teamCryptoEpochId: material.platformEpochId,
+            teamEpochFingerprint: material.fingerprint,
+            recipientUserCryptoEpochId: grant.recipient_user_crypto_epoch_id,
+            recipientUserEpochFingerprint: localUserEpoch.fingerprint,
+          }),
+          signingPrivateKeyJwk: material.signingPrivateKeyJwk,
+          signedByTeamEpochFingerprint: material.fingerprint,
+        }),
+      },
       options.target,
     );
     teamEpochs.push(teamEpoch);

@@ -121,6 +121,20 @@ describe('team epoch member grants', () => {
           init?.method === 'POST' &&
           url.endsWith('/crypto/team-epoch-member-grants/team-grant-1/materialized')
         ) {
+          const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+          expect(body.receipt).toMatchObject({
+            payload: {
+              schema: 'viewport.team_epoch_member_materialization/v1',
+              workspaceId: 'workspace-1',
+              grantId: 'team-grant-1',
+              teamCryptoEpochId: 'team-epoch-platform-1',
+              teamEpochFingerprint: 'sha256:team-epoch',
+              recipientUserCryptoEpochId: 'user-epoch-platform-1',
+              recipientUserEpochFingerprint: epochFingerprint(userMaterial.descriptor),
+            },
+            signature: expect.any(String),
+            signedByTeamEpochFingerprint: 'sha256:team-epoch',
+          });
           return responseJson({ ok: true, data: grantPayload });
         }
 

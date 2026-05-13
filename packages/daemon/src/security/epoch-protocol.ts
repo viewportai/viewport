@@ -60,6 +60,22 @@ export interface SignedUserEpochDeviceMaterialization {
   signedByUserEpochFingerprint: string;
 }
 
+export interface TeamEpochMemberMaterializationPayload {
+  schema: 'viewport.team_epoch_member_materialization/v1';
+  workspaceId: string;
+  grantId: string;
+  teamCryptoEpochId: string;
+  teamEpochFingerprint: string;
+  recipientUserCryptoEpochId: string;
+  recipientUserEpochFingerprint: string;
+}
+
+export interface SignedTeamEpochMemberMaterialization {
+  payload: TeamEpochMemberMaterializationPayload;
+  signature: string;
+  signedByTeamEpochFingerprint: string;
+}
+
 export interface SignedEpochTransition {
   payload: EpochTransitionPayload;
   signature: string;
@@ -202,6 +218,43 @@ export function signUserEpochDeviceMaterialization(input: {
       .sign(null, Buffer.from(canonicalJson(input.payload)), key)
       .toString('base64url'),
     signedByUserEpochFingerprint: input.signedByUserEpochFingerprint,
+  };
+}
+
+export function teamEpochMemberMaterializationPayload(input: {
+  workspaceId: string;
+  grantId: string;
+  teamCryptoEpochId: string;
+  teamEpochFingerprint: string;
+  recipientUserCryptoEpochId: string;
+  recipientUserEpochFingerprint: string;
+}): TeamEpochMemberMaterializationPayload {
+  return {
+    schema: 'viewport.team_epoch_member_materialization/v1',
+    workspaceId: input.workspaceId,
+    grantId: input.grantId,
+    teamCryptoEpochId: input.teamCryptoEpochId,
+    teamEpochFingerprint: input.teamEpochFingerprint,
+    recipientUserCryptoEpochId: input.recipientUserCryptoEpochId,
+    recipientUserEpochFingerprint: input.recipientUserEpochFingerprint,
+  };
+}
+
+export function signTeamEpochMemberMaterialization(input: {
+  payload: TeamEpochMemberMaterializationPayload;
+  signingPrivateKeyJwk: JsonValue;
+  signedByTeamEpochFingerprint: string;
+}): SignedTeamEpochMemberMaterialization {
+  const key = crypto.createPrivateKey({
+    key: input.signingPrivateKeyJwk as crypto.JsonWebKey,
+    format: 'jwk',
+  });
+  return {
+    payload: input.payload,
+    signature: crypto
+      .sign(null, Buffer.from(canonicalJson(input.payload)), key)
+      .toString('base64url'),
+    signedByTeamEpochFingerprint: input.signedByTeamEpochFingerprint,
   };
 }
 
