@@ -10,7 +10,9 @@ import {
   epochFingerprint,
   epochTransitionPayload,
   signEpochTransition,
+  unwrapJsonFromX25519Envelope,
   verifyEpochTransition,
+  wrapJsonForX25519Recipient,
   type EpochDescriptor,
   type JsonValue,
 } from '../../src/security/epoch-protocol.js';
@@ -150,10 +152,63 @@ describe('epoch protocol primitives', () => {
 
     expect(epochFingerprint(epoch)).toMatch(/^sha256:[A-Za-z0-9_-]+$/);
   });
+
+  it('wraps key material so only the recipient X25519 private key and matching AAD can unwrap it', () => {
+    const recipient = x25519Pair();
+    const other = x25519Pair();
+    const aad = {
+      schema: 'viewport.test_wrap_aad/v1',
+      workspaceId: 'workspace-1',
+      resourceId: 'vault-1',
+      recipient: 'bob',
+    };
+    const payload = {
+      schema: 'viewport.test_secret/v1',
+      secret: 'repo-key-material',
+    };
+
+    const envelope = wrapJsonForX25519Recipient({
+      recipientPublicKeyJwk: recipient.publicJwk,
+      payload,
+      aad,
+      createdAt: '2026-05-13T00:00:00.000Z',
+    });
+
+    expect(JSON.stringify(envelope)).not.toContain('repo-key-material');
+    expect(
+      unwrapJsonFromX25519Envelope({
+        recipientPrivateKeyJwk: recipient.privateJwk,
+        envelope,
+        aad,
+      }),
+    ).toEqual(payload);
+    expect(() =>
+      unwrapJsonFromX25519Envelope({
+        recipientPrivateKeyJwk: recipient.privateJwk,
+        envelope,
+        aad: { ...aad, recipient: 'mallory' },
+      }),
+    ).toThrow(/AAD mismatch/);
+    expect(() =>
+      unwrapJsonFromX25519Envelope({
+        recipientPrivateKeyJwk: other.privateJwk,
+        envelope,
+        aad,
+      }),
+    ).toThrow();
+  });
 });
 
 function ed25519Pair(): { publicJwk: JsonValue; privateJwk: JsonValue } {
   const pair = crypto.generateKeyPairSync('ed25519');
+  return {
+    publicJwk: pair.publicKey.export({ format: 'jwk' }) as JsonValue,
+    privateJwk: pair.privateKey.export({ format: 'jwk' }) as JsonValue,
+  };
+}
+
+function x25519Pair(): { publicJwk: JsonValue; privateJwk: JsonValue } {
+  const pair = crypto.generateKeyPairSync('x25519');
   return {
     publicJwk: pair.publicKey.export({ format: 'jwk' }) as JsonValue,
     privateJwk: pair.privateKey.export({ format: 'jwk' }) as JsonValue,
