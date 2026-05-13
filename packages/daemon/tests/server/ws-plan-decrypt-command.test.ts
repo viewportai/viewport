@@ -4,6 +4,7 @@ import type { ConnectedClient } from '../../src/server/hello-builder.js';
 
 vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
   decryptTrustedEdgePlanBody: vi.fn(),
+  decryptTrustedEdgePlanFeedbackField: vi.fn(),
   encryptTrustedEdgePlanFeedbackField: vi.fn(),
   wrapTrustedEdgePlanBodyKey: vi.fn(),
 }));
@@ -11,6 +12,7 @@ vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import {
   decryptTrustedEdgePlanBody,
+  decryptTrustedEdgePlanFeedbackField,
   encryptTrustedEdgePlanFeedbackField,
   wrapTrustedEdgePlanBodyKey,
 } from '../../src/hooks/trusted-edge-plan-artifacts.js';
@@ -265,6 +267,72 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
         field: expect.objectContaining({
           schema: 'viewport.plan_feedback_field_encrypted/v1',
           ciphertext: 'encrypted-comment',
+        }),
+      }),
+    );
+  });
+
+  it('decrypts review fields with the trusted-edge plan key', async () => {
+    const sendAck = vi.fn();
+    vi.mocked(decryptTrustedEdgePlanFeedbackField).mockResolvedValue({
+      text: 'Needs one more proof step.',
+      textSha256: 'sha256:comment',
+      keyRef: 'trusted-edge-plan-key',
+    });
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-plan-decrypt-field'](createClient(), {
+      type: 'trusted-edge-plan-decrypt-field',
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      bodyEncryption: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:ciphertext',
+        aad: {},
+      },
+      fieldEncryption: {
+        schema: 'viewport.plan_feedback_field_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'encrypted-comment',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:comment',
+        aad: { purpose: 'plan-feedback-body' },
+      },
+      capabilityToken: capabilityToken('trusted-edge-plan-decrypt-field'),
+      requestId: 'plan-decrypt-field-req',
+    });
+
+    expect(decryptTrustedEdgePlanFeedbackField).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      sourceRef: undefined,
+      bodyEnvelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      fieldEnvelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      bodyKeyGrants: undefined,
+    });
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'plan-decrypt-field-req',
+      'ok',
+      undefined,
+      expect.objectContaining({
+        field: expect.objectContaining({
+          text: 'Needs one more proof step.',
+          keyRef: 'trusted-edge-plan-key',
         }),
       }),
     );

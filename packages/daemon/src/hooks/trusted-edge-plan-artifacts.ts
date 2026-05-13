@@ -236,6 +236,42 @@ export async function encryptTrustedEdgePlanFeedbackField(options: {
   };
 }
 
+export async function decryptTrustedEdgePlanFeedbackField(options: {
+  workspaceId: string;
+  planId?: string;
+  sourceRef?: string;
+  bodyEnvelope: TrustedEdgePlanEnvelope;
+  fieldEnvelope: TrustedEdgePlanFeedbackEnvelope;
+  bodyKeyGrants?: TrustedEdgePlanBodyKeyGrant[];
+  home?: string;
+}): Promise<{ text: string; textSha256: string; keyRef: string }> {
+  const record = await resolveTrustedEdgePlanKey(
+    {
+      workspaceId: options.workspaceId,
+      planId: options.planId,
+      sourceRef: options.sourceRef,
+      keyRef: options.bodyEnvelope.key_ref,
+      bodyKeyGrants: options.bodyKeyGrants,
+    },
+    options.home,
+  );
+  if (!record) {
+    throw new Error('Trusted edge does not have the key for this plan.');
+  }
+  if (options.fieldEnvelope.schema !== 'viewport.plan_feedback_field_encrypted/v1') {
+    throw new Error(`Unsupported plan feedback schema: ${options.fieldEnvelope.schema}`);
+  }
+  if (options.fieldEnvelope.algorithm !== PLAN_BODY_ALGORITHM) {
+    throw new Error(`Unsupported plan feedback algorithm: ${options.fieldEnvelope.algorithm}`);
+  }
+  if (options.fieldEnvelope.key_ref !== options.bodyEnvelope.key_ref) {
+    throw new Error('Trusted-edge plan feedback key does not match this plan.');
+  }
+
+  const text = decryptAesGcmEnvelope(options.fieldEnvelope, Buffer.from(record.rawKey, 'base64'));
+  return { text, textSha256: digestText(text), keyRef: record.keyRef };
+}
+
 export async function publishTrustedEdgePlanWrappingKey(options: {
   target: TrustedEdgePlanSyncTarget;
   home?: string;
@@ -488,6 +524,13 @@ function decryptEnvelope(envelope: TrustedEdgePlanEnvelope, rawKey: Buffer): str
   if (!envelope.tag) {
     throw new Error('Trusted-edge plan envelope is missing an authentication tag.');
   }
+  return decryptAesGcmEnvelope(envelope, rawKey);
+}
+
+function decryptAesGcmEnvelope(
+  envelope: Pick<TrustedEdgePlanEnvelope, 'iv' | 'ciphertext' | 'tag' | 'aad'>,
+  rawKey: Buffer,
+): string {
   const decipher = crypto.createDecipheriv(
     'aes-256-gcm',
     rawKey,

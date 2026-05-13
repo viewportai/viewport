@@ -332,6 +332,27 @@ export const TrustedEdgePlanEncryptFieldSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const TrustedEdgePlanDecryptFieldSchema = z.object({
+  type: z.literal('trusted-edge-plan-decrypt-field'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: TrustedEdgePlanDecryptSchema.shape.bodyEncryption,
+  bodyKeyGrants: TrustedEdgePlanDecryptSchema.shape.bodyKeyGrants,
+  fieldEncryption: z.object({
+    schema: z.literal('viewport.plan_feedback_field_encrypted/v1'),
+    algorithm: z.literal('AES-GCM-256'),
+    key_ref: z.string().min(1).max(256),
+    ciphertext: z.string().min(1),
+    iv: z.string().min(1),
+    tag: z.string().min(1),
+    digest: z.string().min(1).max(256),
+    aad: z.record(z.string(), z.unknown()).optional(),
+  }),
+  capabilityToken: TrustedEdgePlanDecryptSchema.shape.capabilityToken,
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const TrustedEdgePlanWrapKeySchema = z.object({
   type: z.literal('trusted-edge-plan-wrap-key'),
   workspaceId: z.string().min(1).max(256),
@@ -383,6 +404,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   RespondHookPermissionSchema,
   GetHookPlanDraftSchema,
   TrustedEdgePlanDecryptSchema,
+  TrustedEdgePlanDecryptFieldSchema,
   TrustedEdgePlanEncryptFieldSchema,
   TrustedEdgePlanWrapKeySchema,
 ]);

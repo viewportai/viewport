@@ -20,6 +20,7 @@ export const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
   'read-session-messages': { maxTokens: 20, refillRate: 0.5 },
   'context-candidate-preview': { maxTokens: 20, refillRate: 0.5 },
   'trusted-edge-plan-decrypt': { maxTokens: 20, refillRate: 0.5 },
+  'trusted-edge-plan-decrypt-field': { maxTokens: 80, refillRate: 2.0 },
   'trusted-edge-plan-encrypt-field': { maxTokens: 40, refillRate: 1.0 },
   'trusted-edge-plan-wrap-key': { maxTokens: 20, refillRate: 0.5 },
   resume: { maxTokens: 3, refillRate: 0.05 },

@@ -11,6 +11,7 @@ import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 import {
   decryptTrustedEdgePlanBody,
+  decryptTrustedEdgePlanFeedbackField,
   encryptTrustedEdgePlanFeedbackField,
   wrapTrustedEdgePlanBodyKey,
 } from '../hooks/trusted-edge-plan-artifacts.js';
@@ -294,6 +295,38 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           msg.requestId,
           'error',
           error instanceof Error ? error.message : 'Trusted-edge plan feedback encryption failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-decrypt-field': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-decrypt-field',
+          planId: msg.planId,
+        });
+        const field = await decryptTrustedEdgePlanFeedbackField({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          bodyEnvelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          fieldEnvelope: { ...msg.fieldEncryption, aad: msg.fieldEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          field,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan feedback decryption failed',
           { errorCode: ErrorCodes.INVALID_INPUT },
         );
       }
