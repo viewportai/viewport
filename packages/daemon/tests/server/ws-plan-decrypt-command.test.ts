@@ -4,12 +4,14 @@ import type { ConnectedClient } from '../../src/server/hello-builder.js';
 vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
   decryptTrustedEdgePlanBody: vi.fn(),
   encryptTrustedEdgePlanFeedbackField: vi.fn(),
+  wrapTrustedEdgePlanBodyKey: vi.fn(),
 }));
 
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import {
   decryptTrustedEdgePlanBody,
   encryptTrustedEdgePlanFeedbackField,
+  wrapTrustedEdgePlanBodyKey,
 } from '../../src/hooks/trusted-edge-plan-artifacts.js';
 
 function createClient(): ConnectedClient {
@@ -61,6 +63,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       planId: 'plan-1',
       sourceRef: 'agent-hook:session-1',
       envelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      bodyKeyGrants: undefined,
     });
     expect(sendAck).toHaveBeenCalledWith(
       expect.any(Object),
@@ -161,6 +164,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       planId: 'plan-1',
       sourceRef: undefined,
       envelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      bodyKeyGrants: undefined,
       text: 'Needs one more proof step.',
       aad: { purpose: 'plan-feedback-body' },
     });
@@ -174,6 +178,81 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
           schema: 'viewport.plan_feedback_field_encrypted/v1',
           ciphertext: 'encrypted-comment',
         }),
+      }),
+    );
+  });
+
+  it('wraps trusted-edge plan body keys for share recipients', async () => {
+    const sendAck = vi.fn();
+    vi.mocked(wrapTrustedEdgePlanBodyKey).mockResolvedValue([
+      {
+        schema: 'viewport.plan_body_key_grant/v1',
+        algorithm: 'RSA-OAEP-256',
+        recipient_user_id: 42,
+        recipient_key_id: 'recipient-key',
+        key_ref: 'trusted-edge-plan-key',
+        encrypted_key: 'wrapped-key',
+      },
+    ]);
+    const handlers = createWsCommandHandlers({
+      daemon: {} as any,
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-plan-wrap-key'](createClient(), {
+      type: 'trusted-edge-plan-wrap-key',
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      bodyEncryption: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:ciphertext',
+        aad: {},
+      },
+      recipients: [
+        {
+          user_id: 42,
+          key_id: 'recipient-key',
+          public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
+        },
+      ],
+      requestId: 'plan-wrap-key-req',
+    });
+
+    expect(wrapTrustedEdgePlanBodyKey).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      sourceRef: undefined,
+      envelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      bodyKeyGrants: undefined,
+      recipients: [
+        {
+          user_id: 42,
+          key_id: 'recipient-key',
+          public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
+        },
+      ],
+    });
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'plan-wrap-key-req',
+      'ok',
+      undefined,
+      expect.objectContaining({
+        bodyKeyGrants: [
+          expect.objectContaining({
+            recipient_user_id: 42,
+            encrypted_key: 'wrapped-key',
+          }),
+        ],
       }),
     );
   });

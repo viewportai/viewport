@@ -12,6 +12,7 @@ import { previewContextCandidateForTrustedEdge } from './context-preview-service
 import {
   decryptTrustedEdgePlanBody,
   encryptTrustedEdgePlanFeedbackField,
+  wrapTrustedEdgePlanBodyKey,
 } from '../hooks/trusted-edge-plan-artifacts.js';
 import {
   resolveSessionResourceManifestSync,
@@ -230,6 +231,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
         });
         sendAck(client, msg.requestId, 'ok', undefined, {
           planId: msg.planId,
@@ -256,6 +258,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
           text: msg.text,
           aad: msg.aad,
         });
@@ -270,6 +273,32 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           msg.requestId,
           'error',
           error instanceof Error ? error.message : 'Trusted-edge plan feedback encryption failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-wrap-key': async (client, msg) => {
+      try {
+        const bodyKeyGrants = await wrapTrustedEdgePlanBodyKey({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants,
+          recipients: msg.recipients,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          bodyKeyGrants,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan key wrap failed',
           { errorCode: ErrorCodes.INVALID_INPUT },
         );
       }
