@@ -52,6 +52,7 @@ export async function ensureUserCryptoEpoch(options: {
     {
       workspaceId: stringField(data, 'workspace_id'),
       userId: String(numberOrStringField(data, 'user_id')),
+      platformEpochId: stringField(data, 'id'),
       epoch: numberField(data, 'epoch'),
       schema: 'viewport.user_crypto_epoch/v1',
       status: 'active',
@@ -101,6 +102,7 @@ export async function ensureTeamCryptoEpoch(options: {
       workspaceId: stringField(data, 'workspace_id'),
       teamId: options.teamId,
       platformTeamId: String(numberOrStringField(data, 'team_id')),
+      platformEpochId: stringField(data, 'id'),
       epoch: numberField(data, 'epoch'),
       schema: 'viewport.team_crypto_epoch/v1',
       status: 'active',

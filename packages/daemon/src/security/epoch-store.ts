@@ -14,6 +14,7 @@ const STORE_SCHEMA = 'viewport.local_crypto_epochs/v1';
 export interface LocalUserCryptoEpoch {
   workspaceId: string;
   userId: string;
+  platformEpochId?: string | null;
   epoch: number;
   schema: typeof USER_EPOCH_SCHEMA;
   status: 'active' | 'superseded' | 'revoked';
@@ -31,6 +32,7 @@ export interface LocalTeamCryptoEpoch {
   workspaceId: string;
   teamId: string;
   platformTeamId?: string | null;
+  platformEpochId?: string | null;
   epoch: number;
   schema: typeof TEAM_EPOCH_SCHEMA;
   status: 'active' | 'superseded' | 'revoked';
@@ -44,10 +46,28 @@ export interface LocalTeamCryptoEpoch {
   updatedAt: string;
 }
 
+export interface LocalDeviceEnrollment {
+  workspaceId: string;
+  enrollmentId?: string | null;
+  userId?: string | null;
+  deviceId: string;
+  deviceLabel: string;
+  status: 'pending' | 'approved' | 'accepted' | 'revoked';
+  encryptionPublicKeyJwk: JsonValue;
+  encryptionPrivateKeyJwk: JsonValue;
+  signingPublicKeyJwk: JsonValue;
+  signingPrivateKeyJwk: JsonValue;
+  fingerprint: string;
+  nonce: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface LocalEpochStore {
   schema: typeof STORE_SCHEMA;
   userEpochs: LocalUserCryptoEpoch[];
   teamEpochs: LocalTeamCryptoEpoch[];
+  deviceEnrollments: LocalDeviceEnrollment[];
 }
 
 export async function getActiveLocalUserEpoch(
@@ -77,6 +97,22 @@ export async function getActiveLocalTeamEpoch(
           epoch.status === 'active',
       )
       .sort((a, b) => b.epoch - a.epoch)[0] ?? null
+  );
+}
+
+export async function getLocalDeviceEnrollment(
+  workspaceId: string,
+  enrollmentIdOrFingerprint: string,
+  home = configDir(),
+): Promise<LocalDeviceEnrollment | null> {
+  const store = await readLocalEpochStore(home);
+  return (
+    store.deviceEnrollments.find(
+      (enrollment) =>
+        enrollment.workspaceId === workspaceId &&
+        (enrollment.enrollmentId === enrollmentIdOrFingerprint ||
+          enrollment.fingerprint === enrollmentIdOrFingerprint),
+    ) ?? null
   );
 }
 
@@ -134,6 +170,30 @@ export async function upsertLocalTeamEpoch(
 
   const record: LocalTeamCryptoEpoch = { ...input, createdAt: now, updatedAt: now };
   store.teamEpochs.push(record);
+  await writeLocalEpochStore(store, home);
+  return record;
+}
+
+export async function upsertLocalDeviceEnrollment(
+  input: Omit<LocalDeviceEnrollment, 'createdAt' | 'updatedAt'>,
+  home = configDir(),
+): Promise<LocalDeviceEnrollment> {
+  const store = await readLocalEpochStore(home);
+  const now = new Date().toISOString();
+  const existing = store.deviceEnrollments.find(
+    (enrollment) =>
+      enrollment.workspaceId === input.workspaceId &&
+      (enrollment.fingerprint === input.fingerprint ||
+        (input.enrollmentId && enrollment.enrollmentId === input.enrollmentId)),
+  );
+  if (existing) {
+    Object.assign(existing, input, { updatedAt: now });
+    await writeLocalEpochStore(store, home);
+    return existing;
+  }
+
+  const record: LocalDeviceEnrollment = { ...input, createdAt: now, updatedAt: now };
+  store.deviceEnrollments.push(record);
   await writeLocalEpochStore(store, home);
   return record;
 }
@@ -200,6 +260,34 @@ export function createLocalTeamEpochKeyMaterial(input: {
   };
 }
 
+export function createLocalDeviceEnrollmentKeyMaterial(input: {
+  workspaceId: string;
+  deviceId: string;
+  deviceLabel: string;
+  nonce?: string;
+}): {
+  enrollment: Omit<
+    LocalDeviceEnrollment,
+    'enrollmentId' | 'userId' | 'fingerprint' | 'status' | 'createdAt' | 'updatedAt'
+  >;
+} {
+  const encryption = crypto.generateKeyPairSync('x25519');
+  const signing = crypto.generateKeyPairSync('ed25519');
+
+  return {
+    enrollment: {
+      workspaceId: input.workspaceId,
+      deviceId: input.deviceId,
+      deviceLabel: input.deviceLabel,
+      encryptionPublicKeyJwk: encryption.publicKey.export({ format: 'jwk' }) as JsonValue,
+      encryptionPrivateKeyJwk: encryption.privateKey.export({ format: 'jwk' }) as JsonValue,
+      signingPublicKeyJwk: signing.publicKey.export({ format: 'jwk' }) as JsonValue,
+      signingPrivateKeyJwk: signing.privateKey.export({ format: 'jwk' }) as JsonValue,
+      nonce: input.nonce ?? crypto.randomBytes(24).toString('base64url'),
+    },
+  };
+}
+
 async function readLocalEpochStore(home = configDir()): Promise<LocalEpochStore> {
   try {
     const raw = await fs.readFile(localEpochStorePath(home), 'utf8');
@@ -208,10 +296,11 @@ async function readLocalEpochStore(home = configDir()): Promise<LocalEpochStore>
       throw new Error('Invalid local crypto epoch store.');
     }
     if (!Array.isArray(parsed.teamEpochs)) parsed.teamEpochs = [];
+    if (!Array.isArray(parsed.deviceEnrollments)) parsed.deviceEnrollments = [];
     return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { schema: STORE_SCHEMA, userEpochs: [], teamEpochs: [] };
+      return { schema: STORE_SCHEMA, userEpochs: [], teamEpochs: [], deviceEnrollments: [] };
     }
     throw error;
   }

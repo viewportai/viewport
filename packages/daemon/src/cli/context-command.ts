@@ -27,6 +27,11 @@ import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-
 import { contextVaultUse } from './context-vault-use-command.js';
 import { contextCandidatePreview } from './context-candidate-preview-command.js';
 import { contextRulesInstall } from './context-rules-command.js';
+import {
+  acceptDeviceEpochEnrollment,
+  approveDeviceEpochEnrollment,
+  requestDeviceEpochEnrollment,
+} from '../security/epoch-enrollment.js';
 import { ensureTeamCryptoEpoch, ensureUserCryptoEpoch } from '../security/epoch-sync.js';
 import {
   contextDeviceAccept,
@@ -109,6 +114,18 @@ export async function context(): Promise<void> {
     await contextEpochPublish();
     return;
   }
+  if (subcommand === 'device-enroll-request') {
+    await contextDeviceEnrollRequest();
+    return;
+  }
+  if (subcommand === 'device-enroll-approve') {
+    await contextDeviceEnrollApprove();
+    return;
+  }
+  if (subcommand === 'device-enroll-accept') {
+    await contextDeviceEnrollAccept();
+    return;
+  }
   if (subcommand === 'grants-process') {
     await contextGrantsProcess();
     return;
@@ -165,7 +182,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|device-enroll-request|device-enroll-approve|device-enroll-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -473,6 +490,82 @@ async function contextEpochPublish(): Promise<void> {
 
   console.log(`${teamId ? 'Team' : 'User'} crypto epoch ready: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
+}
+
+async function contextDeviceEnrollRequest(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('device-enroll-request');
+  const deviceId = requiredFlag('device', 'vpd context device-enroll-request --device <id>');
+  const enrollment = await requestDeviceEpochEnrollment({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    deviceId,
+    deviceLabel: getFlag('label') ?? deviceId,
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context device-enroll-request', ok: true, enrollment });
+    return;
+  }
+
+  console.log(`Device enrollment requested: ${enrollment.enrollmentId}`);
+  console.log(`Fingerprint: ${enrollment.fingerprint}`);
+}
+
+async function contextDeviceEnrollApprove(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('device-enroll-approve');
+  const enrollment = await approveDeviceEpochEnrollment({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    enrollmentId: requiredFlag(
+      'enrollment',
+      'vpd context device-enroll-approve --enrollment <id>',
+    ),
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context device-enroll-approve', ok: true, enrollment });
+    return;
+  }
+
+  console.log(`Device enrollment approved: ${enrollment.id}`);
+  console.log(`Status: ${enrollment.status}`);
+}
+
+async function contextDeviceEnrollAccept(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('device-enroll-accept');
+  const epoch = await acceptDeviceEpochEnrollment({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    enrollmentId: requiredFlag('enrollment', 'vpd context device-enroll-accept --enrollment <id>'),
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context device-enroll-accept', ok: true, epoch });
+    return;
+  }
+
+  console.log(`Device enrollment accepted. User crypto epoch ready: ${epoch.fingerprint}`);
 }
 
 async function contextGrantsProcess(): Promise<void> {
