@@ -124,6 +124,20 @@
       "surfacedInCli": false
     },
     {
+      "type": "context-candidate-preview",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#ContextCandidatePreviewSchema",
+      "handler": "src/server/ws-command-handlers.ts#context-candidate-preview",
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-context-preview-command.test.ts",
+        "tests/server/rate-limiter.test.ts"
+      ],
+      "integrationTests": ["tests/server/ws-context-preview-command.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
       "type": "resume",
       "class": "stable",
       "schema": "src/server/ws-protocol.ts#ResumeSchema",
@@ -267,6 +281,48 @@
       "handler": "src/server/ws-command-handlers.ts#get-hook-plan-draft",
       "unitTests": ["tests/server/ws-protocol.test.ts", "tests/server/ws-command-handlers.test.ts"],
       "integrationTests": ["tests/e2e/protocol-discovery-hooks.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "trusted-edge-plan-decrypt",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#TrustedEdgePlanDecryptSchema",
+      "handler": "src/server/ws-command-handlers.ts#trusted-edge-plan-decrypt",
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-plan-decrypt-command.test.ts",
+        "tests/server/rate-limiter.test.ts"
+      ],
+      "integrationTests": ["tests/server/ws-plan-decrypt-command.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "trusted-edge-plan-encrypt-field",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#TrustedEdgePlanEncryptFieldSchema",
+      "handler": "src/server/ws-command-handlers.ts#trusted-edge-plan-encrypt-field",
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-plan-decrypt-command.test.ts",
+        "tests/server/rate-limiter.test.ts"
+      ],
+      "integrationTests": ["tests/server/ws-plan-decrypt-command.test.ts"],
+      "surfacedInUi": true,
+      "surfacedInCli": false
+    },
+    {
+      "type": "trusted-edge-plan-wrap-key",
+      "class": "experimental",
+      "schema": "src/server/ws-protocol.ts#TrustedEdgePlanWrapKeySchema",
+      "handler": "src/server/ws-command-handlers.ts#trusted-edge-plan-wrap-key",
+      "unitTests": [
+        "tests/server/ws-protocol.test.ts",
+        "tests/server/ws-plan-decrypt-command.test.ts",
+        "tests/server/rate-limiter.test.ts"
+      ],
+      "integrationTests": ["tests/server/ws-plan-decrypt-command.test.ts"],
       "surfacedInUi": true,
       "surfacedInCli": false
     }
