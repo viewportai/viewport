@@ -10,6 +10,10 @@ import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.
 import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 import {
+  decryptTrustedEdgePlanBody,
+  encryptTrustedEdgePlanFeedbackField,
+} from '../hooks/trusted-edge-plan-artifacts.js';
+import {
   resolveSessionResourceManifestSync,
   type SessionResourceManifest,
 } from '../config-resolution/index.js';
@@ -214,6 +218,58 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           msg.requestId,
           'error',
           error instanceof Error ? error.message : 'Context preview failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-decrypt': async (client, msg) => {
+      try {
+        const result = await decryptTrustedEdgePlanBody({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          body: result.body,
+          bodySha256: result.bodySha256,
+          keyRef: result.keyRef,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan decrypt failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-plan-encrypt-field': async (client, msg) => {
+      try {
+        const field = await encryptTrustedEdgePlanFeedbackField({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          text: msg.text,
+          aad: msg.aad,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          field,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan feedback encryption failed',
           { errorCode: ErrorCodes.INVALID_INPUT },
         );
       }

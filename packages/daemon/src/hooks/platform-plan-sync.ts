@@ -3,9 +3,11 @@ import { resolveConfiguredWorkspaceSyncTarget } from '../cli/context-sync-target
 import { resolveLocalOrgBindingSync } from '../cli/org-binding.js';
 import type { Daemon } from '../core/daemon.js';
 import type { DaemonEvents } from '../core/events.js';
+import { saveTrustedEdgePlanDraft } from './trusted-edge-plan-artifacts.js';
 
 type PlanProposedEvent = DaemonEvents['hook:plan-proposed'];
 type UrlOpener = (url: string) => void;
+type PlanSaver = typeof saveTrustedEdgePlanDraft;
 
 export interface PlatformPlanHookSyncResult {
   opened: boolean;
@@ -15,16 +17,24 @@ export interface PlatformPlanHookSyncResult {
 
 export class PlatformPlanHookSync {
   constructor(
-    private readonly daemon: Pick<Daemon, 'configManager' | 'createEphemeralPlanDraft'>,
+    private readonly daemon: Pick<Daemon, 'configManager'>,
     private readonly urlOpener: UrlOpener = openUrl,
+    private readonly planSaver: PlanSaver = saveTrustedEdgePlanDraft,
   ) {}
 
   async send(event: PlanProposedEvent): Promise<PlatformPlanHookSyncResult> {
     const target = this.targetFor(event);
     if (!target) return { opened: false, reason: 'missing_platform_target' };
 
-    const draft = this.daemon.createEphemeralPlanDraft(target.workspaceId, event);
-    const planUrl = buildDraftPlanUrl(target.appUrl, target.workspaceId, draft.draftId);
+    let planId: string;
+    try {
+      const saved = await this.planSaver({ event, target });
+      planId = saved.planId;
+    } catch {
+      return { opened: false, reason: 'trusted_edge_save_failed' };
+    }
+
+    const planUrl = buildSavedPlanUrl(target.appUrl, target.workspaceId, planId);
     try {
       this.urlOpener(planUrl);
     } catch {
@@ -34,7 +44,15 @@ export class PlatformPlanHookSync {
     return { opened: true, planUrl };
   }
 
-  private targetFor(event: PlanProposedEvent): { appUrl: string; workspaceId: string } | null {
+  private targetFor(event: PlanProposedEvent): {
+    appUrl: string;
+    workspaceId: string;
+    serverUrl: string;
+    credential: string;
+    tlsVerify?: 'auto' | '0' | '1';
+    caCertPath?: string;
+    tlsPins?: string[];
+  } | null {
     const daemonConfig = this.daemon.configManager.getDaemonConfig();
     if (!daemonConfig) return null;
 
@@ -50,14 +68,19 @@ export class PlatformPlanHookSync {
     return {
       appUrl: inferAppUrl(daemonConfig.server?.appUrl, target.serverUrl),
       workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
     };
   }
 }
 
-function buildDraftPlanUrl(appUrl: string, workspaceId: string, draftId: string): string {
+function buildSavedPlanUrl(appUrl: string, workspaceId: string, planId: string): string {
   const url = new URL('/plans', appUrl);
   url.searchParams.set('resource_id', workspaceId);
-  url.hash = `viewport-plan-draft=${encodeURIComponent(draftId)}`;
+  url.searchParams.set('plan_id', planId);
   return url.toString();
 }
 

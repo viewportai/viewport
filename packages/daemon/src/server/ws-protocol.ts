@@ -286,6 +286,35 @@ export const GetHookPlanDraftSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const TrustedEdgePlanDecryptSchema = z.object({
+  type: z.literal('trusted-edge-plan-decrypt'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: z.object({
+    schema: z.literal('viewport.plan_body_encrypted/v1'),
+    algorithm: z.literal('AES-GCM-256'),
+    key_ref: z.string().min(1).max(256),
+    ciphertext: z.string().min(1),
+    iv: z.string().min(1),
+    tag: z.string().min(1),
+    digest: z.string().min(1).max(256),
+    aad: z.record(z.string(), z.unknown()).optional(),
+  }),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const TrustedEdgePlanEncryptFieldSchema = z.object({
+  type: z.literal('trusted-edge-plan-encrypt-field'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: TrustedEdgePlanDecryptSchema.shape.bodyEncryption,
+  text: z.string().min(1).max(20000),
+  aad: z.record(z.string(), z.unknown()).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Discriminated union of all incoming messages
 // ---------------------------------------------------------------------------
@@ -315,6 +344,8 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   SuperviseSchema,
   RespondHookPermissionSchema,
   GetHookPlanDraftSchema,
+  TrustedEdgePlanDecryptSchema,
+  TrustedEdgePlanEncryptFieldSchema,
 ]);
 
 export type IncomingMessage = z.infer<typeof IncomingMessageSchema>;
