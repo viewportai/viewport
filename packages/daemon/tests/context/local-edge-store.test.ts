@@ -24,6 +24,11 @@ import {
   pushContextEvents,
 } from '../../src/context/local-edge-sync.js';
 import { contextMetadataPath } from '../../src/context/local-edge-paths.js';
+import {
+  createLocalTeamEpochKeyMaterial,
+  upsertLocalTeamEpoch,
+} from '../../src/security/epoch-store.js';
+import { epochFingerprint } from '../../src/security/epoch-protocol.js';
 
 describe('local trusted-edge context store', () => {
   let tempHome: string;
@@ -495,6 +500,196 @@ describe('local trusted-edge context store', () => {
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/revocations/pending',
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/push',
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/mark-revoked',
+      ]);
+    } finally {
+      await fs.rm(bobHome, { recursive: true, force: true });
+    }
+  });
+
+  it('emits and materializes context grants addressed to a team epoch', async () => {
+    const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-team-bob-'));
+    try {
+      await initContextResource({
+        contextResourceId: 'context-alpha',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        credentials,
+        keyStore: 'file',
+        home: tempHome,
+      });
+      await addContextEntry({
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Team-only context',
+        body: 'Shard routing decisions require tenant database isolation proof.',
+        credentials,
+        home: tempHome,
+      });
+      await initContextResource({
+        contextResourceId: 'bob-bootstrap',
+        userName: 'bob',
+        deviceName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        keyStore: 'file',
+        home: bobHome,
+      });
+
+      const teamMaterial = createLocalTeamEpochKeyMaterial({
+        workspaceId: 'workspace-alpha',
+        teamId: 'team-platform-1',
+        epoch: 1,
+      });
+      const teamFingerprint = epochFingerprint(teamMaterial.descriptor);
+      await upsertLocalTeamEpoch(
+        {
+          workspaceId: 'workspace-alpha',
+          teamId: 'team-platform-1',
+          platformTeamId: 'team-platform-1',
+          platformEpochId: 'team_epoch_1',
+          epoch: 1,
+          schema: 'viewport.team_crypto_epoch/v1',
+          status: 'active',
+          encryptionPublicKeyJwk: teamMaterial.descriptor.encryptionPublicKeyJwk,
+          encryptionPrivateKeyJwk: teamMaterial.encryptionPrivateKeyJwk,
+          signingPublicKeyJwk: teamMaterial.descriptor.signingPublicKeyJwk,
+          signingPrivateKeyJwk: teamMaterial.signingPrivateKeyJwk,
+          fingerprint: teamFingerprint,
+          previousEpochFingerprint: null,
+        },
+        bobHome,
+      );
+
+      const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
+      const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
+      let pushedEvents: unknown[] = [];
+
+      const result = await processPendingContextGrants({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+
+          if (String(url).endsWith('/grants/pending')) {
+            return jsonResponse({
+              grants: [
+                {
+                  id: 'cvcg_team_pending_1',
+                  context_resource_id: 'context-alpha',
+                  subject_type: 'team',
+                  subject_id: 'team-platform-1',
+                  recipient_identity: null,
+                  team_epoch: {
+                    id: 'team_epoch_1',
+                    team_id: 'team-platform-1',
+                    epoch: 1,
+                    fingerprint: teamFingerprint,
+                    encryption_public_key_jwk: teamMaterial.descriptor.encryptionPublicKeyJwk,
+                    signing_public_key_jwk: teamMaterial.descriptor.signingPublicKeyJwk,
+                  },
+                },
+              ],
+            });
+          }
+
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('member.granted');
+            expect(payload).toContain('team-epoch:team_epoch_1');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('Shard routing decisions');
+            pushedEvents = Array.isArray(body.events) ? body.events : [];
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+
+          if (String(url).endsWith('/grants/mark-emitted')) {
+            expect(body).toMatchObject({
+              credential: 'runtime-token',
+              crypto_grant_id: 'cvcg_team_pending_1',
+            });
+            expect(String(body.recipient_identity_name)).toContain('team-epoch:team_epoch_1');
+            return jsonResponse({ ok: true });
+          }
+
+          throw new Error(`Unexpected team grant sync URL: ${String(url)}`);
+        },
+      });
+
+      expect(result.emitted).toBe(1);
+      expect(result.missingIdentity).toBe(0);
+      expect(result.pushed).toBeGreaterThan(0);
+
+      await joinContextResource({
+        contextResourceId: 'context-alpha',
+        userName: 'bob',
+        deviceName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        keyStore: 'file',
+        home: bobHome,
+      });
+      importContextIdentity({ identity: aliceIdentity, home: bobHome });
+      importContextIdentity({ identity: aliceLaptopIdentity, home: bobHome });
+
+      const pull = await pullContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          if (String(url).endsWith('/events/pull')) {
+            return jsonResponse({
+              data: pushedEvents.map((event, index) => ({
+                id: index + 1,
+                received_at: `2026-05-13T05:20:0${index}.000Z`,
+                signed_event: event,
+              })),
+            });
+          }
+          if (String(url).endsWith('/grants/materialized')) {
+            expect(body.grant_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            return jsonResponse({ ok: true, materialized: 1 });
+          }
+          throw new Error(`Unexpected team pull URL: ${String(url)}`);
+        },
+      });
+
+      expect(pull.materializedGrants).toBe(1);
+
+      const bundle = await resolveContextBundle({
+        contextResourceId: 'context-alpha',
+        actorName: 'bob-vps',
+        query: 'tenant database isolation',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+      });
+      expect(bundle.items).toEqual([
+        expect.objectContaining({
+          title: 'Team-only context',
+          body: 'Shard routing decisions require tenant database isolation proof.',
+        }),
       ]);
     } finally {
       await fs.rm(bobHome, { recursive: true, force: true });

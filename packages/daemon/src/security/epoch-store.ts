@@ -100,6 +100,16 @@ export async function getActiveLocalTeamEpoch(
   );
 }
 
+export async function listActiveLocalTeamEpochs(
+  workspaceId: string,
+  home = configDir(),
+): Promise<LocalTeamCryptoEpoch[]> {
+  const store = await readLocalEpochStore(home);
+  return store.teamEpochs
+    .filter((epoch) => epoch.workspaceId === workspaceId && epoch.status === 'active')
+    .sort((a, b) => b.epoch - a.epoch);
+}
+
 export async function getLocalTeamEpochByPlatformId(
   workspaceId: string,
   platformEpochId: string,

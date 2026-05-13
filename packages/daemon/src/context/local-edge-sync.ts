@@ -11,10 +11,12 @@ import { verifyContextCandidateDecision } from './local-edge-decision-signature.
 import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
 import {
   exportContextIdentity,
+  grantContextHpkeRecipient,
   grantContextUser,
   importContextIdentity,
   revokeContextUser,
 } from './local-edge-store.js';
+import { listActiveLocalTeamEpochs } from '../security/epoch-store.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
@@ -128,13 +130,18 @@ export async function pullContextEvents(options: {
   );
   const records = extractPulledRecords(response);
   const events = records.map((record) => record.signedEvent);
+  const grantIdentities = await contextGrantIdentitiesForWorkspace({
+    workspaceId: options.workspaceId ?? options.contextResourceId,
+    home,
+  });
   const imported = await vault.importSyncEvents({
     repoId: metadata.repoId,
     events,
     actorName: options.actorName,
+    grantIdentities,
   });
   const materializedGrantEventIds = events
-    .filter((event) => isGrantEventForUser(event, metadata.userName))
+    .filter((event) => isGrantEventForRecipient(event, metadata.userName, grantIdentities))
     .map((event) => event.id);
   const materializedGrants =
     materializedGrantEventIds.length > 0
@@ -341,6 +348,58 @@ export async function processPendingContextGrants(options: {
 
   for (const grant of grants) {
     const record = objectValue(grant);
+    const teamEpoch = objectField(record, 'team_epoch', false);
+    if (teamEpoch) {
+      const teamEpochId = String(numberOrStringField(teamEpoch, 'id'));
+      const fingerprint = stringField(teamEpoch, 'fingerprint');
+      const encryptionPublicKeyJwk = objectField(teamEpoch, 'encryption_public_key_jwk');
+      const recipientName = contextTeamEpochRecipientName({ teamEpochId, fingerprint });
+      const result = await grantContextHpkeRecipient({
+        contextResourceId: options.contextResourceId,
+        actorName: options.actorName,
+        recipientName,
+        recipientHpkePublicKey: jwkPublicXToBase64(encryptionPublicKeyJwk),
+        credentials: options.credentials,
+        home: options.home,
+      });
+      const event = objectValue(result.event);
+      const grantEventId = stringField(event, 'id');
+      const grantPayload = objectField(event, 'grant', false);
+      const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
+
+      const pushResult = await pushContextEvents({
+        contextResourceId: options.contextResourceId,
+        workspaceId: options.workspaceId,
+        serverUrl: options.serverUrl,
+        credential: options.credential,
+        tlsVerify: options.tlsVerify,
+        caCertPath: options.caCertPath,
+        tlsPins: options.tlsPins,
+        home: options.home,
+        fetchImpl,
+      });
+      pushed += pushResult.accepted;
+
+      await postJson(
+        fetchImpl,
+        contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
+        {
+          credential: options.credential,
+          crypto_grant_id: stringField(record, 'id'),
+          grant_event_id: grantEventId,
+          recipient_identity_name: recipientName,
+          ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
+        },
+        {
+          tlsVerify: options.tlsVerify,
+          caCertPath: options.caCertPath,
+          tlsPins: options.tlsPins,
+        },
+      );
+      emitted++;
+      continue;
+    }
+
     const recipient = objectField(record, 'recipient_identity', false);
     if (!recipient) {
       missingIdentity++;
@@ -511,6 +570,37 @@ function contextGrantRotationReceipt(event: unknown): {
     event_id: stringField(object, 'id'),
     ...(recipientName ? { recipient_identity_name: recipientName } : {}),
   };
+}
+
+async function contextGrantIdentitiesForWorkspace(options: {
+  workspaceId: string;
+  home: string;
+}): Promise<Array<{ name: string; hpkePrivateKey: string }>> {
+  const teamEpochs = await listActiveLocalTeamEpochs(options.workspaceId, options.home);
+  return teamEpochs.map((epoch) => ({
+    name: contextTeamEpochRecipientName({
+      teamEpochId: epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
+      fingerprint: epoch.fingerprint,
+    }),
+    hpkePrivateKey: jwkPrivateDToBase64(objectValue(epoch.encryptionPrivateKeyJwk)),
+  }));
+}
+
+function contextTeamEpochRecipientName(input: {
+  teamEpochId: string;
+  fingerprint: string;
+}): string {
+  return `team-epoch:${input.teamEpochId}:${input.fingerprint}`;
+}
+
+function jwkPublicXToBase64(jwk: Record<string, unknown>): string {
+  const x = stringField(jwk, 'x');
+  return Buffer.from(x, 'base64url').toString('base64');
+}
+
+function jwkPrivateDToBase64(jwk: Record<string, unknown>): string {
+  const d = stringField(jwk, 'd');
+  return Buffer.from(d, 'base64url').toString('base64');
 }
 
 function contextRuntimeUrl(
@@ -710,11 +800,19 @@ function extractPulledCandidateDecisions(
   });
 }
 
-function isGrantEventForUser(event: ContextSyncEvent, userName: string): boolean {
+function isGrantEventForRecipient(
+  event: ContextSyncEvent,
+  userName: string,
+  grantIdentities: Array<{ name: string }>,
+): boolean {
   if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return false;
   const grant = (event as { grant?: unknown }).grant;
   if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return false;
-  return (grant as Record<string, unknown>).recipientName === userName;
+  const recipientName = (grant as Record<string, unknown>).recipientName;
+  return (
+    recipientName === userName ||
+    grantIdentities.some((identity) => recipientName === identity.name)
+  );
 }
 
 function latestReceivedAt(
@@ -744,6 +842,15 @@ function numberField(response: unknown, field: string, required = true): number 
   }
   if (typeof value !== 'number') {
     throw new Error(`Context sync response ${field} must be a number`);
+  }
+  return value;
+}
+
+function numberOrStringField(response: unknown, field: string): number | string {
+  const object = objectValue(response);
+  const value = object[field];
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    throw new Error(`Context sync response ${field} must be a number or string`);
   }
   return value;
 }

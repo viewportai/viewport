@@ -286,6 +286,10 @@ class ContextVault {
     return membership.grantRepoHpke(this, { repoId, actorName, recipientName });
   }
 
+  grantRepoHpkeRecipient({ repoId, actorName, recipient }) {
+    return membership.grantRepoHpkeRecipient(this, { repoId, actorName, recipient });
+  }
+
   revokeRepo({ repoId, actorName, recipientName }) {
     return membership.revokeRepo(this, { repoId, actorName, recipientName });
   }
@@ -310,8 +314,8 @@ class ContextVault {
     return sync.importSyncAsync(this, { repoId, inDir, actorName });
   }
 
-  importSyncEvents({ repoId, events, actorName }) {
-    return sync.importSyncEvents(this, { repoId, events, actorName });
+  importSyncEvents({ repoId, events, actorName, grantIdentities = [] }) {
+    return sync.importSyncEvents(this, { repoId, events, actorName, grantIdentities });
   }
 
   writeProfile({ repoId, name, profile }) {
@@ -339,7 +343,7 @@ class ContextVault {
     });
   }
 
-  async materializeHpke({ repoId, actorName }) {
+  async materializeHpke({ repoId, actorName, grantIdentities = [] }) {
     const paths = repoPaths(this.home, repoId);
     ensureDir(paths.root);
     const metadata = readJson(paths.metadata, { repoId, erasedActors: {} });
@@ -353,6 +357,7 @@ class ContextVault {
       actorName,
       identity: this.getIdentity(actorName),
       publicKeys: this.loadPublicKeys(),
+      grantIdentities,
     });
   }
 

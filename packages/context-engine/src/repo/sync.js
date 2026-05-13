@@ -81,7 +81,7 @@ function listSyncEvents(home, { repoId }) {
     .filter((event) => event.visibility !== 'private');
 }
 
-async function importSyncEvents(vault, { repoId, events, actorName }) {
+async function importSyncEvents(vault, { repoId, events, actorName, grantIdentities = [] }) {
   const paths = repoPaths(vault.home, repoId);
   ensureDir(paths.eventsDir);
 
@@ -106,7 +106,7 @@ async function importSyncEvents(vault, { repoId, events, actorName }) {
 
   ensureMetadataFromEvents(paths, repoId, events.map((event) => ({ event })));
 
-  const materialized = await vault.materializeHpke({ repoId, actorName });
+  const materialized = await vault.materializeHpke({ repoId, actorName, grantIdentities });
 
   return {
     imported,
@@ -137,7 +137,7 @@ function importSync(vault, { repoId, inDir, actorName }) {
   return vault.materialize({ repoId, actorName });
 }
 
-async function importSyncAsync(vault, { repoId, inDir, actorName }) {
+async function importSyncAsync(vault, { repoId, inDir, actorName, grantIdentities = [] }) {
   const paths = repoPaths(vault.home, repoId);
   ensureDir(paths.eventsDir);
   const events = listJsonFiles(inDir).map((eventFile) => ({
@@ -157,7 +157,7 @@ async function importSyncAsync(vault, { repoId, inDir, actorName }) {
   }
   ensureMetadataFromEvents(paths, repoId, events);
 
-  return vault.materializeHpke({ repoId, actorName });
+  return vault.materializeHpke({ repoId, actorName, grantIdentities });
 }
 
 module.exports = { exportSync, importSync, importSyncAsync, importSyncEvents, listSyncEvents };
