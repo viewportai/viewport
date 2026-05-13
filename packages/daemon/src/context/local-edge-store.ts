@@ -29,6 +29,7 @@ import {
   type ContextResourceRecord,
   type ContextScope,
   type ContextStoredEntry,
+  type ContextSyncEvent,
 } from './local-edge-types.js';
 
 export type {
@@ -212,6 +213,43 @@ export async function grantContextUser(options: {
   });
   await touchContextMetadata(metadata, home);
   return { event, repoId: metadata.repoId };
+}
+
+export async function revokeContextUser(options: {
+  contextResourceId: string;
+  actorName: string;
+  recipientName: string;
+  credentials: ContextCredentials;
+  home?: string;
+}): Promise<{
+  revokeEvent: ContextSyncEvent;
+  rotateEvents: ContextSyncEvent[];
+  repoId: string;
+}> {
+  const home = options.home ?? configDir();
+  const metadata = await readContextMetadata(options.contextResourceId, home);
+  const vault = createVault(home, metadata.keyStore);
+  assertCredentialsOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials: options.credentials,
+  });
+  await ensureUserOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials: options.credentials,
+  });
+  const result = await vault.revokeRepoHpke({
+    repoId: metadata.repoId,
+    actorName: options.actorName,
+    recipientName: options.recipientName,
+  });
+  await touchContextMetadata(metadata, home);
+  return {
+    revokeEvent: result.revokeEvent,
+    rotateEvents: result.rotateEvents,
+    repoId: metadata.repoId,
+  };
 }
 
 export async function readContextStatus(options: {

@@ -11,6 +11,7 @@ import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
 import {
   processPendingContextGrants,
+  processPendingContextRevocations,
   publishContextPublicIdentity,
   pullContextEvents,
   pushContextEvents,
@@ -101,6 +102,10 @@ export async function context(): Promise<void> {
     await contextGrantsProcess();
     return;
   }
+  if (subcommand === 'revokes-process') {
+    await contextRevokesProcess();
+    return;
+  }
   if (subcommand === 'decisions') {
     await contextDecisions();
     return;
@@ -149,7 +154,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|identity-publish|grants-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|identity-publish|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -353,6 +358,32 @@ async function contextGrantsProcess(): Promise<void> {
   }
 
   console.log(`Context grants emitted: ${result.emitted}`);
+  if (result.missingIdentity > 0) {
+    console.log(`Missing recipient identities: ${result.missingIdentity}`);
+  }
+}
+
+async function contextRevokesProcess(): Promise<void> {
+  const target = await resolveContextSyncTarget('revokes-process');
+  const result = await processPendingContextRevocations({
+    contextResourceId: target.contextResourceId,
+    workspaceId: target.workspaceId,
+    serverUrl: target.serverUrl,
+    credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
+    actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
+    credentials: readCredentials(),
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context revokes-process', ok: true, ...result });
+    return;
+  }
+
+  console.log(`Context revocations processed: ${result.revoked}`);
   if (result.missingIdentity > 0) {
     console.log(`Missing recipient identities: ${result.missingIdentity}`);
   }

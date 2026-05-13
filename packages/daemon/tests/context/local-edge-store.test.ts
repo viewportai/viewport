@@ -19,6 +19,7 @@ import {
 import { proposeContextEntry } from '../../src/context/local-edge-candidates.js';
 import {
   processPendingContextGrants,
+  processPendingContextRevocations,
   pullContextEvents,
   pushContextEvents,
 } from '../../src/context/local-edge-sync.js';
@@ -427,6 +428,67 @@ describe('local trusted-edge context store', () => {
       });
 
       expect(pull.materializedGrants).toBe(1);
+
+      const revokeCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const revokeResult = await processPendingContextRevocations({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          revokeCalls.push({ url: String(url), body });
+
+          if (String(url).endsWith('/grants/revocations/pending')) {
+            return jsonResponse({
+              revocations: [
+                {
+                  id: 'cvcg_pending_1',
+                  context_resource_id: 'context-alpha',
+                  recipient_identity_name: 'bob',
+                },
+              ],
+            });
+          }
+
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('member.revoked');
+            expect(payload).toContain('key.rotated');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('bob-passphrase');
+            expect(payload).not.toContain('correct horse battery staple');
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+
+          if (String(url).endsWith('/grants/mark-revoked')) {
+            expect(body).toMatchObject({
+              credential: 'runtime-token',
+              crypto_grant_id: 'cvcg_pending_1',
+            });
+            expect(typeof body.revoke_event_id).toBe('string');
+            expect(body.rotation_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            expect(typeof body.key_epoch).toBe('number');
+            return jsonResponse({ ok: true });
+          }
+
+          throw new Error(`Unexpected revoke sync URL: ${String(url)}`);
+        },
+      });
+
+      expect(revokeResult.revoked).toBe(1);
+      expect(revokeResult.pushed).toBeGreaterThan(0);
+      expect(revokeCalls.map((call) => call.url)).toEqual([
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/revocations/pending',
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/push',
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/mark-revoked',
+      ]);
     } finally {
       await fs.rm(bobHome, { recursive: true, force: true });
     }

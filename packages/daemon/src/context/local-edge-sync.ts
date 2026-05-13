@@ -13,6 +13,7 @@ import {
   exportContextIdentity,
   grantContextUser,
   importContextIdentity,
+  revokeContextUser,
 } from './local-edge-store.js';
 import type {
   ContextCandidateDecisionPullRecord,
@@ -381,6 +382,7 @@ export async function processPendingContextGrants(options: {
         credential: options.credential,
         crypto_grant_id: stringField(record, 'id'),
         grant_event_id: grantEventId,
+        recipient_identity_name: recipientName,
         ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
       },
       {
@@ -393,6 +395,107 @@ export async function processPendingContextGrants(options: {
   }
 
   return { emitted, missingIdentity, pushed };
+}
+
+export async function processPendingContextRevocations(options: {
+  contextResourceId: string;
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  actorName: string;
+  credentials: ContextCredentials;
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ revoked: number; missingIdentity: number; pushed: number }> {
+  const fetchImpl = options.fetchImpl ?? transportFetch;
+  const response = await postJson(
+    fetchImpl,
+    contextPendingRevocationsUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  const revocations = arrayField(response, 'revocations');
+  let revoked = 0;
+  let missingIdentity = 0;
+  let pushed = 0;
+
+  for (const revocation of revocations) {
+    const record = objectValue(revocation);
+    const recipient = objectField(record, 'recipient_identity', false);
+    const recipientName =
+      nullableStringField(record, 'recipient_identity_name') ??
+      (recipient ? nullableStringField(recipient, 'name') : null);
+    if (!recipientName) {
+      missingIdentity++;
+      continue;
+    }
+
+    const result = await revokeContextUser({
+      contextResourceId: options.contextResourceId,
+      actorName: options.actorName,
+      recipientName,
+      credentials: options.credentials,
+      home: options.home,
+    });
+    const revokeEventId = stringField(objectValue(result.revokeEvent), 'id');
+    const rotationEventIds = result.rotateEvents.map((event) =>
+      stringField(objectValue(event), 'id'),
+    );
+    const maxKeyEpoch = maxEventEpoch([result.revokeEvent, ...result.rotateEvents]);
+
+    const pushResult = await pushContextEvents({
+      contextResourceId: options.contextResourceId,
+      workspaceId: options.workspaceId,
+      serverUrl: options.serverUrl,
+      credential: options.credential,
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+      home: options.home,
+      fetchImpl,
+    });
+    pushed += pushResult.accepted;
+
+    await postJson(
+      fetchImpl,
+      contextMarkRevokedUrl(options.serverUrl, options.workspaceId),
+      {
+        credential: options.credential,
+        crypto_grant_id: stringField(record, 'id'),
+        revoke_event_id: revokeEventId,
+        rotation_event_ids: rotationEventIds,
+        ...(maxKeyEpoch !== null ? { key_epoch: maxKeyEpoch } : {}),
+      },
+      {
+        tlsVerify: options.tlsVerify,
+        caCertPath: options.caCertPath,
+        tlsPins: options.tlsPins,
+      },
+    );
+    revoked++;
+  }
+
+  return { revoked, missingIdentity, pushed };
+}
+
+function maxEventEpoch(events: unknown[]): number | null {
+  let max: number | null = null;
+  for (const event of events) {
+    const epoch = numberField(objectValue(event), 'keyEpoch', false);
+    if (epoch !== null) max = max === null ? epoch : Math.max(max, epoch);
+  }
+  return max;
 }
 
 function contextRuntimeUrl(
@@ -422,6 +525,16 @@ function contextPendingGrantsUrl(serverUrl: string, workspaceId: string): string
 function contextMarkGrantEmittedUrl(serverUrl: string, workspaceId: string): string {
   const base = serverUrl.replace(/\/+$/, '');
   return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/mark-emitted`;
+}
+
+function contextPendingRevocationsUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/revocations/pending`;
+}
+
+function contextMarkRevokedUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/mark-revoked`;
 }
 
 function contextGrantMaterializedUrl(serverUrl: string, workspaceId: string): string {

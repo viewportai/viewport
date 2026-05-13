@@ -440,6 +440,12 @@ export function showHelp(): void {
   console.log(
     '                               Emit encrypted repo-key grant events for pending workspace shares',
   );
+  console.log(
+    '  context revokes-process --context <id> --actor <device> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log(
+    '                               Emit revocation and key-rotation events for removed workspace shares',
+  );
   console.log('  context identity-export --name <identity> [--out <path>] [--json]');
   console.log('  context identity-import (--identity <json>|--identity-file <path>) [--json]');
   console.log('  context device-request --device <name> --code <code> [--out <path>] [--json]');
