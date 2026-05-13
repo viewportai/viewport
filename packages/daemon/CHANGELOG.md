@@ -1,3 +1,10 @@
+## [0.5.3](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.5.2...@viewportai/daemon@0.5.3) (2026-05-13)
+
+
+### Bug Fixes
+
+* implement trusted-edge context and plan grants ([#93](https://github.com/viewportai/viewport/issues/93)) ([f34f952](https://github.com/viewportai/viewport/commit/f34f95299ec1a3c8ee3b316f73dab69e6df15606))
+
 ## [0.5.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.5.1...@viewportai/daemon@0.5.2) (2026-05-13)
 
 
