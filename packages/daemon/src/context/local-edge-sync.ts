@@ -15,6 +15,9 @@ import { getActiveLocalUserEpoch, listActiveLocalTeamEpochs } from '../security/
 import {
   TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
   TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+  contextGrantMaterializationPayload,
+  signContextGrantMaterialization,
+  type SignedContextGrantMaterialization,
   type JsonValue,
 } from '../security/epoch-protocol.js';
 import type {
@@ -140,17 +143,20 @@ export async function pullContextEvents(options: {
     actorName: options.actorName,
     grantIdentities,
   });
-  const materializedGrantEventIds = events
-    .filter((event) => isGrantEventForRecipient(event, metadata.userName, grantIdentities))
-    .map((event) => event.id);
+  const materializationReceipts = contextGrantMaterializationReceipts({
+    workspaceId: options.workspaceId ?? options.contextResourceId,
+    contextResourceId: options.contextResourceId,
+    events,
+    grantIdentities,
+  });
   const materializedGrants =
-    materializedGrantEventIds.length > 0
+    materializationReceipts.length > 0
       ? await recordContextGrantMaterialization({
           workspaceId: options.workspaceId ?? options.contextResourceId,
           serverUrl: options.serverUrl,
           credential: options.credential,
           contextResourceId: options.contextResourceId,
-          grantEventIds: materializedGrantEventIds,
+          receipts: materializationReceipts,
           tlsVerify: options.tlsVerify,
           caCertPath: options.caCertPath,
           tlsPins: options.tlsPins,
@@ -205,13 +211,13 @@ export async function recordContextGrantMaterialization(options: {
   serverUrl: string;
   credential: string;
   contextResourceId: string;
-  grantEventIds: string[];
+  receipts: SignedContextGrantMaterialization[];
   tlsVerify?: TlsVerifyMode;
   caCertPath?: string;
   tlsPins?: string[];
   fetchImpl?: typeof transportFetch;
 }): Promise<number> {
-  if (options.grantEventIds.length === 0) {
+  if (options.receipts.length === 0) {
     return 0;
   }
   const response = await postJson(
@@ -220,7 +226,11 @@ export async function recordContextGrantMaterialization(options: {
     {
       credential: options.credential,
       context_resource_id: options.contextResourceId,
-      grant_event_ids: options.grantEventIds,
+      receipts: options.receipts.map((receipt) => ({
+        payload: receipt.payload,
+        signature: receipt.signature,
+        signed_by_epoch_fingerprint: receipt.signedByEpochFingerprint,
+      })),
     },
     {
       tlsVerify: options.tlsVerify,
@@ -588,30 +598,86 @@ function contextGrantRotationReceipt(event: unknown): {
 async function contextGrantIdentitiesForWorkspace(options: {
   workspaceId: string;
   home: string;
-}): Promise<Array<{ name: string; hpkePrivateKey: string }>> {
+}): Promise<ContextGrantIdentity[]> {
   const userEpoch = await getActiveLocalUserEpoch(options.workspaceId, options.home);
   const teamEpochs = await listActiveLocalTeamEpochs(options.workspaceId, options.home);
   return [
     ...(userEpoch?.platformEpochId
       ? [
           {
+            kind: 'user_epoch' as const,
             name: contextUserEpochRecipientName({
               userEpochId: userEpoch.platformEpochId,
               fingerprint: userEpoch.fingerprint,
             }),
             hpkePrivateKey: jwkPrivateDToBase64(objectValue(userEpoch.encryptionPrivateKeyJwk)),
+            signingPrivateKeyJwk: userEpoch.signingPrivateKeyJwk as JsonValue,
+            signerFingerprint: userEpoch.fingerprint,
           },
         ]
       : []),
     ...teamEpochs.map((epoch) => ({
+      kind: 'team_epoch' as const,
       name: contextTeamEpochRecipientName({
         teamEpochId:
           epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
         fingerprint: epoch.fingerprint,
       }),
       hpkePrivateKey: jwkPrivateDToBase64(objectValue(epoch.encryptionPrivateKeyJwk)),
+      signingPrivateKeyJwk: epoch.signingPrivateKeyJwk as JsonValue,
+      signerFingerprint: epoch.fingerprint,
     })),
   ];
+}
+
+type ContextGrantIdentity = {
+  kind: 'user_epoch' | 'team_epoch';
+  name: string;
+  hpkePrivateKey: string;
+  signingPrivateKeyJwk: JsonValue;
+  signerFingerprint: string;
+};
+
+function contextGrantMaterializationReceipts(options: {
+  workspaceId: string;
+  contextResourceId: string;
+  events: ContextSyncEvent[];
+  grantIdentities: ContextGrantIdentity[];
+}): SignedContextGrantMaterialization[] {
+  const receipts: SignedContextGrantMaterialization[] = [];
+  for (const event of options.events) {
+    const match = grantEventRecipientMatch(event, options.grantIdentities);
+    if (!match) continue;
+    const keyEpoch = numberField(event, 'keyEpoch', false);
+    const payload = contextGrantMaterializationPayload({
+      workspaceId: options.workspaceId,
+      contextResourceId: options.contextResourceId,
+      grantEventId: stringField(event, 'id'),
+      recipientName: match.identity.name,
+      keyEpoch,
+    });
+    receipts.push(
+      signContextGrantMaterialization({
+        payload,
+        signingPrivateKeyJwk: match.identity.signingPrivateKeyJwk,
+        signedByEpochFingerprint: match.identity.signerFingerprint,
+      }),
+    );
+  }
+  return receipts;
+}
+
+function grantEventRecipientMatch(
+  event: ContextSyncEvent,
+  grantIdentities: ContextGrantIdentity[],
+): { grant: Record<string, unknown>; identity: ContextGrantIdentity } | null {
+  if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return null;
+  const grant = (event as { grant?: unknown }).grant;
+  if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return null;
+  const recipientName = (grant as Record<string, unknown>).recipientName;
+  if (typeof recipientName !== 'string' || recipientName === '') return null;
+  const identity = grantIdentities.find((candidate) => candidate.name === recipientName);
+  return identity ? { grant: grant as Record<string, unknown>, identity } : null;
 }
 
 function contextUserEpochRecipientName(input: {
@@ -832,21 +898,6 @@ function extractPulledCandidateDecisions(
 
     return record as ContextCandidateDecisionPullRecord;
   });
-}
-
-function isGrantEventForRecipient(
-  event: ContextSyncEvent,
-  userName: string,
-  grantIdentities: Array<{ name: string }>,
-): boolean {
-  if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return false;
-  const grant = (event as { grant?: unknown }).grant;
-  if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return false;
-  const recipientName = (grant as Record<string, unknown>).recipientName;
-  return (
-    recipientName === userName ||
-    grantIdentities.some((identity) => recipientName === identity.name)
-  );
 }
 
 function latestReceivedAt(

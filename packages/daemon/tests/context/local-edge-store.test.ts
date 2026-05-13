@@ -467,7 +467,20 @@ describe('local trusted-edge context store', () => {
               credential: 'runtime-token',
               context_resource_id: 'context-alpha',
             });
-            expect(body.grant_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            expect(body.receipts).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  payload: expect.objectContaining({
+                    schema: 'viewport.context_vault_grant_materialization/v1',
+                    contextResourceId: 'context-alpha',
+                    grantEventId: expect.any(String),
+                    recipientName: `user-epoch:user_epoch_bob_1:${bobUserEpochFingerprint}`,
+                  }),
+                  signature: expect.any(String),
+                  signed_by_epoch_fingerprint: bobUserEpochFingerprint,
+                }),
+              ]),
+            );
             return jsonResponse({ ok: true, materialized: 1 });
           }
           throw new Error(`Unexpected pull URL: ${String(url)}`);
@@ -708,7 +721,20 @@ describe('local trusted-edge context store', () => {
             });
           }
           if (String(url).endsWith('/grants/materialized')) {
-            expect(body.grant_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            expect(body.receipts).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  payload: expect.objectContaining({
+                    schema: 'viewport.context_vault_grant_materialization/v1',
+                    contextResourceId: 'context-alpha',
+                    grantEventId: expect.any(String),
+                    recipientName: `team-epoch:team_epoch_1:${teamFingerprint}`,
+                  }),
+                  signature: expect.any(String),
+                  signed_by_epoch_fingerprint: teamFingerprint,
+                }),
+              ]),
+            );
             return jsonResponse({ ok: true, materialized: 1 });
           }
           throw new Error(`Unexpected team pull URL: ${String(url)}`);

@@ -76,6 +76,21 @@ export interface SignedTeamEpochMemberMaterialization {
   signedByTeamEpochFingerprint: string;
 }
 
+export interface ContextGrantMaterializationPayload {
+  schema: 'viewport.context_vault_grant_materialization/v1';
+  workspaceId: string;
+  contextResourceId: string;
+  grantEventId: string;
+  recipientName: string;
+  keyEpoch: number | null;
+}
+
+export interface SignedContextGrantMaterialization {
+  payload: ContextGrantMaterializationPayload;
+  signature: string;
+  signedByEpochFingerprint: string;
+}
+
 export interface SignedEpochTransition {
   payload: EpochTransitionPayload;
   signature: string;
@@ -255,6 +270,41 @@ export function signTeamEpochMemberMaterialization(input: {
       .sign(null, Buffer.from(canonicalJson(input.payload)), key)
       .toString('base64url'),
     signedByTeamEpochFingerprint: input.signedByTeamEpochFingerprint,
+  };
+}
+
+export function contextGrantMaterializationPayload(input: {
+  workspaceId: string;
+  contextResourceId: string;
+  grantEventId: string;
+  recipientName: string;
+  keyEpoch: number | null;
+}): ContextGrantMaterializationPayload {
+  return {
+    schema: 'viewport.context_vault_grant_materialization/v1',
+    workspaceId: input.workspaceId,
+    contextResourceId: input.contextResourceId,
+    grantEventId: input.grantEventId,
+    recipientName: input.recipientName,
+    keyEpoch: input.keyEpoch,
+  };
+}
+
+export function signContextGrantMaterialization(input: {
+  payload: ContextGrantMaterializationPayload;
+  signingPrivateKeyJwk: JsonValue;
+  signedByEpochFingerprint: string;
+}): SignedContextGrantMaterialization {
+  const key = crypto.createPrivateKey({
+    key: input.signingPrivateKeyJwk as crypto.JsonWebKey,
+    format: 'jwk',
+  });
+  return {
+    payload: input.payload,
+    signature: crypto
+      .sign(null, Buffer.from(canonicalJson(input.payload)), key)
+      .toString('base64url'),
+    signedByEpochFingerprint: input.signedByEpochFingerprint,
   };
 }
 
