@@ -9,6 +9,7 @@ import { ErrorCodes } from '../core/error-codes.js';
 import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
 import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
+import { resolveContextBundle } from '../context/local-edge-store.js';
 import {
   decryptTrustedEdgePlanBody,
   decryptTrustedEdgePlanFeedbackField,
@@ -229,6 +230,39 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           msg.requestId,
           'error',
           error instanceof Error ? error.message : 'Context preview failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'context-resolve': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'context-resolve',
+          contextResourceId: msg.contextResourceId,
+        });
+        const bundle = await resolveContextBundle({
+          contextResourceId: msg.contextResourceId,
+          actorName: msg.actorName,
+          query: msg.query,
+          maxItems: msg.maxItems,
+          includePrivate: msg.includePrivate,
+          profile: msg.profile,
+          profilePin: msg.profilePin,
+          credentials: {
+            passphrase: msg.passphrase ?? '',
+            recoveryCode: msg.recoveryCode ?? '',
+          },
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, { bundle });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Context resolve failed',
           { errorCode: ErrorCodes.INVALID_INPUT },
         );
       }

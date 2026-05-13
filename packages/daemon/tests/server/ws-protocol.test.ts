@@ -11,6 +11,7 @@ import {
   ListSessionsSchema,
   ReadSessionMessagesSchema,
   ContextCandidatePreviewSchema,
+  ContextResolveSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
@@ -145,6 +146,33 @@ describe('ContextCandidatePreviewSchema', () => {
       type: 'context-candidate-preview',
       actorName: 'bob-vps',
       candidateEventId: 'event-1',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ContextResolveSchema', () => {
+  it('accepts scoped context resolve commands', () => {
+    const result = ContextResolveSchema.safeParse({
+      type: 'context-resolve',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      query: 'roses',
+      maxItems: 25,
+      includePrivate: false,
+      capabilityToken: 'capability-token',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires workspace id for trusted-edge resolve', () => {
+    const result = ContextResolveSchema.safeParse({
+      type: 'context-resolve',
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      query: 'roses',
     });
     expect(result.success).toBe(false);
   });

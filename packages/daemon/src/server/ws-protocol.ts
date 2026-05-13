@@ -150,6 +150,27 @@ export const ContextCandidatePreviewSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const ContextResolveSchema = z.object({
+  type: z.literal('context-resolve'),
+  contextResourceId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(256),
+  actorName: z.string().min(1).max(256),
+  query: z.string().max(10_000).default(''),
+  maxItems: z.number().int().min(1).max(500).optional(),
+  includePrivate: z.boolean().optional(),
+  profile: z.string().min(1).max(256).optional(),
+  profilePin: z
+    .object({
+      path: z.string().min(1).max(4096).optional(),
+      digest: z.string().min(1).max(256).optional(),
+    })
+    .optional(),
+  passphrase: z.string().max(4096).optional(),
+  recoveryCode: z.string().max(4096).optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const ResumeSchema = z
   .object({
     type: z.literal('resume'),
@@ -385,6 +406,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   ListSessionsSchema,
   ReadSessionMessagesSchema,
   ContextCandidatePreviewSchema,
+  ContextResolveSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
