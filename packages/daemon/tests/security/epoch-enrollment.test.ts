@@ -53,6 +53,14 @@ describe('epoch device enrollment', () => {
       if (init?.method === 'POST' && url.endsWith('/crypto/device-enrollments')) {
         const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
         expect(JSON.stringify(body)).not.toContain('"d"');
+        expect(body.request_payload).toMatchObject({
+          schema: 'viewport.device_enrollment/v1',
+          workspaceId: 'workspace-1',
+          deviceId: 'new-vps',
+          deviceLabel: 'New VPS',
+          nonce: body.nonce,
+        });
+        expect(body.request_signature).toEqual(expect.any(String));
         enrollmentPublicKeys = body;
         return responseJson(
           {
@@ -130,6 +138,20 @@ describe('epoch device enrollment', () => {
       ) {
         const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
         expect(body.grant_id).toBe('grant-1');
+        expect(body.receipt).toMatchObject({
+          payload: {
+            schema: 'viewport.user_epoch_device_materialization/v1',
+            workspaceId: 'workspace-1',
+            userId: '42',
+            enrollmentId: 'enroll-1',
+            grantId: 'grant-1',
+            userCryptoEpochId: 'epoch-platform-1',
+            userEpochFingerprint: 'sha256:user-epoch',
+            recipientFingerprint: 'sha256:enrollment',
+          },
+          signature: expect.any(String),
+          signedByUserEpochFingerprint: 'sha256:user-epoch',
+        });
         return responseJson({
           ok: true,
           data: {

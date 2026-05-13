@@ -9,7 +9,10 @@ import {
   deviceEnrollmentFingerprint,
   epochFingerprint,
   epochTransitionPayload,
+  signDeviceEnrollmentRequest,
   signEpochTransition,
+  signUserEpochDeviceMaterialization,
+  userEpochDeviceMaterializationPayload,
   unwrapJsonFromX25519Envelope,
   verifyEpochTransition,
   wrapJsonForX25519Recipient,
@@ -118,12 +121,10 @@ describe('epoch protocol primitives', () => {
     const fingerprint = deviceEnrollmentFingerprint({
       schema: DEVICE_ENROLLMENT_SCHEMA,
       workspaceId: 'workspace-1',
-      userId: '42',
       deviceId: 'vps-1',
       deviceLabel: 'prod-vps',
       encryptionPublicKeyJwk: rsaPublicJwk('vps-encryption'),
       signingPublicKeyJwk: signing.publicJwk,
-      createdAt: '2026-05-13T00:00:00.000Z',
       nonce: 'nonce-1',
     });
 
@@ -134,6 +135,59 @@ describe('epoch protocol primitives', () => {
         nested: { d: 'private-exponent' },
       }),
     ).toThrow('Private key material is not allowed');
+  });
+
+  it('signs device enrollment requests and materialization receipts with local keys', () => {
+    const enrollmentSigning = ed25519Pair();
+    const request = {
+      schema: DEVICE_ENROLLMENT_SCHEMA,
+      workspaceId: 'workspace-1',
+      deviceId: 'vps-1',
+      deviceLabel: 'prod-vps',
+      encryptionPublicKeyJwk: rsaPublicJwk('vps-encryption'),
+      signingPublicKeyJwk: enrollmentSigning.publicJwk,
+      nonce: 'nonce-1',
+    } as const;
+
+    const signedRequest = signDeviceEnrollmentRequest({
+      payload: request,
+      signingPrivateKeyJwk: enrollmentSigning.privateJwk,
+    });
+    expect(signedRequest.payload).toEqual(request);
+    expect(signedRequest.signature).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(
+      crypto.verify(
+        null,
+        Buffer.from(canonicalJson(request)),
+        crypto.createPublicKey({ key: enrollmentSigning.publicJwk, format: 'jwk' }),
+        Buffer.from(signedRequest.signature, 'base64url'),
+      ),
+    ).toBe(true);
+
+    const epochSigning = ed25519Pair();
+    const receiptPayload = userEpochDeviceMaterializationPayload({
+      workspaceId: 'workspace-1',
+      userId: '42',
+      enrollmentId: 'enroll-1',
+      grantId: 'grant-1',
+      userCryptoEpochId: 'epoch-1',
+      userEpochFingerprint: 'sha256:user-epoch',
+      recipientFingerprint: 'sha256:enrollment',
+    });
+    const receipt = signUserEpochDeviceMaterialization({
+      payload: receiptPayload,
+      signingPrivateKeyJwk: epochSigning.privateJwk,
+      signedByUserEpochFingerprint: 'sha256:user-epoch',
+    });
+    expect(receipt.signedByUserEpochFingerprint).toBe('sha256:user-epoch');
+    expect(
+      crypto.verify(
+        null,
+        Buffer.from(canonicalJson(receiptPayload)),
+        crypto.createPublicKey({ key: epochSigning.publicJwk, format: 'jwk' }),
+        Buffer.from(receipt.signature, 'base64url'),
+      ),
+    ).toBe(true);
   });
 
   it('supports team epoch descriptors as first-class signed subjects', () => {

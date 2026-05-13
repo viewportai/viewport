@@ -29,13 +29,33 @@ export interface EpochDescriptor {
 export interface DeviceEnrollmentRequest {
   schema: typeof DEVICE_ENROLLMENT_SCHEMA;
   workspaceId: string;
-  userId: string;
   deviceId: string;
   deviceLabel: string;
   encryptionPublicKeyJwk: JsonValue;
   signingPublicKeyJwk: JsonValue;
-  createdAt: string;
   nonce: string;
+}
+
+export interface SignedDeviceEnrollmentRequest {
+  payload: DeviceEnrollmentRequest;
+  signature: string;
+}
+
+export interface UserEpochDeviceMaterializationPayload {
+  schema: 'viewport.user_epoch_device_materialization/v1';
+  workspaceId: string;
+  userId: string;
+  enrollmentId: string;
+  grantId: string;
+  userCryptoEpochId: string;
+  userEpochFingerprint: string;
+  recipientFingerprint: string;
+}
+
+export interface SignedUserEpochDeviceMaterialization {
+  payload: UserEpochDeviceMaterializationPayload;
+  signature: string;
+  signedByUserEpochFingerprint: string;
 }
 
 export interface SignedEpochTransition {
@@ -120,13 +140,67 @@ export function deviceEnrollmentFingerprint(request: DeviceEnrollmentRequest): s
   return fingerprintPayload({
     schema: request.schema,
     workspaceId: request.workspaceId,
-    userId: request.userId,
     deviceId: request.deviceId,
     deviceLabel: request.deviceLabel,
     encryptionPublicKeyJwk: request.encryptionPublicKeyJwk,
     signingPublicKeyJwk: request.signingPublicKeyJwk,
     nonce: request.nonce,
   });
+}
+
+export function signDeviceEnrollmentRequest(input: {
+  payload: DeviceEnrollmentRequest;
+  signingPrivateKeyJwk: JsonValue;
+}): SignedDeviceEnrollmentRequest {
+  const key = crypto.createPrivateKey({
+    key: input.signingPrivateKeyJwk as crypto.JsonWebKey,
+    format: 'jwk',
+  });
+  return {
+    payload: input.payload,
+    signature: crypto
+      .sign(null, Buffer.from(canonicalJson(input.payload)), key)
+      .toString('base64url'),
+  };
+}
+
+export function userEpochDeviceMaterializationPayload(input: {
+  workspaceId: string;
+  userId: string;
+  enrollmentId: string;
+  grantId: string;
+  userCryptoEpochId: string;
+  userEpochFingerprint: string;
+  recipientFingerprint: string;
+}): UserEpochDeviceMaterializationPayload {
+  return {
+    schema: 'viewport.user_epoch_device_materialization/v1',
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    enrollmentId: input.enrollmentId,
+    grantId: input.grantId,
+    userCryptoEpochId: input.userCryptoEpochId,
+    userEpochFingerprint: input.userEpochFingerprint,
+    recipientFingerprint: input.recipientFingerprint,
+  };
+}
+
+export function signUserEpochDeviceMaterialization(input: {
+  payload: UserEpochDeviceMaterializationPayload;
+  signingPrivateKeyJwk: JsonValue;
+  signedByUserEpochFingerprint: string;
+}): SignedUserEpochDeviceMaterialization {
+  const key = crypto.createPrivateKey({
+    key: input.signingPrivateKeyJwk as crypto.JsonWebKey,
+    format: 'jwk',
+  });
+  return {
+    payload: input.payload,
+    signature: crypto
+      .sign(null, Buffer.from(canonicalJson(input.payload)), key)
+      .toString('base64url'),
+    signedByUserEpochFingerprint: input.signedByUserEpochFingerprint,
+  };
 }
 
 export function epochTransitionPayload(input: {

@@ -10,7 +10,11 @@ import {
   type LocalUserCryptoEpoch,
 } from './epoch-store.js';
 import {
+  DEVICE_ENROLLMENT_SCHEMA,
+  signDeviceEnrollmentRequest,
+  signUserEpochDeviceMaterialization,
   unwrapJsonFromX25519Envelope,
+  userEpochDeviceMaterializationPayload,
   wrapJsonForX25519Recipient,
   type JsonValue,
   type WrappedKeyEnvelope,
@@ -51,6 +55,19 @@ export async function requestDeviceEpochEnrollment(options: {
     deviceId: options.deviceId,
     deviceLabel: options.deviceLabel,
   });
+  const requestPayload = {
+    schema: DEVICE_ENROLLMENT_SCHEMA,
+    workspaceId: options.target.workspaceId,
+    deviceId: options.deviceId,
+    deviceLabel: options.deviceLabel,
+    encryptionPublicKeyJwk: material.enrollment.encryptionPublicKeyJwk,
+    signingPublicKeyJwk: material.enrollment.signingPublicKeyJwk,
+    nonce: material.enrollment.nonce,
+  } as const;
+  const signedRequest = signDeviceEnrollmentRequest({
+    payload: requestPayload,
+    signingPrivateKeyJwk: material.enrollment.signingPrivateKeyJwk,
+  });
   const payload = await postJson(
     options.fetchImpl ?? transportFetch,
     `${runtimeBaseUrl(options.target)}/crypto/device-enrollments`,
@@ -61,6 +78,8 @@ export async function requestDeviceEpochEnrollment(options: {
       encryption_public_key_jwk: material.enrollment.encryptionPublicKeyJwk,
       signing_public_key_jwk: material.enrollment.signingPublicKeyJwk,
       nonce: material.enrollment.nonce,
+      request_payload: signedRequest.payload,
+      request_signature: signedRequest.signature,
     },
     options.target,
   );
@@ -177,6 +196,19 @@ export async function acceptDeviceEpochEnrollment(options: {
     aad: grant.aad,
   });
   const material = materialPayload(payload);
+  const receipt = signUserEpochDeviceMaterialization({
+    payload: userEpochDeviceMaterializationPayload({
+      workspaceId: material.workspaceId,
+      userId: material.userId,
+      enrollmentId: enrollment.id,
+      grantId: grant.id,
+      userCryptoEpochId: material.platformEpochId,
+      userEpochFingerprint: material.fingerprint,
+      recipientFingerprint: grant.recipient_fingerprint,
+    }),
+    signingPrivateKeyJwk: material.signingPrivateKeyJwk,
+    signedByUserEpochFingerprint: material.fingerprint,
+  });
   const epoch = await upsertLocalUserEpoch(
     {
       workspaceId: material.workspaceId,
@@ -209,6 +241,7 @@ export async function acceptDeviceEpochEnrollment(options: {
     {
       credential: options.target.credential,
       grant_id: grant.id,
+      receipt,
     },
     options.target,
   );
