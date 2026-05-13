@@ -18,6 +18,7 @@ import {
   resolveSessionResourceManifestSync,
   type SessionResourceManifest,
 } from '../config-resolution/index.js';
+import { verifyTrustedEdgeCommandCapability } from './trusted-edge-command-capability.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
 
@@ -203,6 +204,14 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
 
     'context-candidate-preview': async (client, msg) => {
       try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId ?? '',
+          purpose: 'context-candidate-preview',
+          contextResourceId: msg.contextResourceId,
+          candidateEventId: msg.candidateEventId,
+          payloadDigest: msg.payloadDigest,
+        });
         const result = await previewContextCandidateForTrustedEdge({
           contextResourceId: msg.contextResourceId,
           workspaceId: msg.workspaceId,
@@ -226,6 +235,12 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
 
     'trusted-edge-plan-decrypt': async (client, msg) => {
       try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-decrypt',
+          planId: msg.planId,
+        });
         const result = await decryptTrustedEdgePlanBody({
           workspaceId: msg.workspaceId,
           planId: msg.planId,
@@ -253,6 +268,12 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
 
     'trusted-edge-plan-encrypt-field': async (client, msg) => {
       try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-encrypt-field',
+          planId: msg.planId,
+        });
         const field = await encryptTrustedEdgePlanFeedbackField({
           workspaceId: msg.workspaceId,
           planId: msg.planId,
@@ -280,6 +301,12 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
 
     'trusted-edge-plan-wrap-key': async (client, msg) => {
       try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-wrap-key',
+          planId: msg.planId,
+        });
         const bodyKeyGrants = await wrapTrustedEdgePlanBodyKey({
           workspaceId: msg.workspaceId,
           planId: msg.planId,

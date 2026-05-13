@@ -146,6 +146,7 @@ export const ContextCandidatePreviewSchema = z.object({
   payloadDigest: z.string().min(1).max(256).optional(),
   passphrase: z.string().max(4096).optional(),
   recoveryCode: z.string().max(4096).optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
@@ -314,6 +315,7 @@ export const TrustedEdgePlanDecryptSchema = z.object({
     )
     .max(500)
     .optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
@@ -326,6 +328,7 @@ export const TrustedEdgePlanEncryptFieldSchema = z.object({
   bodyKeyGrants: TrustedEdgePlanDecryptSchema.shape.bodyKeyGrants,
   text: z.string().min(1).max(20000),
   aad: z.record(z.string(), z.unknown()).optional(),
+  capabilityToken: TrustedEdgePlanDecryptSchema.shape.capabilityToken,
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
@@ -346,6 +349,7 @@ export const TrustedEdgePlanWrapKeySchema = z.object({
     )
     .min(1)
     .max(500),
+  capabilityToken: TrustedEdgePlanDecryptSchema.shape.capabilityToken,
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 

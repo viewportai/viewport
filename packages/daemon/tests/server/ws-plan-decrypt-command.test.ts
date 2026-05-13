@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 
@@ -23,7 +24,91 @@ function createClient(): ConnectedClient {
   };
 }
 
+const TEST_SIGNING_KEY = 'trusted-edge-command-test-secret';
+
+function createDaemon(): any {
+  return {
+    configManager: {
+      getDaemonConfig: () => ({
+        relay: {
+          workspaceId: 'workspace-1',
+          tokenIssuer: 'viewport-server',
+          tokenAudience: 'viewport-relay',
+          signingKeys: { v1: TEST_SIGNING_KEY },
+          tokenClockSkewSec: 30,
+        },
+      }),
+    },
+  };
+}
+
+function capabilityToken(purpose: string, planId = 'plan-1'): string {
+  const header = Buffer.from(
+    JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: 'v1' }),
+    'utf8',
+  ).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(
+    JSON.stringify({
+      role: 'trusted-edge-client',
+      scope: 'trusted-edge-command',
+      workspaceId: 'workspace-1',
+      purpose,
+      planId,
+      iss: 'viewport-server',
+      aud: 'viewport-relay',
+      iat: now,
+      exp: now + 60,
+      jti: crypto.randomUUID(),
+    }),
+    'utf8',
+  ).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', TEST_SIGNING_KEY)
+    .update(`${header}.${payload}`)
+    .digest('base64url');
+  return `${header}.${payload}.${signature}`;
+}
+
 describe('trusted-edge-plan-decrypt websocket command', () => {
+  it('rejects decrypt requests without a scoped command capability', async () => {
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-plan-decrypt'](createClient(), {
+      type: 'trusted-edge-plan-decrypt',
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      bodyEncryption: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:ciphertext',
+        aad: {},
+      },
+      requestId: 'plan-decrypt-req',
+    });
+
+    expect(decryptTrustedEdgePlanBody).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'plan-decrypt-req',
+      'error',
+      'Trusted-edge command capability is required.',
+      { errorCode: 'INVALID_INPUT' },
+    );
+  });
+
   it('returns decrypted plan body from the trusted edge', async () => {
     const sendAck = vi.fn();
     vi.mocked(decryptTrustedEdgePlanBody).mockResolvedValue({
@@ -32,7 +117,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       keyRef: 'trusted-edge-plan-key',
     });
     const handlers = createWsCommandHandlers({
-      daemon: {} as any,
+      daemon: createDaemon(),
       sendAck,
       getOrCreateBuffer: (() => ({
         getAll: () => [],
@@ -55,6 +140,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
         digest: 'sha256:ciphertext',
         aad: {},
       },
+      capabilityToken: capabilityToken('trusted-edge-plan-decrypt'),
       requestId: 'plan-decrypt-req',
     });
 
@@ -85,7 +171,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       new Error('Trusted edge does not have the key for this plan.'),
     );
     const handlers = createWsCommandHandlers({
-      daemon: {} as any,
+      daemon: createDaemon(),
       sendAck,
       getOrCreateBuffer: (() => ({
         getAll: () => [],
@@ -107,6 +193,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
         digest: 'sha256:ciphertext',
         aad: {},
       },
+      capabilityToken: capabilityToken('trusted-edge-plan-decrypt'),
       requestId: 'plan-decrypt-req',
     });
 
@@ -132,7 +219,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       aad: { purpose: 'plan-feedback-body' },
     });
     const handlers = createWsCommandHandlers({
-      daemon: {} as any,
+      daemon: createDaemon(),
       sendAck,
       getOrCreateBuffer: (() => ({
         getAll: () => [],
@@ -156,6 +243,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       },
       text: 'Needs one more proof step.',
       aad: { purpose: 'plan-feedback-body' },
+      capabilityToken: capabilityToken('trusted-edge-plan-encrypt-field'),
       requestId: 'plan-encrypt-field-req',
     });
 
@@ -195,7 +283,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       },
     ]);
     const handlers = createWsCommandHandlers({
-      daemon: {} as any,
+      daemon: createDaemon(),
       sendAck,
       getOrCreateBuffer: (() => ({
         getAll: () => [],
@@ -224,6 +312,7 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
           public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
         },
       ],
+      capabilityToken: capabilityToken('trusted-edge-plan-wrap-key'),
       requestId: 'plan-wrap-key-req',
     });
 
