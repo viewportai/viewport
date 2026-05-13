@@ -17,7 +17,7 @@ import {
 } from './epoch-protocol.js';
 import type { CryptoEpochSyncTarget } from './epoch-sync.js';
 
-interface DeviceGrantPayload {
+export interface DeviceGrantPayload {
   id: string;
   user_crypto_epoch_id: string;
   recipient_fingerprint: string;
@@ -25,7 +25,7 @@ interface DeviceGrantPayload {
   encrypted_payload: WrappedKeyEnvelope;
 }
 
-interface DeviceEnrollmentPayload {
+export interface DeviceEnrollmentPayload {
   id: string;
   workspace_id: string;
   user_id: number | string;
@@ -83,6 +83,23 @@ export async function requestDeviceEpochEnrollment(options: {
     },
     options.home ?? configDir(),
   );
+}
+
+export async function listDeviceEpochEnrollments(options: {
+  target: CryptoEpochSyncTarget;
+  fetchImpl?: typeof transportFetch;
+}): Promise<DeviceEnrollmentPayload[]> {
+  const payload = await getJson(
+    options.fetchImpl ?? transportFetch,
+    `${runtimeBaseUrl(options.target)}/crypto/device-enrollments`,
+    options.target,
+  );
+  const response = record(payload, 'device enrollments response');
+  const data = response.data;
+  if (!Array.isArray(data)) {
+    throw new Error('Device enrollment response did not include data array.');
+  }
+  return data.map((item) => enrollmentPayload({ data: item }));
 }
 
 export async function approveDeviceEpochEnrollment(options: {

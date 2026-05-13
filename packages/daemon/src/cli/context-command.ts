@@ -29,6 +29,7 @@ import { contextRulesInstall } from './context-rules-command.js';
 import {
   acceptDeviceEpochEnrollment,
   approveDeviceEpochEnrollment,
+  listDeviceEpochEnrollments,
   requestDeviceEpochEnrollment,
 } from '../security/epoch-enrollment.js';
 import {
@@ -130,6 +131,10 @@ export async function context(): Promise<void> {
     await contextDeviceEnrollAccept();
     return;
   }
+  if (subcommand === 'device-enrollments' || subcommand === 'device-enroll-status') {
+    await contextDeviceEnrollments();
+    return;
+  }
   if (subcommand === 'team-grant-create') {
     await contextTeamGrantCreate();
     return;
@@ -170,7 +175,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
 }
 
 function showContextHelp(): void {
@@ -692,6 +697,36 @@ async function contextDeviceEnrollAccept(): Promise<void> {
   }
 
   console.log(`Device enrollment accepted. User crypto epoch ready: ${epoch.fingerprint}`);
+}
+
+async function contextDeviceEnrollments(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('device-enrollments');
+  const enrollments = await listDeviceEpochEnrollments({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context device-enrollments', ok: true, enrollments });
+    return;
+  }
+
+  if (enrollments.length === 0) {
+    console.log('No device enrollments found.');
+    return;
+  }
+
+  for (const enrollment of enrollments) {
+    console.log(
+      `${enrollment.id}  ${enrollment.status}  ${enrollment.device_label}  ${enrollment.fingerprint}`,
+    );
+  }
 }
 
 async function contextTeamGrantCreate(): Promise<void> {

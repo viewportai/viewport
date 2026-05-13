@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   acceptDeviceEpochEnrollment,
   approveDeviceEpochEnrollment,
+  listDeviceEpochEnrollments,
   requestDeviceEpochEnrollment,
 } from '../../src/security/epoch-enrollment.js';
 import {
@@ -181,6 +182,68 @@ describe('epoch device enrollment', () => {
     expect((await getActiveLocalUserEpoch('workspace-1', newDeviceHome))?.platformEpochId).toBe(
       'epoch-platform-1',
     );
+  });
+
+  it('lists device enrollment status for laptop and VPS setup checks', async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: { method?: string }) => {
+      expect(init?.method ?? 'GET').toBe('GET');
+      expect(url).toBe(
+        'https://api.test/api/runtime/workspaces/workspace-1/crypto/device-enrollments?credential=issue-token',
+      );
+      return responseJson({
+        data: [
+          {
+            id: 'enroll-vps-1',
+            workspace_id: 'workspace-1',
+            user_id: 42,
+            device_id: 'bob-vps',
+            device_label: 'Bob VPS',
+            encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public-x' },
+            signing_public_key_jwk: { kty: 'OKP', crv: 'Ed25519', x: 'public-sign' },
+            fingerprint: 'sha256:vps-fingerprint',
+            nonce: 'nonce-1',
+            status: 'approved',
+            grants: [
+              {
+                id: 'grant-1',
+                user_crypto_epoch_id: 'epoch-platform-1',
+                recipient_fingerprint: 'sha256:vps-fingerprint',
+                aad: { schema: 'viewport.user_epoch_device_grant_aad/v1' },
+                encrypted_payload: {
+                  schema: 'viewport.wrapped_key_envelope/v1',
+                  alg: 'x25519-hkdf-sha256-aes-256-gcm',
+                  ephemeralPublicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'ephemeral' },
+                  iv: 'iv',
+                  ciphertext: 'ciphertext',
+                  tag: 'tag',
+                  aadDigest: 'sha256:aad',
+                  createdAt: '2026-05-13T00:00:00.000Z',
+                },
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    const enrollments = await listDeviceEpochEnrollments({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(enrollments).toHaveLength(1);
+    expect(enrollments[0]).toMatchObject({
+      id: 'enroll-vps-1',
+      device_id: 'bob-vps',
+      device_label: 'Bob VPS',
+      status: 'approved',
+      fingerprint: 'sha256:vps-fingerprint',
+      grants: [{ id: 'grant-1' }],
+    });
   });
 });
 

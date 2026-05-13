@@ -201,6 +201,54 @@ describe('context CLI command', () => {
     expect(output).not.toContain('runtime-token');
   });
 
+  it('lists device enrollment status through the paired runtime credential', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: false,
+        endpoint: 'wss://getviewport.test:7781/ws',
+        serverUrl: 'http://app.getviewport.test',
+        workspaceId: 'workspace-alpha',
+        issueToken: 'runtime-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/crypto/device-enrollments?credential=runtime-token',
+      );
+      expect(init?.method).toBe('GET');
+      return jsonResponse({
+        data: [
+          {
+            id: 'enroll-vps-1',
+            workspace_id: 'workspace-alpha',
+            user_id: 42,
+            device_id: 'bob-vps',
+            device_label: 'Bob VPS',
+            encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public-x' },
+            signing_public_key_jwk: { kty: 'OKP', crv: 'Ed25519', x: 'public-sign' },
+            fingerprint: 'sha256:vps-fingerprint',
+            nonce: 'nonce-1',
+            status: 'approved',
+            grants: [],
+          },
+        ],
+      });
+    }) as typeof fetch;
+
+    await runContext(['context', 'device-enrollments', '--json']);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context device-enrollments"');
+    expect(output).toContain('"device_id": "bob-vps"');
+    expect(output).toContain('"status": "approved"');
+    expect(output).not.toContain('runtime-token');
+  });
+
   it('creates, initializes, and attaches a Context Vault in one command', async () => {
     const repo = path.join(tempHome, 'created-use-repo');
     const { ConfigManager } = await import('../../src/core/config.js');
