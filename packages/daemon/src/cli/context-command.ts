@@ -40,6 +40,11 @@ import {
   rotateUserCryptoEpoch,
 } from '../security/epoch-sync.js';
 import {
+  createUserEpochRecoveryBackup,
+  generateUserEpochRecoveryKey,
+  restoreUserEpochFromRecoveryBackup,
+} from '../security/epoch-recovery.js';
+import {
   acceptTeamEpochMemberGrants,
   grantTeamEpochToUserEpoch,
 } from '../security/team-epoch-grants.js';
@@ -115,6 +120,14 @@ export async function context(): Promise<void> {
     await contextEpochRotate();
     return;
   }
+  if (subcommand === 'recovery-backup') {
+    await contextRecoveryBackup();
+    return;
+  }
+  if (subcommand === 'recovery-restore') {
+    await contextRecoveryRestore();
+    return;
+  }
   if (subcommand === 'rotations-process') {
     await contextRotationsProcess();
     return;
@@ -175,7 +188,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|recovery-backup [--recovery-key <key>]|recovery-restore --recovery-key <key>|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
 }
 
 function showContextHelp(): void {
@@ -574,6 +587,74 @@ async function contextEpochRotate(): Promise<void> {
   console.log(`${teamId ? 'Team' : 'User'} crypto epoch rotated: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
   console.log(`Reason: ${reason}`);
+}
+
+async function contextRecoveryBackup(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('recovery-backup');
+  const generatedRecoveryKey = getFlag('recovery-key') ? null : generateUserEpochRecoveryKey();
+  const recoveryKey = getFlag('recovery-key') ?? generatedRecoveryKey;
+  if (!recoveryKey) {
+    throw new Error('vpd context recovery-backup requires --recovery-key <key>');
+  }
+  const backup = await createUserEpochRecoveryBackup({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    recoveryKey,
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({
+      command: 'context recovery-backup',
+      ok: true,
+      backup,
+      generatedRecoveryKey,
+    });
+    return;
+  }
+
+  console.log(`Recovery backup stored: ${backup.id}`);
+  console.log(`User epoch: ${backup.user_crypto_epoch_id}`);
+  if (generatedRecoveryKey) {
+    console.log('Recovery key generated. Store it somewhere private; Viewport cannot recover it.');
+    console.log(generatedRecoveryKey);
+  }
+}
+
+async function contextRecoveryRestore(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('recovery-restore');
+  const recoveryKey = requiredFlag(
+    'recovery-key',
+    'vpd context recovery-restore --recovery-key <key>',
+  );
+  const result = await restoreUserEpochFromRecoveryBackup({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    recoveryKey,
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context recovery-restore', ok: true, ...result });
+    return;
+  }
+
+  console.log(`Recovery backup restored: ${result.backup.id}`);
+  console.log(`Recovered epoch: ${result.restoredEpoch.fingerprint}`);
+  console.log(`Rotated epoch: ${result.rotatedEpoch.fingerprint}`);
+  console.log(`Fresh recovery backup stored: ${result.rotatedBackup.id}`);
 }
 
 async function contextRotationsProcess(): Promise<void> {
