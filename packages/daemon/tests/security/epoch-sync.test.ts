@@ -5,10 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureTeamCryptoEpoch,
   ensureUserCryptoEpoch,
+  processPendingCryptoRotationRequests,
   rotateTeamCryptoEpoch,
   rotateUserCryptoEpoch,
 } from '../../src/security/epoch-sync.js';
-import { getActiveLocalTeamEpoch, getActiveLocalUserEpoch } from '../../src/security/epoch-store.js';
+import {
+  createLocalUserEpochKeyMaterial,
+  getActiveLocalTeamEpoch,
+  getActiveLocalUserEpoch,
+} from '../../src/security/epoch-store.js';
 import { epochFingerprint } from '../../src/security/epoch-protocol.js';
 
 const tmpDirs: string[] = [];
@@ -322,6 +327,214 @@ describe('epoch sync', () => {
     const active = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
     expect(active?.epoch).toBe(2);
   });
+
+  it('processes pending user rotation requests from the runtime queue', async () => {
+    const home = await tempHome();
+    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
+    const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      requests.push({ url, method, body });
+      if (method === 'GET' && url.includes('/crypto/rotation-requests')) {
+        return responseJson({
+          data: [
+            {
+              id: 'rotation-user-1',
+              subject_type: 'user',
+              subject_id: '42',
+              team_public_id: null,
+              reason: 'device_revoked',
+              recipient_user_crypto_epoch_ids: [],
+            },
+          ],
+        });
+      }
+      if (method === 'POST' && url.endsWith('/crypto/user-epochs')) {
+        const epoch = Number(body?.epoch);
+        const fingerprint = epochFingerprint({
+          schema: 'viewport.user_crypto_epoch/v1',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '42',
+          epoch,
+          encryptionPublicKeyJwk: body?.encryption_public_key_jwk as never,
+          signingPublicKeyJwk: body?.signing_public_key_jwk as never,
+          previousEpochFingerprint: (body?.previous_epoch_fingerprint as string | undefined) ?? null,
+          createdAt: 'server-fixture',
+        });
+        return responseJson({
+          data: {
+            id: `user-epoch-${epoch}`,
+            workspace_id: 'workspace-1',
+            user_id: 42,
+            epoch,
+            schema: 'viewport.user_crypto_epoch/v1',
+            status: 'active',
+            fingerprint,
+            encryption_public_key_jwk: body?.encryption_public_key_jwk,
+            signing_public_key_jwk: body?.signing_public_key_jwk,
+            previous_epoch_fingerprint: body?.previous_epoch_fingerprint ?? null,
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await ensureUserCryptoEpoch({
+      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    const result = await processPendingCryptoRotationRequests({
+      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(result).toMatchObject({
+      processed: 1,
+      userRotations: 1,
+      teamRotations: 0,
+      teamMemberGrants: 0,
+      skipped: 0,
+    });
+    const rotationPost = requests.find(
+      (request) => request.method === 'POST' && request.url.endsWith('/crypto/user-epochs') && request.body?.epoch === 2,
+    );
+    expect(rotationPost?.body).toMatchObject({
+      credential: 'issue-token',
+      epoch: 2,
+      previous_epoch_fingerprint: expect.any(String),
+      continuity: {
+        payload: expect.objectContaining({
+          reason: 'device_revoked',
+          fromEpoch: 1,
+          toEpoch: 2,
+        }),
+        signature: expect.any(String),
+      },
+    });
+    const active = await getActiveLocalUserEpoch('workspace-1', home);
+    expect(active?.epoch).toBe(2);
+  });
+
+  it('processes pending team rotations and regrants the new epoch to remaining user epochs', async () => {
+    const home = await tempHome();
+    const recipientKey = createRecipientUserEpochFixture();
+    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
+    const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      requests.push({ url, method, body });
+      if (method === 'GET' && url.includes('/crypto/rotation-requests')) {
+        return responseJson({
+          data: [
+            {
+              id: 'rotation-team-1',
+              subject_type: 'team',
+              subject_id: '77',
+              team_public_id: 'team_public_1',
+              reason: 'member_revoked',
+              recipient_user_crypto_epoch_ids: ['recipient-user-epoch-1'],
+            },
+          ],
+        });
+      }
+      if (method === 'GET' && url.includes('/crypto/epochs')) {
+        return responseJson({
+          data: {
+            user_epochs: [
+              {
+                id: 'recipient-user-epoch-1',
+                workspace_id: 'workspace-1',
+                user_id: 99,
+                epoch: 1,
+                fingerprint: 'sha256:recipient-user-epoch',
+                encryption_public_key_jwk: recipientKey.encryptionPublicKeyJwk,
+                signing_public_key_jwk: recipientKey.signingPublicKeyJwk,
+                previous_epoch_fingerprint: null,
+              },
+            ],
+            team_epochs: [],
+          },
+        });
+      }
+      if (method === 'POST' && url.includes('/crypto/teams/team_public_1/epochs')) {
+        const epoch = Number(body?.epoch);
+        const fingerprint = epochFingerprint({
+          schema: 'viewport.team_crypto_epoch/v1',
+          workspaceId: 'workspace-1',
+          subjectType: 'team',
+          subjectId: '77',
+          epoch,
+          encryptionPublicKeyJwk: body?.encryption_public_key_jwk as never,
+          signingPublicKeyJwk: body?.signing_public_key_jwk as never,
+          previousEpochFingerprint: (body?.previous_epoch_fingerprint as string | undefined) ?? null,
+          createdAt: 'server-fixture',
+        });
+        return responseJson({
+          data: {
+            id: `team-epoch-${epoch}`,
+            workspace_id: 'workspace-1',
+            team_id: 77,
+            epoch,
+            schema: 'viewport.team_crypto_epoch/v1',
+            status: 'active',
+            fingerprint,
+            encryption_public_key_jwk: body?.encryption_public_key_jwk,
+            signing_public_key_jwk: body?.signing_public_key_jwk,
+            previous_epoch_fingerprint: body?.previous_epoch_fingerprint ?? null,
+          },
+        });
+      }
+      if (method === 'POST' && url.endsWith('/crypto/team-epochs/team-epoch-2/member-grants')) {
+        return responseJson({
+          data: {
+            id: 'team-member-grant-2',
+            team_crypto_epoch_id: 'team-epoch-2',
+            recipient_user_crypto_epoch_id: body?.recipient_user_crypto_epoch_id,
+            aad: body?.aad,
+            encrypted_payload: body?.encrypted_payload,
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await ensureTeamCryptoEpoch({
+      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      teamId: 'team_public_1',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    const result = await processPendingCryptoRotationRequests({
+      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(result).toMatchObject({
+      processed: 1,
+      userRotations: 0,
+      teamRotations: 1,
+      teamMemberGrants: 1,
+      skipped: 0,
+    });
+    const grantPost = requests.find((request) =>
+      request.url.endsWith('/crypto/team-epochs/team-epoch-2/member-grants'),
+    );
+    expect(grantPost?.body).toMatchObject({
+      credential: 'issue-token',
+      recipient_user_crypto_epoch_id: 'recipient-user-epoch-1',
+      aad: expect.objectContaining({
+        teamEpochId: 'team-epoch-2',
+        recipientUserEpochId: 'recipient-user-epoch-1',
+      }),
+      encrypted_payload: expect.any(Object),
+    });
+    const active = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
+    expect(active?.epoch).toBe(2);
+  });
 });
 
 async function tempHome(): Promise<string> {
@@ -337,4 +550,18 @@ function responseJson(payload: unknown): Response {
     statusText: 'OK',
     json: async () => payload,
   } as Response;
+}
+
+function createRecipientUserEpochFixture(): {
+  encryptionPublicKeyJwk: Record<string, unknown>;
+  signingPublicKeyJwk: Record<string, unknown>;
+} {
+  const keys = createLocalUserEpochKeyMaterial({
+    workspaceId: 'workspace-1',
+    epoch: 1,
+  });
+  return {
+    encryptionPublicKeyJwk: keys.descriptor.encryptionPublicKeyJwk as Record<string, unknown>,
+    signingPublicKeyJwk: keys.descriptor.signingPublicKeyJwk as Record<string, unknown>,
+  };
 }

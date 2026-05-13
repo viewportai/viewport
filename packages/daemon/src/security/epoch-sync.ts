@@ -16,6 +16,7 @@ import {
   type EpochTransitionPayload,
   type JsonValue,
 } from './epoch-protocol.js';
+import { grantTeamEpochToUserEpoch } from './team-epoch-grants.js';
 
 export interface CryptoEpochSyncTarget {
   workspaceId: string;
@@ -285,6 +286,149 @@ export async function rotateTeamCryptoEpoch(options: {
   );
 }
 
+export async function processPendingCryptoRotationRequests(options: {
+  target: CryptoEpochSyncTarget;
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{
+  processed: number;
+  userRotations: number;
+  teamRotations: number;
+  teamMemberGrants: number;
+  skipped: number;
+}> {
+  const fetchImpl = options.fetchImpl ?? transportFetch;
+  const response = await getJson(
+    fetchImpl,
+    `${runtimeBaseUrl(options.target)}/crypto/rotation-requests`,
+    options.target,
+  );
+  const requests = arrayField(response, 'data').map((item) => rotationRequestPayload(item));
+  let userRotations = 0;
+  let teamRotations = 0;
+  let teamMemberGrants = 0;
+  let skipped = 0;
+
+  for (const request of requests) {
+    if (request.subject_type === 'user') {
+      await rotateUserCryptoEpoch({
+        target: options.target,
+        reason: rotationReason(request.reason),
+        home: options.home,
+        fetchImpl,
+      });
+      userRotations++;
+      continue;
+    }
+
+    if (request.subject_type === 'team' && request.team_public_id) {
+      const rotated = await rotateTeamCryptoEpoch({
+        target: options.target,
+        teamId: request.team_public_id,
+        reason: rotationReason(request.reason),
+        home: options.home,
+        fetchImpl,
+      });
+      teamRotations++;
+      if (!rotated.platformEpochId) {
+        skipped++;
+        continue;
+      }
+      for (const recipientEpochId of request.recipient_user_crypto_epoch_ids) {
+        await grantTeamEpochToUserEpoch({
+          target: options.target,
+          teamCryptoEpochId: rotated.platformEpochId,
+          recipientUserCryptoEpochId: recipientEpochId,
+          home: options.home,
+          fetchImpl,
+        });
+        teamMemberGrants++;
+      }
+      continue;
+    }
+
+    skipped++;
+  }
+
+  return {
+    processed: userRotations + teamRotations,
+    userRotations,
+    teamRotations,
+    teamMemberGrants,
+    skipped,
+  };
+}
+
+function runtimeBaseUrl(target: CryptoEpochSyncTarget): string {
+  return `${target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(
+    target.workspaceId,
+  )}`;
+}
+
+async function getJson(
+  fetchImpl: typeof transportFetch,
+  url: string,
+  transportOptions: CryptoEpochSyncTarget,
+): Promise<unknown> {
+  const requestUrl = new URL(url);
+  requestUrl.searchParams.set('credential', transportOptions.credential);
+  const response = await fetchImpl(requestUrl.toString(), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    timeoutMs: 5_000,
+    tlsVerify: transportOptions.tlsVerify,
+    caCertPath: transportOptions.caCertPath,
+    tlsPins: transportOptions.tlsPins,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'message' in payload
+        ? String((payload as { message?: unknown }).message)
+        : `${response.status} ${response.statusText}`;
+    throw new Error(`Crypto rotation sync failed: ${message}`);
+  }
+  return payload;
+}
+
+function rotationRequestPayload(value: unknown): {
+  id: string;
+  subject_type: 'user' | 'team';
+  subject_id: string;
+  team_public_id: string | null;
+  reason: string;
+  recipient_user_crypto_epoch_ids: string[];
+} {
+  const data = objectValue(value);
+  const subjectType = stringField(data, 'subject_type');
+  if (subjectType !== 'user' && subjectType !== 'team') {
+    throw new Error(`Unsupported crypto rotation subject: ${subjectType}`);
+  }
+  const recipients = data.recipient_user_crypto_epoch_ids;
+  return {
+    id: stringField(data, 'id'),
+    subject_type: subjectType,
+    subject_id: stringField(data, 'subject_id'),
+    team_public_id: typeof data.team_public_id === 'string' ? data.team_public_id : null,
+    reason: stringField(data, 'reason'),
+    recipient_user_crypto_epoch_ids: Array.isArray(recipients)
+      ? recipients.map((item) => String(item))
+      : [],
+  };
+}
+
+function rotationReason(value: string): EpochTransitionPayload['reason'] {
+  if (
+    value === 'device_revoked' ||
+    value === 'member_revoked' ||
+    value === 'manual_rotation' ||
+    value === 'recovery'
+  ) {
+    return value;
+  }
+  return 'manual_rotation';
+}
+
 async function postJson(
   fetchImpl: typeof transportFetch,
   url: string,
@@ -316,14 +460,28 @@ async function postJson(
 }
 
 function objectField(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`Expected response object while reading ${field}`);
-  }
-  const child = (value as Record<string, unknown>)[field];
+  const object = objectValue(value);
+  const child = object[field];
   if (!child || typeof child !== 'object' || Array.isArray(child)) {
     throw new Error(`Crypto epoch response did not include ${field}`);
   }
   return child as Record<string, unknown>;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Expected response object.');
+  }
+  return value as Record<string, unknown>;
+}
+
+function arrayField(value: unknown, field: string): unknown[] {
+  const object = objectValue(value);
+  const child = object[field];
+  if (!Array.isArray(child)) {
+    throw new Error(`Crypto epoch response did not include ${field} array.`);
+  }
+  return child;
 }
 
 function stringField(value: Record<string, unknown>, field: string): string {

@@ -35,6 +35,7 @@ import {
 import {
   ensureTeamCryptoEpoch,
   ensureUserCryptoEpoch,
+  processPendingCryptoRotationRequests,
   rotateTeamCryptoEpoch,
   rotateUserCryptoEpoch,
 } from '../security/epoch-sync.js';
@@ -127,6 +128,10 @@ export async function context(): Promise<void> {
     await contextEpochRotate();
     return;
   }
+  if (subcommand === 'rotations-process') {
+    await contextRotationsProcess();
+    return;
+  }
   if (subcommand === 'device-enroll-request') {
     await contextDeviceEnrollRequest();
     return;
@@ -203,7 +208,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -371,6 +376,22 @@ async function contextSyncAll(): Promise<void> {
   const deviceName = requiredFlag('device', 'vpd context sync-all --user <name> --device <name>');
   const credentials = readCredentials({ required: false });
   const keyStore = parseKeyStore(getFlag('key-store'));
+  const syncTarget = {
+    workspaceId: target.workspaceId,
+    serverUrl: target.serverUrl,
+    credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
+  };
+  const rotations = await processPendingCryptoRotationRequests({
+    target: syncTarget,
+    home,
+  });
+  const acceptedTeamGrants = await acceptTeamEpochMemberGrants({
+    target: syncTarget,
+    home,
+  });
   const vaults = await fetchVisibleContextVaults(target);
   const results = [];
 
@@ -401,7 +422,31 @@ async function contextSyncAll(): Promise<void> {
       limit: parseLimit(getFlag('limit')),
       home,
     });
-    results.push({ contextResourceId, ...pulled });
+    const revoked = await processPendingContextRevocations({
+      contextResourceId,
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+      actorName: deviceName,
+      credentials,
+      home,
+    });
+    const granted = await processPendingContextGrants({
+      contextResourceId,
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+      actorName: deviceName,
+      credentials,
+      home,
+    });
+    results.push({ contextResourceId, ...pulled, revoked, granted });
   }
 
   const summary = {
@@ -409,10 +454,22 @@ async function contextSyncAll(): Promise<void> {
     pulled: results.reduce((total, item) => total + item.pulled, 0),
     imported: results.reduce((total, item) => total + item.imported, 0),
     materializedGrants: results.reduce((total, item) => total + item.materializedGrants, 0),
+    revocationsProcessed: results.reduce((total, item) => total + item.revoked.revoked, 0),
+    grantsEmitted: results.reduce((total, item) => total + item.granted.emitted, 0),
+    rotationsProcessed: rotations.processed,
+    teamEpochGrantsAccepted: acceptedTeamGrants.accepted,
   };
 
   if (isJsonMode()) {
-    printJson({ command: 'context sync-all', ok: true, workspaceId: target.workspaceId, ...summary, results });
+    printJson({
+      command: 'context sync-all',
+      ok: true,
+      workspaceId: target.workspaceId,
+      ...summary,
+      rotations,
+      acceptedTeamGrants,
+      results,
+    });
     return;
   }
 
@@ -420,6 +477,18 @@ async function contextSyncAll(): Promise<void> {
   console.log(`Context events pulled: ${summary.imported}/${summary.pulled}`);
   if (summary.materializedGrants > 0) {
     console.log(`Context grants materialized: ${summary.materializedGrants}`);
+  }
+  if (summary.rotationsProcessed > 0) {
+    console.log(`Crypto rotations processed: ${summary.rotationsProcessed}`);
+  }
+  if (summary.teamEpochGrantsAccepted > 0) {
+    console.log(`Team epoch grants accepted: ${summary.teamEpochGrantsAccepted}`);
+  }
+  if (summary.revocationsProcessed > 0) {
+    console.log(`Context revocations processed: ${summary.revocationsProcessed}`);
+  }
+  if (summary.grantsEmitted > 0) {
+    console.log(`Context grants emitted: ${summary.grantsEmitted}`);
   }
 }
 
@@ -546,6 +615,40 @@ async function contextEpochRotate(): Promise<void> {
   console.log(`${teamId ? 'Team' : 'User'} crypto epoch rotated: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
   console.log(`Reason: ${reason}`);
+}
+
+async function contextRotationsProcess(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('rotations-process');
+  const result = await processPendingCryptoRotationRequests({
+    target: {
+      workspaceId: target.workspaceId,
+      serverUrl: target.serverUrl,
+      credential: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
+    },
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context rotations-process', ok: true, ...result });
+    return;
+  }
+
+  console.log(`Crypto rotation requests processed: ${result.processed}`);
+  if (result.userRotations > 0) {
+    console.log(`User epoch rotations: ${result.userRotations}`);
+  }
+  if (result.teamRotations > 0) {
+    console.log(`Team epoch rotations: ${result.teamRotations}`);
+  }
+  if (result.teamMemberGrants > 0) {
+    console.log(`Team epoch member grants created: ${result.teamMemberGrants}`);
+  }
+  if (result.skipped > 0) {
+    console.log(`Skipped rotation requests: ${result.skipped}`);
+  }
 }
 
 function epochRotationReason(value: string): 'device_revoked' | 'member_revoked' | 'manual_rotation' | 'recovery' {

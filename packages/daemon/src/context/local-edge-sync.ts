@@ -16,7 +16,7 @@ import {
   importContextIdentity,
   revokeContextUser,
 } from './local-edge-store.js';
-import { listActiveLocalTeamEpochs } from '../security/epoch-store.js';
+import { getActiveLocalUserEpoch, listActiveLocalTeamEpochs } from '../security/epoch-store.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
@@ -348,6 +348,58 @@ export async function processPendingContextGrants(options: {
 
   for (const grant of grants) {
     const record = objectValue(grant);
+    const userEpoch = objectField(record, 'user_epoch', false);
+    if (userEpoch) {
+      const userEpochId = String(numberOrStringField(userEpoch, 'id'));
+      const fingerprint = stringField(userEpoch, 'fingerprint');
+      const encryptionPublicKeyJwk = objectField(userEpoch, 'encryption_public_key_jwk');
+      const recipientName = contextUserEpochRecipientName({ userEpochId, fingerprint });
+      const result = await grantContextHpkeRecipient({
+        contextResourceId: options.contextResourceId,
+        actorName: options.actorName,
+        recipientName,
+        recipientHpkePublicKey: jwkPublicXToBase64(encryptionPublicKeyJwk),
+        credentials: options.credentials,
+        home: options.home,
+      });
+      const event = objectValue(result.event);
+      const grantEventId = stringField(event, 'id');
+      const grantPayload = objectField(event, 'grant', false);
+      const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
+
+      const pushResult = await pushContextEvents({
+        contextResourceId: options.contextResourceId,
+        workspaceId: options.workspaceId,
+        serverUrl: options.serverUrl,
+        credential: options.credential,
+        tlsVerify: options.tlsVerify,
+        caCertPath: options.caCertPath,
+        tlsPins: options.tlsPins,
+        home: options.home,
+        fetchImpl,
+      });
+      pushed += pushResult.accepted;
+
+      await postJson(
+        fetchImpl,
+        contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
+        {
+          credential: options.credential,
+          crypto_grant_id: stringField(record, 'id'),
+          grant_event_id: grantEventId,
+          recipient_identity_name: recipientName,
+          ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
+        },
+        {
+          tlsVerify: options.tlsVerify,
+          caCertPath: options.caCertPath,
+          tlsPins: options.tlsPins,
+        },
+      );
+      emitted++;
+      continue;
+    }
+
     const teamEpoch = objectField(record, 'team_epoch', false);
     if (teamEpoch) {
       const teamEpochId = String(numberOrStringField(teamEpoch, 'id'));
@@ -576,14 +628,35 @@ async function contextGrantIdentitiesForWorkspace(options: {
   workspaceId: string;
   home: string;
 }): Promise<Array<{ name: string; hpkePrivateKey: string }>> {
+  const userEpoch = await getActiveLocalUserEpoch(options.workspaceId, options.home);
   const teamEpochs = await listActiveLocalTeamEpochs(options.workspaceId, options.home);
-  return teamEpochs.map((epoch) => ({
-    name: contextTeamEpochRecipientName({
-      teamEpochId: epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
-      fingerprint: epoch.fingerprint,
-    }),
-    hpkePrivateKey: jwkPrivateDToBase64(objectValue(epoch.encryptionPrivateKeyJwk)),
-  }));
+  return [
+    ...(userEpoch?.platformEpochId
+      ? [
+          {
+            name: contextUserEpochRecipientName({
+              userEpochId: userEpoch.platformEpochId,
+              fingerprint: userEpoch.fingerprint,
+            }),
+            hpkePrivateKey: jwkPrivateDToBase64(objectValue(userEpoch.encryptionPrivateKeyJwk)),
+          },
+        ]
+      : []),
+    ...teamEpochs.map((epoch) => ({
+      name: contextTeamEpochRecipientName({
+        teamEpochId: epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
+        fingerprint: epoch.fingerprint,
+      }),
+      hpkePrivateKey: jwkPrivateDToBase64(objectValue(epoch.encryptionPrivateKeyJwk)),
+    })),
+  ];
+}
+
+function contextUserEpochRecipientName(input: {
+  userEpochId: string;
+  fingerprint: string;
+}): string {
+  return `user-epoch:${input.userEpochId}:${input.fingerprint}`;
 }
 
 function contextTeamEpochRecipientName(input: {

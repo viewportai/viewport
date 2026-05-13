@@ -25,7 +25,9 @@ import {
 } from '../../src/context/local-edge-sync.js';
 import { contextMetadataPath } from '../../src/context/local-edge-paths.js';
 import {
+  createLocalUserEpochKeyMaterial,
   createLocalTeamEpochKeyMaterial,
+  upsertLocalUserEpoch,
   upsertLocalTeamEpoch,
 } from '../../src/security/epoch-store.js';
 import { epochFingerprint } from '../../src/security/epoch-protocol.js';
@@ -289,7 +291,7 @@ describe('local trusted-edge context store', () => {
     });
   });
 
-  it('emits pending workspace crypto grants to recipient public identities', async () => {
+  it('emits pending workspace crypto grants to recipient user epochs', async () => {
     const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-bob-'));
     try {
       await initContextResource({
@@ -312,7 +314,29 @@ describe('local trusted-edge context store', () => {
         home: bobHome,
       });
 
-      const bobIdentity = exportContextIdentity({ name: 'bob', home: bobHome });
+      const bobUserEpochMaterial = createLocalUserEpochKeyMaterial({
+        workspaceId: 'workspace-alpha',
+        userId: 'bob-user-1',
+        epoch: 1,
+      });
+      const bobUserEpochFingerprint = epochFingerprint(bobUserEpochMaterial.descriptor);
+      await upsertLocalUserEpoch(
+        {
+          workspaceId: 'workspace-alpha',
+          userId: 'bob-user-1',
+          platformEpochId: 'user_epoch_bob_1',
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          status: 'active',
+          encryptionPublicKeyJwk: bobUserEpochMaterial.descriptor.encryptionPublicKeyJwk,
+          encryptionPrivateKeyJwk: bobUserEpochMaterial.encryptionPrivateKeyJwk,
+          signingPublicKeyJwk: bobUserEpochMaterial.descriptor.signingPublicKeyJwk,
+          signingPrivateKeyJwk: bobUserEpochMaterial.signingPrivateKeyJwk,
+          fingerprint: bobUserEpochFingerprint,
+          previousEpochFingerprint: null,
+        },
+        bobHome,
+      );
       const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
       const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
       const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -336,9 +360,14 @@ describe('local trusted-edge context store', () => {
                 {
                   id: 'cvcg_pending_1',
                   context_resource_id: 'context-alpha',
-                  recipient_identity: {
-                    name: 'bob',
-                    public_identity: bobIdentity,
+                  recipient_identity: null,
+                  user_epoch: {
+                    id: 'user_epoch_bob_1',
+                    user_id: 'bob-user-1',
+                    epoch: 1,
+                    fingerprint: bobUserEpochFingerprint,
+                    encryption_public_key_jwk: bobUserEpochMaterial.descriptor.encryptionPublicKeyJwk,
+                    signing_public_key_jwk: bobUserEpochMaterial.descriptor.signingPublicKeyJwk,
                   },
                 },
               ],
@@ -348,6 +377,7 @@ describe('local trusted-edge context store', () => {
           if (String(url).endsWith('/events/push')) {
             const payload = String(init?.body ?? '');
             expect(payload).toContain('member.granted');
+            expect(payload).toContain('user-epoch:user_epoch_bob_1');
             expect(payload).toContain('ciphertext');
             expect(payload).not.toContain('bob-passphrase');
             expect(payload).not.toContain('correct horse battery staple');
@@ -453,7 +483,7 @@ describe('local trusted-edge context store', () => {
                 {
                   id: 'cvcg_pending_1',
                   context_resource_id: 'context-alpha',
-                  recipient_identity_name: 'bob',
+                  recipient_identity_name: `user-epoch:user_epoch_bob_1:${bobUserEpochFingerprint}`,
                 },
               ],
             });
