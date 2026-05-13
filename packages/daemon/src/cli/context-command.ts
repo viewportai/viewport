@@ -9,9 +9,14 @@ import {
 } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { readCandidateDecisionApplications } from '../context/local-edge-decision-applications.js';
-import { pullContextEvents, pushContextEvents } from '../context/local-edge-sync.js';
+import {
+  processPendingContextGrants,
+  publishContextPublicIdentity,
+  pullContextEvents,
+  pushContextEvents,
+} from '../context/local-edge-sync.js';
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
-import { resolveContextSyncTarget } from './context-sync-target.js';
+import { resolveContextSyncTarget, resolveWorkspaceSyncTarget } from './context-sync-target.js';
 import { parseLimit, parseMaxItems, parseSince } from './context-command-parsers.js';
 import { contextAdd } from './context-add-command.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
@@ -88,6 +93,14 @@ export async function context(): Promise<void> {
     await contextSyncPull();
     return;
   }
+  if (subcommand === 'identity-publish') {
+    await contextIdentityPublish();
+    return;
+  }
+  if (subcommand === 'grants-process') {
+    await contextGrantsProcess();
+    return;
+  }
   if (subcommand === 'decisions') {
     await contextDecisions();
     return;
@@ -136,7 +149,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|identity-publish|grants-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -295,6 +308,54 @@ async function contextSyncPull(): Promise<void> {
 
   console.log(`Context events pulled: ${result.imported}/${result.pulled}`);
   console.log(`Repo: ${result.repoId}`);
+}
+
+async function contextIdentityPublish(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('identity-publish');
+  const result = await publishContextPublicIdentity({
+    workspaceId: target.workspaceId,
+    serverUrl: target.serverUrl,
+    credential: target.credential,
+    identityName: requiredFlag('name', 'vpd context identity-publish --name <identity>'),
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context identity-publish', ok: true, ...result });
+    return;
+  }
+
+  console.log(`Context public identity published: ${result.identityId}`);
+  if (result.fingerprint) console.log(`Fingerprint: ${result.fingerprint}`);
+}
+
+async function contextGrantsProcess(): Promise<void> {
+  const target = await resolveContextSyncTarget('grants-process');
+  const result = await processPendingContextGrants({
+    contextResourceId: target.contextResourceId,
+    workspaceId: target.workspaceId,
+    serverUrl: target.serverUrl,
+    credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
+    actorName: getFlag('actor') ?? getFlag('device') ?? 'local-device',
+    credentials: readCredentials(),
+    home: getFlag('home'),
+  });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context grants-process', ok: true, ...result });
+    return;
+  }
+
+  console.log(`Context grants emitted: ${result.emitted}`);
+  if (result.missingIdentity > 0) {
+    console.log(`Missing recipient identities: ${result.missingIdentity}`);
+  }
 }
 
 async function contextDecisions(): Promise<void> {

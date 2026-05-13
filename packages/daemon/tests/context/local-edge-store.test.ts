@@ -17,7 +17,11 @@ import {
   writeContextProfile,
 } from '../../src/context/local-edge-store.js';
 import { proposeContextEntry } from '../../src/context/local-edge-candidates.js';
-import { pullContextEvents, pushContextEvents } from '../../src/context/local-edge-sync.js';
+import {
+  processPendingContextGrants,
+  pullContextEvents,
+  pushContextEvents,
+} from '../../src/context/local-edge-sync.js';
 import { contextMetadataPath } from '../../src/context/local-edge-paths.js';
 
 describe('local trusted-edge context store', () => {
@@ -277,6 +281,101 @@ describe('local trusted-edge context store', () => {
     expect(pullBodies[1]).toMatchObject({
       after_received_at: `2026-05-06T21:00:0${pushedEvents.length - 1}.000Z`,
     });
+  });
+
+  it('emits pending workspace crypto grants to recipient public identities', async () => {
+    const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-bob-'));
+    try {
+      await initContextResource({
+        contextResourceId: 'context-alpha',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        credentials,
+        keyStore: 'file',
+        home: tempHome,
+      });
+      await initContextResource({
+        contextResourceId: 'bob-bootstrap',
+        userName: 'bob',
+        deviceName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        keyStore: 'file',
+        home: bobHome,
+      });
+
+      const bobIdentity = exportContextIdentity({ name: 'bob', home: bobHome });
+      const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+      const result = await processPendingContextGrants({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          calls.push({ url: String(url), body });
+
+          if (String(url).endsWith('/grants/pending')) {
+            return jsonResponse({
+              grants: [
+                {
+                  id: 'cvcg_pending_1',
+                  context_resource_id: 'context-alpha',
+                  recipient_identity: {
+                    name: 'bob',
+                    public_identity: bobIdentity,
+                  },
+                },
+              ],
+            });
+          }
+
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('member.granted');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('bob-passphrase');
+            expect(payload).not.toContain('correct horse battery staple');
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+
+          if (String(url).endsWith('/grants/mark-emitted')) {
+            expect(body).toMatchObject({
+              credential: 'runtime-token',
+              crypto_grant_id: 'cvcg_pending_1',
+            });
+            expect(typeof body.grant_event_id).toBe('string');
+            expect(typeof body.key_epoch).toBe('number');
+            return jsonResponse({ ok: true });
+          }
+
+          throw new Error(`Unexpected grant sync URL: ${String(url)}`);
+        },
+      });
+
+      expect(result).toEqual({
+        emitted: 1,
+        missingIdentity: 0,
+        pushed: expect.any(Number),
+      });
+      expect(result.pushed).toBeGreaterThan(0);
+      expect(calls.map((call) => call.url)).toEqual([
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/pending',
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/push',
+        'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/mark-emitted',
+      ]);
+    } finally {
+      await fs.rm(bobHome, { recursive: true, force: true });
+    }
   });
 
   it('applies platform context candidate approvals at the trusted edge for future bundles', async () => {

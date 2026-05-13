@@ -428,6 +428,18 @@ export function showHelp(): void {
   console.log(
     '                               Pull signed encrypted context events from Viewport; defaults to vpd remote login config',
   );
+  console.log(
+    '  context identity-publish --name <identity> [--workspace <id>] [--server-url <url>] [--credential <token>] [--json]',
+  );
+  console.log(
+    '                               Publish this trusted edge public identity for grant recipients',
+  );
+  console.log(
+    '  context grants-process --context <id> --actor <device> --passphrase <text> --recovery-code <text> [--json]',
+  );
+  console.log(
+    '                               Emit encrypted repo-key grant events for pending workspace shares',
+  );
   console.log('  context identity-export --name <identity> [--out <path>] [--json]');
   console.log('  context identity-import (--identity <json>|--identity-file <path>) [--json]');
   console.log('  context device-request --device <name> --code <code> [--out <path>] [--json]');
