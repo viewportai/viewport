@@ -27,7 +27,7 @@ import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-
 import { contextVaultUse } from './context-vault-use-command.js';
 import { contextCandidatePreview } from './context-candidate-preview-command.js';
 import { contextRulesInstall } from './context-rules-command.js';
-import { ensureUserCryptoEpoch } from '../security/epoch-sync.js';
+import { ensureTeamCryptoEpoch, ensureUserCryptoEpoch } from '../security/epoch-sync.js';
 import {
   contextDeviceAccept,
   contextDeviceApprove,
@@ -165,7 +165,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -446,24 +446,32 @@ async function contextIdentityPublish(): Promise<void> {
 
 async function contextEpochPublish(): Promise<void> {
   const target = await resolveWorkspaceSyncTarget('epoch-publish');
-  const epoch = await ensureUserCryptoEpoch({
-    target: {
-      workspaceId: target.workspaceId,
-      serverUrl: target.serverUrl,
-      credential: target.credential,
-      tlsVerify: target.tlsVerify,
-      caCertPath: target.caCertPath,
-      tlsPins: target.tlsPins,
-    },
-    home: getFlag('home'),
-  });
+  const syncTarget = {
+    workspaceId: target.workspaceId,
+    serverUrl: target.serverUrl,
+    credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
+  };
+  const teamId = getFlag('team');
+  const epoch = teamId
+    ? await ensureTeamCryptoEpoch({
+        target: syncTarget,
+        teamId,
+        home: getFlag('home'),
+      })
+    : await ensureUserCryptoEpoch({
+        target: syncTarget,
+        home: getFlag('home'),
+      });
 
   if (isJsonMode()) {
-    printJson({ command: 'context epoch-publish', ok: true, epoch });
+    printJson({ command: 'context epoch-publish', ok: true, scope: teamId ? 'team' : 'user', epoch });
     return;
   }
 
-  console.log(`User crypto epoch ready: ${epoch.fingerprint}`);
+  console.log(`${teamId ? 'Team' : 'User'} crypto epoch ready: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
 }
 

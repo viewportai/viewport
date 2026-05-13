@@ -1,9 +1,13 @@
 import { transportFetch, type TlsVerifyMode } from '../cli/network.js';
 import { configDir } from '../core/config.js';
 import {
+  createLocalTeamEpochKeyMaterial,
   createLocalUserEpochKeyMaterial,
+  getActiveLocalTeamEpoch,
   getActiveLocalUserEpoch,
+  upsertLocalTeamEpoch,
   upsertLocalUserEpoch,
+  type LocalTeamCryptoEpoch,
   type LocalUserCryptoEpoch,
 } from './epoch-store.js';
 import type { JsonValue } from './epoch-protocol.js';
@@ -50,6 +54,55 @@ export async function ensureUserCryptoEpoch(options: {
       userId: String(numberOrStringField(data, 'user_id')),
       epoch: numberField(data, 'epoch'),
       schema: 'viewport.user_crypto_epoch/v1',
+      status: 'active',
+      encryptionPublicKeyJwk: objectField(data, 'encryption_public_key_jwk') as JsonValue,
+      encryptionPrivateKeyJwk: material.encryptionPrivateKeyJwk,
+      signingPublicKeyJwk: objectField(data, 'signing_public_key_jwk') as JsonValue,
+      signingPrivateKeyJwk: material.signingPrivateKeyJwk,
+      fingerprint: stringField(data, 'fingerprint'),
+      previousEpochFingerprint:
+        typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
+    },
+    options.home ?? configDir(),
+  );
+}
+
+export async function ensureTeamCryptoEpoch(options: {
+  target: CryptoEpochSyncTarget;
+  teamId: string;
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<LocalTeamCryptoEpoch> {
+  const existing = await getActiveLocalTeamEpoch(options.target.workspaceId, options.teamId, options.home);
+  if (existing) return existing;
+
+  const material = createLocalTeamEpochKeyMaterial({
+    workspaceId: options.target.workspaceId,
+    teamId: options.teamId,
+    epoch: 1,
+  });
+  const payload = await postJson(
+    options.fetchImpl ?? transportFetch,
+    `${options.target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(
+      options.target.workspaceId,
+    )}/crypto/teams/${encodeURIComponent(options.teamId)}/epochs`,
+    {
+      credential: options.target.credential,
+      epoch: 1,
+      encryption_public_key_jwk: material.descriptor.encryptionPublicKeyJwk,
+      signing_public_key_jwk: material.descriptor.signingPublicKeyJwk,
+    },
+    options.target,
+  );
+  const data = objectField(payload, 'data');
+
+  return upsertLocalTeamEpoch(
+    {
+      workspaceId: stringField(data, 'workspace_id'),
+      teamId: options.teamId,
+      platformTeamId: String(numberOrStringField(data, 'team_id')),
+      epoch: numberField(data, 'epoch'),
+      schema: 'viewport.team_crypto_epoch/v1',
       status: 'active',
       encryptionPublicKeyJwk: objectField(data, 'encryption_public_key_jwk') as JsonValue,
       encryptionPrivateKeyJwk: material.encryptionPrivateKeyJwk,
