@@ -1,6 +1,8 @@
 import type { ConfigManager } from '../core/config.js';
 import type { DaemonEvents } from '../core/events.js';
 import { transportFetch } from '../cli/network.js';
+import { resolveConfiguredWorkspaceSyncTarget } from '../cli/context-sync-target.js';
+import { resolveLocalOrgBindingSync } from '../cli/org-binding.js';
 import { PLAN_PROPOSAL_SCHEMA_VERSION, sanitizePlanProposalMetadata } from './plan-extractor.js';
 
 type Fetcher = typeof transportFetch;
@@ -19,7 +21,7 @@ export class PlatformPlanHookSync {
   ) {}
 
   async send(event: PlanProposedEvent): Promise<PlatformPlanHookSyncResult> {
-    const target = this.targetFor();
+    const target = this.targetFor(event);
     if (!target) return { synced: false, reason: 'missing_platform_target' };
 
     const res = await this.fetcher(target.url, {
@@ -50,7 +52,7 @@ export class PlatformPlanHookSync {
     return { synced: true };
   }
 
-  private targetFor(): {
+  private targetFor(event: PlanProposedEvent): {
     url: string;
     issueToken: string;
     tlsVerify?: 'auto' | '0' | '1';
@@ -58,20 +60,19 @@ export class PlatformPlanHookSync {
     tlsPins?: string[];
   } | null {
     const daemonConfig = this.configManager.getDaemonConfig();
-    const server = daemonConfig?.server ?? {};
-    const relay = daemonConfig?.relay ?? {};
-    const serverUrl = relay.serverUrl ?? server.url;
-    const issueToken = relay.issueToken;
-    const workspaceId = relay.workspaceId;
+    if (!daemonConfig) return null;
 
-    if (!serverUrl || !issueToken || !workspaceId) return null;
+    const cwd = typeof event.cwd === 'string' && event.cwd.length > 0 ? event.cwd : process.cwd();
+    const requestedWorkspaceId = resolveLocalOrgBindingSync(cwd)?.organizationId;
+    const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, { requestedWorkspaceId });
+    if (!target) return null;
 
     return {
-      url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/agent-hooks/plans`,
-      issueToken,
-      tlsVerify: server.tlsVerify,
-      caCertPath: server.caCertPath,
-      tlsPins: server.tlsPins,
+      url: `${target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(target.workspaceId)}/agent-hooks/plans`,
+      issueToken: target.credential,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
     };
   }
 }

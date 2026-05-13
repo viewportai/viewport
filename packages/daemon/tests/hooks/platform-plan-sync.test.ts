@@ -1,7 +1,11 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PlatformPlanHookSync } from '../../src/hooks/platform-plan-sync.js';
 import type { TransportFetchOptions } from '../../src/cli/network.js';
 import { PLAN_PROPOSAL_SCHEMA_VERSION } from '../../src/hooks/plan-extractor.js';
+import { writeLocalOrgBinding } from '../../src/cli/org-binding.js';
 
 describe('PlatformPlanHookSync', () => {
   it('sends plan proposals to the daemon-authenticated platform ingestion endpoint', async () => {
@@ -101,5 +105,91 @@ describe('PlatformPlanHookSync', () => {
       }),
     ).resolves.toEqual({ synced: true });
     expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('routes plan proposals to the repo-bound workspace when multiple relay bindings exist', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-plan-sync-'));
+    await writeLocalOrgBinding({ directory: cwd, organizationId: 'workspace_2' });
+
+    const requests: Array<{ url: string; options: TransportFetchOptions }> = [];
+    const fetcher = vi.fn(async (url: string, options: TransportFetchOptions) => {
+      requests.push({ url, options });
+      return new Response(JSON.stringify({ data: { id: 'plan_1' } }), { status: 201 });
+    });
+    const sync = new PlatformPlanHookSync(
+      {
+        getDaemonConfig: () => ({
+          server: { url: 'https://fallback.getviewport.test' },
+          relay: {
+            bindings: [
+              {
+                workspaceId: 'workspace_1',
+                serverUrl: 'https://api.getviewport.test',
+                issueToken: 'token-1',
+              },
+              {
+                workspaceId: 'workspace_2',
+                serverUrl: 'https://api.getviewport.test',
+                issueToken: 'token-2',
+              },
+            ],
+          },
+        }),
+      },
+      fetcher,
+    );
+
+    await expect(
+      sync.send({
+        sessionId: 'session_1',
+        adapter: 'claude',
+        cwd,
+        body: 'Plan',
+      }),
+    ).resolves.toEqual({ synced: true });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(
+      'https://api.getviewport.test/api/runtime/workspaces/workspace_2/agent-hooks/plans',
+    );
+    expect(JSON.parse(String(requests[0]?.options.body))).toMatchObject({
+      credential: 'token-2',
+      hook_event_name: 'PlanProposed',
+    });
+  });
+
+  it('does not guess a plan workspace when multiple relay bindings exist without a repo binding', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ data: { id: 'plan_1' } })));
+    const sync = new PlatformPlanHookSync(
+      {
+        getDaemonConfig: () => ({
+          relay: {
+            bindings: [
+              {
+                workspaceId: 'workspace_1',
+                serverUrl: 'https://api.getviewport.test',
+                issueToken: 'token-1',
+              },
+              {
+                workspaceId: 'workspace_2',
+                serverUrl: 'https://api.getviewport.test',
+                issueToken: 'token-2',
+              },
+            ],
+          },
+        }),
+      },
+      fetcher,
+    );
+
+    await expect(
+      sync.send({
+        sessionId: 'session_1',
+        adapter: 'claude',
+        cwd: '/no/local/binding',
+        body: 'Plan',
+      }),
+    ).resolves.toEqual({ synced: false, reason: 'missing_platform_target' });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

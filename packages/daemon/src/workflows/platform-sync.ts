@@ -1,5 +1,6 @@
 import type { ConfigManager } from '../core/config.js';
 import { transportFetch } from '../cli/network.js';
+import { resolveConfiguredWorkspaceSyncTarget } from '../cli/context-sync-target.js';
 import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
 import { runtimeCommands, type WorkflowRuntimeCommand } from './platform-runtime-command.js';
 import { buildReviewPacket } from './review-packet.js';
@@ -237,24 +238,22 @@ export class WorkflowRunPlatformSync {
     if (!resourceId || !runtimeTargetId || !run.platformRunId) return null;
 
     const daemonConfig = this.configManager.getDaemonConfig();
-    const server = daemonConfig?.server ?? {};
-    const relay = daemonConfig?.relay ?? {};
-    const serverUrl = relay.serverUrl ?? server.url;
-    const issueToken = relay.issueToken;
-
-    if (!serverUrl || !issueToken) return null;
-    if (relay.workspaceId && relay.workspaceId !== resourceId) return null;
-    if (relay.runtimeTargetId && relay.runtimeTargetId !== runtimeTargetId) {
+    if (!daemonConfig) return null;
+    const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
+      requestedWorkspaceId: resourceId,
+    });
+    if (!target) return null;
+    if (target.runtimeTargetId && target.runtimeTargetId !== runtimeTargetId) {
       return null;
     }
 
     return {
-      url: `${serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(resourceId)}/workflow-runs/${encodeURIComponent(run.platformRunId)}/sync`,
-      issueToken,
+      url: `${target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(resourceId)}/workflow-runs/${encodeURIComponent(run.platformRunId)}/sync`,
+      issueToken: target.credential,
       runtimeTargetId,
-      tlsVerify: server.tlsVerify,
-      caCertPath: server.caCertPath,
-      tlsPins: server.tlsPins,
+      tlsVerify: target.tlsVerify,
+      caCertPath: target.caCertPath,
+      tlsPins: target.tlsPins,
     };
   }
 }

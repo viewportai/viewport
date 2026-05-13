@@ -44,6 +44,7 @@ export async function pushContextEvents(options: {
     contextRuntimeUrl(options.serverUrl, options.workspaceId ?? options.contextResourceId, 'push'),
     {
       credential: options.credential,
+      ...(options.workspaceId ? { target_workspace_id: options.workspaceId } : {}),
       events,
       ...(candidateDecisionApplications.length > 0
         ? { candidate_decision_applications: candidateDecisionApplications }

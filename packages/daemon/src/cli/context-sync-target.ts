@@ -1,5 +1,6 @@
 import { getFlag } from './args.js';
-import { ConfigManager } from '../core/config.js';
+import { ConfigManager, type ViewportConfig } from '../core/config.js';
+import { resolveLocalOrgBindingSync } from './org-binding.js';
 
 export interface ContextSyncTarget {
   contextResourceId: string;
@@ -12,6 +13,16 @@ export interface ContextSyncTarget {
   decisionSigningKeys?: Record<string, string>;
 }
 
+export interface WorkspaceSyncTarget {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  runtimeTargetId?: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+}
+
 export async function resolveContextSyncTarget(
   commandName: 'sync-push' | 'sync-pull',
 ): Promise<ContextSyncTarget> {
@@ -21,9 +32,9 @@ export async function resolveContextSyncTarget(
   const relay = daemon.relay ?? {};
 
   const contextResourceId = getFlag('context') ?? getFlag('project');
-  const workspaceId = getFlag('workspace') ?? relay.workspaceId;
-  const serverUrl = getFlag('server-url') ?? relay.serverUrl ?? daemon.server?.url;
-  const credential = getFlag('credential') ?? relay.issueToken;
+  const explicitWorkspaceId = getFlag('workspace');
+  const explicitServerUrl = getFlag('server-url');
+  const explicitCredential = getFlag('credential');
   const decisionSigningKeys =
     parseDecisionSigningKeys(
       getFlag('context-decision-key') ??
@@ -36,32 +47,140 @@ export async function resolveContextSyncTarget(
       `vpd context ${commandName} requires --context <resource-id>; saved remote workspace ids are not context ids`,
     );
   }
-  if (!serverUrl) {
-    throw new Error(
-      `vpd context ${commandName} requires --server-url or a saved remote server from vpd remote login`,
-    );
+
+  if (explicitWorkspaceId && explicitServerUrl && explicitCredential) {
+    return {
+      contextResourceId,
+      workspaceId: explicitWorkspaceId,
+      serverUrl: explicitServerUrl,
+      credential: explicitCredential,
+      tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
+      caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
+      tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
+      decisionSigningKeys,
+    };
   }
-  if (!workspaceId) {
+
+  const target = resolveConfiguredContextSyncTarget(daemon, {
+    contextResourceId,
+    requestedWorkspaceId:
+      explicitWorkspaceId ?? resolveLocalOrgBindingSync(process.cwd())?.organizationId,
+    explicitServerUrl,
+    explicitCredential,
+    decisionSigningKeys,
+  });
+
+  if (!target) {
     throw new Error(
-      `vpd context ${commandName} requires --workspace <id> or a saved remote workspace from vpd remote login`,
-    );
-  }
-  if (!credential) {
-    throw new Error(
-      `vpd context ${commandName} requires --credential or a saved relay issue token from vpd remote login`,
+      `vpd context ${commandName} requires an unambiguous remote workspace. Pass --workspace <id>, run from a bound repo, or keep exactly one saved remote workspace binding.`,
     );
   }
 
+  return target;
+}
+
+export function resolveConfiguredContextSyncTarget(
+  daemon: NonNullable<ViewportConfig['daemon']>,
+  options: {
+    contextResourceId: string;
+    requestedWorkspaceId?: string;
+    explicitServerUrl?: string;
+    explicitCredential?: string;
+    decisionSigningKeys?: Record<string, string>;
+  },
+): ContextSyncTarget | null {
+  const target = resolveConfiguredWorkspaceSyncTarget(daemon, options);
+  if (!target) return null;
+
   return {
-    contextResourceId,
-    workspaceId,
-    serverUrl,
-    credential,
-    tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
-    caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
-    tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
-    decisionSigningKeys,
+    ...target,
+    contextResourceId: options.contextResourceId,
+    decisionSigningKeys: options.decisionSigningKeys,
   };
+}
+
+export function resolveConfiguredWorkspaceSyncTarget(
+  daemon: NonNullable<ViewportConfig['daemon']>,
+  options: {
+    requestedWorkspaceId?: string;
+    explicitServerUrl?: string;
+    explicitCredential?: string;
+  } = {},
+): WorkspaceSyncTarget | null {
+  const relay = daemon.relay ?? {};
+  if (options.requestedWorkspaceId && options.explicitServerUrl && options.explicitCredential) {
+    return {
+      workspaceId: options.requestedWorkspaceId,
+      serverUrl: options.explicitServerUrl,
+      credential: options.explicitCredential,
+      tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
+      caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
+      tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
+    };
+  }
+
+  const targets = configuredWorkspaceTargets(daemon)
+    .map((target) => ({
+      ...target,
+      serverUrl: options.explicitServerUrl ?? target.serverUrl,
+      credential: options.explicitCredential ?? target.credential,
+    }))
+    .filter((target) => target.workspaceId && target.serverUrl && target.credential);
+
+  if (options.requestedWorkspaceId) {
+    const match = targets.find((target) => target.workspaceId === options.requestedWorkspaceId);
+    return match ?? null;
+  }
+
+  const unique = new Map<string, WorkspaceSyncTarget>();
+  for (const target of targets) {
+    unique.set(target.workspaceId, target);
+  }
+
+  if (unique.size !== 1) return null;
+  const [target] = unique.values();
+  return target ?? null;
+}
+
+function configuredWorkspaceTargets(
+  daemon: NonNullable<ViewportConfig['daemon']>,
+): WorkspaceSyncTarget[] {
+  const relay = daemon.relay ?? {};
+  const bindings = relay.bindings ?? [];
+  const candidates = [
+    ...bindings.filter((binding) => binding.enabled !== false),
+    ...(relay.workspaceId || relay.serverUrl || relay.issueToken
+      ? [
+          {
+            enabled: relay.enabled,
+            workspaceId: relay.workspaceId,
+            serverUrl: relay.serverUrl,
+            issueToken: relay.issueToken,
+            tlsVerify: relay.tlsVerify,
+            caCertPath: relay.caCertPath,
+            tlsPins: relay.tlsPins,
+          },
+        ]
+      : []),
+  ];
+
+  return candidates.flatMap((binding) => {
+    const workspaceId = binding.workspaceId;
+    const serverUrl = binding.serverUrl ?? relay.serverUrl ?? daemon.server?.url;
+    const credential = binding.issueToken;
+    if (!workspaceId || !serverUrl || !credential) return [];
+    return [
+      {
+        workspaceId,
+        serverUrl,
+        credential,
+        runtimeTargetId: binding.runtimeTargetId,
+        tlsVerify: daemon.server?.tlsVerify ?? binding.tlsVerify ?? relay.tlsVerify,
+        caCertPath: daemon.server?.caCertPath ?? binding.caCertPath ?? relay.caCertPath,
+        tlsPins: daemon.server?.tlsPins ?? binding.tlsPins ?? relay.tlsPins,
+      },
+    ];
+  });
 }
 
 function parseDecisionSigningKeys(raw: string | undefined): Record<string, string> | undefined {

@@ -9,6 +9,7 @@ import {
 import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
 import { pushContextEvents } from '../context/local-edge-sync.js';
 import { ConfigManager } from '../core/config.js';
+import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
 
 const CredentialsSchema = z.object({
   passphrase: z.string().min(1),
@@ -59,6 +60,7 @@ const CandidatePreviewBodySchema = z.object({
 
 const CandidateProposeBodySchema = z.object({
   contextResourceId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   title: z.string().min(1),
   body: z.string().min(1),
@@ -206,16 +208,18 @@ export function registerContextRoutes(app: FastifyInstance): void {
     });
 
     let sync:
-      | { ok: true; accepted: number; pushed: number; repoId: string }
+      | { ok: true; accepted: number; pushed: number; repoId: string; workspaceId: string }
       | { ok: false; error: string }
       | null = null;
     if (parsed.data.sync !== false) {
       try {
-        const target = await resolveSavedSyncTarget(contextResourceId);
+        const target = await resolveSavedSyncTarget(contextResourceId, parsed.data.workspaceId);
         if (!target) {
           sync = {
             ok: false,
-            error: 'No saved remote workspace credentials are available on this daemon.',
+            error: parsed.data.workspaceId
+              ? `No saved remote credentials are available for workspace ${parsed.data.workspaceId}.`
+              : 'Context sync requires an explicit workspace when this daemon has multiple remote bindings.',
           };
         } else {
           const result = await pushContextEvents({
@@ -227,7 +231,7 @@ export function registerContextRoutes(app: FastifyInstance): void {
             caCertPath: target.caCertPath,
             tlsPins: target.tlsPins,
           });
-          sync = { ok: true, ...result };
+          sync = { ok: true, workspaceId: target.workspaceId, ...result };
         }
       } catch (error) {
         sync = {
@@ -245,7 +249,10 @@ function contextResourceIdFrom(input: { contextResourceId?: string }): string | 
   return input.contextResourceId ?? null;
 }
 
-async function resolveSavedSyncTarget(contextResourceId: string): Promise<{
+async function resolveSavedSyncTarget(
+  contextResourceId: string,
+  workspaceId?: string,
+): Promise<{
   workspaceId: string;
   serverUrl: string;
   credential: string;
@@ -256,17 +263,8 @@ async function resolveSavedSyncTarget(contextResourceId: string): Promise<{
   const manager = new ConfigManager();
   await manager.load();
   const daemon = manager.getDaemonConfig() ?? {};
-  const relay = daemon.relay ?? {};
-  const workspaceId = relay.workspaceId ?? contextResourceId;
-  const serverUrl = relay.serverUrl ?? daemon.server?.url;
-  const credential = relay.issueToken;
-  if (!workspaceId || !serverUrl || !credential) return null;
-  return {
-    workspaceId,
-    serverUrl,
-    credential,
-    tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
-    caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
-    tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
-  };
+  return resolveConfiguredContextSyncTarget(daemon, {
+    contextResourceId,
+    requestedWorkspaceId: workspaceId,
+  });
 }
