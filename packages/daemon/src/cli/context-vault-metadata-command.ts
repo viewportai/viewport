@@ -8,6 +8,10 @@ import { initContextResource, type ContextKeyStore } from '../context/local-edge
 import { resolveContextKeyStore } from '../context/local-edge-key-store.js';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 import { useViewportVaultProvider } from '../config-resolution/config-writer.js';
+import {
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+} from '../security/epoch-protocol.js';
 
 type ContextVaultAccess = {
   role?: string | null;
@@ -239,7 +243,11 @@ async function requestJson(
   try {
     response = await transportFetch(url, {
       ...init,
-      headers: { accept: 'application/json', ...(init.headers ?? {}) },
+      headers: {
+        accept: 'application/json',
+        [TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER]: TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+        ...(init.headers ?? {}),
+      },
       timeoutMs: 5_000,
       tlsVerify: target.tlsVerify,
       caCertPath: target.caCertPath,

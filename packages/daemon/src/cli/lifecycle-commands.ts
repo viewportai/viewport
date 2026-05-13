@@ -327,6 +327,10 @@ export function showHelp(): void {
   console.log(
     '                               Authorize a local directory tree to stream to a paired organization',
   );
+  console.log('  unlock <id> [--workspace <id>] [--json]');
+  console.log(
+    '                               Activate a short-lived hosted-web trusted-edge session',
+  );
   console.log('  add <path> [--json]          Register a directory');
   console.log('  remove <path> [--json]       Unregister a directory');
   console.log('  list [--json]                List directories + active sessions');
@@ -429,12 +433,6 @@ export function showHelp(): void {
     '                               Pull signed encrypted context events from Viewport; defaults to vpd remote login config',
   );
   console.log(
-    '  context identity-publish --name <identity> [--workspace <id>] [--server-url <url>] [--credential <token>] [--json]',
-  );
-  console.log(
-    '                               Publish this trusted edge public identity for grant recipients',
-  );
-  console.log(
     '  context grants-process --context <id> --actor <device> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
@@ -445,18 +443,6 @@ export function showHelp(): void {
   );
   console.log(
     '                               Emit revocation and key-rotation events for removed workspace shares',
-  );
-  console.log('  context identity-export --name <identity> [--out <path>] [--json]');
-  console.log('  context identity-import (--identity <json>|--identity-file <path>) [--json]');
-  console.log('  context device-request --device <name> --code <code> [--out <path>] [--json]');
-  console.log(
-    '  context device-approve --user <name> (--request <json>|--request-file <path>) --code <code> --passphrase <text> --recovery-code <text> [--out <path>] [--json]',
-  );
-  console.log(
-    '  context device-accept --user <name> --device <name> (--approval <json>|--approval-file <path>) --code <code> [--json]',
-  );
-  console.log(
-    '  context grant --context <id> --actor <device> --recipient <user> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log('  hook notify --event <EventName>');
   console.log('  hook plan                    Send a plan proposal hook from stdin');

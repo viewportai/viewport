@@ -139,6 +139,9 @@ describe('context CLI command', () => {
       const requestUrl = String(url);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       requests.push({ url: requestUrl, method: init?.method, body });
+      expect((init?.headers as Record<string, string>)['X-Viewport-Crypto-Protocol']).toBe(
+        'viewport.trusted_edge_crypto/v2',
+      );
       if (requestUrl.includes('/context-vaults?')) {
         expect(requestUrl).toBe(
           'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults?credential=runtime-token',
@@ -201,6 +204,54 @@ describe('context CLI command', () => {
     expect(output).not.toContain('runtime-token');
   });
 
+  it('lists device enrollment status through the paired runtime credential', async () => {
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    await manager.setDaemonConfig({
+      relay: {
+        enabled: false,
+        endpoint: 'wss://getviewport.test:7781/ws',
+        serverUrl: 'http://app.getviewport.test',
+        workspaceId: 'workspace-alpha',
+        issueToken: 'runtime-token',
+        tlsVerify: 'auto',
+      },
+    });
+
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/crypto/device-enrollments?credential=runtime-token',
+      );
+      expect(init?.method).toBe('GET');
+      return jsonResponse({
+        data: [
+          {
+            id: 'enroll-vps-1',
+            workspace_id: 'workspace-alpha',
+            user_id: 42,
+            device_id: 'bob-vps',
+            device_label: 'Bob VPS',
+            encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public-x' },
+            signing_public_key_jwk: { kty: 'OKP', crv: 'Ed25519', x: 'public-sign' },
+            fingerprint: 'sha256:vps-fingerprint',
+            nonce: 'nonce-1',
+            status: 'approved',
+            grants: [],
+          },
+        ],
+      });
+    }) as typeof fetch;
+
+    await runContext(['context', 'device-enrollments', '--json']);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context device-enrollments"');
+    expect(output).toContain('"device_id": "bob-vps"');
+    expect(output).toContain('"status": "approved"');
+    expect(output).not.toContain('runtime-token');
+  });
+
   it('creates, initializes, and attaches a Context Vault in one command', async () => {
     const repo = path.join(tempHome, 'created-use-repo');
     const { ConfigManager } = await import('../../src/core/config.js');
@@ -220,6 +271,9 @@ describe('context CLI command', () => {
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe(
         'http://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vaults',
+      );
+      expect((init?.headers as Record<string, string>)['X-Viewport-Crypto-Protocol']).toBe(
+        'viewport.trusted_edge_crypto/v2',
       );
       const body = JSON.parse(String(init?.body ?? '{}'));
       expect(body).toMatchObject({
@@ -912,6 +966,57 @@ describe('context CLI command', () => {
     );
   });
 
+  it('resets local encrypted collaboration state only with explicit acknowledgement', async () => {
+    const cryptoEpochPath = path.join(tempHome, 'crypto', 'epochs.json');
+    const contextMetadataDir = path.join(tempHome, 'context', 'canonical-resources');
+    const decisionDir = path.join(tempHome, 'context', 'candidate-decision-applications');
+    const repoEventsDir = path.join(tempHome, 'repos', 'context-alpha', 'events');
+    const identityDir = path.join(tempHome, 'identities');
+    const planKeyPath = path.join(tempHome, 'plans', 'trusted-edge-keys.json');
+    const configPath = path.join(tempHome, 'config.json');
+
+    await fs.mkdir(path.dirname(cryptoEpochPath), { recursive: true });
+    await fs.mkdir(contextMetadataDir, { recursive: true });
+    await fs.mkdir(decisionDir, { recursive: true });
+    await fs.mkdir(repoEventsDir, { recursive: true });
+    await fs.mkdir(identityDir, { recursive: true });
+    await fs.mkdir(path.dirname(planKeyPath), { recursive: true });
+    await fs.writeFile(cryptoEpochPath, '{}\n', 'utf8');
+    await fs.writeFile(path.join(contextMetadataDir, 'context-alpha.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(decisionDir, 'decision.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(repoEventsDir, 'event.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(identityDir, 'alice.json'), '{}\n', 'utf8');
+    await fs.writeFile(planKeyPath, '{}\n', 'utf8');
+    await fs.writeFile(configPath, '{"daemon":{"relay":{"enabled":true}}}\n', 'utf8');
+
+    await expect(
+      runContext(['context', 'dev-reset-crypto', '--home', tempHome, '--json']),
+    ).rejects.toThrow('Re-run with --i-understand');
+    await fs.access(cryptoEpochPath);
+    await fs.access(planKeyPath);
+
+    await runContext([
+      'context',
+      'dev-reset-crypto',
+      '--home',
+      tempHome,
+      '--i-understand',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context dev-reset-crypto"');
+    expect(output).toContain('"crypto/epochs.json"');
+    expect(output).toContain('"plans/trusted-edge-keys.json"');
+    await expect(fs.access(cryptoEpochPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(contextMetadataDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(decisionDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(path.join(tempHome, 'repos'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(identityDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(planKeyPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await fs.access(configPath);
+  });
+
   it('routes unsupported provider proposals into the configured viewport-vault fallback', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-fallback-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
@@ -1526,153 +1631,86 @@ describe('context CLI command', () => {
     expect(output).toContain('"pulled"');
   });
 
-  it('publishes recipient identities and processes pending context grants through CLI commands', async () => {
-    const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-cli-bob-'));
-    try {
-      await runContext([
-        'context',
-        'init',
-        '--home',
-        tempHome,
-        '--context',
-        'context-alpha',
-        '--user',
-        'alice',
-        '--device',
-        'alice-laptop',
-        '--passphrase',
-        'alice-passphrase',
-        '--recovery-code',
-        'alice-recovery',
-        '--key-store',
-        'file',
-        '--json',
-      ]);
-      await runContext([
-        'context',
-        'init',
-        '--home',
-        bobHome,
-        '--context',
-        'bob-bootstrap',
-        '--user',
-        'bob',
-        '--device',
-        'bob-vps',
-        '--passphrase',
-        'bob-passphrase',
-        '--recovery-code',
-        'bob-recovery',
-        '--key-store',
-        'file',
-        '--json',
-      ]);
+  it('syncs every visible context vault for an approved user device in one command', async () => {
+    await runContext([
+      'context',
+      'user-init',
+      '--home',
+      tempHome,
+      '--user',
+      'alice',
+      '--device',
+      'alice-vps',
+      '--passphrase',
+      'alice-passphrase',
+      '--recovery-code',
+      'alice-recovery',
+      '--key-store',
+      'file',
+      '--json',
+    ]);
 
-      let publishedBobIdentity: Record<string, unknown> | null = null;
-      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        const requestUrl = String(url);
+    const pulledContexts: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/context-vaults?credential=runtime-token')) {
+        return jsonResponse({
+          data: [
+            { vault_id: 'context-alpha', access: { can_view: true } },
+            { vault_id: 'context-beta', access: { can_view: true } },
+            { vault_id: 'context-hidden', access: { can_view: false } },
+          ],
+        });
+      }
+
+      if (requestUrl.includes('/crypto/rotation-requests')) {
+        return jsonResponse({ data: [] });
+      }
+
+      if (requestUrl.includes('/team-epoch-member-grants')) {
+        return jsonResponse({ data: [] });
+      }
+
+      if (requestUrl.endsWith('/grants/revocations/pending')) {
+        return jsonResponse({ revocations: [] });
+      }
+
+      if (requestUrl.endsWith('/grants/pending')) {
+        return jsonResponse({ grants: [] });
+      }
+
+      if (requestUrl.endsWith('/events/pull')) {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        pulledContexts.push(String(body.context_resource_id));
+        return jsonResponse({ data: [], candidate_decisions: [] });
+      }
 
-        if (requestUrl.endsWith('/identities')) {
-          publishedBobIdentity = body.public_identity as Record<string, unknown>;
-          expect(JSON.stringify(body)).toContain('"hpkePublicKey"');
-          expect(JSON.stringify(body)).not.toContain('privateKey');
-          expect(JSON.stringify(body)).not.toContain('bob-passphrase');
-          return jsonResponse({
-            identity: {
-              id: 'ctxid_bob',
-              fingerprint: 'sha256:bob-public-fingerprint',
-            },
-          });
-        }
+      throw new Error(`Unexpected sync-all URL ${requestUrl}`);
+    }) as typeof fetch;
 
-        if (requestUrl.endsWith('/grants/pending')) {
-          expect(publishedBobIdentity).toBeTruthy();
-          return jsonResponse({
-            grants: [
-              {
-                id: 'cvcg_cli_pending_1',
-                context_resource_id: 'context-alpha',
-                recipient_identity: {
-                  name: 'bob',
-                  public_identity: publishedBobIdentity,
-                },
-              },
-            ],
-          });
-        }
+    logSpy.mockClear();
+    await runContext([
+      'context',
+      'sync-all',
+      '--home',
+      tempHome,
+      '--user',
+      'alice',
+      '--device',
+      'alice-vps',
+      '--workspace',
+      'workspace-alpha',
+      '--server-url',
+      'http://app.getviewport.test',
+      '--credential',
+      'runtime-token',
+      '--json',
+    ]);
 
-        if (requestUrl.endsWith('/events/push')) {
-          const payload = String(init?.body ?? '');
-          expect(payload).toContain('member.granted');
-          expect(payload).toContain('ciphertext');
-          expect(payload).not.toContain('alice-passphrase');
-          expect(payload).not.toContain('bob-passphrase');
-          return jsonResponse({
-            ok: true,
-            accepted: Array.isArray(body.events) ? body.events.length : 0,
-          });
-        }
-
-        if (requestUrl.endsWith('/grants/mark-emitted')) {
-          expect(body).toMatchObject({
-            crypto_grant_id: 'cvcg_cli_pending_1',
-            credential: 'runtime-token',
-          });
-          expect(typeof body.grant_event_id).toBe('string');
-          return jsonResponse({ ok: true });
-        }
-
-        throw new Error(`Unexpected URL ${requestUrl}`);
-      }) as typeof fetch;
-
-      logSpy.mockClear();
-      await runContext([
-        'context',
-        'identity-publish',
-        '--home',
-        bobHome,
-        '--name',
-        'bob',
-        '--workspace',
-        'workspace-alpha',
-        '--server-url',
-        'http://app.getviewport.test',
-        '--credential',
-        'runtime-token',
-        '--json',
-      ]);
-
-      await runContext([
-        'context',
-        'grants-process',
-        '--home',
-        tempHome,
-        '--context',
-        'context-alpha',
-        '--actor',
-        'alice-laptop',
-        '--workspace',
-        'workspace-alpha',
-        '--server-url',
-        'http://app.getviewport.test',
-        '--credential',
-        'runtime-token',
-        '--passphrase',
-        'alice-passphrase',
-        '--recovery-code',
-        'alice-recovery',
-        '--json',
-      ]);
-
-      const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-      expect(output).toContain('"command": "context identity-publish"');
-      expect(output).toContain('"identityId": "ctxid_bob"');
-      expect(output).toContain('"command": "context grants-process"');
-      expect(output).toContain('"emitted": 1');
-    } finally {
-      await fs.rm(bobHome, { recursive: true, force: true });
-    }
+    expect(pulledContexts).toEqual(['context-alpha', 'context-beta']);
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context sync-all"');
+    expect(output).toContain('"vaults": 2');
   });
 
   it('does not treat saved remote workspace id as an implicit context resource id', async () => {

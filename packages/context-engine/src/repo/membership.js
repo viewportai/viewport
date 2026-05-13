@@ -33,6 +33,20 @@ async function grantRepoHpke(vault, { repoId, actorName, recipientName }) {
   });
 }
 
+async function grantRepoHpkeRecipient(vault, { repoId, actorName, recipient }) {
+  const metadata = vault.getRepoMetadata(repoId);
+  const repoKey = vault.getRepoKey(repoId, metadata.currentKeyEpoch);
+
+  return appendGrantEventHpke(vault, {
+    repoId,
+    actorName,
+    recipient,
+    keyEpoch: metadata.currentKeyEpoch,
+    repoKey,
+    eventType: 'member.granted',
+  });
+}
+
 function revokeRepo(vault, { repoId, actorName, recipientName }) {
   const actor = vault.getIdentity(actorName);
   const actorRecipientName = actor.grantRecipientName ?? actorName;
@@ -172,6 +186,7 @@ module.exports = {
   appendGrantEventHpke,
   grantRepo,
   grantRepoHpke,
+  grantRepoHpkeRecipient,
   revokeRepo,
   revokeRepoHpke,
 };

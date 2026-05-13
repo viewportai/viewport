@@ -10,7 +10,9 @@ import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
 import { ConfigManager } from '../core/config.js';
+import type { Daemon } from '../core/daemon.js';
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
+import { verifyTrustedEdgeCommandCapability } from './trusted-edge-command-capability.js';
 
 const CredentialsSchema = z.object({
   passphrase: z.string().min(1),
@@ -35,6 +37,7 @@ const AddBodySchema = CredentialsSchema.extend({
 
 const ResolveBodySchema = z.object({
   contextResourceId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   query: z.string().default(''),
   maxItems: z.number().int().min(1).max(500).optional(),
@@ -48,6 +51,7 @@ const ResolveBodySchema = z.object({
     .optional(),
   passphrase: z.string().optional(),
   recoveryCode: z.string().optional(),
+  capabilityToken: z.string().min(1).optional(),
 });
 
 const CandidatePreviewBodySchema = z.object({
@@ -56,6 +60,7 @@ const CandidatePreviewBodySchema = z.object({
   actorName: z.string().min(1),
   candidateEventId: z.string().min(1).optional(),
   payloadDigest: z.string().min(1).optional(),
+  capabilityToken: z.string().min(1).optional(),
   passphrase: z.string().optional(),
   recoveryCode: z.string().optional(),
 });
@@ -73,7 +78,7 @@ const CandidateProposeBodySchema = z.object({
   sync: z.boolean().optional(),
 });
 
-export function registerContextRoutes(app: FastifyInstance): void {
+export function registerContextRoutes(app: FastifyInstance, daemon: Daemon): void {
   app.get<{ Querystring: { context?: string } }>('/api/context/status', async (request) => {
     return readContextStatus({
       contextResourceId: request.query.context,
@@ -141,20 +146,35 @@ export function registerContextRoutes(app: FastifyInstance): void {
     if (!contextResourceId) {
       return reply.status(400).send({ error: 'contextResourceId is required' });
     }
-    const bundle = await resolveContextBundle({
-      contextResourceId,
-      actorName: parsed.data.actorName,
-      query: parsed.data.query,
-      maxItems: parsed.data.maxItems,
-      includePrivate: parsed.data.includePrivate,
-      profile: parsed.data.profile,
-      profilePin: parsed.data.profilePin,
-      credentials: {
-        passphrase: parsed.data.passphrase ?? '',
-        recoveryCode: parsed.data.recoveryCode ?? '',
-      },
-    });
-    return { bundle };
+    if (!parsed.data.workspaceId) {
+      return reply.status(400).send({ error: 'workspaceId is required for trusted-edge resolve' });
+    }
+    try {
+      await verifyTrustedEdgeCommandCapability(daemon, {
+        token: parsed.data.capabilityToken,
+        workspaceId: parsed.data.workspaceId,
+        purpose: 'context-resolve',
+        contextResourceId,
+      });
+      const bundle = await resolveContextBundle({
+        contextResourceId,
+        actorName: parsed.data.actorName,
+        query: parsed.data.query,
+        maxItems: parsed.data.maxItems,
+        includePrivate: parsed.data.includePrivate,
+        profile: parsed.data.profile,
+        profilePin: parsed.data.profilePin,
+        credentials: {
+          passphrase: parsed.data.passphrase ?? '',
+          recoveryCode: parsed.data.recoveryCode ?? '',
+        },
+      });
+      return { bundle };
+    } catch (error) {
+      return reply
+        .status(400)
+        .send({ error: error instanceof Error ? error.message : 'Context resolve failed' });
+    }
   });
 
   app.post('/api/context/candidates/preview', async (request, reply) => {
@@ -168,7 +188,18 @@ export function registerContextRoutes(app: FastifyInstance): void {
     if (!contextResourceId) {
       return reply.status(400).send({ error: 'contextResourceId is required' });
     }
+    if (!parsed.data.workspaceId) {
+      return reply.status(400).send({ error: 'workspaceId is required for trusted-edge preview' });
+    }
     try {
+      await verifyTrustedEdgeCommandCapability(daemon, {
+        token: parsed.data.capabilityToken,
+        workspaceId: parsed.data.workspaceId,
+        purpose: 'context-candidate-preview',
+        contextResourceId,
+        candidateEventId: parsed.data.candidateEventId,
+        payloadDigest: parsed.data.payloadDigest,
+      });
       return await previewContextCandidateForTrustedEdge({
         contextResourceId,
         workspaceId: parsed.data.workspaceId,

@@ -150,6 +150,43 @@ export const ContextCandidatePreviewSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const ContextResolveSchema = z.object({
+  type: z.literal('context-resolve'),
+  contextResourceId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(256),
+  actorName: z.string().min(1).max(256),
+  query: z.string().max(10_000).default(''),
+  maxItems: z.number().int().min(1).max(500).optional(),
+  includePrivate: z.boolean().optional(),
+  profile: z.string().min(1).max(256).optional(),
+  profilePin: z
+    .object({
+      path: z.string().min(1).max(4096).optional(),
+      digest: z.string().min(1).max(256).optional(),
+    })
+    .optional(),
+  passphrase: z.string().max(4096).optional(),
+  recoveryCode: z.string().max(4096).optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
+export const ContextProposeSchema = z.object({
+  type: z.literal('context-propose'),
+  contextResourceId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(256),
+  actorName: z.string().min(1).max(256),
+  title: z.string().min(1).max(500),
+  body: z.string().min(1).max(100_000),
+  source: z.string().max(512).optional(),
+  sourceKind: z.enum(['workflow', 'plan', 'integration']).optional(),
+  sync: z.boolean().optional(),
+  passphrase: z.string().max(4096).optional(),
+  recoveryCode: z.string().max(4096).optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const ResumeSchema = z
   .object({
     type: z.literal('resume'),
@@ -281,10 +318,24 @@ export const RespondHookPermissionSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
-export const GetHookPlanDraftSchema = z.object({
-  type: z.literal('get-hook-plan-draft'),
-  draftId: z.string().min(1).max(256),
-  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+const TrustedEdgePlanBodyKeyGrantSchema = z.object({
+  schema: z.literal('viewport.plan_body_key_grant/v2'),
+  algorithm: z.literal('x25519-hkdf-sha256-aes-256-gcm'),
+  recipient_type: z.union([z.literal('user_epoch'), z.literal('team_epoch')]),
+  recipient_epoch_id: z.string().min(1).max(256),
+  recipient_fingerprint: z.string().min(1).max(256),
+  key_ref: z.string().min(1).max(256),
+  aad: z.record(z.string(), z.unknown()),
+  encrypted_payload: z.object({
+    schema: z.literal('viewport.wrapped_key_envelope/v1'),
+    alg: z.literal('x25519-hkdf-sha256-aes-256-gcm'),
+    ephemeralPublicKeyJwk: z.record(z.string(), z.unknown()),
+    iv: z.string().min(1),
+    ciphertext: z.string().min(1),
+    tag: z.string().min(1),
+    aadDigest: z.string().min(1),
+    createdAt: z.string().min(1),
+  }),
 });
 
 export const TrustedEdgePlanDecryptSchema = z.object({
@@ -302,19 +353,7 @@ export const TrustedEdgePlanDecryptSchema = z.object({
     digest: z.string().min(1).max(256),
     aad: z.record(z.string(), z.unknown()).optional(),
   }),
-  bodyKeyGrants: z
-    .array(
-      z.object({
-        schema: z.literal('viewport.plan_body_key_grant/v1'),
-        algorithm: z.literal('RSA-OAEP-256'),
-        recipient_user_id: z.number().int(),
-        recipient_key_id: z.string().min(1).max(256),
-        key_ref: z.string().min(1).max(256),
-        encrypted_key: z.string().min(1),
-      }),
-    )
-    .max(500)
-    .optional(),
+  bodyKeyGrants: z.array(TrustedEdgePlanBodyKeyGrantSchema).max(500).optional(),
   capabilityToken: z.string().min(1).max(4096).optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
@@ -332,6 +371,27 @@ export const TrustedEdgePlanEncryptFieldSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const TrustedEdgePlanDecryptFieldSchema = z.object({
+  type: z.literal('trusted-edge-plan-decrypt-field'),
+  workspaceId: z.string().min(1).max(256),
+  planId: z.string().min(1).max(256).optional(),
+  sourceRef: z.string().min(1).max(512).optional(),
+  bodyEncryption: TrustedEdgePlanDecryptSchema.shape.bodyEncryption,
+  bodyKeyGrants: TrustedEdgePlanDecryptSchema.shape.bodyKeyGrants,
+  fieldEncryption: z.object({
+    schema: z.literal('viewport.plan_feedback_field_encrypted/v1'),
+    algorithm: z.literal('AES-GCM-256'),
+    key_ref: z.string().min(1).max(256),
+    ciphertext: z.string().min(1),
+    iv: z.string().min(1),
+    tag: z.string().min(1),
+    digest: z.string().min(1).max(256),
+    aad: z.record(z.string(), z.unknown()).optional(),
+  }),
+  capabilityToken: TrustedEdgePlanDecryptSchema.shape.capabilityToken,
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const TrustedEdgePlanWrapKeySchema = z.object({
   type: z.literal('trusted-edge-plan-wrap-key'),
   workspaceId: z.string().min(1).max(256),
@@ -342,9 +402,10 @@ export const TrustedEdgePlanWrapKeySchema = z.object({
   recipients: z
     .array(
       z.object({
-        user_id: z.number().int().positive(),
-        key_id: z.string().min(1).max(256),
-        public_key_jwk: z.record(z.string(), z.unknown()),
+        recipient_type: z.union([z.literal('user_epoch'), z.literal('team_epoch')]),
+        recipient_epoch_id: z.string().min(1).max(256),
+        recipient_fingerprint: z.string().min(1).max(256),
+        encryption_public_key_jwk: z.record(z.string(), z.unknown()),
       }),
     )
     .min(1)
@@ -370,6 +431,8 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   ListSessionsSchema,
   ReadSessionMessagesSchema,
   ContextCandidatePreviewSchema,
+  ContextResolveSchema,
+  ContextProposeSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
@@ -381,8 +444,8 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
-  GetHookPlanDraftSchema,
   TrustedEdgePlanDecryptSchema,
+  TrustedEdgePlanDecryptFieldSchema,
   TrustedEdgePlanEncryptFieldSchema,
   TrustedEdgePlanWrapKeySchema,
 ]);

@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -8,6 +9,7 @@ import { Daemon } from '../../src/core/daemon.js';
 import { registerHttpRoutes } from '../../src/server/http-server.js';
 
 describe('HTTP context routes', () => {
+  const trustedEdgeSigningKey = 'trusted-edge-command-test-secret';
   let app: ReturnType<typeof Fastify>;
   let daemon: Daemon;
   let tempHome: string;
@@ -80,13 +82,36 @@ describe('HTTP context routes', () => {
       keyStore: 'file',
     });
 
+    const resolveWithoutCapability = await app.inject({
+      method: 'POST',
+      url: '/api/context/resolve',
+      payload: credentials({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
+        actorName: 'alice-laptop',
+        query: 'regression',
+      }),
+    });
+    expect(resolveWithoutCapability.statusCode).toBe(400);
+    expect(JSON.parse(resolveWithoutCapability.payload)).toMatchObject({
+      error: 'Trusted-edge command capability is required.',
+    });
+
+    await configureTrustedEdgeCapability(tempHome, daemon);
+
     const resolved = await app.inject({
       method: 'POST',
       url: '/api/context/resolve',
       payload: credentials({
         contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
         actorName: 'alice-laptop',
         query: 'regression',
+        capabilityToken: capabilityToken({
+          workspaceId: 'workspace-1',
+          purpose: 'context-resolve',
+          contextResourceId: 'context-alpha',
+        }),
       }),
     });
     expect(resolved.statusCode).toBe(200);
@@ -103,8 +128,14 @@ describe('HTTP context routes', () => {
       url: '/api/context/resolve',
       payload: {
         contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
         actorName: 'alice-laptop',
         query: 'regression',
+        capabilityToken: capabilityToken({
+          workspaceId: 'workspace-1',
+          purpose: 'context-resolve',
+          contextResourceId: 'context-alpha',
+        }),
       },
     });
     expect(resolvedFromApprovedDevice.statusCode).toBe(200);
@@ -299,6 +330,79 @@ describe('HTTP context routes', () => {
     });
   });
 
+  it('requires a scoped trusted-edge command capability before returning candidate plaintext', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/context/init',
+      payload: credentials({
+        contextResourceId: 'context-alpha',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        keyStore: 'file',
+      }),
+    });
+
+    const proposal = await app.inject({
+      method: 'POST',
+      url: '/api/context/candidates',
+      payload: {
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
+        actorName: 'alice-laptop',
+        title: 'Candidate standard',
+        body: 'Retry flaky browser paths with trace proof before merge.',
+        sync: false,
+      },
+    });
+    expect(proposal.statusCode).toBe(201);
+    const candidate = JSON.parse(proposal.payload).candidate as {
+      id: string;
+      bodyDigest: string;
+    };
+
+    const withoutCapability = await app.inject({
+      method: 'POST',
+      url: '/api/context/candidates/preview',
+      payload: {
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
+        actorName: 'alice-laptop',
+        payloadDigest: candidate.bodyDigest,
+      },
+    });
+    expect(withoutCapability.statusCode).toBe(400);
+    expect(JSON.parse(withoutCapability.payload)).toMatchObject({
+      error: 'Trusted-edge command capability is required.',
+    });
+
+    await configureTrustedEdgeCapability(tempHome, daemon);
+
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/context/candidates/preview',
+      payload: {
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
+        actorName: 'alice-laptop',
+        candidateEventId: candidate.id,
+        payloadDigest: candidate.bodyDigest,
+        capabilityToken: capabilityToken({
+          workspaceId: 'workspace-1',
+          purpose: 'context-candidate-preview',
+          contextResourceId: 'context-alpha',
+          candidateEventId: candidate.id,
+          payloadDigest: candidate.bodyDigest,
+        }),
+      },
+    });
+    expect(preview.statusCode, preview.payload).toBe(200);
+    expect(JSON.parse(preview.payload).candidate).toMatchObject({
+      title: 'Candidate standard',
+      body: 'Retry flaky browser paths with trace proof before merge.',
+      previewProof: expect.objectContaining({ ok: false }),
+    });
+  });
+
   function credentials<T extends Record<string, unknown>>(
     payload: T,
   ): T & {
@@ -323,5 +427,54 @@ describe('HTTP context routes', () => {
       }
     }
     return output;
+  }
+
+  async function configureTrustedEdgeCapability(home: string, activeDaemon: Daemon): Promise<void> {
+    await fs.writeFile(
+      path.join(home, 'config.json'),
+      JSON.stringify(
+        {
+          daemon: {
+            relay: {
+              workspaceId: 'workspace-1',
+              tokenIssuer: 'viewport-server',
+              tokenAudience: 'viewport-relay',
+              signingKeys: { v1: trustedEdgeSigningKey },
+              tokenClockSkewSec: 30,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await activeDaemon.configManager.load();
+  }
+
+  function capabilityToken(claims: Record<string, unknown>): string {
+    const header = Buffer.from(
+      JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: 'v1' }),
+      'utf8',
+    ).toString('base64url');
+    const now = Math.floor(Date.now() / 1000);
+    const payload = Buffer.from(
+      JSON.stringify({
+        role: 'trusted-edge-client',
+        scope: 'trusted-edge-command',
+        trustedEdgeUnlockSessionId: 'unlock-session-1',
+        iss: 'viewport-server',
+        aud: 'viewport-relay',
+        iat: now,
+        exp: now + 60,
+        jti: crypto.randomUUID(),
+        ...claims,
+      }),
+      'utf8',
+    ).toString('base64url');
+    const signature = crypto
+      .createHmac('sha256', trustedEdgeSigningKey)
+      .update(`${header}.${payload}`)
+      .digest('base64url');
+    return `${header}.${payload}.${signature}`;
   }
 });

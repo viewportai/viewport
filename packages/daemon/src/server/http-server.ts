@@ -155,7 +155,7 @@ export function registerHttpRoutes(
   // ---------------------------------------------------------------------------
 
   registerSessionRoutes(app, daemon);
-  registerContextRoutes(app);
+  registerContextRoutes(app, daemon);
 
   app.post<{ Body: { path: string; config?: Record<string, unknown> } }>(
     '/api/directories',

@@ -53,6 +53,18 @@ function grantRecipientIdentity(identity, actorName) {
   };
 }
 
+function grantRecipientIdentities(identity, actorName, grantIdentities = []) {
+  return [
+    grantRecipientIdentity(identity, actorName),
+    ...grantIdentities.filter(
+      (candidate) =>
+        candidate &&
+        typeof candidate.name === 'string' &&
+        typeof candidate.hpkePrivateKey === 'string',
+    ),
+  ];
+}
+
 async function unwrapSupportedGrantAsync(
   wrappedRepoKeyEnvelope,
   identity,
@@ -256,6 +268,7 @@ async function materializeRepoAsync({
   actorName,
   identity,
   publicKeys,
+  grantIdentities = [],
 }) {
   const eventFiles = listJsonFiles(paths.eventsDir);
   const keys = readJson(paths.keys, { epochs: {} });
@@ -273,15 +286,17 @@ async function materializeRepoAsync({
       event.type === 'member.granted' ||
       event.type === 'key.rotated'
     ) {
-      if (
-        event.grant?.recipientName ===
-        grantRecipientNameFor(identity, actorName)
-      ) {
+      const recipientIdentity = grantRecipientIdentities(
+        identity,
+        actorName,
+        grantIdentities,
+      ).find((candidate) => event.grant?.recipientName === candidate.name);
+      if (recipientIdentity) {
         try {
           keys.epochs[String(event.grant.keyEpoch)] = (
             await unwrapSupportedGrantAsync(
               event.grant.wrappedRepoKeyEnvelope,
-              grantRecipientIdentity(identity, actorName),
+              recipientIdentity,
               { repoId: event.repoId, keyEpoch: event.grant.keyEpoch },
             )
           ).toString('base64');

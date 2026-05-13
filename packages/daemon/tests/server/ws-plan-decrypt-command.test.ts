@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
 
 vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
   decryptTrustedEdgePlanBody: vi.fn(),
+  decryptTrustedEdgePlanFeedbackField: vi.fn(),
   encryptTrustedEdgePlanFeedbackField: vi.fn(),
   wrapTrustedEdgePlanBodyKey: vi.fn(),
 }));
@@ -11,6 +12,7 @@ vi.mock('../../src/hooks/trusted-edge-plan-artifacts.js', () => ({
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import {
   decryptTrustedEdgePlanBody,
+  decryptTrustedEdgePlanFeedbackField,
   encryptTrustedEdgePlanFeedbackField,
   wrapTrustedEdgePlanBodyKey,
 } from '../../src/hooks/trusted-edge-plan-artifacts.js';
@@ -26,12 +28,13 @@ function createClient(): ConnectedClient {
 
 const TEST_SIGNING_KEY = 'trusted-edge-command-test-secret';
 
-function createDaemon(): any {
+function createDaemon(runtimeTargetId = 'runtime-target-1'): any {
   return {
     configManager: {
       getDaemonConfig: () => ({
         relay: {
           workspaceId: 'workspace-1',
+          runtimeTargetId,
           tokenIssuer: 'viewport-server',
           tokenAudience: 'viewport-relay',
           signingKeys: { v1: TEST_SIGNING_KEY },
@@ -42,7 +45,11 @@ function createDaemon(): any {
   };
 }
 
-function capabilityToken(purpose: string, planId = 'plan-1'): string {
+function capabilityToken(
+  purpose: string,
+  planId = 'plan-1',
+  extraClaims: Record<string, unknown> = {},
+): string {
   const header = Buffer.from(
     JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: 'v1' }),
     'utf8',
@@ -55,11 +62,13 @@ function capabilityToken(purpose: string, planId = 'plan-1'): string {
       workspaceId: 'workspace-1',
       purpose,
       planId,
+      trustedEdgeUnlockSessionId: 'unlock-session-1',
       iss: 'viewport-server',
       aud: 'viewport-relay',
       iat: now,
       exp: now + 60,
       jti: crypto.randomUUID(),
+      ...extraClaims,
     }),
     'utf8',
   ).toString('base64url');
@@ -71,6 +80,10 @@ function capabilityToken(purpose: string, planId = 'plan-1'): string {
 }
 
 describe('trusted-edge-plan-decrypt websocket command', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('rejects decrypt requests without a scoped command capability', async () => {
     const sendAck = vi.fn();
     const handlers = createWsCommandHandlers({
@@ -162,6 +175,47 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
         bodySha256: 'sha256:plaintext',
         keyRef: 'trusted-edge-plan-key',
       }),
+    );
+  });
+
+  it('rejects capabilities unlocked for a different runtime target', async () => {
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon('runtime-target-1'),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-plan-decrypt'](createClient(), {
+      type: 'trusted-edge-plan-decrypt',
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      bodyEncryption: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:ciphertext',
+        aad: {},
+      },
+      capabilityToken: capabilityToken('trusted-edge-plan-decrypt', 'plan-1', {
+        runtimeTargetId: 'runtime-target-2',
+      }),
+      requestId: 'plan-decrypt-target-mismatch',
+    });
+
+    expect(decryptTrustedEdgePlanBody).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'plan-decrypt-target-mismatch',
+      'error',
+      'Trusted-edge command capability runtimeTargetId mismatch.',
+      { errorCode: 'INVALID_INPUT' },
     );
   });
 
@@ -270,16 +324,93 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
     );
   });
 
+  it('decrypts review fields with the trusted-edge plan key', async () => {
+    const sendAck = vi.fn();
+    vi.mocked(decryptTrustedEdgePlanFeedbackField).mockResolvedValue({
+      text: 'Needs one more proof step.',
+      textSha256: 'sha256:comment',
+      keyRef: 'trusted-edge-plan-key',
+    });
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['trusted-edge-plan-decrypt-field'](createClient(), {
+      type: 'trusted-edge-plan-decrypt-field',
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      bodyEncryption: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:ciphertext',
+        aad: {},
+      },
+      fieldEncryption: {
+        schema: 'viewport.plan_feedback_field_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'trusted-edge-plan-key',
+        ciphertext: 'encrypted-comment',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:comment',
+        aad: { purpose: 'plan-feedback-body' },
+      },
+      capabilityToken: capabilityToken('trusted-edge-plan-decrypt-field'),
+      requestId: 'plan-decrypt-field-req',
+    });
+
+    expect(decryptTrustedEdgePlanFeedbackField).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      planId: 'plan-1',
+      sourceRef: undefined,
+      bodyEnvelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      fieldEnvelope: expect.objectContaining({ key_ref: 'trusted-edge-plan-key' }),
+      bodyKeyGrants: undefined,
+    });
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'plan-decrypt-field-req',
+      'ok',
+      undefined,
+      expect.objectContaining({
+        field: expect.objectContaining({
+          text: 'Needs one more proof step.',
+          keyRef: 'trusted-edge-plan-key',
+        }),
+      }),
+    );
+  });
+
   it('wraps trusted-edge plan body keys for share recipients', async () => {
     const sendAck = vi.fn();
     vi.mocked(wrapTrustedEdgePlanBodyKey).mockResolvedValue([
       {
-        schema: 'viewport.plan_body_key_grant/v1',
-        algorithm: 'RSA-OAEP-256',
-        recipient_user_id: 42,
-        recipient_key_id: 'recipient-key',
+        schema: 'viewport.plan_body_key_grant/v2',
+        algorithm: 'x25519-hkdf-sha256-aes-256-gcm',
+        recipient_type: 'user_epoch',
+        recipient_epoch_id: 'user_epoch_42_1',
+        recipient_fingerprint: 'sha256:user-epoch',
         key_ref: 'trusted-edge-plan-key',
-        encrypted_key: 'wrapped-key',
+        aad: { purpose: 'plan-body-key' },
+        encrypted_payload: {
+          schema: 'viewport.wrapped_key_envelope/v1',
+          alg: 'x25519-hkdf-sha256-aes-256-gcm',
+          ephemeralPublicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'ephemeral' },
+          iv: 'iv',
+          ciphertext: 'wrapped-key',
+          tag: 'tag',
+          aadDigest: 'digest',
+          createdAt: '2026-05-13T00:00:00.000Z',
+        },
       },
     ]);
     const handlers = createWsCommandHandlers({
@@ -307,9 +438,10 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       },
       recipients: [
         {
-          user_id: 42,
-          key_id: 'recipient-key',
-          public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: 'user_epoch_42_1',
+          recipient_fingerprint: 'sha256:user-epoch',
+          encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public' },
         },
       ],
       capabilityToken: capabilityToken('trusted-edge-plan-wrap-key'),
@@ -324,9 +456,10 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       bodyKeyGrants: undefined,
       recipients: [
         {
-          user_id: 42,
-          key_id: 'recipient-key',
-          public_key_jwk: { kty: 'RSA', alg: 'RSA-OAEP-256', n: 'abc', e: 'AQAB' },
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: 'user_epoch_42_1',
+          recipient_fingerprint: 'sha256:user-epoch',
+          encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public' },
         },
       ],
     });
@@ -338,8 +471,11 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       expect.objectContaining({
         bodyKeyGrants: [
           expect.objectContaining({
-            recipient_user_id: 42,
-            encrypted_key: 'wrapped-key',
+            recipient_type: 'user_epoch',
+            recipient_epoch_id: 'user_epoch_42_1',
+            encrypted_payload: expect.objectContaining({
+              ciphertext: 'wrapped-key',
+            }),
           }),
         ],
       }),

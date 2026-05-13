@@ -1,0 +1,831 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  ensureTeamCryptoEpoch,
+  ensureUserCryptoEpoch,
+  processPendingCryptoRotationRequests,
+  rotateTeamCryptoEpoch,
+  rotateUserCryptoEpoch,
+} from '../../src/security/epoch-sync.js';
+import {
+  createLocalUserEpochKeyMaterial,
+  getActiveLocalTeamEpoch,
+  getActiveLocalUserEpoch,
+} from '../../src/security/epoch-store.js';
+import {
+  epochFingerprint,
+  epochTransitionPayload,
+  signEpochTransition,
+} from '../../src/security/epoch-protocol.js';
+import { validateAndPinPublicEpoch } from '../../src/security/epoch-public-pins.js';
+
+const tmpDirs: string[] = [];
+
+describe('epoch sync', () => {
+  afterEach(async () => {
+    await Promise.all(tmpDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  });
+
+  it('generates private user epoch material locally and publishes public material only', async () => {
+    const home = await tempHome();
+    const fetchImpl = vi.fn(async (_url: string, init?: { body?: string; headers?: unknown }) => {
+      expectCryptoProtocolHeader(init?.headers);
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      expect(JSON.stringify(body)).not.toContain('private');
+      expect(JSON.stringify(body)).not.toContain('"d"');
+      expect(JSON.stringify(body)).not.toContain('"k"');
+      return responseJson({
+        ok: true,
+        data: {
+          id: 'epoch-1',
+          workspace_id: 'workspace-1',
+          user_id: 42,
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          status: 'active',
+          fingerprint: 'sha256:epoch-fingerprint',
+          encryption_public_key_jwk: body.encryption_public_key_jwk,
+          signing_public_key_jwk: body.signing_public_key_jwk,
+          previous_epoch_fingerprint: null,
+        },
+      });
+    });
+
+    const epoch = await ensureUserCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(epoch.fingerprint).toBe('sha256:epoch-fingerprint');
+    expect(epoch.userId).toBe('42');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    const stored = await getActiveLocalUserEpoch('workspace-1', home);
+    expect(stored?.encryptionPrivateKeyJwk).toMatchObject({ d: expect.any(String) });
+    expect(stored?.signingPrivateKeyJwk).toMatchObject({ d: expect.any(String) });
+  });
+
+  it('reuses an active local epoch without publishing again', async () => {
+    const home = await tempHome();
+    const fetchImpl = vi.fn(async () =>
+      responseJson({
+        ok: true,
+        data: {
+          id: 'epoch-1',
+          workspace_id: 'workspace-1',
+          user_id: 42,
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          status: 'active',
+          fingerprint: 'sha256:epoch-fingerprint',
+          encryption_public_key_jwk: { kty: 'OKP', crv: 'X25519', x: 'public-x' },
+          signing_public_key_jwk: { kty: 'OKP', crv: 'Ed25519', x: 'public-signing' },
+          previous_epoch_fingerprint: null,
+        },
+      }),
+    );
+
+    await ensureUserCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    await ensureUserCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rotates a user epoch with signed continuity and keeps private material local', async () => {
+    const home = await tempHome();
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      requests.push({ url, body });
+      expect(JSON.stringify(body)).not.toContain('private');
+      expect(JSON.stringify(body)).not.toContain('"d"');
+      expect(JSON.stringify(body)).not.toContain('"k"');
+      const epoch = Number(body.epoch);
+      const fingerprint = epochFingerprint({
+        schema: 'viewport.user_crypto_epoch/v1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '42',
+        epoch,
+        encryptionPublicKeyJwk: body.encryption_public_key_jwk as never,
+        signingPublicKeyJwk: body.signing_public_key_jwk as never,
+        previousEpochFingerprint: (body.previous_epoch_fingerprint as string | undefined) ?? null,
+        createdAt: 'server-fixture',
+      });
+      return responseJson({
+        ok: true,
+        data: {
+          id: `user-epoch-${epoch}`,
+          workspace_id: 'workspace-1',
+          user_id: 42,
+          epoch,
+          schema: 'viewport.user_crypto_epoch/v1',
+          status: 'active',
+          fingerprint,
+          encryption_public_key_jwk: body.encryption_public_key_jwk,
+          signing_public_key_jwk: body.signing_public_key_jwk,
+          previous_epoch_fingerprint: body.previous_epoch_fingerprint ?? null,
+        },
+      });
+    });
+
+    await ensureUserCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    const rotated = await rotateUserCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      reason: 'device_revoked',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(rotated.epoch).toBe(2);
+    const fromFingerprint = String(requests[1]?.body.previous_epoch_fingerprint);
+    expect(rotated.previousEpochFingerprint).toBe(fromFingerprint);
+    expect(requests[1]?.body).toMatchObject({
+      credential: 'issue-token',
+      epoch: 2,
+      previous_epoch_fingerprint: fromFingerprint,
+      continuity: {
+        payload: expect.objectContaining({
+          reason: 'device_revoked',
+          fromEpoch: 1,
+          toEpoch: 2,
+          fromEpochFingerprint: fromFingerprint,
+          toEpochFingerprint: expect.any(String),
+        }),
+        signature: expect.any(String),
+        signed_by_epoch_fingerprint: fromFingerprint,
+      },
+    });
+    const active = await getActiveLocalUserEpoch('workspace-1', home);
+    expect(active?.epoch).toBe(2);
+    expect(active?.encryptionPrivateKeyJwk).toMatchObject({ d: expect.any(String) });
+  });
+
+  it('generates private team epoch material locally and publishes public material only', async () => {
+    const home = await tempHome();
+    const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
+      expect(url).toBe(
+        'https://api.test/api/runtime/workspaces/workspace-1/crypto/teams/team_public_1/epochs',
+      );
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      expect(JSON.stringify(body)).not.toContain('private');
+      expect(JSON.stringify(body)).not.toContain('"d"');
+      expect(JSON.stringify(body)).not.toContain('"k"');
+      return responseJson({
+        ok: true,
+        data: {
+          id: 'team-epoch-1',
+          workspace_id: 'workspace-1',
+          team_id: 77,
+          epoch: 1,
+          schema: 'viewport.team_crypto_epoch/v1',
+          status: 'active',
+          fingerprint: 'sha256:team-epoch-fingerprint',
+          encryption_public_key_jwk: body.encryption_public_key_jwk,
+          signing_public_key_jwk: body.signing_public_key_jwk,
+          previous_epoch_fingerprint: null,
+        },
+      });
+    });
+
+    const epoch = await ensureTeamCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      teamId: 'team_public_1',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(epoch.fingerprint).toBe('sha256:team-epoch-fingerprint');
+    expect(epoch.teamId).toBe('team_public_1');
+    expect(epoch.platformTeamId).toBe('77');
+
+    const stored = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
+    expect(stored?.encryptionPrivateKeyJwk).toMatchObject({ d: expect.any(String) });
+    expect(stored?.signingPrivateKeyJwk).toMatchObject({ d: expect.any(String) });
+  });
+
+  it('reuses an active local team epoch without publishing again', async () => {
+    const home = await tempHome();
+    const fetchImpl = vi.fn(async (_url: string, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return responseJson({
+        ok: true,
+        data: {
+          id: 'team-epoch-1',
+          workspace_id: 'workspace-1',
+          team_id: 77,
+          epoch: 1,
+          schema: 'viewport.team_crypto_epoch/v1',
+          status: 'active',
+          fingerprint: 'sha256:team-epoch-fingerprint',
+          encryption_public_key_jwk: body.encryption_public_key_jwk,
+          signing_public_key_jwk: body.signing_public_key_jwk,
+          previous_epoch_fingerprint: null,
+        },
+      });
+    });
+
+    await ensureTeamCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      teamId: 'team_public_1',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    await ensureTeamCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      teamId: 'team_public_1',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rotates a team epoch with signed continuity for member revocation', async () => {
+    const home = await tempHome();
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      requests.push({ url, body });
+      const epoch = Number(body.epoch);
+      const fingerprint = epochFingerprint({
+        schema: 'viewport.team_crypto_epoch/v1',
+        workspaceId: 'workspace-1',
+        subjectType: 'team',
+        subjectId: '77',
+        epoch,
+        encryptionPublicKeyJwk: body.encryption_public_key_jwk as never,
+        signingPublicKeyJwk: body.signing_public_key_jwk as never,
+        previousEpochFingerprint: (body.previous_epoch_fingerprint as string | undefined) ?? null,
+        createdAt: 'server-fixture',
+      });
+      return responseJson({
+        ok: true,
+        data: {
+          id: `team-epoch-${epoch}`,
+          workspace_id: 'workspace-1',
+          team_id: 77,
+          epoch,
+          schema: 'viewport.team_crypto_epoch/v1',
+          status: 'active',
+          fingerprint,
+          encryption_public_key_jwk: body.encryption_public_key_jwk,
+          signing_public_key_jwk: body.signing_public_key_jwk,
+          previous_epoch_fingerprint: body.previous_epoch_fingerprint ?? null,
+        },
+      });
+    });
+
+    await ensureTeamCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      teamId: 'team_public_1',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    const rotated = await rotateTeamCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      teamId: 'team_public_1',
+      reason: 'member_revoked',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(rotated.epoch).toBe(2);
+    const fromTeamFingerprint = String(requests[1]?.body.previous_epoch_fingerprint);
+    expect(rotated.previousEpochFingerprint).toBe(fromTeamFingerprint);
+    expect(requests[1]?.url).toBe(
+      'https://api.test/api/runtime/workspaces/workspace-1/crypto/teams/team_public_1/epochs',
+    );
+    expect(requests[1]?.body).toMatchObject({
+      credential: 'issue-token',
+      epoch: 2,
+      previous_epoch_fingerprint: fromTeamFingerprint,
+      continuity: {
+        payload: expect.objectContaining({
+          reason: 'member_revoked',
+          fromEpoch: 1,
+          toEpoch: 2,
+          fromEpochFingerprint: fromTeamFingerprint,
+        }),
+        signature: expect.any(String),
+        signed_by_epoch_fingerprint: fromTeamFingerprint,
+      },
+    });
+    const active = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
+    expect(active?.epoch).toBe(2);
+  });
+
+  it('processes pending user rotation requests from the runtime queue', async () => {
+    const home = await tempHome();
+    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> =
+      [];
+    const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      requests.push({ url, method, body });
+      if (method === 'GET' && url.includes('/crypto/rotation-requests')) {
+        return responseJson({
+          data: [
+            {
+              id: 'rotation-user-1',
+              subject_type: 'user',
+              subject_id: '42',
+              team_public_id: null,
+              reason: 'device_revoked',
+              recipient_user_crypto_epoch_ids: [],
+            },
+          ],
+        });
+      }
+      if (method === 'POST' && url.endsWith('/crypto/user-epochs')) {
+        const epoch = Number(body?.epoch);
+        const fingerprint = epochFingerprint({
+          schema: 'viewport.user_crypto_epoch/v1',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '42',
+          epoch,
+          encryptionPublicKeyJwk: body?.encryption_public_key_jwk as never,
+          signingPublicKeyJwk: body?.signing_public_key_jwk as never,
+          previousEpochFingerprint:
+            (body?.previous_epoch_fingerprint as string | undefined) ?? null,
+          createdAt: 'server-fixture',
+        });
+        return responseJson({
+          data: {
+            id: `user-epoch-${epoch}`,
+            workspace_id: 'workspace-1',
+            user_id: 42,
+            epoch,
+            schema: 'viewport.user_crypto_epoch/v1',
+            status: 'active',
+            fingerprint,
+            encryption_public_key_jwk: body?.encryption_public_key_jwk,
+            signing_public_key_jwk: body?.signing_public_key_jwk,
+            previous_epoch_fingerprint: body?.previous_epoch_fingerprint ?? null,
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await ensureUserCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    const result = await processPendingCryptoRotationRequests({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(result).toMatchObject({
+      processed: 1,
+      userRotations: 1,
+      teamRotations: 0,
+      teamMemberGrants: 0,
+      skipped: 0,
+    });
+    const rotationPost = requests.find(
+      (request) =>
+        request.method === 'POST' &&
+        request.url.endsWith('/crypto/user-epochs') &&
+        request.body?.epoch === 2,
+    );
+    expect(rotationPost?.body).toMatchObject({
+      credential: 'issue-token',
+      epoch: 2,
+      previous_epoch_fingerprint: expect.any(String),
+      continuity: {
+        payload: expect.objectContaining({
+          reason: 'device_revoked',
+          fromEpoch: 1,
+          toEpoch: 2,
+        }),
+        signature: expect.any(String),
+      },
+    });
+    const active = await getActiveLocalUserEpoch('workspace-1', home);
+    expect(active?.epoch).toBe(2);
+  });
+
+  it('processes pending team rotations and grants the new epoch to current user epochs', async () => {
+    const home = await tempHome();
+    const recipientKey = createRecipientUserEpochFixture();
+    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> =
+      [];
+    const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      requests.push({ url, method, body });
+      if (method === 'GET' && url.includes('/crypto/rotation-requests')) {
+        return responseJson({
+          data: [
+            {
+              id: 'rotation-team-1',
+              subject_type: 'team',
+              subject_id: '77',
+              team_public_id: 'team_public_1',
+              reason: 'member_added',
+              recipient_user_crypto_epoch_ids: ['recipient-user-epoch-1'],
+            },
+          ],
+        });
+      }
+      if (method === 'GET' && url.includes('/crypto/epochs')) {
+        return responseJson({
+          data: {
+            user_epochs: [
+              {
+                id: 'recipient-user-epoch-1',
+                workspace_id: 'workspace-1',
+                user_id: 99,
+                epoch: 1,
+                fingerprint: recipientKey.fingerprint,
+                encryption_public_key_jwk: recipientKey.encryptionPublicKeyJwk,
+                signing_public_key_jwk: recipientKey.signingPublicKeyJwk,
+                previous_epoch_fingerprint: null,
+              },
+            ],
+            team_epochs: [],
+          },
+        });
+      }
+      if (method === 'POST' && url.includes('/crypto/teams/team_public_1/epochs')) {
+        const epoch = Number(body?.epoch);
+        const fingerprint = epochFingerprint({
+          schema: 'viewport.team_crypto_epoch/v1',
+          workspaceId: 'workspace-1',
+          subjectType: 'team',
+          subjectId: '77',
+          epoch,
+          encryptionPublicKeyJwk: body?.encryption_public_key_jwk as never,
+          signingPublicKeyJwk: body?.signing_public_key_jwk as never,
+          previousEpochFingerprint:
+            (body?.previous_epoch_fingerprint as string | undefined) ?? null,
+          createdAt: 'server-fixture',
+        });
+        return responseJson({
+          data: {
+            id: `team-epoch-${epoch}`,
+            workspace_id: 'workspace-1',
+            team_id: 77,
+            epoch,
+            schema: 'viewport.team_crypto_epoch/v1',
+            status: 'active',
+            fingerprint,
+            encryption_public_key_jwk: body?.encryption_public_key_jwk,
+            signing_public_key_jwk: body?.signing_public_key_jwk,
+            previous_epoch_fingerprint: body?.previous_epoch_fingerprint ?? null,
+          },
+        });
+      }
+      if (method === 'POST' && url.endsWith('/crypto/team-epochs/team-epoch-2/member-grants')) {
+        return responseJson({
+          data: {
+            id: 'team-member-grant-2',
+            team_crypto_epoch_id: 'team-epoch-2',
+            recipient_user_crypto_epoch_id: body?.recipient_user_crypto_epoch_id,
+            aad: body?.aad,
+            encrypted_payload: body?.encrypted_payload,
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await ensureTeamCryptoEpoch({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      teamId: 'team_public_1',
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+    const result = await processPendingCryptoRotationRequests({
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
+      home,
+      fetchImpl: fetchImpl as never,
+    });
+
+    expect(result).toMatchObject({
+      processed: 1,
+      userRotations: 0,
+      teamRotations: 1,
+      teamMemberGrants: 1,
+      skipped: 0,
+    });
+    const grantPost = requests.find((request) =>
+      request.url.endsWith('/crypto/team-epochs/team-epoch-2/member-grants'),
+    );
+    expect(grantPost?.body).toMatchObject({
+      credential: 'issue-token',
+      recipient_user_crypto_epoch_id: 'recipient-user-epoch-1',
+      aad: expect.objectContaining({
+        teamEpochId: 'team-epoch-2',
+        recipientUserEpochId: 'recipient-user-epoch-1',
+      }),
+      encrypted_payload: expect.any(Object),
+    });
+    const rotationPost = requests.find(
+      (request) =>
+        request.url.endsWith('/crypto/teams/team_public_1/epochs') && request.body?.epoch === 2,
+    );
+    expect(rotationPost?.body).toMatchObject({
+      continuity: {
+        payload: expect.objectContaining({
+          reason: 'member_added',
+          fromEpoch: 1,
+          toEpoch: 2,
+        }),
+      },
+    });
+    const active = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
+    expect(active?.epoch).toBe(2);
+  });
+
+  it('pins fetched public epochs and rejects same-epoch key replacement', async () => {
+    const home = await tempHome();
+    const first = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const attacker = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const firstFingerprint = epochFingerprint(first.descriptor);
+    const attackerFingerprint = epochFingerprint(attacker.descriptor);
+
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: firstFingerprint,
+        encryptionPublicKeyJwk: first.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: first.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: null,
+      },
+      home,
+    );
+
+    await expect(
+      validateAndPinPublicEpoch(
+        {
+          platformEpochId: 'user-epoch-1',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '99',
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint: attackerFingerprint,
+          encryptionPublicKeyJwk: attacker.descriptor.encryptionPublicKeyJwk,
+          signingPublicKeyJwk: attacker.descriptor.signingPublicKeyJwk,
+          previousEpochFingerprint: null,
+        },
+        home,
+      ),
+    ).rejects.toThrow(/replacement/);
+  });
+
+  it('rejects fetched public epoch rollback and accepts signed continuity to the next epoch', async () => {
+    const home = await tempHome();
+    const epoch1 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const epoch2 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 2,
+      previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+    });
+    const createdAt = new Date().toISOString();
+    const continuity = signEpochTransition({
+      payload: epochTransitionPayload({
+        from: epoch1.descriptor,
+        to: epoch2.descriptor,
+        reason: 'manual_rotation',
+        createdAt,
+      }),
+      signingPrivateKeyJwk: epoch1.signingPrivateKeyJwk,
+      signedByEpochFingerprint: epochFingerprint(epoch1.descriptor),
+    });
+
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: epochFingerprint(epoch1.descriptor),
+        encryptionPublicKeyJwk: epoch1.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: epoch1.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: null,
+      },
+      home,
+    );
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-2',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 2,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: epochFingerprint(epoch2.descriptor),
+        encryptionPublicKeyJwk: epoch2.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: epoch2.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+        continuityPayload: continuity.payload as never,
+        continuitySignature: continuity.signature,
+        signedByEpochFingerprint: continuity.signedByEpochFingerprint,
+      },
+      home,
+    );
+
+    await expect(
+      validateAndPinPublicEpoch(
+        {
+          platformEpochId: 'user-epoch-1',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '99',
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint: epochFingerprint(epoch1.descriptor),
+          encryptionPublicKeyJwk: epoch1.descriptor.encryptionPublicKeyJwk,
+          signingPublicKeyJwk: epoch1.descriptor.signingPublicKeyJwk,
+          previousEpochFingerprint: null,
+        },
+        home,
+      ),
+    ).rejects.toThrow(/rollback/);
+  });
+
+  it('rejects fetched public epoch advances without signed continuity from the pinned epoch', async () => {
+    const home = await tempHome();
+    const epoch1 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const epoch2 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 2,
+      previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+    });
+
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: epochFingerprint(epoch1.descriptor),
+        encryptionPublicKeyJwk: epoch1.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: epoch1.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: null,
+      },
+      home,
+    );
+
+    await expect(
+      validateAndPinPublicEpoch(
+        {
+          platformEpochId: 'user-epoch-2',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '99',
+          epoch: 2,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint: epochFingerprint(epoch2.descriptor),
+          encryptionPublicKeyJwk: epoch2.descriptor.encryptionPublicKeyJwk,
+          signingPublicKeyJwk: epoch2.descriptor.signingPublicKeyJwk,
+          previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+        },
+        home,
+      ),
+    ).rejects.toThrow(/missing signed continuity/);
+  });
+});
+
+async function tempHome(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-epoch-sync-'));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+function responseJson(payload: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: async () => payload,
+  } as Response;
+}
+
+function expectCryptoProtocolHeader(headers: unknown): void {
+  expect(headers).toMatchObject({
+    'X-Viewport-Crypto-Protocol': 'viewport.trusted_edge_crypto/v2',
+  });
+}
+
+function createRecipientUserEpochFixture(): {
+  encryptionPublicKeyJwk: Record<string, unknown>;
+  signingPublicKeyJwk: Record<string, unknown>;
+  fingerprint: string;
+} {
+  const keys = createLocalUserEpochKeyMaterial({
+    workspaceId: 'workspace-1',
+    userId: '99',
+    epoch: 1,
+  });
+  return {
+    encryptionPublicKeyJwk: keys.descriptor.encryptionPublicKeyJwk as Record<string, unknown>,
+    signingPublicKeyJwk: keys.descriptor.signingPublicKeyJwk as Record<string, unknown>,
+    fingerprint: epochFingerprint(keys.descriptor),
+  };
+}

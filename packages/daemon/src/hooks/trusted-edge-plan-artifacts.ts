@@ -5,6 +5,16 @@ import { configDir } from '../core/config.js';
 import { stableJson } from '../context/local-edge-crypto.js';
 import { transportFetch, type TlsVerifyMode } from '../cli/network.js';
 import type { DaemonEvents } from '../core/events.js';
+import {
+  getLocalTeamEpochByPlatformId,
+  getLocalUserEpochByPlatformId,
+} from '../security/epoch-store.js';
+import {
+  unwrapJsonFromX25519Envelope,
+  wrapJsonForX25519Recipient,
+  type JsonValue,
+  type WrappedKeyEnvelope,
+} from '../security/epoch-protocol.js';
 
 export const TRUSTED_EDGE_PLAN_BODY_SCHEMA = 'viewport.plan_body_encrypted/v1';
 const TRUSTED_EDGE_PLAN_KEY_STORE_SCHEMA = 'viewport.trusted_edge_plan_keys/v1';
@@ -45,35 +55,29 @@ export interface TrustedEdgePlanRecord {
   updatedAt: string;
 }
 
-export interface TrustedEdgePlanWrappingKey {
-  keyId: string;
-  label: string;
-  algorithm: 'RSA-OAEP-256';
-  publicKeyJwk: Record<string, unknown>;
-  privateKeyJwk: Record<string, unknown>;
-  createdAt: string;
-  lastSeenAt: string;
+export interface TrustedEdgePlanEpochBodyKeyGrant {
+  schema: 'viewport.plan_body_key_grant/v2';
+  algorithm: 'x25519-hkdf-sha256-aes-256-gcm';
+  recipient_type: 'user_epoch' | 'team_epoch';
+  recipient_epoch_id: string;
+  recipient_fingerprint: string;
+  key_ref: string;
+  aad: JsonValue;
+  encrypted_payload: WrappedKeyEnvelope;
 }
 
-export interface TrustedEdgePlanBodyKeyGrant {
-  schema: 'viewport.plan_body_key_grant/v1';
-  algorithm: 'RSA-OAEP-256';
-  recipient_user_id: number;
-  recipient_key_id: string;
-  key_ref: string;
-  encrypted_key: string;
-}
+export type TrustedEdgePlanAnyBodyKeyGrant = TrustedEdgePlanEpochBodyKeyGrant;
 
 export interface TrustedEdgePlanGrantRecipient {
-  user_id: number;
-  key_id: string;
-  public_key_jwk: Record<string, unknown>;
+  recipient_type: 'user_epoch' | 'team_epoch';
+  recipient_epoch_id: string;
+  recipient_fingerprint: string;
+  encryption_public_key_jwk: JsonValue;
 }
 
 interface TrustedEdgePlanKeyStore {
   schema: typeof TRUSTED_EDGE_PLAN_KEY_STORE_SCHEMA;
   records: TrustedEdgePlanRecord[];
-  wrappingKeys?: TrustedEdgePlanWrappingKey[];
 }
 
 export interface TrustedEdgePlanSyncTarget {
@@ -92,11 +96,6 @@ export async function saveTrustedEdgePlanDraft(options: {
   fetchImpl?: typeof transportFetch;
 }): Promise<{ planId: string; sourceRef: string; envelope: TrustedEdgePlanEnvelope }> {
   const sourceRef = options.event.sourceRef ?? `agent-hook:${options.event.sessionId}`;
-  await publishTrustedEdgePlanWrappingKey({
-    target: options.target,
-    home: options.home,
-    fetchImpl: options.fetchImpl,
-  });
   const encrypted = await encryptTrustedEdgePlanBody({
     workspaceId: options.target.workspaceId,
     sourceRef,
@@ -164,7 +163,7 @@ export async function decryptTrustedEdgePlanBody(options: {
   planId?: string;
   sourceRef?: string;
   envelope: TrustedEdgePlanEnvelope;
-  bodyKeyGrants?: TrustedEdgePlanBodyKeyGrant[];
+  bodyKeyGrants?: TrustedEdgePlanAnyBodyKeyGrant[];
   home?: string;
 }): Promise<{ body: string; bodySha256: string; keyRef: string }> {
   const record = await resolveTrustedEdgePlanKey(
@@ -201,7 +200,7 @@ export async function encryptTrustedEdgePlanFeedbackField(options: {
   envelope: TrustedEdgePlanEnvelope;
   text: string;
   aad?: Record<string, unknown>;
-  bodyKeyGrants?: TrustedEdgePlanBodyKeyGrant[];
+  bodyKeyGrants?: TrustedEdgePlanAnyBodyKeyGrant[];
   home?: string;
 }): Promise<TrustedEdgePlanFeedbackEnvelope> {
   const record = await resolveTrustedEdgePlanKey(
@@ -236,31 +235,40 @@ export async function encryptTrustedEdgePlanFeedbackField(options: {
   };
 }
 
-export async function publishTrustedEdgePlanWrappingKey(options: {
-  target: TrustedEdgePlanSyncTarget;
+export async function decryptTrustedEdgePlanFeedbackField(options: {
+  workspaceId: string;
+  planId?: string;
+  sourceRef?: string;
+  bodyEnvelope: TrustedEdgePlanEnvelope;
+  fieldEnvelope: TrustedEdgePlanFeedbackEnvelope;
+  bodyKeyGrants?: TrustedEdgePlanAnyBodyKeyGrant[];
   home?: string;
-  label?: string;
-  fetchImpl?: typeof transportFetch;
-}): Promise<TrustedEdgePlanWrappingKey> {
-  const key = await ensureTrustedEdgePlanWrappingKey(options.home, options.label);
-  await postJson(
-    options.fetchImpl ?? transportFetch,
-    `${options.target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(options.target.workspaceId)}/plan-encryption-keys`,
+}): Promise<{ text: string; textSha256: string; keyRef: string }> {
+  const record = await resolveTrustedEdgePlanKey(
     {
-      credential: options.target.credential,
-      key_id: key.keyId,
-      label: key.label,
-      algorithm: key.algorithm,
-      public_key_jwk: key.publicKeyJwk,
+      workspaceId: options.workspaceId,
+      planId: options.planId,
+      sourceRef: options.sourceRef,
+      keyRef: options.bodyEnvelope.key_ref,
+      bodyKeyGrants: options.bodyKeyGrants,
     },
-    {
-      tlsVerify: options.target.tlsVerify,
-      caCertPath: options.target.caCertPath,
-      tlsPins: options.target.tlsPins,
-    },
+    options.home,
   );
+  if (!record) {
+    throw new Error('Trusted edge does not have the key for this plan.');
+  }
+  if (options.fieldEnvelope.schema !== 'viewport.plan_feedback_field_encrypted/v1') {
+    throw new Error(`Unsupported plan feedback schema: ${options.fieldEnvelope.schema}`);
+  }
+  if (options.fieldEnvelope.algorithm !== PLAN_BODY_ALGORITHM) {
+    throw new Error(`Unsupported plan feedback algorithm: ${options.fieldEnvelope.algorithm}`);
+  }
+  if (options.fieldEnvelope.key_ref !== options.bodyEnvelope.key_ref) {
+    throw new Error('Trusted-edge plan feedback key does not match this plan.');
+  }
 
-  return key;
+  const text = decryptAesGcmEnvelope(options.fieldEnvelope, Buffer.from(record.rawKey, 'base64'));
+  return { text, textSha256: digestText(text), keyRef: record.keyRef };
 }
 
 export async function wrapTrustedEdgePlanBodyKey(options: {
@@ -268,10 +276,10 @@ export async function wrapTrustedEdgePlanBodyKey(options: {
   planId?: string;
   sourceRef?: string;
   envelope: TrustedEdgePlanEnvelope;
-  bodyKeyGrants?: TrustedEdgePlanBodyKeyGrant[];
+  bodyKeyGrants?: TrustedEdgePlanAnyBodyKeyGrant[];
   recipients: TrustedEdgePlanGrantRecipient[];
   home?: string;
-}): Promise<TrustedEdgePlanBodyKeyGrant[]> {
+}): Promise<TrustedEdgePlanAnyBodyKeyGrant[]> {
   const record = await resolveTrustedEdgePlanKey(
     {
       workspaceId: options.workspaceId,
@@ -293,44 +301,13 @@ export async function wrapTrustedEdgePlanBodyKey(options: {
   });
 }
 
-async function ensureTrustedEdgePlanWrappingKey(
-  home = configDir(),
-  label = 'Trusted edge plan key',
-): Promise<TrustedEdgePlanWrappingKey> {
-  const store = await readTrustedEdgePlanKeyStore(home);
-  const existing = store.wrappingKeys?.find((key) => key.algorithm === 'RSA-OAEP-256');
-  if (existing) {
-    existing.lastSeenAt = new Date().toISOString();
-    await writeTrustedEdgePlanKeyStore(store, home);
-    return existing;
-  }
-
-  const pair = crypto.generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicExponent: 0x10001,
-  });
-  const now = new Date().toISOString();
-  const key: TrustedEdgePlanWrappingKey = {
-    keyId: `trusted-edge-${crypto.randomUUID()}`,
-    label,
-    algorithm: 'RSA-OAEP-256',
-    publicKeyJwk: withPublicJwkMetadata(pair.publicKey.export({ format: 'jwk' })),
-    privateKeyJwk: withPrivateJwkMetadata(pair.privateKey.export({ format: 'jwk' })),
-    createdAt: now,
-    lastSeenAt: now,
-  };
-  store.wrappingKeys = [...(store.wrappingKeys ?? []), key];
-  await writeTrustedEdgePlanKeyStore(store, home);
-  return key;
-}
-
 async function resolveTrustedEdgePlanKey(
   input: {
     workspaceId: string;
     planId?: string;
     sourceRef?: string;
     keyRef: string;
-    bodyKeyGrants?: TrustedEdgePlanBodyKeyGrant[];
+    bodyKeyGrants?: TrustedEdgePlanAnyBodyKeyGrant[];
   },
   home = configDir(),
 ): Promise<TrustedEdgePlanRecord | null> {
@@ -354,38 +331,38 @@ async function resolveTrustedEdgePlanKey(
 
 async function unwrapTrustedEdgePlanKeyGrant(
   input: {
+    workspaceId: string;
     keyRef: string;
-    bodyKeyGrants?: TrustedEdgePlanBodyKeyGrant[];
+    bodyKeyGrants?: TrustedEdgePlanAnyBodyKeyGrant[];
   },
   home = configDir(),
 ): Promise<Buffer | null> {
   const grants = input.bodyKeyGrants ?? [];
   if (grants.length === 0) return null;
-  const store = await readTrustedEdgePlanKeyStore(home);
-  const wrappingKeys = store.wrappingKeys ?? [];
-  for (const localKey of wrappingKeys) {
-    const grant = grants.find(
-      (candidate) =>
-        candidate.key_ref === input.keyRef &&
-        candidate.recipient_key_id === localKey.keyId &&
-        candidate.algorithm === 'RSA-OAEP-256',
-    );
-    if (!grant) continue;
+  for (const grant of grants) {
+    if (grant.schema !== 'viewport.plan_body_key_grant/v2' || grant.key_ref !== input.keyRef) {
+      continue;
+    }
+    const localEpoch =
+      grant.recipient_type === 'user_epoch'
+        ? await getLocalUserEpochByPlatformId(input.workspaceId, grant.recipient_epoch_id, home)
+        : await getLocalTeamEpochByPlatformId(input.workspaceId, grant.recipient_epoch_id, home);
+    if (!localEpoch || localEpoch.fingerprint !== grant.recipient_fingerprint) continue;
     try {
-      return crypto.privateDecrypt(
-        {
-          key: crypto.createPrivateKey({
-            key: localKey.privateKeyJwk as crypto.JsonWebKey,
-            format: 'jwk',
-          }),
-          oaepHash: 'sha256',
-        },
-        Buffer.from(grant.encrypted_key, 'base64'),
-      );
+      const payload = unwrapJsonFromX25519Envelope({
+        recipientPrivateKeyJwk: localEpoch.encryptionPrivateKeyJwk,
+        envelope: grant.encrypted_payload,
+        aad: grant.aad,
+      });
+      const material = objectField(payload, 'material');
+      if (stringField(material, 'schema') !== 'viewport.plan_body_key_material/v1') continue;
+      if (stringField(material, 'keyRef') !== input.keyRef) continue;
+      return Buffer.from(stringField(material, 'rawKey'), 'base64');
     } catch {
       continue;
     }
   }
+
   return null;
 }
 
@@ -393,52 +370,41 @@ async function wrapRawPlanBodyKey(input: {
   rawKey: Buffer;
   keyRef: string;
   recipients: TrustedEdgePlanGrantRecipient[];
-}): Promise<TrustedEdgePlanBodyKeyGrant[]> {
+}): Promise<TrustedEdgePlanAnyBodyKeyGrant[]> {
   const unique = new Map<string, TrustedEdgePlanGrantRecipient>();
   for (const recipient of input.recipients) {
-    unique.set(`${recipient.user_id}:${recipient.key_id}`, recipient);
+    unique.set(`${recipient.recipient_type}:${recipient.recipient_epoch_id}`, recipient);
   }
 
-  return [...unique.values()].map((recipient) => {
-    const publicKey = crypto.createPublicKey({
-      key: recipient.public_key_jwk as crypto.JsonWebKey,
-      format: 'jwk',
-    });
-    const encryptedKey = crypto.publicEncrypt(
-      {
-        key: publicKey,
-        oaepHash: 'sha256',
-      },
-      input.rawKey,
-    );
-
+  return [...unique.values()].map((recipient): TrustedEdgePlanAnyBodyKeyGrant => {
+    const aad: JsonValue = {
+      schema: 'viewport.plan_body_key_grant_aad/v1',
+      keyRef: input.keyRef,
+      recipientType: recipient.recipient_type,
+      recipientEpochId: recipient.recipient_epoch_id,
+      recipientFingerprint: recipient.recipient_fingerprint,
+    };
     return {
-      schema: 'viewport.plan_body_key_grant/v1',
-      algorithm: 'RSA-OAEP-256',
-      recipient_user_id: recipient.user_id,
-      recipient_key_id: recipient.key_id,
+      schema: 'viewport.plan_body_key_grant/v2',
+      algorithm: 'x25519-hkdf-sha256-aes-256-gcm',
+      recipient_type: recipient.recipient_type,
+      recipient_epoch_id: recipient.recipient_epoch_id,
+      recipient_fingerprint: recipient.recipient_fingerprint,
       key_ref: input.keyRef,
-      encrypted_key: encryptedKey.toString('base64'),
+      aad,
+      encrypted_payload: wrapJsonForX25519Recipient({
+        recipientPublicKeyJwk: recipient.encryption_public_key_jwk,
+        aad,
+        payload: {
+          material: {
+            schema: 'viewport.plan_body_key_material/v1',
+            keyRef: input.keyRef,
+            rawKey: input.rawKey.toString('base64'),
+          },
+        },
+      }),
     };
   });
-}
-
-function withPublicJwkMetadata(jwk: crypto.JsonWebKey): Record<string, unknown> {
-  return {
-    ...jwk,
-    alg: 'RSA-OAEP-256',
-    key_ops: ['encrypt'],
-    ext: true,
-  };
-}
-
-function withPrivateJwkMetadata(jwk: crypto.JsonWebKey): Record<string, unknown> {
-  return {
-    ...jwk,
-    alg: 'RSA-OAEP-256',
-    key_ops: ['decrypt'],
-    ext: true,
-  };
 }
 
 async function encryptTrustedEdgePlanBody(input: {
@@ -488,6 +454,13 @@ function decryptEnvelope(envelope: TrustedEdgePlanEnvelope, rawKey: Buffer): str
   if (!envelope.tag) {
     throw new Error('Trusted-edge plan envelope is missing an authentication tag.');
   }
+  return decryptAesGcmEnvelope(envelope, rawKey);
+}
+
+function decryptAesGcmEnvelope(
+  envelope: Pick<TrustedEdgePlanEnvelope, 'iv' | 'ciphertext' | 'tag' | 'aad'>,
+  rawKey: Buffer,
+): string {
   const decipher = crypto.createDecipheriv(
     'aes-256-gcm',
     rawKey,

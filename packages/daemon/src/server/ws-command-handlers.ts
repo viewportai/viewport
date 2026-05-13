@@ -9,9 +9,17 @@ import { ErrorCodes } from '../core/error-codes.js';
 import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
 import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
+import { resolveContextBundle } from '../context/local-edge-store.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { pushContextEvents } from '../context/local-edge-sync.js';
+import { ConfigManager } from '../core/config.js';
+import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
 import {
   decryptTrustedEdgePlanBody,
+  decryptTrustedEdgePlanFeedbackField,
   encryptTrustedEdgePlanFeedbackField,
+  type TrustedEdgePlanAnyBodyKeyGrant,
+  type TrustedEdgePlanGrantRecipient,
   wrapTrustedEdgePlanBodyKey,
 } from '../hooks/trusted-edge-plan-artifacts.js';
 import {
@@ -233,6 +241,107 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
     },
 
+    'context-resolve': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'context-resolve',
+          contextResourceId: msg.contextResourceId,
+        });
+        const bundle = await resolveContextBundle({
+          contextResourceId: msg.contextResourceId,
+          actorName: msg.actorName,
+          query: msg.query,
+          maxItems: msg.maxItems,
+          includePrivate: msg.includePrivate,
+          profile: msg.profile,
+          profilePin: msg.profilePin,
+          credentials: {
+            passphrase: msg.passphrase ?? '',
+            recoveryCode: msg.recoveryCode ?? '',
+          },
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, { bundle });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Context resolve failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'context-propose': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'context-propose',
+          contextResourceId: msg.contextResourceId,
+        });
+        const candidate = await proposeContextEntry({
+          contextResourceId: msg.contextResourceId,
+          actorName: msg.actorName,
+          title: msg.title,
+          body: msg.body,
+          source: msg.source ?? 'web://vault-detail',
+          sourceKind: msg.sourceKind ?? 'integration',
+          credentials: {
+            passphrase: msg.passphrase ?? '',
+            recoveryCode: msg.recoveryCode ?? '',
+          },
+        });
+
+        let sync:
+          | { ok: true; accepted: number; pushed: number; repoId: string; workspaceId: string }
+          | { ok: false; error: string }
+          | null = null;
+        if (msg.sync !== false) {
+          try {
+            const target = await resolveSavedContextSyncTarget(
+              msg.contextResourceId,
+              msg.workspaceId,
+            );
+            if (!target) {
+              sync = {
+                ok: false,
+                error: `No saved remote credentials are available for workspace ${msg.workspaceId}.`,
+              };
+            } else {
+              const result = await pushContextEvents({
+                contextResourceId: msg.contextResourceId,
+                workspaceId: target.workspaceId,
+                serverUrl: target.serverUrl,
+                credential: target.credential,
+                tlsVerify: target.tlsVerify,
+                caCertPath: target.caCertPath,
+                tlsPins: target.tlsPins,
+              });
+              sync = { ok: true, workspaceId: target.workspaceId, ...result };
+            }
+          } catch (error) {
+            sync = {
+              ok: false,
+              error: error instanceof Error ? error.message : 'Context sync failed',
+            };
+          }
+        }
+
+        sendAck(client, msg.requestId, 'ok', undefined, { candidate, sync });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Context proposal failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
     'trusted-edge-plan-decrypt': async (client, msg) => {
       try {
         await verifyTrustedEdgeCommandCapability(daemon, {
@@ -246,7 +355,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
         });
         sendAck(client, msg.requestId, 'ok', undefined, {
           planId: msg.planId,
@@ -279,7 +388,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
           text: msg.text,
           aad: msg.aad,
         });
@@ -299,6 +408,38 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
     },
 
+    'trusted-edge-plan-decrypt-field': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-plan-decrypt-field',
+          planId: msg.planId,
+        });
+        const field = await decryptTrustedEdgePlanFeedbackField({
+          workspaceId: msg.workspaceId,
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          bodyEnvelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
+          fieldEnvelope: { ...msg.fieldEncryption, aad: msg.fieldEncryption.aad ?? {} },
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          planId: msg.planId,
+          sourceRef: msg.sourceRef,
+          field,
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge plan feedback decryption failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
     'trusted-edge-plan-wrap-key': async (client, msg) => {
       try {
         await verifyTrustedEdgeCommandCapability(daemon, {
@@ -312,8 +453,8 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           planId: msg.planId,
           sourceRef: msg.sourceRef,
           envelope: { ...msg.bodyEncryption, aad: msg.bodyEncryption.aad ?? {} },
-          bodyKeyGrants: msg.bodyKeyGrants,
-          recipients: msg.recipients,
+          bodyKeyGrants: msg.bodyKeyGrants as TrustedEdgePlanAnyBodyKeyGrant[] | undefined,
+          recipients: msg.recipients as TrustedEdgePlanGrantRecipient[],
         });
         sendAck(client, msg.requestId, 'ok', undefined, {
           planId: msg.planId,
@@ -372,42 +513,31 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
       sendAck(client, msg.requestId, 'ok');
     },
-
-    'get-hook-plan-draft': async (client, msg) => {
-      const draft = daemon.getEphemeralPlanDraft(msg.draftId);
-      if (!draft) {
-        sendAck(client, msg.requestId, 'error', 'Plan draft not found', {
-          errorCode: ErrorCodes.INVALID_INPUT,
-        });
-        return;
-      }
-
-      client.send(
-        JSON.stringify({
-          type: 'hook-plan-draft',
-          draftId: draft.draftId,
-          schema: draft.schema,
-          workspaceId: draft.workspaceId,
-          title: draft.title,
-          summary: draft.summary,
-          body: draft.body,
-          source: draft.source,
-          sourceRef: draft.sourceRef,
-          sessionId: draft.sessionId,
-          hookRequestId: draft.hookRequestId,
-          metadata: draft.metadata,
-          createdAt: draft.createdAt,
-          expiresAt: draft.expiresAt,
-          timestamp: Date.now(),
-        }),
-      );
-      sendAck(client, msg.requestId, 'ok');
-    },
   };
 }
 
 function resolveManifest(workingDirectory: string | null | undefined): SessionResourceManifest {
   return resolveSessionResourceManifestSync({
     workingDirectory: workingDirectory ?? process.cwd(),
+  });
+}
+
+async function resolveSavedContextSyncTarget(
+  contextResourceId: string,
+  workspaceId: string,
+): Promise<{
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+} | null> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const daemonConfig = manager.getDaemonConfig() ?? {};
+  return resolveConfiguredContextSyncTarget(daemonConfig, {
+    contextResourceId,
+    requestedWorkspaceId: workspaceId,
   });
 }

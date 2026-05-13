@@ -6,8 +6,22 @@ vi.mock('../../src/server/context-preview-service.js', () => ({
   previewContextCandidateForTrustedEdge: vi.fn(),
 }));
 
+vi.mock('../../src/context/local-edge-store.js', () => ({
+  resolveContextBundle: vi.fn(),
+}));
+
+vi.mock('../../src/context/local-edge-candidates.js', () => ({
+  proposeContextEntry: vi.fn(),
+}));
+
+vi.mock('../../src/context/local-edge-sync.js', () => ({
+  pushContextEvents: vi.fn(),
+}));
+
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import { previewContextCandidateForTrustedEdge } from '../../src/server/context-preview-service.js';
+import { resolveContextBundle } from '../../src/context/local-edge-store.js';
+import { proposeContextEntry } from '../../src/context/local-edge-candidates.js';
 
 function createClient(): ConnectedClient {
   return {
@@ -47,6 +61,7 @@ function capabilityToken(claims: Record<string, unknown>): string {
       role: 'trusted-edge-client',
       scope: 'trusted-edge-command',
       workspaceId: 'workspace-1',
+      trustedEdgeUnlockSessionId: 'unlock-session-1',
       iss: 'viewport-server',
       aud: 'viewport-relay',
       iat: now,
@@ -209,6 +224,227 @@ describe('context-candidate-preview websocket command', () => {
       'preview-req',
       'error',
       'Context candidate is not available on this trusted edge.',
+      { errorCode: 'INVALID_INPUT' },
+    );
+  });
+});
+
+describe('context-resolve websocket command', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns resolved context over the encrypted command channel', async () => {
+    const sendAck = vi.fn();
+    vi.mocked(resolveContextBundle).mockResolvedValue({
+      manifest: {
+        schemaVersion: 'viewport.context_bundle_manifest/v1',
+        apiVersion: 'viewport.context_bundle_manifest/v1',
+        contextResourceId: 'ctx-1',
+        repoId: 'repo-1',
+        actorName: 'bob-vps',
+        query: 'roses',
+        resolvedAt: '2026-05-13T01:02:03.000Z',
+        serverSync: 'disabled',
+        itemCount: 1,
+        digest: 'digest-1',
+        engineManifest: {},
+      },
+      items: [
+        {
+          id: 'item-1',
+          title: 'Roses incident note',
+          body: 'Keep the rose context scoped to the workspace.',
+          source: 'web://vault-detail',
+          scope: 'resource',
+          trustState: 'approved',
+          actorName: 'bob-vps',
+          createdAt: '2026-05-13T01:02:03.000Z',
+          digest: 'digest-1',
+        },
+      ],
+    });
+
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['context-resolve'](createClient(), {
+      type: 'context-resolve',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      query: 'roses',
+      maxItems: 25,
+      includePrivate: false,
+      capabilityToken: capabilityToken({
+        purpose: 'context-resolve',
+        contextResourceId: 'ctx-1',
+      }),
+      requestId: 'resolve-req',
+    });
+
+    expect(resolveContextBundle).toHaveBeenCalledWith({
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      query: 'roses',
+      maxItems: 25,
+      includePrivate: false,
+      profile: undefined,
+      profilePin: undefined,
+      credentials: {
+        passphrase: '',
+        recoveryCode: '',
+      },
+    });
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'resolve-req',
+      'ok',
+      undefined,
+      expect.objectContaining({
+        bundle: expect.objectContaining({
+          items: [expect.objectContaining({ title: 'Roses incident note' })],
+        }),
+      }),
+    );
+  });
+
+  it('rejects context resolve without matching scoped capability claims', async () => {
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['context-resolve'](createClient(), {
+      type: 'context-resolve',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      query: 'roses',
+      capabilityToken: capabilityToken({
+        purpose: 'context-resolve',
+        contextResourceId: 'ctx-2',
+      }),
+      requestId: 'resolve-req',
+    });
+
+    expect(resolveContextBundle).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'resolve-req',
+      'error',
+      'Trusted-edge command capability contextResourceId mismatch.',
+      { errorCode: 'INVALID_INPUT' },
+    );
+  });
+});
+
+describe('context-propose websocket command', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('creates a context candidate over the encrypted command channel', async () => {
+    const sendAck = vi.fn();
+    vi.mocked(proposeContextEntry).mockResolvedValue({
+      id: 'candidate-1',
+      proposalEventId: 'event-1',
+      bodyDigest: 'sha256:body',
+      trustState: 'candidate',
+      actorName: 'bob-vps',
+    } as any);
+
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['context-propose'](createClient(), {
+      type: 'context-propose',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
+      source: 'web://vault-detail',
+      sourceKind: 'integration',
+      sync: false,
+      capabilityToken: capabilityToken({
+        purpose: 'context-propose',
+        contextResourceId: 'ctx-1',
+      }),
+      requestId: 'propose-req',
+    });
+
+    expect(proposeContextEntry).toHaveBeenCalledWith({
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
+      source: 'web://vault-detail',
+      sourceKind: 'integration',
+      credentials: {
+        passphrase: '',
+        recoveryCode: '',
+      },
+    });
+    expect(sendAck).toHaveBeenCalledWith(expect.any(Object), 'propose-req', 'ok', undefined, {
+      candidate: expect.objectContaining({
+        id: 'candidate-1',
+        bodyDigest: 'sha256:body',
+        trustState: 'candidate',
+        actorName: 'bob-vps',
+      }),
+      sync: null,
+    });
+  });
+
+  it('rejects context proposals without matching scoped capability claims', async () => {
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: createDaemon(),
+      sendAck,
+      getOrCreateBuffer: (() => ({
+        getAll: () => [],
+        getReplayWindow: () => ({ entries: [] }),
+      })) as any,
+    });
+
+    await handlers['context-propose'](createClient(), {
+      type: 'context-propose',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
+      capabilityToken: capabilityToken({
+        purpose: 'context-propose',
+        contextResourceId: 'ctx-2',
+      }),
+      requestId: 'propose-req',
+    });
+
+    expect(proposeContextEntry).not.toHaveBeenCalled();
+    expect(sendAck).toHaveBeenCalledWith(
+      expect.any(Object),
+      'propose-req',
+      'error',
+      'Trusted-edge command capability contextResourceId mismatch.',
       { errorCode: 'INVALID_INPUT' },
     );
   });

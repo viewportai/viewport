@@ -9,12 +9,17 @@ import { applyContextCandidateDecision } from './local-edge-candidates.js';
 import { readCandidateDecisionApplications } from './local-edge-decision-applications.js';
 import { verifyContextCandidateDecision } from './local-edge-decision-signature.js';
 import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
+import { grantContextHpkeRecipient, revokeContextUser } from './local-edge-store.js';
+import { validateAndPinPublicEpoch } from '../security/epoch-public-pins.js';
+import { getActiveLocalUserEpoch, listActiveLocalTeamEpochs } from '../security/epoch-store.js';
 import {
-  exportContextIdentity,
-  grantContextUser,
-  importContextIdentity,
-  revokeContextUser,
-} from './local-edge-store.js';
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+  contextGrantMaterializationPayload,
+  signContextGrantMaterialization,
+  type SignedContextGrantMaterialization,
+  type JsonValue,
+} from '../security/epoch-protocol.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
@@ -128,22 +133,30 @@ export async function pullContextEvents(options: {
   );
   const records = extractPulledRecords(response);
   const events = records.map((record) => record.signedEvent);
+  const grantIdentities = await contextGrantIdentitiesForWorkspace({
+    workspaceId: options.workspaceId ?? options.contextResourceId,
+    home,
+  });
   const imported = await vault.importSyncEvents({
     repoId: metadata.repoId,
     events,
     actorName: options.actorName,
+    grantIdentities,
   });
-  const materializedGrantEventIds = events
-    .filter((event) => isGrantEventForUser(event, metadata.userName))
-    .map((event) => event.id);
+  const materializationReceipts = contextGrantMaterializationReceipts({
+    workspaceId: options.workspaceId ?? options.contextResourceId,
+    contextResourceId: options.contextResourceId,
+    events,
+    grantIdentities,
+  });
   const materializedGrants =
-    materializedGrantEventIds.length > 0
+    materializationReceipts.length > 0
       ? await recordContextGrantMaterialization({
           workspaceId: options.workspaceId ?? options.contextResourceId,
           serverUrl: options.serverUrl,
           credential: options.credential,
           contextResourceId: options.contextResourceId,
-          grantEventIds: materializedGrantEventIds,
+          receipts: materializationReceipts,
           tlsVerify: options.tlsVerify,
           caCertPath: options.caCertPath,
           tlsPins: options.tlsPins,
@@ -198,13 +211,13 @@ export async function recordContextGrantMaterialization(options: {
   serverUrl: string;
   credential: string;
   contextResourceId: string;
-  grantEventIds: string[];
+  receipts: SignedContextGrantMaterialization[];
   tlsVerify?: TlsVerifyMode;
   caCertPath?: string;
   tlsPins?: string[];
   fetchImpl?: typeof transportFetch;
 }): Promise<number> {
-  if (options.grantEventIds.length === 0) {
+  if (options.receipts.length === 0) {
     return 0;
   }
   const response = await postJson(
@@ -213,7 +226,11 @@ export async function recordContextGrantMaterialization(options: {
     {
       credential: options.credential,
       context_resource_id: options.contextResourceId,
-      grant_event_ids: options.grantEventIds,
+      receipts: options.receipts.map((receipt) => ({
+        payload: receipt.payload,
+        signature: receipt.signature,
+        signed_by_epoch_fingerprint: receipt.signedByEpochFingerprint,
+      })),
     },
     {
       tlsVerify: options.tlsVerify,
@@ -270,42 +287,6 @@ export async function recordContextCandidatePreviewProof(options: {
   };
 }
 
-export async function publishContextPublicIdentity(options: {
-  workspaceId: string;
-  serverUrl: string;
-  credential: string;
-  identityName: string;
-  tlsVerify?: TlsVerifyMode;
-  caCertPath?: string;
-  tlsPins?: string[];
-  home?: string;
-  fetchImpl?: typeof transportFetch;
-}): Promise<{ identityId: string; fingerprint: string | null }> {
-  const publicIdentity = exportContextIdentity({
-    name: options.identityName,
-    home: options.home,
-  });
-  const response = await postJson(
-    options.fetchImpl ?? transportFetch,
-    contextPublicIdentityUrl(options.serverUrl, options.workspaceId),
-    {
-      credential: options.credential,
-      name: options.identityName,
-      public_identity: publicIdentity,
-    },
-    {
-      tlsVerify: options.tlsVerify,
-      caCertPath: options.caCertPath,
-      tlsPins: options.tlsPins,
-    },
-  );
-  const identity = objectField(response, 'identity');
-  return {
-    identityId: stringField(identity, 'id'),
-    fingerprint: nullableStringField(identity, 'fingerprint'),
-  };
-}
-
 export async function processPendingContextGrants(options: {
   contextResourceId: string;
   workspaceId: string;
@@ -341,57 +322,167 @@ export async function processPendingContextGrants(options: {
 
   for (const grant of grants) {
     const record = objectValue(grant);
-    const recipient = objectField(record, 'recipient_identity', false);
-    if (!recipient) {
-      missingIdentity++;
-      continue;
-    }
-    const publicIdentity = objectField(recipient, 'public_identity');
-    const recipientName = stringField(recipient, 'name');
-    importContextIdentity({ identity: publicIdentity, home: options.home });
+    const userEpoch = objectField(record, 'user_epoch', false);
+    if (userEpoch) {
+      const userEpochId = String(numberOrStringField(userEpoch, 'id'));
+      const userId = String(numberOrStringField(userEpoch, 'user_id'));
+      const epoch = numberField(userEpoch, 'epoch');
+      const fingerprint = stringField(userEpoch, 'fingerprint');
+      const encryptionPublicKeyJwk = objectField(userEpoch, 'encryption_public_key_jwk');
+      const signingPublicKeyJwk = objectField(userEpoch, 'signing_public_key_jwk');
+      await validateAndPinPublicEpoch(
+        {
+          platformEpochId: userEpochId,
+          workspaceId: options.workspaceId,
+          subjectType: 'user',
+          subjectId: userId,
+          epoch,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint,
+          encryptionPublicKeyJwk: encryptionPublicKeyJwk as JsonValue,
+          signingPublicKeyJwk: signingPublicKeyJwk as JsonValue,
+          previousEpochFingerprint: nullableStringField(userEpoch, 'previous_epoch_fingerprint'),
+          continuityPayload: objectField(
+            userEpoch,
+            'continuity_payload',
+            false,
+          ) as JsonValue | null,
+          continuitySignature: nullableStringField(userEpoch, 'continuity_signature'),
+          signedByEpochFingerprint: nullableStringField(userEpoch, 'signed_by_epoch_fingerprint'),
+        },
+        options.home,
+      );
+      const recipientName = contextUserEpochRecipientName({ userEpochId, fingerprint });
+      const result = await grantContextHpkeRecipient({
+        contextResourceId: options.contextResourceId,
+        actorName: options.actorName,
+        recipientName,
+        recipientHpkePublicKey: jwkPublicXToBase64(encryptionPublicKeyJwk),
+        credentials: options.credentials,
+        home: options.home,
+      });
+      const event = objectValue(result.event);
+      const grantEventId = stringField(event, 'id');
+      const grantPayload = objectField(event, 'grant', false);
+      const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
 
-    const result = await grantContextUser({
-      contextResourceId: options.contextResourceId,
-      actorName: options.actorName,
-      recipientName,
-      credentials: options.credentials,
-      home: options.home,
-    });
-    const event = objectValue(result.event);
-    const grantEventId = stringField(event, 'id');
-    const grantPayload = objectField(event, 'grant', false);
-    const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
-
-    const pushResult = await pushContextEvents({
-      contextResourceId: options.contextResourceId,
-      workspaceId: options.workspaceId,
-      serverUrl: options.serverUrl,
-      credential: options.credential,
-      tlsVerify: options.tlsVerify,
-      caCertPath: options.caCertPath,
-      tlsPins: options.tlsPins,
-      home: options.home,
-      fetchImpl,
-    });
-    pushed += pushResult.accepted;
-
-    await postJson(
-      fetchImpl,
-      contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
-      {
+      const pushResult = await pushContextEvents({
+        contextResourceId: options.contextResourceId,
+        workspaceId: options.workspaceId,
+        serverUrl: options.serverUrl,
         credential: options.credential,
-        crypto_grant_id: stringField(record, 'id'),
-        grant_event_id: grantEventId,
-        recipient_identity_name: recipientName,
-        ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
-      },
-      {
         tlsVerify: options.tlsVerify,
         caCertPath: options.caCertPath,
         tlsPins: options.tlsPins,
-      },
-    );
-    emitted++;
+        home: options.home,
+        fetchImpl,
+      });
+      pushed += pushResult.accepted;
+
+      await postJson(
+        fetchImpl,
+        contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
+        {
+          credential: options.credential,
+          crypto_grant_id: stringField(record, 'id'),
+          grant_event_id: grantEventId,
+          recipient_identity_name: recipientName,
+          recipient_type: 'user_epoch',
+          recipient_epoch_id: userEpochId,
+          recipient_fingerprint: fingerprint,
+          ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
+        },
+        {
+          tlsVerify: options.tlsVerify,
+          caCertPath: options.caCertPath,
+          tlsPins: options.tlsPins,
+        },
+      );
+      emitted++;
+      continue;
+    }
+
+    const teamEpoch = objectField(record, 'team_epoch', false);
+    if (teamEpoch) {
+      const teamEpochId = String(numberOrStringField(teamEpoch, 'id'));
+      const teamId = String(numberOrStringField(teamEpoch, 'team_id'));
+      const epoch = numberField(teamEpoch, 'epoch');
+      const fingerprint = stringField(teamEpoch, 'fingerprint');
+      const encryptionPublicKeyJwk = objectField(teamEpoch, 'encryption_public_key_jwk');
+      const signingPublicKeyJwk = objectField(teamEpoch, 'signing_public_key_jwk');
+      await validateAndPinPublicEpoch(
+        {
+          platformEpochId: teamEpochId,
+          workspaceId: options.workspaceId,
+          subjectType: 'team',
+          subjectId: teamId,
+          epoch,
+          schema: 'viewport.team_crypto_epoch/v1',
+          fingerprint,
+          encryptionPublicKeyJwk: encryptionPublicKeyJwk as JsonValue,
+          signingPublicKeyJwk: signingPublicKeyJwk as JsonValue,
+          previousEpochFingerprint: nullableStringField(teamEpoch, 'previous_epoch_fingerprint'),
+          continuityPayload: objectField(
+            teamEpoch,
+            'continuity_payload',
+            false,
+          ) as JsonValue | null,
+          continuitySignature: nullableStringField(teamEpoch, 'continuity_signature'),
+          signedByEpochFingerprint: nullableStringField(teamEpoch, 'signed_by_epoch_fingerprint'),
+        },
+        options.home,
+      );
+      const recipientName = contextTeamEpochRecipientName({ teamEpochId, fingerprint });
+      const result = await grantContextHpkeRecipient({
+        contextResourceId: options.contextResourceId,
+        actorName: options.actorName,
+        recipientName,
+        recipientHpkePublicKey: jwkPublicXToBase64(encryptionPublicKeyJwk),
+        credentials: options.credentials,
+        home: options.home,
+      });
+      const event = objectValue(result.event);
+      const grantEventId = stringField(event, 'id');
+      const grantPayload = objectField(event, 'grant', false);
+      const keyEpoch = grantPayload ? numberField(grantPayload, 'keyEpoch', false) : null;
+
+      const pushResult = await pushContextEvents({
+        contextResourceId: options.contextResourceId,
+        workspaceId: options.workspaceId,
+        serverUrl: options.serverUrl,
+        credential: options.credential,
+        tlsVerify: options.tlsVerify,
+        caCertPath: options.caCertPath,
+        tlsPins: options.tlsPins,
+        home: options.home,
+        fetchImpl,
+      });
+      pushed += pushResult.accepted;
+
+      await postJson(
+        fetchImpl,
+        contextMarkGrantEmittedUrl(options.serverUrl, options.workspaceId),
+        {
+          credential: options.credential,
+          crypto_grant_id: stringField(record, 'id'),
+          grant_event_id: grantEventId,
+          recipient_identity_name: recipientName,
+          recipient_type: 'team_epoch',
+          recipient_epoch_id: teamEpochId,
+          recipient_fingerprint: fingerprint,
+          ...(keyEpoch !== null ? { key_epoch: keyEpoch } : {}),
+        },
+        {
+          tlsVerify: options.tlsVerify,
+          caCertPath: options.caCertPath,
+          tlsPins: options.tlsPins,
+        },
+      );
+      emitted++;
+      continue;
+    }
+
+    missingIdentity++;
   }
 
   return { emitted, missingIdentity, pushed };
@@ -432,10 +523,7 @@ export async function processPendingContextRevocations(options: {
 
   for (const revocation of revocations) {
     const record = objectValue(revocation);
-    const recipient = objectField(record, 'recipient_identity', false);
-    const recipientName =
-      nullableStringField(record, 'recipient_identity_name') ??
-      (recipient ? nullableStringField(recipient, 'name') : null);
+    const recipientName = nullableStringField(record, 'recipient_identity_name');
     if (!recipientName) {
       missingIdentity++;
       continue;
@@ -513,6 +601,115 @@ function contextGrantRotationReceipt(event: unknown): {
   };
 }
 
+async function contextGrantIdentitiesForWorkspace(options: {
+  workspaceId: string;
+  home: string;
+}): Promise<ContextGrantIdentity[]> {
+  const userEpoch = await getActiveLocalUserEpoch(options.workspaceId, options.home);
+  const teamEpochs = await listActiveLocalTeamEpochs(options.workspaceId, options.home);
+  return [
+    ...(userEpoch?.platformEpochId
+      ? [
+          {
+            kind: 'user_epoch' as const,
+            name: contextUserEpochRecipientName({
+              userEpochId: userEpoch.platformEpochId,
+              fingerprint: userEpoch.fingerprint,
+            }),
+            hpkePrivateKey: jwkPrivateDToBase64(objectValue(userEpoch.encryptionPrivateKeyJwk)),
+            signingPrivateKeyJwk: userEpoch.signingPrivateKeyJwk as JsonValue,
+            signerFingerprint: userEpoch.fingerprint,
+          },
+        ]
+      : []),
+    ...teamEpochs.map((epoch) => ({
+      kind: 'team_epoch' as const,
+      name: contextTeamEpochRecipientName({
+        teamEpochId:
+          epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
+        fingerprint: epoch.fingerprint,
+      }),
+      hpkePrivateKey: jwkPrivateDToBase64(objectValue(epoch.encryptionPrivateKeyJwk)),
+      signingPrivateKeyJwk: epoch.signingPrivateKeyJwk as JsonValue,
+      signerFingerprint: epoch.fingerprint,
+    })),
+  ];
+}
+
+type ContextGrantIdentity = {
+  kind: 'user_epoch' | 'team_epoch';
+  name: string;
+  hpkePrivateKey: string;
+  signingPrivateKeyJwk: JsonValue;
+  signerFingerprint: string;
+};
+
+function contextGrantMaterializationReceipts(options: {
+  workspaceId: string;
+  contextResourceId: string;
+  events: ContextSyncEvent[];
+  grantIdentities: ContextGrantIdentity[];
+}): SignedContextGrantMaterialization[] {
+  const receipts: SignedContextGrantMaterialization[] = [];
+  for (const event of options.events) {
+    const match = grantEventRecipientMatch(event, options.grantIdentities);
+    if (!match) continue;
+    const keyEpoch = numberField(event, 'keyEpoch', false);
+    const payload = contextGrantMaterializationPayload({
+      workspaceId: options.workspaceId,
+      contextResourceId: options.contextResourceId,
+      grantEventId: stringField(event, 'id'),
+      recipientName: match.identity.name,
+      keyEpoch,
+    });
+    receipts.push(
+      signContextGrantMaterialization({
+        payload,
+        signingPrivateKeyJwk: match.identity.signingPrivateKeyJwk,
+        signedByEpochFingerprint: match.identity.signerFingerprint,
+      }),
+    );
+  }
+  return receipts;
+}
+
+function grantEventRecipientMatch(
+  event: ContextSyncEvent,
+  grantIdentities: ContextGrantIdentity[],
+): { grant: Record<string, unknown>; identity: ContextGrantIdentity } | null {
+  if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return null;
+  const grant = (event as { grant?: unknown }).grant;
+  if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return null;
+  const recipientName = (grant as Record<string, unknown>).recipientName;
+  if (typeof recipientName !== 'string' || recipientName === '') return null;
+  const identity = grantIdentities.find((candidate) => candidate.name === recipientName);
+  return identity ? { grant: grant as Record<string, unknown>, identity } : null;
+}
+
+function contextUserEpochRecipientName(input: {
+  userEpochId: string;
+  fingerprint: string;
+}): string {
+  return `user-epoch:${input.userEpochId}:${input.fingerprint}`;
+}
+
+function contextTeamEpochRecipientName(input: {
+  teamEpochId: string;
+  fingerprint: string;
+}): string {
+  return `team-epoch:${input.teamEpochId}:${input.fingerprint}`;
+}
+
+function jwkPublicXToBase64(jwk: Record<string, unknown>): string {
+  const x = stringField(jwk, 'x');
+  return Buffer.from(x, 'base64url').toString('base64');
+}
+
+function jwkPrivateDToBase64(jwk: Record<string, unknown>): string {
+  const d = stringField(jwk, 'd');
+  return Buffer.from(d, 'base64url').toString('base64');
+}
+
 function contextRuntimeUrl(
   serverUrl: string,
   workspaceId: string,
@@ -525,11 +722,6 @@ function contextRuntimeUrl(
 function contextCandidatePreviewProofUrl(serverUrl: string, workspaceId: string): string {
   const base = serverUrl.replace(/\/+$/, '');
   return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/candidates/preview-proof`;
-}
-
-function contextPublicIdentityUrl(serverUrl: string, workspaceId: string): string {
-  const base = serverUrl.replace(/\/+$/, '');
-  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/identities`;
 }
 
 function contextPendingGrantsUrl(serverUrl: string, workspaceId: string): string {
@@ -569,7 +761,11 @@ async function postJson(
 ): Promise<unknown> {
   const response = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      [TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER]: TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+    },
     body: JSON.stringify(body),
     timeoutMs: 5_000,
     ...transportOptions,
@@ -710,13 +906,6 @@ function extractPulledCandidateDecisions(
   });
 }
 
-function isGrantEventForUser(event: ContextSyncEvent, userName: string): boolean {
-  if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return false;
-  const grant = (event as { grant?: unknown }).grant;
-  if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return false;
-  return (grant as Record<string, unknown>).recipientName === userName;
-}
-
 function latestReceivedAt(
   records: ContextSyncPullRecord[],
   decisions: ContextCandidateDecisionPullRecord[] = [],
@@ -744,6 +933,15 @@ function numberField(response: unknown, field: string, required = true): number 
   }
   if (typeof value !== 'number') {
     throw new Error(`Context sync response ${field} must be a number`);
+  }
+  return value;
+}
+
+function numberOrStringField(response: unknown, field: string): number | string {
+  const object = objectValue(response);
+  const value = object[field];
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    throw new Error(`Context sync response ${field} must be a number or string`);
   }
   return value;
 }

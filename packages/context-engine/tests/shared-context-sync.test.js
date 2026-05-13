@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const { test } = require('node:test');
 const path = require('node:path');
 const { signEnvelope } = require('../src/crypto/signatures');
+const { ContextVault } = require('../src');
 const { pairedVaults, readAllText, tempHome } = require('./helpers');
 
 test('shared resource context syncs as encrypted events and materializes for another identity', () => {
@@ -86,6 +87,160 @@ test('shared resource context syncs from event objects and materializes for anot
 
   assert.equal(search.length, 1);
   assert.equal(search[0].body, secretBody);
+});
+
+test('revoked HPKE recipient cannot decrypt context added after repo key rotation', async () => {
+  const { aliceVault, bobVault } = pairedVaults();
+  const repoId = 'project-hpke-revocation';
+  const initialBody = 'Initial context remains readable before revoke.';
+  const futureBody = 'Future context after revoke must stay hidden from Bob.';
+
+  await aliceVault.createRepoHpke(repoId, 'alice');
+  aliceVault.addEntry({
+    repoId,
+    actorName: 'alice',
+    scope: 'resource',
+    title: 'Initial context',
+    body: initialBody,
+    source: 'manual://initial',
+  });
+  await aliceVault.grantRepoHpke({ repoId, actorName: 'alice', recipientName: 'bob' });
+
+  await bobVault.importSyncEvents({
+    repoId,
+    actorName: 'bob',
+    events: aliceVault.listSyncEvents({ repoId }),
+  });
+  assert.equal(
+    bobVault.search({ repoId, actorName: 'bob', query: 'Initial context' })[0]?.body,
+    initialBody,
+  );
+
+  const revokeResult = await aliceVault.revokeRepoHpke({
+    repoId,
+    actorName: 'alice',
+    recipientName: 'bob',
+  });
+  assert.equal(revokeResult.revokeEvent.type, 'member.revoked');
+  assert.equal(revokeResult.revokeEvent.grant.revokedName, 'bob');
+  assert.equal(revokeResult.rotateEvents.every((event) => event.grant.recipientName !== 'bob'), true);
+
+  aliceVault.addEntry({
+    repoId,
+    actorName: 'alice',
+    scope: 'resource',
+    title: 'Future context',
+    body: futureBody,
+    source: 'manual://future',
+  });
+
+  await bobVault.importSyncEvents({
+    repoId,
+    actorName: 'bob',
+    events: aliceVault.listSyncEvents({ repoId }),
+  });
+
+  assert.equal(bobVault.search({ repoId, actorName: 'bob', query: 'Initial context' }).length, 1);
+  assert.equal(bobVault.search({ repoId, actorName: 'bob', query: 'Future context' }).length, 0);
+});
+
+test('team epoch revocation rotates the context repo key to remaining team epochs only', async () => {
+  const aliceVault = new ContextVault(tempHome('vault-team-owner'));
+  const revokedTeamVault = new ContextVault(tempHome('vault-team-revoked'));
+  const remainingTeamVault = new ContextVault(tempHome('vault-team-remaining'));
+  const repoId = 'project-team-revocation';
+  const initialBody = 'Team-shared context before revoke.';
+  const futureBody = 'Future context after team revoke belongs to remaining team only.';
+
+  aliceVault.createIdentity('alice');
+  revokedTeamVault.createIdentity('team-alpha-epoch-1');
+  remainingTeamVault.createIdentity('team-beta-epoch-1');
+  aliceVault.importPublicIdentity(revokedTeamVault.exportPublicIdentity('team-alpha-epoch-1'));
+  aliceVault.importPublicIdentity(remainingTeamVault.exportPublicIdentity('team-beta-epoch-1'));
+  revokedTeamVault.importPublicIdentity(aliceVault.exportPublicIdentity('alice'));
+  remainingTeamVault.importPublicIdentity(aliceVault.exportPublicIdentity('alice'));
+
+  await aliceVault.createRepoHpke(repoId, 'alice');
+  aliceVault.addEntry({
+    repoId,
+    actorName: 'alice',
+    scope: 'resource',
+    title: 'Initial team context',
+    body: initialBody,
+    source: 'manual://team-initial',
+  });
+  await aliceVault.grantRepoHpkeRecipient({
+    repoId,
+    actorName: 'alice',
+    recipient: {
+      name: 'team-alpha-epoch-1',
+      hpkePublicKey: revokedTeamVault.exportPublicIdentity('team-alpha-epoch-1').hpkePublicKey,
+    },
+  });
+  await aliceVault.grantRepoHpkeRecipient({
+    repoId,
+    actorName: 'alice',
+    recipient: {
+      name: 'team-beta-epoch-1',
+      hpkePublicKey: remainingTeamVault.exportPublicIdentity('team-beta-epoch-1').hpkePublicKey,
+    },
+  });
+
+  await revokedTeamVault.importSyncEvents({
+    repoId,
+    actorName: 'team-alpha-epoch-1',
+    events: aliceVault.listSyncEvents({ repoId }),
+  });
+  await remainingTeamVault.importSyncEvents({
+    repoId,
+    actorName: 'team-beta-epoch-1',
+    events: aliceVault.listSyncEvents({ repoId }),
+  });
+  assert.equal(
+    revokedTeamVault.search({ repoId, actorName: 'team-alpha-epoch-1', query: 'Initial team context' })[0]?.body,
+    initialBody,
+  );
+
+  const revokeResult = await aliceVault.revokeRepoHpke({
+    repoId,
+    actorName: 'alice',
+    recipientName: 'team-alpha-epoch-1',
+  });
+  assert.equal(revokeResult.rotateEvents.length, 2);
+  assert.deepEqual(
+    revokeResult.rotateEvents.map((event) => event.grant.recipientName).sort(),
+    ['alice', 'team-beta-epoch-1'],
+  );
+
+  aliceVault.addEntry({
+    repoId,
+    actorName: 'alice',
+    scope: 'resource',
+    title: 'Future team context',
+    body: futureBody,
+    source: 'manual://team-future',
+  });
+  const rotatedEvents = aliceVault.listSyncEvents({ repoId });
+
+  await revokedTeamVault.importSyncEvents({
+    repoId,
+    actorName: 'team-alpha-epoch-1',
+    events: rotatedEvents,
+  });
+  await remainingTeamVault.importSyncEvents({
+    repoId,
+    actorName: 'team-beta-epoch-1',
+    events: rotatedEvents,
+  });
+
+  assert.equal(
+    revokedTeamVault.search({ repoId, actorName: 'team-alpha-epoch-1', query: 'Future team context' }).length,
+    0,
+  );
+  assert.equal(
+    remainingTeamVault.search({ repoId, actorName: 'team-beta-epoch-1', query: 'Future team context' })[0]?.body,
+    futureBody,
+  );
 });
 
 test('sync import rejects downgraded signed events before copying them', () => {

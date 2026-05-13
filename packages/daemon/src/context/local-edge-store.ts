@@ -215,6 +215,39 @@ export async function grantContextUser(options: {
   return { event, repoId: metadata.repoId };
 }
 
+export async function grantContextHpkeRecipient(options: {
+  contextResourceId: string;
+  actorName: string;
+  recipientName: string;
+  recipientHpkePublicKey: string;
+  credentials: ContextCredentials;
+  home?: string;
+}): Promise<{ event: unknown; repoId: string }> {
+  const home = options.home ?? configDir();
+  const metadata = await readContextMetadata(options.contextResourceId, home);
+  const vault = createVault(home, metadata.keyStore);
+  assertCredentialsOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials: options.credentials,
+  });
+  await ensureUserOrApprovedDevice(vault, {
+    userName: metadata.userName,
+    deviceName: options.actorName,
+    credentials: options.credentials,
+  });
+  const event = await vault.grantRepoHpkeRecipient({
+    repoId: metadata.repoId,
+    actorName: options.actorName,
+    recipient: {
+      name: options.recipientName,
+      hpkePublicKey: options.recipientHpkePublicKey,
+    },
+  });
+  await touchContextMetadata(metadata, home);
+  return { event, repoId: metadata.repoId };
+}
+
 export async function revokeContextUser(options: {
   contextResourceId: string;
   actorName: string;

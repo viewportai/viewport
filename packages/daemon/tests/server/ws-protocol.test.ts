@@ -11,6 +11,8 @@ import {
   ListSessionsSchema,
   ReadSessionMessagesSchema,
   ContextCandidatePreviewSchema,
+  ContextProposeSchema,
+  ContextResolveSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
@@ -21,7 +23,6 @@ import {
   WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
-  GetHookPlanDraftSchema,
   IncomingMessageSchema,
 } from '../../src/server/ws-protocol.js';
 
@@ -146,6 +147,62 @@ describe('ContextCandidatePreviewSchema', () => {
       type: 'context-candidate-preview',
       actorName: 'bob-vps',
       candidateEventId: 'event-1',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ContextResolveSchema', () => {
+  it('accepts scoped context resolve commands', () => {
+    const result = ContextResolveSchema.safeParse({
+      type: 'context-resolve',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      query: 'roses',
+      maxItems: 25,
+      includePrivate: false,
+      capabilityToken: 'capability-token',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires workspace id for trusted-edge resolve', () => {
+    const result = ContextResolveSchema.safeParse({
+      type: 'context-resolve',
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      query: 'roses',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ContextProposeSchema', () => {
+  it('accepts scoped context proposal commands', () => {
+    const result = ContextProposeSchema.safeParse({
+      type: 'context-propose',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
+      source: 'web://vault-detail',
+      sourceKind: 'integration',
+      capabilityToken: 'capability-token',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires workspace id for trusted-edge proposals', () => {
+    const result = ContextProposeSchema.safeParse({
+      type: 'context-propose',
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
     });
     expect(result.success).toBe(false);
   });
@@ -592,25 +649,6 @@ describe('RespondHookPermissionSchema', () => {
   });
 });
 
-describe('GetHookPlanDraftSchema', () => {
-  it('accepts valid draft lookup requests', () => {
-    const result = GetHookPlanDraftSchema.safeParse({
-      type: 'get-hook-plan-draft',
-      draftId: 'draft-1',
-      requestId: 'req-1',
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects missing draft ids', () => {
-    const result = GetHookPlanDraftSchema.safeParse({
-      type: 'get-hook-plan-draft',
-      requestId: 'req-1',
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
 describe('IncomingMessageSchema discriminated union', () => {
   it('dispatches to correct schema by type', () => {
     const launch = IncomingMessageSchema.safeParse({ type: 'launch', directoryId: 'd1' });
@@ -634,12 +672,6 @@ describe('IncomingMessageSchema discriminated union', () => {
       decision: { behavior: 'deny' },
     });
     expect(respond.success).toBe(true);
-
-    const planDraft = IncomingMessageSchema.safeParse({
-      type: 'get-hook-plan-draft',
-      draftId: 'draft-1',
-    });
-    expect(planDraft.success).toBe(true);
   });
 
   it('rejects unknown type', () => {

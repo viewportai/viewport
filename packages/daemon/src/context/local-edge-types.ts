@@ -202,6 +202,14 @@ export interface ContextVaultInstance {
     actorName: string;
     recipientName: string;
   }): Promise<unknown>;
+  grantRepoHpkeRecipient(options: {
+    repoId: string;
+    actorName: string;
+    recipient: {
+      name: string;
+      hpkePublicKey: string;
+    };
+  }): Promise<unknown>;
   revokeRepoHpke(options: { repoId: string; actorName: string; recipientName: string }): Promise<{
     revokeEvent: ContextSyncEvent;
     rotateEvent?: ContextSyncEvent;
@@ -276,6 +284,7 @@ export interface ContextVaultInstance {
     repoId: string;
     events: ContextSyncEvent[];
     actorName: string;
+    grantIdentities?: Array<{ name: string; hpkePrivateKey: string }>;
   }): Promise<{
     imported: ContextSyncEvent[];
     materialized: { entries: unknown[]; candidates: unknown[] };

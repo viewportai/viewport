@@ -24,6 +24,17 @@ import {
   pushContextEvents,
 } from '../../src/context/local-edge-sync.js';
 import { contextMetadataPath } from '../../src/context/local-edge-paths.js';
+import {
+  createLocalUserEpochKeyMaterial,
+  createLocalTeamEpochKeyMaterial,
+  upsertLocalUserEpoch,
+  upsertLocalTeamEpoch,
+} from '../../src/security/epoch-store.js';
+import {
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+  epochFingerprint,
+} from '../../src/security/epoch-protocol.js';
 
 describe('local trusted-edge context store', () => {
   let tempHome: string;
@@ -217,10 +228,12 @@ describe('local trusted-edge context store', () => {
 
     let pushedEvents: unknown[] = [];
     const pullBodies: Array<Record<string, unknown>> = [];
+    const protocolHeaders: Array<string | null> = [];
     const fetchImpl = async (
       url: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
+      protocolHeaders.push(headerValue(init?.headers, TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER));
       const body = JSON.parse(String(init?.body ?? '{}'));
       if (String(url).endsWith('/push')) {
         pushedEvents = body.events;
@@ -278,13 +291,18 @@ describe('local trusted-edge context store', () => {
     });
 
     expect(secondPull.pulled).toBe(0);
+    expect(protocolHeaders).toEqual([
+      TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+      TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+      TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+    ]);
     expect(pullBodies[0]).not.toHaveProperty('after_received_at');
     expect(pullBodies[1]).toMatchObject({
       after_received_at: `2026-05-06T21:00:0${pushedEvents.length - 1}.000Z`,
     });
   });
 
-  it('emits pending workspace crypto grants to recipient public identities', async () => {
+  it('emits pending workspace crypto grants to recipient user epochs', async () => {
     const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-bob-'));
     try {
       await initContextResource({
@@ -293,6 +311,14 @@ describe('local trusted-edge context store', () => {
         deviceName: 'alice-laptop',
         credentials,
         keyStore: 'file',
+        home: tempHome,
+      });
+      await addContextEntry({
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Initial shared context',
+        body: 'Tenant routing migrations require a rollback runbook.',
+        credentials,
         home: tempHome,
       });
       await initContextResource({
@@ -307,7 +333,29 @@ describe('local trusted-edge context store', () => {
         home: bobHome,
       });
 
-      const bobIdentity = exportContextIdentity({ name: 'bob', home: bobHome });
+      const bobUserEpochMaterial = createLocalUserEpochKeyMaterial({
+        workspaceId: 'workspace-alpha',
+        userId: 'bob-user-1',
+        epoch: 1,
+      });
+      const bobUserEpochFingerprint = epochFingerprint(bobUserEpochMaterial.descriptor);
+      await upsertLocalUserEpoch(
+        {
+          workspaceId: 'workspace-alpha',
+          userId: 'bob-user-1',
+          platformEpochId: 'user_epoch_bob_1',
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          status: 'active',
+          encryptionPublicKeyJwk: bobUserEpochMaterial.descriptor.encryptionPublicKeyJwk,
+          encryptionPrivateKeyJwk: bobUserEpochMaterial.encryptionPrivateKeyJwk,
+          signingPublicKeyJwk: bobUserEpochMaterial.descriptor.signingPublicKeyJwk,
+          signingPrivateKeyJwk: bobUserEpochMaterial.signingPrivateKeyJwk,
+          fingerprint: bobUserEpochFingerprint,
+          previousEpochFingerprint: null,
+        },
+        bobHome,
+      );
       const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
       const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
       const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -331,9 +379,15 @@ describe('local trusted-edge context store', () => {
                 {
                   id: 'cvcg_pending_1',
                   context_resource_id: 'context-alpha',
-                  recipient_identity: {
-                    name: 'bob',
-                    public_identity: bobIdentity,
+                  recipient_identity: null,
+                  user_epoch: {
+                    id: 'user_epoch_bob_1',
+                    user_id: 'bob-user-1',
+                    epoch: 1,
+                    fingerprint: bobUserEpochFingerprint,
+                    encryption_public_key_jwk:
+                      bobUserEpochMaterial.descriptor.encryptionPublicKeyJwk,
+                    signing_public_key_jwk: bobUserEpochMaterial.descriptor.signingPublicKeyJwk,
                   },
                 },
               ],
@@ -343,6 +397,7 @@ describe('local trusted-edge context store', () => {
           if (String(url).endsWith('/events/push')) {
             const payload = String(init?.body ?? '');
             expect(payload).toContain('member.granted');
+            expect(payload).toContain('user-epoch:user_epoch_bob_1');
             expect(payload).toContain('ciphertext');
             expect(payload).not.toContain('bob-passphrase');
             expect(payload).not.toContain('correct horse battery staple');
@@ -420,7 +475,20 @@ describe('local trusted-edge context store', () => {
               credential: 'runtime-token',
               context_resource_id: 'context-alpha',
             });
-            expect(body.grant_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            expect(body.receipts).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  payload: expect.objectContaining({
+                    schema: 'viewport.context_vault_grant_materialization/v1',
+                    contextResourceId: 'context-alpha',
+                    grantEventId: expect.any(String),
+                    recipientName: `user-epoch:user_epoch_bob_1:${bobUserEpochFingerprint}`,
+                  }),
+                  signature: expect.any(String),
+                  signed_by_epoch_fingerprint: bobUserEpochFingerprint,
+                }),
+              ]),
+            );
             return jsonResponse({ ok: true, materialized: 1 });
           }
           throw new Error(`Unexpected pull URL: ${String(url)}`);
@@ -429,6 +497,24 @@ describe('local trusted-edge context store', () => {
 
       expect(pull.materializedGrants).toBe(1);
 
+      const beforeRevokeBundle = await resolveContextBundle({
+        contextResourceId: 'context-alpha',
+        actorName: 'bob-vps',
+        query: 'rollback runbook',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+      });
+      expect(beforeRevokeBundle.items).toEqual([
+        expect.objectContaining({
+          title: 'Initial shared context',
+          body: 'Tenant routing migrations require a rollback runbook.',
+        }),
+      ]);
+
+      let pushedRevocationEvents: unknown[] = [];
       const revokeCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
       const revokeResult = await processPendingContextRevocations({
         contextResourceId: 'context-alpha',
@@ -448,7 +534,7 @@ describe('local trusted-edge context store', () => {
                 {
                   id: 'cvcg_pending_1',
                   context_resource_id: 'context-alpha',
-                  recipient_identity_name: 'bob',
+                  recipient_identity_name: `user-epoch:user_epoch_bob_1:${bobUserEpochFingerprint}`,
                 },
               ],
             });
@@ -461,6 +547,7 @@ describe('local trusted-edge context store', () => {
             expect(payload).toContain('ciphertext');
             expect(payload).not.toContain('bob-passphrase');
             expect(payload).not.toContain('correct horse battery staple');
+            pushedRevocationEvents = Array.isArray(body.events) ? body.events : [];
             return jsonResponse({
               ok: true,
               accepted: Array.isArray(body.events) ? body.events.length : 0,
@@ -496,6 +583,440 @@ describe('local trusted-edge context store', () => {
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/push',
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/mark-revoked',
       ]);
+
+      await addContextEntry({
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Future rotated context',
+        body: 'Future tenant cutovers require the rotated repo key.',
+        credentials,
+        home: tempHome,
+      });
+
+      let pushedAfterRevocationEvents: unknown[] = [];
+      await pushContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('Future rotated context');
+            expect(payload).not.toContain('Future tenant cutovers require the rotated repo key.');
+            pushedAfterRevocationEvents = Array.isArray(body.events) ? body.events : [];
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+          throw new Error(`Unexpected future push URL: ${String(url)}`);
+        },
+      });
+
+      const postRevokePullEvents = [...pushedRevocationEvents, ...pushedAfterRevocationEvents];
+      await pullContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith('/events/pull')) {
+            return jsonResponse({
+              data: postRevokePullEvents.map((event, index) => ({
+                id: index + 100,
+                received_at: `2026-05-13T05:11:${String(index).padStart(2, '0')}.000Z`,
+                signed_event: event,
+              })),
+            });
+          }
+          if (String(url).endsWith('/grants/materialized')) {
+            return jsonResponse({ ok: true, materialized: 0 });
+          }
+          throw new Error(`Unexpected post-revoke pull URL: ${String(url)}`);
+        },
+      });
+
+      const afterRevokeBundle = await resolveContextBundle({
+        contextResourceId: 'context-alpha',
+        actorName: 'bob-vps',
+        query: 'tenant',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+      });
+      expect(afterRevokeBundle.items).toEqual([
+        expect.objectContaining({
+          title: 'Initial shared context',
+          body: 'Tenant routing migrations require a rollback runbook.',
+        }),
+      ]);
+      expect(afterRevokeBundle.items).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: 'Future rotated context',
+            body: 'Future tenant cutovers require the rotated repo key.',
+          }),
+        ]),
+      );
+    } finally {
+      await fs.rm(bobHome, { recursive: true, force: true });
+    }
+  });
+
+  it('emits and materializes context grants addressed to a team epoch', async () => {
+    const bobHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-team-bob-'));
+    try {
+      await initContextResource({
+        contextResourceId: 'context-alpha',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        credentials,
+        keyStore: 'file',
+        home: tempHome,
+      });
+      await addContextEntry({
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Team-only context',
+        body: 'Shard routing decisions require tenant database isolation proof.',
+        credentials,
+        home: tempHome,
+      });
+      await initContextResource({
+        contextResourceId: 'bob-bootstrap',
+        userName: 'bob',
+        deviceName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        keyStore: 'file',
+        home: bobHome,
+      });
+
+      const teamMaterial = createLocalTeamEpochKeyMaterial({
+        workspaceId: 'workspace-alpha',
+        teamId: 'team-platform-1',
+        epoch: 1,
+      });
+      const teamFingerprint = epochFingerprint(teamMaterial.descriptor);
+      await upsertLocalTeamEpoch(
+        {
+          workspaceId: 'workspace-alpha',
+          teamId: 'team-platform-1',
+          platformTeamId: 'team-platform-1',
+          platformEpochId: 'team_epoch_1',
+          epoch: 1,
+          schema: 'viewport.team_crypto_epoch/v1',
+          status: 'active',
+          encryptionPublicKeyJwk: teamMaterial.descriptor.encryptionPublicKeyJwk,
+          encryptionPrivateKeyJwk: teamMaterial.encryptionPrivateKeyJwk,
+          signingPublicKeyJwk: teamMaterial.descriptor.signingPublicKeyJwk,
+          signingPrivateKeyJwk: teamMaterial.signingPrivateKeyJwk,
+          fingerprint: teamFingerprint,
+          previousEpochFingerprint: null,
+        },
+        bobHome,
+      );
+
+      const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
+      const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
+      let pushedEvents: unknown[] = [];
+
+      const result = await processPendingContextGrants({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+
+          if (String(url).endsWith('/grants/pending')) {
+            return jsonResponse({
+              grants: [
+                {
+                  id: 'cvcg_team_pending_1',
+                  context_resource_id: 'context-alpha',
+                  subject_type: 'team',
+                  subject_id: 'team-platform-1',
+                  recipient_identity: null,
+                  team_epoch: {
+                    id: 'team_epoch_1',
+                    team_id: 'team-platform-1',
+                    epoch: 1,
+                    fingerprint: teamFingerprint,
+                    encryption_public_key_jwk: teamMaterial.descriptor.encryptionPublicKeyJwk,
+                    signing_public_key_jwk: teamMaterial.descriptor.signingPublicKeyJwk,
+                  },
+                },
+              ],
+            });
+          }
+
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('member.granted');
+            expect(payload).toContain('team-epoch:team_epoch_1');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('Shard routing decisions');
+            pushedEvents = Array.isArray(body.events) ? body.events : [];
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+
+          if (String(url).endsWith('/grants/mark-emitted')) {
+            expect(body).toMatchObject({
+              credential: 'runtime-token',
+              crypto_grant_id: 'cvcg_team_pending_1',
+            });
+            expect(String(body.recipient_identity_name)).toContain('team-epoch:team_epoch_1');
+            return jsonResponse({ ok: true });
+          }
+
+          throw new Error(`Unexpected team grant sync URL: ${String(url)}`);
+        },
+      });
+
+      expect(result.emitted).toBe(1);
+      expect(result.missingIdentity).toBe(0);
+      expect(result.pushed).toBeGreaterThan(0);
+
+      await joinContextResource({
+        contextResourceId: 'context-alpha',
+        userName: 'bob',
+        deviceName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        keyStore: 'file',
+        home: bobHome,
+      });
+      importContextIdentity({ identity: aliceIdentity, home: bobHome });
+      importContextIdentity({ identity: aliceLaptopIdentity, home: bobHome });
+
+      const pull = await pullContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          if (String(url).endsWith('/events/pull')) {
+            return jsonResponse({
+              data: pushedEvents.map((event, index) => ({
+                id: index + 1,
+                received_at: `2026-05-13T05:20:0${index}.000Z`,
+                signed_event: event,
+              })),
+            });
+          }
+          if (String(url).endsWith('/grants/materialized')) {
+            expect(body.receipts).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  payload: expect.objectContaining({
+                    schema: 'viewport.context_vault_grant_materialization/v1',
+                    contextResourceId: 'context-alpha',
+                    grantEventId: expect.any(String),
+                    recipientName: `team-epoch:team_epoch_1:${teamFingerprint}`,
+                  }),
+                  signature: expect.any(String),
+                  signed_by_epoch_fingerprint: teamFingerprint,
+                }),
+              ]),
+            );
+            return jsonResponse({ ok: true, materialized: 1 });
+          }
+          throw new Error(`Unexpected team pull URL: ${String(url)}`);
+        },
+      });
+
+      expect(pull.materializedGrants).toBe(1);
+
+      const bundle = await resolveContextBundle({
+        contextResourceId: 'context-alpha',
+        actorName: 'bob-vps',
+        query: 'tenant database isolation',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+      });
+      expect(bundle.items).toEqual([
+        expect.objectContaining({
+          title: 'Team-only context',
+          body: 'Shard routing decisions require tenant database isolation proof.',
+        }),
+      ]);
+
+      let pushedTeamRevocationEvents: unknown[] = [];
+      const teamRevokeResult = await processPendingContextRevocations({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'alice-laptop',
+        credentials,
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+
+          if (String(url).endsWith('/grants/revocations/pending')) {
+            return jsonResponse({
+              revocations: [
+                {
+                  id: 'cvcg_team_pending_1',
+                  context_resource_id: 'context-alpha',
+                  recipient_identity_name: `team-epoch:team_epoch_1:${teamFingerprint}`,
+                },
+              ],
+            });
+          }
+
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('member.revoked');
+            expect(payload).toContain('key.rotated');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('Team future context');
+            pushedTeamRevocationEvents = Array.isArray(body.events) ? body.events : [];
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+
+          if (String(url).endsWith('/grants/mark-revoked')) {
+            expect(body).toMatchObject({
+              credential: 'runtime-token',
+              crypto_grant_id: 'cvcg_team_pending_1',
+            });
+            expect(body.rotation_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            return jsonResponse({ ok: true });
+          }
+
+          throw new Error(`Unexpected team revoke URL: ${String(url)}`);
+        },
+      });
+
+      expect(teamRevokeResult.revoked).toBe(1);
+
+      await addContextEntry({
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Team future context',
+        body: 'Future shard migrations require the rotated team repo key.',
+        credentials,
+        home: tempHome,
+      });
+
+      let pushedAfterTeamRevocationEvents: unknown[] = [];
+      await pushContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        home: tempHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          if (String(url).endsWith('/events/push')) {
+            const payload = String(init?.body ?? '');
+            expect(payload).toContain('ciphertext');
+            expect(payload).not.toContain('Team future context');
+            expect(payload).not.toContain(
+              'Future shard migrations require the rotated team repo key.',
+            );
+            pushedAfterTeamRevocationEvents = Array.isArray(body.events) ? body.events : [];
+            return jsonResponse({
+              ok: true,
+              accepted: Array.isArray(body.events) ? body.events.length : 0,
+            });
+          }
+          throw new Error(`Unexpected team future push URL: ${String(url)}`);
+        },
+      });
+
+      const postTeamRevokeEvents = [
+        ...pushedTeamRevocationEvents,
+        ...pushedAfterTeamRevocationEvents,
+      ];
+      await pullContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith('/events/pull')) {
+            return jsonResponse({
+              data: postTeamRevokeEvents.map((event, index) => ({
+                id: index + 200,
+                received_at: `2026-05-13T05:21:${String(index).padStart(2, '0')}.000Z`,
+                signed_event: event,
+              })),
+            });
+          }
+          if (String(url).endsWith('/grants/materialized')) {
+            return jsonResponse({ ok: true, materialized: 0 });
+          }
+          throw new Error(`Unexpected team post-revoke pull URL: ${String(url)}`);
+        },
+      });
+
+      const afterTeamRevokeBundle = await resolveContextBundle({
+        contextResourceId: 'context-alpha',
+        actorName: 'bob-vps',
+        query: 'shard migrations',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+      });
+      expect(afterTeamRevokeBundle.items).toEqual([
+        expect.objectContaining({
+          title: 'Team-only context',
+          body: 'Shard routing decisions require tenant database isolation proof.',
+        }),
+      ]);
+      expect(afterTeamRevokeBundle.items).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: 'Team future context',
+            body: 'Future shard migrations require the rotated team repo key.',
+          }),
+        ]),
+      );
     } finally {
       await fs.rm(bobHome, { recursive: true, force: true });
     }
@@ -1021,6 +1542,17 @@ describe('local trusted-edge context store', () => {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  }
+
+  function headerValue(headers: RequestInit['headers'] | undefined, name: string): string | null {
+    if (!headers) return null;
+    if (headers instanceof Headers) return headers.get(name);
+    if (Array.isArray(headers)) {
+      const match = headers.find(([key]) => key.toLowerCase() === name.toLowerCase());
+      return match?.[1] ?? null;
+    }
+    const match = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+    return typeof match?.[1] === 'string' ? match[1] : null;
   }
 
   function signedDecision<T extends Record<string, unknown>>(

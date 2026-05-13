@@ -6,7 +6,10 @@ import { parseJwksSigningKeys } from '../relay/bridge-token-issuer.js';
 
 type TrustedEdgeCommandPurpose =
   | 'context-candidate-preview'
+  | 'context-propose'
+  | 'context-resolve'
   | 'trusted-edge-plan-decrypt'
+  | 'trusted-edge-plan-decrypt-field'
   | 'trusted-edge-plan-encrypt-field'
   | 'trusted-edge-plan-wrap-key';
 
@@ -28,6 +31,7 @@ interface VerificationConfig {
   audience?: string;
   jwksUrl?: string;
   signingKeys?: Record<string, string>;
+  runtimeTargetId?: string;
   clockSkewSec?: number;
   tlsVerify?: 'auto' | '0' | '1';
   caCertPath?: string;
@@ -60,6 +64,13 @@ export async function verifyTrustedEdgeCommandCapability(
   requireClaim(claimMap['role'], 'trusted-edge-client', 'role');
   requireClaim(claimMap['workspaceId'], input.workspaceId, 'workspaceId');
   requireClaim(claimMap['purpose'], input.purpose, 'purpose');
+  requireStringClaim(claimMap['trustedEdgeUnlockSessionId'], 'trustedEdgeUnlockSessionId');
+  if (
+    typeof claimMap['runtimeTargetId'] === 'string' &&
+    claimMap['runtimeTargetId'].trim() !== ''
+  ) {
+    requireClaim(config.runtimeTargetId, claimMap['runtimeTargetId'], 'runtimeTargetId');
+  }
 
   if (input.contextResourceId) {
     requireClaim(claimMap['contextResourceId'], input.contextResourceId, 'contextResourceId');
@@ -81,6 +92,12 @@ function requireClaim(actual: unknown, expected: string, name: string): void {
   }
 }
 
+function requireStringClaim(actual: unknown, name: string): void {
+  if (typeof actual !== 'string' || actual.trim() === '') {
+    throw new Error(`Trusted-edge command capability ${name} is required.`);
+  }
+}
+
 function resolveVerificationConfig(daemon: Daemon, workspaceId: string): VerificationConfig {
   const relay = daemon.configManager.getDaemonConfig()?.relay;
   const binding = relay?.bindings?.find(
@@ -97,6 +114,7 @@ function resolveVerificationConfig(daemon: Daemon, workspaceId: string): Verific
     audience: source.tokenAudience,
     jwksUrl: source.tokenJwksUrl,
     signingKeys: source.signingKeys,
+    runtimeTargetId: source.runtimeTargetId,
     clockSkewSec: source.tokenClockSkewSec,
     tlsVerify: source.tlsVerify,
     caCertPath: source.caCertPath,
