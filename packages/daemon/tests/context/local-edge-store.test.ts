@@ -366,7 +366,8 @@ describe('local trusted-edge context store', () => {
                     user_id: 'bob-user-1',
                     epoch: 1,
                     fingerprint: bobUserEpochFingerprint,
-                    encryption_public_key_jwk: bobUserEpochMaterial.descriptor.encryptionPublicKeyJwk,
+                    encryption_public_key_jwk:
+                      bobUserEpochMaterial.descriptor.encryptionPublicKeyJwk,
                     signing_public_key_jwk: bobUserEpochMaterial.descriptor.signingPublicKeyJwk,
                   },
                 },

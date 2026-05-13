@@ -64,7 +64,13 @@ export interface EpochTransitionPayload {
   fromEpochFingerprint: string;
   toEpoch: number;
   toEpochFingerprint: string;
-  reason: 'initial' | 'device_enrolled' | 'device_revoked' | 'member_revoked' | 'manual_rotation' | 'recovery';
+  reason:
+    | 'initial'
+    | 'device_enrolled'
+    | 'device_revoked'
+    | 'member_revoked'
+    | 'manual_rotation'
+    | 'recovery';
   createdAt: string;
 }
 
@@ -132,7 +138,10 @@ export function epochTransitionPayload(input: {
   if (input.from.workspaceId !== input.to.workspaceId) {
     throw new Error('Epoch transition workspace mismatch.');
   }
-  if (input.from.subjectType !== input.to.subjectType || input.from.subjectId !== input.to.subjectId) {
+  if (
+    input.from.subjectType !== input.to.subjectType ||
+    input.from.subjectId !== input.to.subjectId
+  ) {
     throw new Error('Epoch transition subject mismatch.');
   }
   if (input.to.epoch !== input.from.epoch + 1) {
@@ -162,7 +171,9 @@ export function signEpochTransition(input: {
     key: input.signingPrivateKeyJwk as crypto.JsonWebKey,
     format: 'jwk',
   });
-  const signature = crypto.sign(null, Buffer.from(canonicalJson(input.payload)), key).toString('base64url');
+  const signature = crypto
+    .sign(null, Buffer.from(canonicalJson(input.payload)), key)
+    .toString('base64url');
   return {
     payload: input.payload,
     signature,
@@ -177,7 +188,8 @@ export function verifyEpochTransition(input: {
   expectedToEpochFingerprint: string;
 }): boolean {
   if (input.signed.signedByEpochFingerprint !== input.expectedFromEpochFingerprint) return false;
-  if (input.signed.payload.fromEpochFingerprint !== input.expectedFromEpochFingerprint) return false;
+  if (input.signed.payload.fromEpochFingerprint !== input.expectedFromEpochFingerprint)
+    return false;
   if (input.signed.payload.toEpochFingerprint !== input.expectedToEpochFingerprint) return false;
   const key = crypto.createPublicKey({
     key: input.signingPublicKeyJwk as crypto.JsonWebKey,

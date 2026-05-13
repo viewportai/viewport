@@ -518,7 +518,10 @@ async function fetchVisibleContextVaults(target: {
   }
   if (!Array.isArray(payload.data)) return [];
   return payload.data
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+    .filter(
+      (item): item is Record<string, unknown> =>
+        !!item && typeof item === 'object' && !Array.isArray(item),
+    )
     .map((item) => ({
       vault_id: String(item.vault_id ?? ''),
       access:
@@ -574,7 +577,12 @@ async function contextEpochPublish(): Promise<void> {
       });
 
   if (isJsonMode()) {
-    printJson({ command: 'context epoch-publish', ok: true, scope: teamId ? 'team' : 'user', epoch });
+    printJson({
+      command: 'context epoch-publish',
+      ok: true,
+      scope: teamId ? 'team' : 'user',
+      epoch,
+    });
     return;
   }
 
@@ -608,7 +616,13 @@ async function contextEpochRotate(): Promise<void> {
       });
 
   if (isJsonMode()) {
-    printJson({ command: 'context epoch-rotate', ok: true, scope: teamId ? 'team' : 'user', reason, epoch });
+    printJson({
+      command: 'context epoch-rotate',
+      ok: true,
+      scope: teamId ? 'team' : 'user',
+      reason,
+      epoch,
+    });
     return;
   }
 
@@ -651,11 +665,20 @@ async function contextRotationsProcess(): Promise<void> {
   }
 }
 
-function epochRotationReason(value: string): 'device_revoked' | 'member_revoked' | 'manual_rotation' | 'recovery' {
-  if (value === 'device_revoked' || value === 'member_revoked' || value === 'manual_rotation' || value === 'recovery') {
+function epochRotationReason(
+  value: string,
+): 'device_revoked' | 'member_revoked' | 'manual_rotation' | 'recovery' {
+  if (
+    value === 'device_revoked' ||
+    value === 'member_revoked' ||
+    value === 'manual_rotation' ||
+    value === 'recovery'
+  ) {
     return value;
   }
-  throw new Error('Epoch rotation reason must be device_revoked, member_revoked, manual_rotation, or recovery.');
+  throw new Error(
+    'Epoch rotation reason must be device_revoked, member_revoked, manual_rotation, or recovery.',
+  );
 }
 
 async function contextDeviceEnrollRequest(): Promise<void> {
@@ -695,10 +718,7 @@ async function contextDeviceEnrollApprove(): Promise<void> {
       caCertPath: target.caCertPath,
       tlsPins: target.tlsPins,
     },
-    enrollmentId: requiredFlag(
-      'enrollment',
-      'vpd context device-enroll-approve --enrollment <id>',
-    ),
+    enrollmentId: requiredFlag('enrollment', 'vpd context device-enroll-approve --enrollment <id>'),
     home: getFlag('home'),
   });
 
@@ -745,8 +765,14 @@ async function contextTeamGrantCreate(): Promise<void> {
       caCertPath: target.caCertPath,
       tlsPins: target.tlsPins,
     },
-    teamCryptoEpochId: requiredFlag('team-epoch', 'vpd context team-grant-create --team-epoch <id> --recipient-epoch <id>'),
-    recipientUserCryptoEpochId: requiredFlag('recipient-epoch', 'vpd context team-grant-create --team-epoch <id> --recipient-epoch <id>'),
+    teamCryptoEpochId: requiredFlag(
+      'team-epoch',
+      'vpd context team-grant-create --team-epoch <id> --recipient-epoch <id>',
+    ),
+    recipientUserCryptoEpochId: requiredFlag(
+      'recipient-epoch',
+      'vpd context team-grant-create --team-epoch <id> --recipient-epoch <id>',
+    ),
     home: getFlag('home'),
   });
 

@@ -328,7 +328,9 @@ export function showHelp(): void {
     '                               Authorize a local directory tree to stream to a paired organization',
   );
   console.log('  unlock <id> [--workspace <id>] [--json]');
-  console.log('                               Activate a short-lived hosted-web trusted-edge session');
+  console.log(
+    '                               Activate a short-lived hosted-web trusted-edge session',
+  );
   console.log('  add <path> [--json]          Register a directory');
   console.log('  remove <path> [--json]       Unregister a directory');
   console.log('  list [--json]                List directories + active sessions');

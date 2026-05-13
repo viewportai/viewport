@@ -93,7 +93,9 @@ export async function approveDeviceEpochEnrollment(options: {
 }): Promise<DeviceEnrollmentPayload> {
   const epoch = await getActiveLocalUserEpoch(options.target.workspaceId, options.home);
   if (!epoch?.platformEpochId) {
-    throw new Error('Active local user epoch with platform id is required before approving a device.');
+    throw new Error(
+      'Active local user epoch with platform id is required before approving a device.',
+    );
   }
   const enrollment = await fetchEnrollment(options);
   const aad = userEpochDeviceGrantAad({ epoch, enrollment });
@@ -297,9 +299,7 @@ function enrollmentPayload(payload: unknown): DeviceEnrollmentPayload {
     fingerprint: stringField(data, 'fingerprint'),
     nonce: stringField(data, 'nonce'),
     status: statusField(data, 'status'),
-    grants: Array.isArray(data.grants)
-      ? data.grants.map((item) => deviceGrantPayload(item))
-      : [],
+    grants: Array.isArray(data.grants) ? data.grants.map((item) => deviceGrantPayload(item)) : [],
   };
 }
 

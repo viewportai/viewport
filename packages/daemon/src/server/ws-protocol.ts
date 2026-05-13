@@ -171,6 +171,22 @@ export const ContextResolveSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const ContextProposeSchema = z.object({
+  type: z.literal('context-propose'),
+  contextResourceId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(256),
+  actorName: z.string().min(1).max(256),
+  title: z.string().min(1).max(500),
+  body: z.string().min(1).max(100_000),
+  source: z.string().max(512).optional(),
+  sourceKind: z.enum(['workflow', 'plan', 'integration']).optional(),
+  sync: z.boolean().optional(),
+  passphrase: z.string().max(4096).optional(),
+  recoveryCode: z.string().max(4096).optional(),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const ResumeSchema = z
   .object({
     type: z.literal('resume'),
@@ -347,10 +363,7 @@ export const TrustedEdgePlanDecryptSchema = z.object({
     digest: z.string().min(1).max(256),
     aad: z.record(z.string(), z.unknown()).optional(),
   }),
-  bodyKeyGrants: z
-    .array(TrustedEdgePlanBodyKeyGrantSchema)
-    .max(500)
-    .optional(),
+  bodyKeyGrants: z.array(TrustedEdgePlanBodyKeyGrantSchema).max(500).optional(),
   capabilityToken: z.string().min(1).max(4096).optional(),
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
@@ -436,6 +449,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   ReadSessionMessagesSchema,
   ContextCandidatePreviewSchema,
   ContextResolveSchema,
+  ContextProposeSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,

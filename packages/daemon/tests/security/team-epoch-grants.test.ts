@@ -92,7 +92,10 @@ describe('team epoch member grants', () => {
         });
       }
 
-      if (init?.method === 'POST' && url.endsWith('/crypto/team-epochs/team-epoch-platform-1/member-grants')) {
+      if (
+        init?.method === 'POST' &&
+        url.endsWith('/crypto/team-epochs/team-epoch-platform-1/member-grants')
+      ) {
         const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
         expect(body.recipient_user_crypto_epoch_id).toBe('user-epoch-platform-1');
         expect(JSON.stringify(body)).not.toContain('encryptionPrivateKeyJwk');
@@ -111,7 +114,10 @@ describe('team epoch member grants', () => {
         return responseJson({ data: grantPayload ? [grantPayload] : [] });
       }
 
-      if (init?.method === 'POST' && url.endsWith('/crypto/team-epoch-member-grants/team-grant-1/materialized')) {
+      if (
+        init?.method === 'POST' &&
+        url.endsWith('/crypto/team-epoch-member-grants/team-grant-1/materialized')
+      ) {
         return responseJson({ ok: true, data: grantPayload });
       }
 
@@ -137,9 +143,10 @@ describe('team epoch member grants', () => {
     });
 
     expect(result.accepted).toBe(1);
-    expect((await getActiveLocalTeamEpoch('workspace-1', 'team-public-1', recipientHome))?.platformEpochId).toBe(
-      'team-epoch-platform-1',
-    );
+    expect(
+      (await getActiveLocalTeamEpoch('workspace-1', 'team-public-1', recipientHome))
+        ?.platformEpochId,
+    ).toBe('team-epoch-platform-1');
   });
 });
 

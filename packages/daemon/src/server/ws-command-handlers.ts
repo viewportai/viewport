@@ -10,6 +10,10 @@ import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.
 import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 import { resolveContextBundle } from '../context/local-edge-store.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { pushContextEvents } from '../context/local-edge-sync.js';
+import { ConfigManager } from '../core/config.js';
+import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
 import {
   decryptTrustedEdgePlanBody,
   decryptTrustedEdgePlanFeedbackField,
@@ -270,6 +274,74 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
     },
 
+    'context-propose': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'context-propose',
+          contextResourceId: msg.contextResourceId,
+        });
+        const candidate = await proposeContextEntry({
+          contextResourceId: msg.contextResourceId,
+          actorName: msg.actorName,
+          title: msg.title,
+          body: msg.body,
+          source: msg.source ?? 'web://vault-detail',
+          sourceKind: msg.sourceKind ?? 'integration',
+          credentials: {
+            passphrase: msg.passphrase ?? '',
+            recoveryCode: msg.recoveryCode ?? '',
+          },
+        });
+
+        let sync:
+          | { ok: true; accepted: number; pushed: number; repoId: string; workspaceId: string }
+          | { ok: false; error: string }
+          | null = null;
+        if (msg.sync !== false) {
+          try {
+            const target = await resolveSavedContextSyncTarget(
+              msg.contextResourceId,
+              msg.workspaceId,
+            );
+            if (!target) {
+              sync = {
+                ok: false,
+                error: `No saved remote credentials are available for workspace ${msg.workspaceId}.`,
+              };
+            } else {
+              const result = await pushContextEvents({
+                contextResourceId: msg.contextResourceId,
+                workspaceId: target.workspaceId,
+                serverUrl: target.serverUrl,
+                credential: target.credential,
+                tlsVerify: target.tlsVerify,
+                caCertPath: target.caCertPath,
+                tlsPins: target.tlsPins,
+              });
+              sync = { ok: true, workspaceId: target.workspaceId, ...result };
+            }
+          } catch (error) {
+            sync = {
+              ok: false,
+              error: error instanceof Error ? error.message : 'Context sync failed',
+            };
+          }
+        }
+
+        sendAck(client, msg.requestId, 'ok', undefined, { candidate, sync });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Context proposal failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
     'trusted-edge-plan-decrypt': async (client, msg) => {
       try {
         await verifyTrustedEdgeCommandCapability(daemon, {
@@ -441,12 +513,31 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       }
       sendAck(client, msg.requestId, 'ok');
     },
-
   };
 }
 
 function resolveManifest(workingDirectory: string | null | undefined): SessionResourceManifest {
   return resolveSessionResourceManifestSync({
     workingDirectory: workingDirectory ?? process.cwd(),
+  });
+}
+
+async function resolveSavedContextSyncTarget(
+  contextResourceId: string,
+  workspaceId: string,
+): Promise<{
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+} | null> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const daemonConfig = manager.getDaemonConfig() ?? {};
+  return resolveConfiguredContextSyncTarget(daemonConfig, {
+    contextResourceId,
+    requestedWorkspaceId: workspaceId,
   });
 }

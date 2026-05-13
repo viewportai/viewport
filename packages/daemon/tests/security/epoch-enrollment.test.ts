@@ -53,22 +53,25 @@ describe('epoch device enrollment', () => {
         const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
         expect(JSON.stringify(body)).not.toContain('"d"');
         enrollmentPublicKeys = body;
-        return responseJson({
-          ok: true,
-          data: {
-            id: 'enroll-1',
-            workspace_id: 'workspace-1',
-            user_id: 42,
-            device_id: body.device_id,
-            device_label: body.device_label,
-            encryption_public_key_jwk: body.encryption_public_key_jwk,
-            signing_public_key_jwk: body.signing_public_key_jwk,
-            fingerprint: 'sha256:enrollment',
-            nonce: body.nonce,
-            status: 'pending',
-            grants: [],
+        return responseJson(
+          {
+            ok: true,
+            data: {
+              id: 'enroll-1',
+              workspace_id: 'workspace-1',
+              user_id: 42,
+              device_id: body.device_id,
+              device_label: body.device_label,
+              encryption_public_key_jwk: body.encryption_public_key_jwk,
+              signing_public_key_jwk: body.signing_public_key_jwk,
+              fingerprint: 'sha256:enrollment',
+              nonce: body.nonce,
+              status: 'pending',
+              grants: [],
+            },
           },
-        }, 201);
+          201,
+        );
       }
 
       if (init?.method === 'GET' && url.includes('/crypto/device-enrollments/enroll-1')) {
@@ -120,7 +123,10 @@ describe('epoch device enrollment', () => {
         });
       }
 
-      if (init?.method === 'POST' && url.endsWith('/crypto/device-enrollments/enroll-1/materialized')) {
+      if (
+        init?.method === 'POST' &&
+        url.endsWith('/crypto/device-enrollments/enroll-1/materialized')
+      ) {
         const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
         expect(body.grant_id).toBe('grant-1');
         return responseJson({

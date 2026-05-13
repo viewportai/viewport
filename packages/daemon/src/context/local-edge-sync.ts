@@ -644,7 +644,8 @@ async function contextGrantIdentitiesForWorkspace(options: {
       : []),
     ...teamEpochs.map((epoch) => ({
       name: contextTeamEpochRecipientName({
-        teamEpochId: epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
+        teamEpochId:
+          epoch.platformEpochId ?? `${epoch.platformTeamId ?? epoch.teamId}:${epoch.epoch}`,
         fingerprint: epoch.fingerprint,
       }),
       hpkePrivateKey: jwkPrivateDToBase64(objectValue(epoch.encryptionPrivateKeyJwk)),

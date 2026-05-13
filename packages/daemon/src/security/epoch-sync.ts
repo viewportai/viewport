@@ -68,7 +68,9 @@ export async function ensureUserCryptoEpoch(options: {
       signingPrivateKeyJwk: material.signingPrivateKeyJwk,
       fingerprint: stringField(data, 'fingerprint'),
       previousEpochFingerprint:
-        typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
+        typeof data.previous_epoch_fingerprint === 'string'
+          ? data.previous_epoch_fingerprint
+          : null,
     },
     options.home ?? configDir(),
   );
@@ -148,7 +150,9 @@ export async function rotateUserCryptoEpoch(options: {
       signingPrivateKeyJwk: material.signingPrivateKeyJwk,
       fingerprint: stringField(data, 'fingerprint'),
       previousEpochFingerprint:
-        typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
+        typeof data.previous_epoch_fingerprint === 'string'
+          ? data.previous_epoch_fingerprint
+          : null,
     },
     options.home ?? configDir(),
   );
@@ -160,7 +164,11 @@ export async function ensureTeamCryptoEpoch(options: {
   home?: string;
   fetchImpl?: typeof transportFetch;
 }): Promise<LocalTeamCryptoEpoch> {
-  const existing = await getActiveLocalTeamEpoch(options.target.workspaceId, options.teamId, options.home);
+  const existing = await getActiveLocalTeamEpoch(
+    options.target.workspaceId,
+    options.teamId,
+    options.home,
+  );
   if (existing) return existing;
 
   const material = createLocalTeamEpochKeyMaterial({
@@ -198,7 +206,9 @@ export async function ensureTeamCryptoEpoch(options: {
       signingPrivateKeyJwk: material.signingPrivateKeyJwk,
       fingerprint: stringField(data, 'fingerprint'),
       previousEpochFingerprint:
-        typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
+        typeof data.previous_epoch_fingerprint === 'string'
+          ? data.previous_epoch_fingerprint
+          : null,
     },
     options.home ?? configDir(),
   );
@@ -211,7 +221,11 @@ export async function rotateTeamCryptoEpoch(options: {
   home?: string;
   fetchImpl?: typeof transportFetch;
 }): Promise<LocalTeamCryptoEpoch> {
-  const previous = await getActiveLocalTeamEpoch(options.target.workspaceId, options.teamId, options.home);
+  const previous = await getActiveLocalTeamEpoch(
+    options.target.workspaceId,
+    options.teamId,
+    options.home,
+  );
   if (!previous) {
     throw new Error('Cannot rotate team crypto epoch before an active local team epoch exists.');
   }
@@ -280,7 +294,9 @@ export async function rotateTeamCryptoEpoch(options: {
       signingPrivateKeyJwk: material.signingPrivateKeyJwk,
       fingerprint: stringField(data, 'fingerprint'),
       previousEpochFingerprint:
-        typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
+        typeof data.previous_epoch_fingerprint === 'string'
+          ? data.previous_epoch_fingerprint
+          : null,
     },
     options.home ?? configDir(),
   );

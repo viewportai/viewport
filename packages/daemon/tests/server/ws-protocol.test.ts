@@ -11,6 +11,7 @@ import {
   ListSessionsSchema,
   ReadSessionMessagesSchema,
   ContextCandidatePreviewSchema,
+  ContextProposeSchema,
   ContextResolveSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
@@ -173,6 +174,35 @@ describe('ContextResolveSchema', () => {
       contextResourceId: 'ctx-1',
       actorName: 'bob-vps',
       query: 'roses',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ContextProposeSchema', () => {
+  it('accepts scoped context proposal commands', () => {
+    const result = ContextProposeSchema.safeParse({
+      type: 'context-propose',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
+      source: 'web://vault-detail',
+      sourceKind: 'integration',
+      capabilityToken: 'capability-token',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('requires workspace id for trusted-edge proposals', () => {
+    const result = ContextProposeSchema.safeParse({
+      type: 'context-propose',
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      title: 'Roses incident note',
+      body: 'Keep the rose context scoped to the workspace.',
     });
     expect(result.success).toBe(false);
   });
@@ -642,7 +672,6 @@ describe('IncomingMessageSchema discriminated union', () => {
       decision: { behavior: 'deny' },
     });
     expect(respond.success).toBe(true);
-
   });
 
   it('rejects unknown type', () => {

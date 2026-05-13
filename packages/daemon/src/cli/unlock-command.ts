@@ -6,7 +6,9 @@ import { printJson } from './command-shared.js';
 export async function unlock(): Promise<void> {
   const unlockSessionId = getArgs()[1] ?? getFlag('id') ?? getFlag('session');
   if (!unlockSessionId || unlockSessionId.startsWith('--')) {
-    throw new Error('Usage: vpd unlock <unlock-session-id> [--workspace <id>] [--server-url <url>] [--credential <token>] [--json]');
+    throw new Error(
+      'Usage: vpd unlock <unlock-session-id> [--workspace <id>] [--server-url <url>] [--credential <token>] [--json]',
+    );
   }
 
   const target = await resolveWorkspaceSyncTarget('unlock');
@@ -33,7 +35,9 @@ export async function unlock(): Promise<void> {
     message?: string;
   };
   if (!response.ok) {
-    throw new Error(body.message ?? `Failed to unlock trusted edge session: HTTP ${response.status}`);
+    throw new Error(
+      body.message ?? `Failed to unlock trusted edge session: HTTP ${response.status}`,
+    );
   }
 
   if (hasFlag('json')) {

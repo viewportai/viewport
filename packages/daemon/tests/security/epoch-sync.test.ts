@@ -87,12 +87,20 @@ describe('epoch sync', () => {
     );
 
     await ensureUserCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       home,
       fetchImpl: fetchImpl as never,
     });
     await ensureUserCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       home,
       fetchImpl: fetchImpl as never,
     });
@@ -139,12 +147,20 @@ describe('epoch sync', () => {
     });
 
     await ensureUserCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       home,
       fetchImpl: fetchImpl as never,
     });
     const rotated = await rotateUserCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       reason: 'device_revoked',
       home,
       fetchImpl: fetchImpl as never,
@@ -177,7 +193,9 @@ describe('epoch sync', () => {
   it('generates private team epoch material locally and publishes public material only', async () => {
     const home = await tempHome();
     const fetchImpl = vi.fn(async (url: string, init?: { body?: string }) => {
-      expect(url).toBe('https://api.test/api/runtime/workspaces/workspace-1/crypto/teams/team_public_1/epochs');
+      expect(url).toBe(
+        'https://api.test/api/runtime/workspaces/workspace-1/crypto/teams/team_public_1/epochs',
+      );
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
       expect(JSON.stringify(body)).not.toContain('private');
       expect(JSON.stringify(body)).not.toContain('"d"');
@@ -241,13 +259,21 @@ describe('epoch sync', () => {
     });
 
     await ensureTeamCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       teamId: 'team_public_1',
       home,
       fetchImpl: fetchImpl as never,
     });
     await ensureTeamCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       teamId: 'team_public_1',
       home,
       fetchImpl: fetchImpl as never,
@@ -292,13 +318,21 @@ describe('epoch sync', () => {
     });
 
     await ensureTeamCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       teamId: 'team_public_1',
       home,
       fetchImpl: fetchImpl as never,
     });
     const rotated = await rotateTeamCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       teamId: 'team_public_1',
       reason: 'member_revoked',
       home,
@@ -308,7 +342,9 @@ describe('epoch sync', () => {
     expect(rotated.epoch).toBe(2);
     const fromTeamFingerprint = String(requests[1]?.body.previous_epoch_fingerprint);
     expect(rotated.previousEpochFingerprint).toBe(fromTeamFingerprint);
-    expect(requests[1]?.url).toBe('https://api.test/api/runtime/workspaces/workspace-1/crypto/teams/team_public_1/epochs');
+    expect(requests[1]?.url).toBe(
+      'https://api.test/api/runtime/workspaces/workspace-1/crypto/teams/team_public_1/epochs',
+    );
     expect(requests[1]?.body).toMatchObject({
       credential: 'issue-token',
       epoch: 2,
@@ -330,7 +366,8 @@ describe('epoch sync', () => {
 
   it('processes pending user rotation requests from the runtime queue', async () => {
     const home = await tempHome();
-    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
+    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> =
+      [];
     const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
       const method = init?.method ?? 'GET';
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
@@ -359,7 +396,8 @@ describe('epoch sync', () => {
           epoch,
           encryptionPublicKeyJwk: body?.encryption_public_key_jwk as never,
           signingPublicKeyJwk: body?.signing_public_key_jwk as never,
-          previousEpochFingerprint: (body?.previous_epoch_fingerprint as string | undefined) ?? null,
+          previousEpochFingerprint:
+            (body?.previous_epoch_fingerprint as string | undefined) ?? null,
           createdAt: 'server-fixture',
         });
         return responseJson({
@@ -381,12 +419,20 @@ describe('epoch sync', () => {
     });
 
     await ensureUserCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       home,
       fetchImpl: fetchImpl as never,
     });
     const result = await processPendingCryptoRotationRequests({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       home,
       fetchImpl: fetchImpl as never,
     });
@@ -399,7 +445,10 @@ describe('epoch sync', () => {
       skipped: 0,
     });
     const rotationPost = requests.find(
-      (request) => request.method === 'POST' && request.url.endsWith('/crypto/user-epochs') && request.body?.epoch === 2,
+      (request) =>
+        request.method === 'POST' &&
+        request.url.endsWith('/crypto/user-epochs') &&
+        request.body?.epoch === 2,
     );
     expect(rotationPost?.body).toMatchObject({
       credential: 'issue-token',
@@ -421,7 +470,8 @@ describe('epoch sync', () => {
   it('processes pending team rotations and regrants the new epoch to remaining user epochs', async () => {
     const home = await tempHome();
     const recipientKey = createRecipientUserEpochFixture();
-    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> = [];
+    const requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }> =
+      [];
     const fetchImpl = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
       const method = init?.method ?? 'GET';
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
@@ -469,7 +519,8 @@ describe('epoch sync', () => {
           epoch,
           encryptionPublicKeyJwk: body?.encryption_public_key_jwk as never,
           signingPublicKeyJwk: body?.signing_public_key_jwk as never,
-          previousEpochFingerprint: (body?.previous_epoch_fingerprint as string | undefined) ?? null,
+          previousEpochFingerprint:
+            (body?.previous_epoch_fingerprint as string | undefined) ?? null,
           createdAt: 'server-fixture',
         });
         return responseJson({
@@ -502,13 +553,21 @@ describe('epoch sync', () => {
     });
 
     await ensureTeamCryptoEpoch({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       teamId: 'team_public_1',
       home,
       fetchImpl: fetchImpl as never,
     });
     const result = await processPendingCryptoRotationRequests({
-      target: { workspaceId: 'workspace-1', serverUrl: 'https://api.test', credential: 'issue-token' },
+      target: {
+        workspaceId: 'workspace-1',
+        serverUrl: 'https://api.test',
+        credential: 'issue-token',
+      },
       home,
       fetchImpl: fetchImpl as never,
     });

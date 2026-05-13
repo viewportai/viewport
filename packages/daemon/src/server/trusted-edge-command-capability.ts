@@ -6,6 +6,7 @@ import { parseJwksSigningKeys } from '../relay/bridge-token-issuer.js';
 
 type TrustedEdgeCommandPurpose =
   | 'context-candidate-preview'
+  | 'context-propose'
   | 'context-resolve'
   | 'trusted-edge-plan-decrypt'
   | 'trusted-edge-plan-decrypt-field'
