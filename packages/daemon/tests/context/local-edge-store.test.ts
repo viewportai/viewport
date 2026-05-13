@@ -30,7 +30,11 @@ import {
   upsertLocalUserEpoch,
   upsertLocalTeamEpoch,
 } from '../../src/security/epoch-store.js';
-import { epochFingerprint } from '../../src/security/epoch-protocol.js';
+import {
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+  epochFingerprint,
+} from '../../src/security/epoch-protocol.js';
 
 describe('local trusted-edge context store', () => {
   let tempHome: string;
@@ -224,10 +228,12 @@ describe('local trusted-edge context store', () => {
 
     let pushedEvents: unknown[] = [];
     const pullBodies: Array<Record<string, unknown>> = [];
+    const protocolHeaders: Array<string | null> = [];
     const fetchImpl = async (
       url: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
+      protocolHeaders.push(headerValue(init?.headers, TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER));
       const body = JSON.parse(String(init?.body ?? '{}'));
       if (String(url).endsWith('/push')) {
         pushedEvents = body.events;
@@ -285,6 +291,11 @@ describe('local trusted-edge context store', () => {
     });
 
     expect(secondPull.pulled).toBe(0);
+    expect(protocolHeaders).toEqual([
+      TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+      TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+      TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+    ]);
     expect(pullBodies[0]).not.toHaveProperty('after_received_at');
     expect(pullBodies[1]).toMatchObject({
       after_received_at: `2026-05-06T21:00:0${pushedEvents.length - 1}.000Z`,
@@ -1247,6 +1258,17 @@ describe('local trusted-edge context store', () => {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  }
+
+  function headerValue(headers: RequestInit['headers'] | undefined, name: string): string | null {
+    if (!headers) return null;
+    if (headers instanceof Headers) return headers.get(name);
+    if (Array.isArray(headers)) {
+      const match = headers.find(([key]) => key.toLowerCase() === name.toLowerCase());
+      return match?.[1] ?? null;
+    }
+    const match = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+    return typeof match?.[1] === 'string' ? match[1] : null;
   }
 
   function signedDecision<T extends Record<string, unknown>>(

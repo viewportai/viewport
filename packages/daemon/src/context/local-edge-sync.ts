@@ -12,7 +12,11 @@ import { readContextMetadata, touchContextMetadata } from './local-edge-metadata
 import { grantContextHpkeRecipient, revokeContextUser } from './local-edge-store.js';
 import { validateAndPinPublicEpoch } from '../security/epoch-public-pins.js';
 import { getActiveLocalUserEpoch, listActiveLocalTeamEpochs } from '../security/epoch-store.js';
-import type { JsonValue } from '../security/epoch-protocol.js';
+import {
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER,
+  TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+  type JsonValue,
+} from '../security/epoch-protocol.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
@@ -685,7 +689,11 @@ async function postJson(
 ): Promise<unknown> {
   const response = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      [TRUSTED_EDGE_CRYPTO_PROTOCOL_HEADER]: TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
+    },
     body: JSON.stringify(body),
     timeoutMs: 5_000,
     ...transportOptions,
