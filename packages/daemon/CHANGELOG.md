@@ -1,3 +1,10 @@
+## [0.5.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.5.1...@viewportai/daemon@0.5.2) (2026-05-13)
+
+
+### Bug Fixes
+
+* **daemon:** stream trusted-edge plan drafts ([0cc8c80](https://github.com/viewportai/viewport/commit/0cc8c80875e26d162c278f039948392bb63fb0d9))
+
 ## [0.5.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.5.0...@viewportai/daemon@0.5.1) (2026-05-13)
 
 
