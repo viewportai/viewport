@@ -177,7 +177,6 @@ describe('RateLimiter', () => {
       expect(DEFAULT_LIMITS['subscribe']).toBeDefined();
       expect(DEFAULT_LIMITS['watch-discovered-session']).toBeDefined();
       expect(DEFAULT_LIMITS['respond-hook-permission']).toBeDefined();
-      expect(DEFAULT_LIMITS['get-hook-plan-draft']).toBeDefined();
     });
 
     it('all limits have positive maxTokens and refillRate', () => {

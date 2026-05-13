@@ -34,7 +34,6 @@ export const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
   'unwatch-discovered-session': { maxTokens: 20, refillRate: 0.5 },
   supervise: { maxTokens: 20, refillRate: 0.5 },
   'respond-hook-permission': { maxTokens: 20, refillRate: 0.5 },
-  'get-hook-plan-draft': { maxTokens: 20, refillRate: 0.5 },
 };
 
 export class RateLimiter {

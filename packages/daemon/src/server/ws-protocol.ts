@@ -281,12 +281,6 @@ export const RespondHookPermissionSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
-export const GetHookPlanDraftSchema = z.object({
-  type: z.literal('get-hook-plan-draft'),
-  draftId: z.string().min(1).max(256),
-  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
-});
-
 export const TrustedEdgePlanDecryptSchema = z.object({
   type: z.literal('trusted-edge-plan-decrypt'),
   workspaceId: z.string().min(1).max(256),
@@ -402,7 +396,6 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   WorkflowCancelRunSchema,
   SuperviseSchema,
   RespondHookPermissionSchema,
-  GetHookPlanDraftSchema,
   TrustedEdgePlanDecryptSchema,
   TrustedEdgePlanDecryptFieldSchema,
   TrustedEdgePlanEncryptFieldSchema,
