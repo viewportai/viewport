@@ -38,8 +38,12 @@ export class PlatformPlanHookSync {
     const daemonConfig = this.daemon.configManager.getDaemonConfig();
     if (!daemonConfig) return null;
 
-    const cwd = typeof event.cwd === 'string' && event.cwd.length > 0 ? event.cwd : process.cwd();
-    const requestedWorkspaceId = resolveLocalOrgBindingSync(cwd)?.organizationId;
+    const explicitCwd = typeof event.cwd === 'string' && event.cwd.length > 0;
+    const cwd = explicitCwd ? event.cwd! : process.cwd();
+    const binding = resolveLocalOrgBindingSync(cwd);
+    if (explicitCwd && !binding) return null;
+    if (binding && !binding.streamEnabled) return null;
+    const requestedWorkspaceId = binding?.organizationId;
     const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, { requestedWorkspaceId });
     if (!target) return null;
 

@@ -99,8 +99,16 @@ describe('PlatformPlanHookSync', () => {
             server: { url: 'https://api.getviewport.test', appUrl: 'https://app.getviewport.test' },
             relay: {
               bindings: [
-                { workspaceId: 'workspace_1', serverUrl: 'https://api.getviewport.test' },
-                { workspaceId: 'workspace_2', serverUrl: 'https://api.getviewport.test' },
+                {
+                  workspaceId: 'workspace_1',
+                  serverUrl: 'https://api.getviewport.test',
+                  issueToken: 'issue-token-1',
+                },
+                {
+                  workspaceId: 'workspace_2',
+                  serverUrl: 'https://api.getviewport.test',
+                  issueToken: 'issue-token-2',
+                },
               ],
             },
           }),

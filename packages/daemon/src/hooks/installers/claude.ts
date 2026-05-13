@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import type { HookInstaller, HookInstallerConfig } from './base.js';
-import { CLAUDE_HOOK_EVENT_KINDS } from '../types.js';
+import { CLAUDE_HOOK_EVENT_KINDS, type HookEventKind } from '../types.js';
 
 const VIEWPORT_MARKER = '--viewport-hook';
 
@@ -72,9 +72,7 @@ export class ClaudeHookInstaller implements HookInstaller {
       }
     }
 
-    for (const event of config.events.filter((candidate) =>
-      CLAUDE_HOOK_EVENT_KINDS.includes(candidate),
-    )) {
+    for (const event of config.events.filter(isClaudeHookEventKind)) {
       const hookEntry = {
         type: 'command' as const,
         command: buildCommand(config.vpdBinaryPath, config.daemonListen, event),
@@ -155,6 +153,12 @@ export class ClaudeHookInstaller implements HookInstaller {
       return false;
     }
   }
+}
+
+function isClaudeHookEventKind(
+  event: HookEventKind,
+): event is (typeof CLAUDE_HOOK_EVENT_KINDS)[number] {
+  return (CLAUDE_HOOK_EVENT_KINDS as readonly HookEventKind[]).includes(event);
 }
 
 function removeViewportHookEntries(
