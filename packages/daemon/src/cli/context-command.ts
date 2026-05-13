@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
@@ -49,6 +51,7 @@ import {
   grantTeamEpochToUserEpoch,
 } from '../security/team-epoch-grants.js';
 import { contextJoin, contextUserInit } from './context-access-command.js';
+import { configDir } from '../core/config.js';
 
 export async function context(): Promise<void> {
   const subcommand = getArgs()[1];
@@ -110,6 +113,10 @@ export async function context(): Promise<void> {
   }
   if (subcommand === 'sync-all') {
     await contextSyncAll();
+    return;
+  }
+  if (subcommand === 'dev-reset-crypto') {
+    await contextDevResetCrypto();
     return;
   }
   if (subcommand === 'epoch-publish') {
@@ -188,7 +195,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|recovery-backup [--recovery-key <key>]|recovery-restore --recovery-key <key>|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|dev-reset-crypto --i-understand|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|recovery-backup [--recovery-key <key>]|recovery-restore --recovery-key <key>|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
 }
 
 function showContextHelp(): void {
@@ -469,6 +476,43 @@ async function contextSyncAll(): Promise<void> {
   }
   if (summary.grantsEmitted > 0) {
     console.log(`Context grants emitted: ${summary.grantsEmitted}`);
+  }
+}
+
+async function contextDevResetCrypto(): Promise<void> {
+  if (!hasFlag('i-understand')) {
+    throw new Error(
+      'vpd context dev-reset-crypto removes local encrypted context, epoch, and plan key material. Re-run with --i-understand to continue.',
+    );
+  }
+  const home = getFlag('home') ?? configDir();
+  const targets = [
+    path.join(home, 'crypto', 'epochs.json'),
+    path.join(home, 'context', 'canonical-resources'),
+    path.join(home, 'context', 'candidate-decision-applications'),
+    path.join(home, 'repos'),
+    path.join(home, 'identities'),
+    path.join(home, 'plans', 'trusted-edge-keys.json'),
+  ];
+  const removed: string[] = [];
+  for (const target of targets) {
+    try {
+      await fs.rm(target, { recursive: true, force: true });
+      removed.push(path.relative(home, target) || target);
+    } catch (error) {
+      throw new Error(
+        `Failed to remove local crypto state at ${target}: ${(error as Error).message}`,
+      );
+    }
+  }
+
+  if (isJsonMode()) {
+    printJson({ command: 'context dev-reset-crypto', ok: true, home, removed });
+    return;
+  }
+  console.log(`Local encrypted collaboration state reset under ${home}`);
+  for (const item of removed) {
+    console.log(`Removed: ${item}`);
   }
 }
 

@@ -960,6 +960,57 @@ describe('context CLI command', () => {
     );
   });
 
+  it('resets local encrypted collaboration state only with explicit acknowledgement', async () => {
+    const cryptoEpochPath = path.join(tempHome, 'crypto', 'epochs.json');
+    const contextMetadataDir = path.join(tempHome, 'context', 'canonical-resources');
+    const decisionDir = path.join(tempHome, 'context', 'candidate-decision-applications');
+    const repoEventsDir = path.join(tempHome, 'repos', 'context-alpha', 'events');
+    const identityDir = path.join(tempHome, 'identities');
+    const planKeyPath = path.join(tempHome, 'plans', 'trusted-edge-keys.json');
+    const configPath = path.join(tempHome, 'config.json');
+
+    await fs.mkdir(path.dirname(cryptoEpochPath), { recursive: true });
+    await fs.mkdir(contextMetadataDir, { recursive: true });
+    await fs.mkdir(decisionDir, { recursive: true });
+    await fs.mkdir(repoEventsDir, { recursive: true });
+    await fs.mkdir(identityDir, { recursive: true });
+    await fs.mkdir(path.dirname(planKeyPath), { recursive: true });
+    await fs.writeFile(cryptoEpochPath, '{}\n', 'utf8');
+    await fs.writeFile(path.join(contextMetadataDir, 'context-alpha.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(decisionDir, 'decision.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(repoEventsDir, 'event.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(identityDir, 'alice.json'), '{}\n', 'utf8');
+    await fs.writeFile(planKeyPath, '{}\n', 'utf8');
+    await fs.writeFile(configPath, '{"daemon":{"relay":{"enabled":true}}}\n', 'utf8');
+
+    await expect(
+      runContext(['context', 'dev-reset-crypto', '--home', tempHome, '--json']),
+    ).rejects.toThrow('Re-run with --i-understand');
+    await fs.access(cryptoEpochPath);
+    await fs.access(planKeyPath);
+
+    await runContext([
+      'context',
+      'dev-reset-crypto',
+      '--home',
+      tempHome,
+      '--i-understand',
+      '--json',
+    ]);
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context dev-reset-crypto"');
+    expect(output).toContain('"crypto/epochs.json"');
+    expect(output).toContain('"plans/trusted-edge-keys.json"');
+    await expect(fs.access(cryptoEpochPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(contextMetadataDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(decisionDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(path.join(tempHome, 'repos'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(identityDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(planKeyPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await fs.access(configPath);
+  });
+
   it('routes unsupported provider proposals into the configured viewport-vault fallback', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-provider-fallback-'));
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
