@@ -124,6 +124,52 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls[0]?.body).not.toHaveProperty('project_machine_binding_id');
   });
 
+  it('uses the relay binding for the workflow resource instead of the legacy default workspace', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(
+      {
+        getDaemonConfig: () => ({
+          server: { url: 'https://fallback.getviewport.test', tlsVerify: 'auto' },
+          relay: {
+            workspaceId: 'personal-workspace',
+            issueToken: 'personal-token',
+            bindings: [
+              {
+                workspaceId: 'personal-workspace',
+                serverUrl: 'https://api.getviewport.test',
+                issueToken: 'personal-token',
+              },
+              {
+                workspaceId: 'project-1',
+                runtimeTargetId: 'binding-1',
+                serverUrl: 'https://api.getviewport.test',
+                issueToken: 'project-token',
+              },
+            ],
+          },
+        }),
+      } as ConfigManager,
+      async (url, init) => {
+        calls.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    );
+
+    await sync.sync(workflowRun());
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(
+      'https://api.getviewport.test/api/runtime/workspaces/project-1/workflow-runs/platform-run-1/sync',
+    );
+    expect(calls[0]?.body).toMatchObject({
+      credential: 'project-token',
+      runtime_target_id: 'binding-1',
+    });
+  });
+
   it('emits a privacy-preserving review packet for terminal review workflows', async () => {
     const calls: Array<Record<string, unknown>> = [];
     const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {

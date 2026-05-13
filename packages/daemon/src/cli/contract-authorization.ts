@@ -1,5 +1,7 @@
 import { getFlag } from './args.js';
 import { transportFetch } from './network.js';
+import { resolveConfiguredWorkspaceSyncTarget } from './context-sync-target.js';
+import { resolveLocalOrgBindingSync } from './org-binding.js';
 import { ConfigManager } from '../core/config.js';
 import type { SessionResourceManifest } from '../config-resolution/index.js';
 
@@ -29,36 +31,28 @@ export async function resolveAuthorizationTarget(): Promise<AuthorizationTarget>
   const manager = new ConfigManager();
   await manager.load();
   const daemon = manager.getDaemonConfig() ?? {};
-  const relay = daemon.relay ?? {};
-  const server = daemon.server ?? {};
+  const target = resolveConfiguredWorkspaceSyncTarget(daemon, {
+    requestedWorkspaceId:
+      getFlag('workspace') ??
+      getFlag('resource') ??
+      resolveLocalOrgBindingSync(process.cwd())?.organizationId,
+    explicitServerUrl: getFlag('server-url'),
+    explicitCredential: getFlag('credential'),
+  });
 
-  const serverUrl = getFlag('server-url') ?? relay.serverUrl ?? server.url;
-  const workspaceId = getFlag('workspace') ?? getFlag('resource') ?? relay.workspaceId;
-  const credential = getFlag('credential') ?? relay.issueToken;
-
-  if (!serverUrl) {
+  if (!target) {
     throw new Error(
-      'vpd contract authorize requires --server-url or a saved remote server from vpd remote login',
-    );
-  }
-  if (!workspaceId) {
-    throw new Error(
-      'vpd contract authorize requires --workspace <id> or a saved remote workspace from vpd remote login',
-    );
-  }
-  if (!credential) {
-    throw new Error(
-      'vpd contract authorize requires --credential or a saved relay issue token from vpd remote login',
+      'vpd contract authorize requires an unambiguous remote workspace. Pass --workspace <id>, run from a bound repo, or keep exactly one saved remote workspace binding.',
     );
   }
 
   return {
-    serverUrl,
-    workspaceId,
-    credential,
-    tlsVerify: server.tlsVerify ?? relay.tlsVerify,
-    caCertPath: server.caCertPath ?? relay.caCertPath,
-    tlsPins: server.tlsPins ?? relay.tlsPins,
+    serverUrl: target.serverUrl,
+    workspaceId: target.workspaceId,
+    credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
   };
 }
 

@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import fs from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -146,6 +147,155 @@ describe('HTTP context routes', () => {
     expect(init.statusCode).toBe(400);
     expect(JSON.parse(init.payload)).toMatchObject({
       error: 'contextResourceId is required',
+    });
+  });
+
+  it('syncs web-originated context candidates to the requested workspace binding', async () => {
+    const received: Array<{ workspaceId: string; body: Record<string, unknown> }> = [];
+    const controlPlane = Fastify();
+    controlPlane.post<{ Params: { workspaceId: string } }>(
+      '/api/runtime/workspaces/:workspaceId/context-vault/events/push',
+      async (request, reply) => {
+        received.push({
+          workspaceId: request.params.workspaceId,
+          body: request.body as Record<string, unknown>,
+        });
+        return reply.status(202).send({ ok: true, accepted: 1, events: [] });
+      },
+    );
+    await controlPlane.listen({ host: '127.0.0.1', port: 0 });
+    const address = controlPlane.server.address() as AddressInfo;
+    const serverUrl = `http://127.0.0.1:${address.port}`;
+
+    await fs.writeFile(
+      path.join(tempHome, 'config.json'),
+      JSON.stringify(
+        {
+          daemon: {
+            relay: {
+              workspaceId: 'org-personal',
+              serverUrl,
+              issueToken: 'token-personal',
+              bindings: [
+                {
+                  workspaceId: 'org-personal',
+                  serverUrl,
+                  issueToken: 'token-personal',
+                },
+                {
+                  workspaceId: 'org-new',
+                  serverUrl,
+                  issueToken: 'token-new',
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/context/init',
+        payload: credentials({
+          contextResourceId: 'context-alpha',
+          userName: 'alice',
+          deviceName: 'alice-laptop',
+          keyStore: 'file',
+        }),
+      });
+
+      const proposal = await app.inject({
+        method: 'POST',
+        url: '/api/context/candidates',
+        payload: {
+          contextResourceId: 'context-alpha',
+          workspaceId: 'org-new',
+          actorName: 'alice-laptop',
+          title: 'Candidate standard',
+          body: 'Retry flaky browser paths with trace proof before merge.',
+        },
+      });
+
+      expect(proposal.statusCode).toBe(201);
+      expect(JSON.parse(proposal.payload).sync).toMatchObject({
+        ok: true,
+        workspaceId: 'org-new',
+        accepted: 1,
+      });
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({
+        workspaceId: 'org-new',
+        body: {
+          credential: 'token-new',
+          target_workspace_id: 'org-new',
+        },
+      });
+    } finally {
+      await controlPlane.close();
+    }
+  });
+
+  it('refuses context candidate sync instead of guessing when multiple workspaces are configured', async () => {
+    await fs.writeFile(
+      path.join(tempHome, 'config.json'),
+      JSON.stringify(
+        {
+          daemon: {
+            relay: {
+              workspaceId: 'org-personal',
+              serverUrl: 'http://127.0.0.1:9',
+              issueToken: 'token-personal',
+              bindings: [
+                {
+                  workspaceId: 'org-personal',
+                  serverUrl: 'http://127.0.0.1:9',
+                  issueToken: 'token-personal',
+                },
+                {
+                  workspaceId: 'org-new',
+                  serverUrl: 'http://127.0.0.1:9',
+                  issueToken: 'token-new',
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/context/init',
+      payload: credentials({
+        contextResourceId: 'context-alpha',
+        userName: 'alice',
+        deviceName: 'alice-laptop',
+        keyStore: 'file',
+      }),
+    });
+
+    const proposal = await app.inject({
+      method: 'POST',
+      url: '/api/context/candidates',
+      payload: {
+        contextResourceId: 'context-alpha',
+        actorName: 'alice-laptop',
+        title: 'Candidate standard',
+        body: 'Retry flaky browser paths with trace proof before merge.',
+      },
+    });
+
+    expect(proposal.statusCode).toBe(201);
+    expect(JSON.parse(proposal.payload).sync).toMatchObject({
+      ok: false,
+      error:
+        'Context sync requires an explicit workspace when this daemon has multiple remote bindings.',
     });
   });
 
