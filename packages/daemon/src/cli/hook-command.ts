@@ -114,10 +114,7 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
   }
 }
 
-function formatHookDecision(
-  event: string,
-  decision: unknown,
-): Record<string, unknown> {
+function formatHookDecision(event: string, decision: unknown): Record<string, unknown> {
   if (!isDecisionObject(decision)) {
     return { decision };
   }
