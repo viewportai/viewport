@@ -10,6 +10,7 @@ import {
   SquashMergeSchema,
   ListSessionsSchema,
   ReadSessionMessagesSchema,
+  ContextCandidatePreviewSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,
@@ -111,6 +112,40 @@ describe('PromptSchema', () => {
       sessionId: 's1',
       text: 'hello',
       images: Array.from({ length: 5 }, () => ({ data: 'abc', mediaType: 'image/png' })),
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ContextCandidatePreviewSchema', () => {
+  it('accepts candidate preview by event id', () => {
+    const result = ContextCandidatePreviewSchema.safeParse({
+      type: 'context-candidate-preview',
+      contextResourceId: 'ctx-1',
+      workspaceId: 'workspace-1',
+      actorName: 'bob-vps',
+      candidateEventId: 'event-1',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts candidate preview by payload digest', () => {
+    const result = ContextCandidatePreviewSchema.safeParse({
+      type: 'context-candidate-preview',
+      contextResourceId: 'ctx-1',
+      actorName: 'bob-vps',
+      payloadDigest: 'digest-1',
+      requestId: 'req-1',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects missing context resource id', () => {
+    const result = ContextCandidatePreviewSchema.safeParse({
+      type: 'context-candidate-preview',
+      actorName: 'bob-vps',
+      candidateEventId: 'event-1',
     });
     expect(result.success).toBe(false);
   });

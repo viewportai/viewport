@@ -137,6 +137,18 @@ export const ReadSessionMessagesSchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const ContextCandidatePreviewSchema = z.object({
+  type: z.literal('context-candidate-preview'),
+  contextResourceId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(256).optional(),
+  actorName: z.string().min(1).max(256),
+  candidateEventId: z.string().min(1).max(256).optional(),
+  payloadDigest: z.string().min(1).max(256).optional(),
+  passphrase: z.string().max(4096).optional(),
+  recoveryCode: z.string().max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 export const ResumeSchema = z
   .object({
     type: z.literal('resume'),
@@ -290,6 +302,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   SquashMergeSchema,
   ListSessionsSchema,
   ReadSessionMessagesSchema,
+  ContextCandidatePreviewSchema,
   ResumeSchema,
   WatchDiscoveredSessionSchema,
   UnwatchDiscoveredSessionSchema,

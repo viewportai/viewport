@@ -6,13 +6,11 @@ import {
   readContextStatus,
   resolveContextBundle,
 } from '../context/local-edge-store.js';
-import { previewContextCandidate, proposeContextEntry } from '../context/local-edge-candidates.js';
-import {
-  pushContextEvents,
-  recordContextCandidatePreviewProof,
-} from '../context/local-edge-sync.js';
-import { ConfigManager } from '../core/config.js';
+import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { pushContextEvents } from '../context/local-edge-sync.js';
 import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
+import { ConfigManager } from '../core/config.js';
+import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 
 const CredentialsSchema = z.object({
   passphrase: z.string().min(1),
@@ -170,56 +168,21 @@ export function registerContextRoutes(app: FastifyInstance): void {
     if (!contextResourceId) {
       return reply.status(400).send({ error: 'contextResourceId is required' });
     }
-    if (!parsed.data.candidateEventId && !parsed.data.payloadDigest) {
-      return reply.status(400).send({ error: 'candidateEventId or payloadDigest is required' });
-    }
-    const candidate = await previewContextCandidate({
-      contextResourceId,
-      actorName: parsed.data.actorName,
-      candidateEventId: parsed.data.candidateEventId,
-      payloadDigest: parsed.data.payloadDigest,
-      credentials: {
-        passphrase: parsed.data.passphrase ?? '',
-        recoveryCode: parsed.data.recoveryCode ?? '',
-      },
-    });
-
-    let previewProof:
-      | { ok: true; previewProofId: string; expiresAt: string | null; workspaceId: string }
-      | { ok: false; error: string }
-      | null = null;
     try {
-      const target = await resolveSavedSyncTarget(contextResourceId, parsed.data.workspaceId);
-      if (!target) {
-        previewProof = {
-          ok: false,
-          error: parsed.data.workspaceId
-            ? `No saved remote credentials are available for workspace ${parsed.data.workspaceId}.`
-            : 'Preview proof requires an explicit workspace when this daemon has multiple remote bindings.',
-        };
-      } else {
-        const proof = await recordContextCandidatePreviewProof({
-          workspaceId: target.workspaceId,
-          serverUrl: target.serverUrl,
-          credential: target.credential,
-          contextResourceId,
-          candidateEventId: candidate.proposalEventId,
-          payloadDigest: candidate.payloadDigest,
-          previewDigest: candidate.payloadDigest,
-          tlsVerify: target.tlsVerify,
-          caCertPath: target.caCertPath,
-          tlsPins: target.tlsPins,
-        });
-        previewProof = { ok: true, workspaceId: target.workspaceId, ...proof };
-      }
+      return await previewContextCandidateForTrustedEdge({
+        contextResourceId,
+        workspaceId: parsed.data.workspaceId,
+        actorName: parsed.data.actorName,
+        candidateEventId: parsed.data.candidateEventId,
+        payloadDigest: parsed.data.payloadDigest,
+        passphrase: parsed.data.passphrase,
+        recoveryCode: parsed.data.recoveryCode,
+      });
     } catch (error) {
-      previewProof = {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Context preview proof failed',
-      };
+      return reply
+        .status(400)
+        .send({ error: error instanceof Error ? error.message : 'Context preview failed' });
     }
-
-    return { candidate: { ...candidate, previewProof }, previewProof };
   });
 
   app.post('/api/context/candidates', async (request, reply) => {

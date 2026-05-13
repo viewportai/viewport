@@ -8,6 +8,7 @@ import type { IncomingMessage } from './ws-protocol.js';
 import { ErrorCodes } from '../core/error-codes.js';
 import { createWsWorkflowCommandHandlers } from './ws-workflow-command-handlers.js';
 import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js';
+import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 import {
   resolveSessionResourceManifestSync,
   type SessionResourceManifest,
@@ -194,6 +195,29 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
       getOrCreateBuffer,
       addBoundedSetEntry,
     }),
+
+    'context-candidate-preview': async (client, msg) => {
+      try {
+        const result = await previewContextCandidateForTrustedEdge({
+          contextResourceId: msg.contextResourceId,
+          workspaceId: msg.workspaceId,
+          actorName: msg.actorName,
+          candidateEventId: msg.candidateEventId,
+          payloadDigest: msg.payloadDigest,
+          passphrase: msg.passphrase,
+          recoveryCode: msg.recoveryCode,
+        });
+        sendAck(client, msg.requestId, 'ok', undefined, result);
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Context preview failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
 
     'sync-request': async (client, msg) => {
       sendSyncSnapshot(client, daemon, registry);
