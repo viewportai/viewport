@@ -307,7 +307,10 @@ describe('local trusted-edge context store', () => {
       });
 
       const bobIdentity = exportContextIdentity({ name: 'bob', home: bobHome });
+      const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
+      const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
       const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+      let pushedGrantEvents: unknown[] = [];
 
       const result = await processPendingContextGrants({
         contextResourceId: 'context-alpha',
@@ -342,6 +345,7 @@ describe('local trusted-edge context store', () => {
             expect(payload).toContain('ciphertext');
             expect(payload).not.toContain('bob-passphrase');
             expect(payload).not.toContain('correct horse battery staple');
+            pushedGrantEvents = Array.isArray(body.events) ? body.events : [];
             return jsonResponse({
               ok: true,
               accepted: Array.isArray(body.events) ? body.events.length : 0,
@@ -373,6 +377,56 @@ describe('local trusted-edge context store', () => {
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/events/push',
         'https://app.getviewport.test/api/runtime/workspaces/workspace-alpha/context-vault/grants/mark-emitted',
       ]);
+
+      await joinContextResource({
+        contextResourceId: 'context-alpha',
+        userName: 'bob',
+        deviceName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        keyStore: 'file',
+        home: bobHome,
+      });
+      importContextIdentity({ identity: aliceIdentity, home: bobHome });
+      importContextIdentity({ identity: aliceLaptopIdentity, home: bobHome });
+
+      const pull = await pullContextEvents({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-alpha',
+        serverUrl: 'https://app.getviewport.test',
+        credential: 'runtime-token',
+        actorName: 'bob-vps',
+        credentials: {
+          passphrase: 'bob-passphrase',
+          recoveryCode: 'bob-recovery',
+        },
+        home: bobHome,
+        fetchImpl: async (url, init) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          if (String(url).endsWith('/events/pull')) {
+            return jsonResponse({
+              data: pushedGrantEvents.map((event, index) => ({
+                id: index + 1,
+                received_at: `2026-05-13T05:10:0${index}.000Z`,
+                signed_event: event,
+              })),
+            });
+          }
+          if (String(url).endsWith('/grants/materialized')) {
+            expect(body).toMatchObject({
+              credential: 'runtime-token',
+              context_resource_id: 'context-alpha',
+            });
+            expect(body.grant_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            return jsonResponse({ ok: true, materialized: 1 });
+          }
+          throw new Error(`Unexpected pull URL: ${String(url)}`);
+        },
+      });
+
+      expect(pull.materializedGrants).toBe(1);
     } finally {
       await fs.rm(bobHome, { recursive: true, force: true });
     }

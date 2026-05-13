@@ -21,6 +21,8 @@ import type {
   ContextSyncPullRecord,
 } from './local-edge-types.js';
 
+const CONTEXT_GRANT_EVENT_TYPES = new Set(['member.granted', 'key.rotated']);
+
 export async function pushContextEvents(options: {
   contextResourceId: string;
   workspaceId?: string;
@@ -86,6 +88,7 @@ export async function pullContextEvents(options: {
 }): Promise<{
   appliedCandidateDecisions: number;
   imported: number;
+  materializedGrants: number;
   pendingCandidateDecisions: number;
   pulled: number;
   repoId: string;
@@ -129,6 +132,23 @@ export async function pullContextEvents(options: {
     events,
     actorName: options.actorName,
   });
+  const materializedGrantEventIds = events
+    .filter((event) => isGrantEventForUser(event, metadata.userName))
+    .map((event) => event.id);
+  const materializedGrants =
+    materializedGrantEventIds.length > 0
+      ? await recordContextGrantMaterialization({
+          workspaceId: options.workspaceId ?? options.contextResourceId,
+          serverUrl: options.serverUrl,
+          credential: options.credential,
+          contextResourceId: options.contextResourceId,
+          grantEventIds: materializedGrantEventIds,
+          tlsVerify: options.tlsVerify,
+          caCertPath: options.caCertPath,
+          tlsPins: options.tlsPins,
+          fetchImpl: options.fetchImpl,
+        })
+      : 0;
   const candidateDecisions = extractPulledCandidateDecisions(response, options.trustedDecisionKeys);
   const candidateDecisionResults = [];
   for (const decision of candidateDecisions) {
@@ -165,10 +185,43 @@ export async function pullContextEvents(options: {
   return {
     appliedCandidateDecisions,
     imported: imported.imported.length,
+    materializedGrants,
     pendingCandidateDecisions,
     pulled: events.length,
     repoId: metadata.repoId,
   };
+}
+
+export async function recordContextGrantMaterialization(options: {
+  workspaceId: string;
+  serverUrl: string;
+  credential: string;
+  contextResourceId: string;
+  grantEventIds: string[];
+  tlsVerify?: TlsVerifyMode;
+  caCertPath?: string;
+  tlsPins?: string[];
+  fetchImpl?: typeof transportFetch;
+}): Promise<number> {
+  if (options.grantEventIds.length === 0) {
+    return 0;
+  }
+  const response = await postJson(
+    options.fetchImpl ?? transportFetch,
+    contextGrantMaterializedUrl(options.serverUrl, options.workspaceId),
+    {
+      credential: options.credential,
+      context_resource_id: options.contextResourceId,
+      grant_event_ids: options.grantEventIds,
+    },
+    {
+      tlsVerify: options.tlsVerify,
+      caCertPath: options.caCertPath,
+      tlsPins: options.tlsPins,
+    },
+  );
+
+  return numberField(response, 'materialized');
 }
 
 export async function recordContextCandidatePreviewProof(options: {
@@ -371,6 +424,11 @@ function contextMarkGrantEmittedUrl(serverUrl: string, workspaceId: string): str
   return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/mark-emitted`;
 }
 
+function contextGrantMaterializedUrl(serverUrl: string, workspaceId: string): string {
+  const base = serverUrl.replace(/\/+$/, '');
+  return `${base}/api/runtime/workspaces/${encodeURIComponent(workspaceId)}/context-vault/grants/materialized`;
+}
+
 async function postJson(
   fetchImpl: typeof transportFetch,
   url: string,
@@ -522,6 +580,13 @@ function extractPulledCandidateDecisions(
 
     return record as ContextCandidateDecisionPullRecord;
   });
+}
+
+function isGrantEventForUser(event: ContextSyncEvent, userName: string): boolean {
+  if (!CONTEXT_GRANT_EVENT_TYPES.has(event.type)) return false;
+  const grant = (event as { grant?: unknown }).grant;
+  if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return false;
+  return (grant as Record<string, unknown>).recipientName === userName;
 }
 
 function latestReceivedAt(
