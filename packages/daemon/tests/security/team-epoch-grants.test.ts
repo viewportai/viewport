@@ -13,6 +13,7 @@ import {
   acceptTeamEpochMemberGrants,
   grantTeamEpochToUserEpoch,
 } from '../../src/security/team-epoch-grants.js';
+import { epochFingerprint } from '../../src/security/epoch-protocol.js';
 
 const tmpDirs: string[] = [];
 
@@ -64,7 +65,7 @@ describe('team epoch member grants', () => {
         encryptionPrivateKeyJwk: userMaterial.encryptionPrivateKeyJwk,
         signingPublicKeyJwk: userMaterial.descriptor.signingPublicKeyJwk,
         signingPrivateKeyJwk: userMaterial.signingPrivateKeyJwk,
-        fingerprint: 'sha256:user-epoch',
+        fingerprint: epochFingerprint(userMaterial.descriptor),
         previousEpochFingerprint: null,
       },
       recipientHome,
@@ -81,7 +82,7 @@ describe('team epoch member grants', () => {
                 workspace_id: 'workspace-1',
                 user_id: 42,
                 epoch: 1,
-                fingerprint: 'sha256:user-epoch',
+                fingerprint: epochFingerprint(userMaterial.descriptor),
                 encryption_public_key_jwk: userMaterial.descriptor.encryptionPublicKeyJwk,
                 signing_public_key_jwk: userMaterial.descriptor.signingPublicKeyJwk,
                 previous_epoch_fingerprint: null,

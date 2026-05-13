@@ -14,7 +14,12 @@ import {
   getActiveLocalTeamEpoch,
   getActiveLocalUserEpoch,
 } from '../../src/security/epoch-store.js';
-import { epochFingerprint } from '../../src/security/epoch-protocol.js';
+import {
+  epochFingerprint,
+  epochTransitionPayload,
+  signEpochTransition,
+} from '../../src/security/epoch-protocol.js';
+import { validateAndPinPublicEpoch } from '../../src/security/epoch-public-pins.js';
 
 const tmpDirs: string[] = [];
 
@@ -499,7 +504,7 @@ describe('epoch sync', () => {
                 workspace_id: 'workspace-1',
                 user_id: 99,
                 epoch: 1,
-                fingerprint: 'sha256:recipient-user-epoch',
+                fingerprint: recipientKey.fingerprint,
                 encryption_public_key_jwk: recipientKey.encryptionPublicKeyJwk,
                 signing_public_key_jwk: recipientKey.signingPublicKeyJwk,
                 previous_epoch_fingerprint: null,
@@ -594,6 +599,183 @@ describe('epoch sync', () => {
     const active = await getActiveLocalTeamEpoch('workspace-1', 'team_public_1', home);
     expect(active?.epoch).toBe(2);
   });
+
+  it('pins fetched public epochs and rejects same-epoch key replacement', async () => {
+    const home = await tempHome();
+    const first = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const attacker = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const firstFingerprint = epochFingerprint(first.descriptor);
+    const attackerFingerprint = epochFingerprint(attacker.descriptor);
+
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: firstFingerprint,
+        encryptionPublicKeyJwk: first.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: first.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: null,
+      },
+      home,
+    );
+
+    await expect(
+      validateAndPinPublicEpoch(
+        {
+          platformEpochId: 'user-epoch-1',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '99',
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint: attackerFingerprint,
+          encryptionPublicKeyJwk: attacker.descriptor.encryptionPublicKeyJwk,
+          signingPublicKeyJwk: attacker.descriptor.signingPublicKeyJwk,
+          previousEpochFingerprint: null,
+        },
+        home,
+      ),
+    ).rejects.toThrow(/replacement/);
+  });
+
+  it('rejects fetched public epoch rollback and accepts signed continuity to the next epoch', async () => {
+    const home = await tempHome();
+    const epoch1 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const epoch2 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 2,
+      previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+    });
+    const createdAt = new Date().toISOString();
+    const continuity = signEpochTransition({
+      payload: epochTransitionPayload({
+        from: epoch1.descriptor,
+        to: epoch2.descriptor,
+        reason: 'manual_rotation',
+        createdAt,
+      }),
+      signingPrivateKeyJwk: epoch1.signingPrivateKeyJwk,
+      signedByEpochFingerprint: epochFingerprint(epoch1.descriptor),
+    });
+
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: epochFingerprint(epoch1.descriptor),
+        encryptionPublicKeyJwk: epoch1.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: epoch1.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: null,
+      },
+      home,
+    );
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-2',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 2,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: epochFingerprint(epoch2.descriptor),
+        encryptionPublicKeyJwk: epoch2.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: epoch2.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+        continuityPayload: continuity.payload as never,
+        continuitySignature: continuity.signature,
+        signedByEpochFingerprint: continuity.signedByEpochFingerprint,
+      },
+      home,
+    );
+
+    await expect(
+      validateAndPinPublicEpoch(
+        {
+          platformEpochId: 'user-epoch-1',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '99',
+          epoch: 1,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint: epochFingerprint(epoch1.descriptor),
+          encryptionPublicKeyJwk: epoch1.descriptor.encryptionPublicKeyJwk,
+          signingPublicKeyJwk: epoch1.descriptor.signingPublicKeyJwk,
+          previousEpochFingerprint: null,
+        },
+        home,
+      ),
+    ).rejects.toThrow(/rollback/);
+  });
+
+  it('rejects fetched public epoch advances without signed continuity from the pinned epoch', async () => {
+    const home = await tempHome();
+    const epoch1 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 1,
+    });
+    const epoch2 = createLocalUserEpochKeyMaterial({
+      workspaceId: 'workspace-1',
+      userId: '99',
+      epoch: 2,
+      previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+    });
+
+    await validateAndPinPublicEpoch(
+      {
+        platformEpochId: 'user-epoch-1',
+        workspaceId: 'workspace-1',
+        subjectType: 'user',
+        subjectId: '99',
+        epoch: 1,
+        schema: 'viewport.user_crypto_epoch/v1',
+        fingerprint: epochFingerprint(epoch1.descriptor),
+        encryptionPublicKeyJwk: epoch1.descriptor.encryptionPublicKeyJwk,
+        signingPublicKeyJwk: epoch1.descriptor.signingPublicKeyJwk,
+        previousEpochFingerprint: null,
+      },
+      home,
+    );
+
+    await expect(
+      validateAndPinPublicEpoch(
+        {
+          platformEpochId: 'user-epoch-2',
+          workspaceId: 'workspace-1',
+          subjectType: 'user',
+          subjectId: '99',
+          epoch: 2,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint: epochFingerprint(epoch2.descriptor),
+          encryptionPublicKeyJwk: epoch2.descriptor.encryptionPublicKeyJwk,
+          signingPublicKeyJwk: epoch2.descriptor.signingPublicKeyJwk,
+          previousEpochFingerprint: epochFingerprint(epoch1.descriptor),
+        },
+        home,
+      ),
+    ).rejects.toThrow(/missing signed continuity/);
+  });
 });
 
 async function tempHome(): Promise<string> {
@@ -614,13 +796,16 @@ function responseJson(payload: unknown): Response {
 function createRecipientUserEpochFixture(): {
   encryptionPublicKeyJwk: Record<string, unknown>;
   signingPublicKeyJwk: Record<string, unknown>;
+  fingerprint: string;
 } {
   const keys = createLocalUserEpochKeyMaterial({
     workspaceId: 'workspace-1',
+    userId: '99',
     epoch: 1,
   });
   return {
     encryptionPublicKeyJwk: keys.descriptor.encryptionPublicKeyJwk as Record<string, unknown>,
     signingPublicKeyJwk: keys.descriptor.signingPublicKeyJwk as Record<string, unknown>,
+    fingerprint: epochFingerprint(keys.descriptor),
   };
 }

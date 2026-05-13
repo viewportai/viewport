@@ -12,6 +12,7 @@ import {
   type JsonValue,
   type WrappedKeyEnvelope,
 } from './epoch-protocol.js';
+import { validateAndPinPublicEpoch } from './epoch-public-pins.js';
 import type { CryptoEpochSyncTarget } from './epoch-sync.js';
 
 interface PublicUserEpoch {
@@ -23,6 +24,9 @@ interface PublicUserEpoch {
   encryption_public_key_jwk: JsonValue;
   signing_public_key_jwk: JsonValue;
   previous_epoch_fingerprint?: string | null;
+  continuity_payload?: JsonValue | null;
+  continuity_signature?: string | null;
+  signed_by_epoch_fingerprint?: string | null;
 }
 
 interface TeamMemberGrantPayload {
@@ -159,6 +163,7 @@ function teamEpochMemberGrantAad(input: {
 async function fetchPublicUserEpoch(options: {
   target: CryptoEpochSyncTarget;
   recipientUserCryptoEpochId: string;
+  home?: string;
   fetchImpl?: typeof transportFetch;
 }): Promise<PublicUserEpoch> {
   const response = await getJson(
@@ -171,6 +176,24 @@ async function fetchPublicUserEpoch(options: {
   );
   const epoch = userEpochs.find((item) => item.id === options.recipientUserCryptoEpochId);
   if (!epoch) throw new Error('Recipient user epoch not found in workspace epoch feed.');
+  await validateAndPinPublicEpoch(
+    {
+      platformEpochId: epoch.id,
+      workspaceId: epoch.workspace_id,
+      subjectType: 'user',
+      subjectId: String(epoch.user_id),
+      epoch: epoch.epoch,
+      schema: 'viewport.user_crypto_epoch/v1',
+      fingerprint: epoch.fingerprint,
+      encryptionPublicKeyJwk: epoch.encryption_public_key_jwk,
+      signingPublicKeyJwk: epoch.signing_public_key_jwk,
+      previousEpochFingerprint: epoch.previous_epoch_fingerprint ?? null,
+      continuityPayload: epoch.continuity_payload ?? null,
+      continuitySignature: epoch.continuity_signature ?? null,
+      signedByEpochFingerprint: epoch.signed_by_epoch_fingerprint ?? null,
+    },
+    options.home,
+  );
   return epoch;
 }
 
@@ -244,6 +267,16 @@ function publicUserEpochPayload(value: unknown): PublicUserEpoch {
     signing_public_key_jwk: objectField(data, 'signing_public_key_jwk') as JsonValue,
     previous_epoch_fingerprint:
       typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
+    continuity_payload:
+      data.continuity_payload && typeof data.continuity_payload === 'object'
+        ? (data.continuity_payload as JsonValue)
+        : null,
+    continuity_signature:
+      typeof data.continuity_signature === 'string' ? data.continuity_signature : null,
+    signed_by_epoch_fingerprint:
+      typeof data.signed_by_epoch_fingerprint === 'string'
+        ? data.signed_by_epoch_fingerprint
+        : null,
   };
 }
 

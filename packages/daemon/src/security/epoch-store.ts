@@ -63,11 +63,30 @@ export interface LocalDeviceEnrollment {
   updatedAt: string;
 }
 
+export interface LocalPublicEpochPin {
+  workspaceId: string;
+  subjectType: 'user' | 'team';
+  subjectId: string;
+  platformEpochId: string;
+  epoch: number;
+  schema: typeof USER_EPOCH_SCHEMA | typeof TEAM_EPOCH_SCHEMA;
+  fingerprint: string;
+  encryptionPublicKeyJwk: JsonValue;
+  signingPublicKeyJwk: JsonValue;
+  previousEpochFingerprint?: string | null;
+  continuityPayload?: JsonValue | null;
+  continuitySignature?: string | null;
+  signedByEpochFingerprint?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface LocalEpochStore {
   schema: typeof STORE_SCHEMA;
   userEpochs: LocalUserCryptoEpoch[];
   teamEpochs: LocalTeamCryptoEpoch[];
   deviceEnrollments: LocalDeviceEnrollment[];
+  publicEpochPins: LocalPublicEpochPin[];
 }
 
 export async function getActiveLocalUserEpoch(
@@ -240,6 +259,52 @@ export async function upsertLocalDeviceEnrollment(
   return record;
 }
 
+export async function getLocalPublicEpochPin(
+  input: {
+    workspaceId: string;
+    subjectType: 'user' | 'team';
+    subjectId: string;
+  },
+  home = configDir(),
+): Promise<LocalPublicEpochPin | null> {
+  const store = await readLocalEpochStore(home);
+  return (
+    store.publicEpochPins
+      .filter(
+        (pin) =>
+          pin.workspaceId === input.workspaceId &&
+          pin.subjectType === input.subjectType &&
+          pin.subjectId === input.subjectId,
+      )
+      .sort((a, b) => b.epoch - a.epoch)[0] ?? null
+  );
+}
+
+export async function upsertLocalPublicEpochPin(
+  input: Omit<LocalPublicEpochPin, 'createdAt' | 'updatedAt'>,
+  home = configDir(),
+): Promise<LocalPublicEpochPin> {
+  const store = await readLocalEpochStore(home);
+  const now = new Date().toISOString();
+  const existing = store.publicEpochPins.find(
+    (pin) =>
+      pin.workspaceId === input.workspaceId &&
+      pin.subjectType === input.subjectType &&
+      pin.subjectId === input.subjectId &&
+      pin.epoch === input.epoch,
+  );
+  if (existing) {
+    Object.assign(existing, input, { updatedAt: now });
+    await writeLocalEpochStore(store, home);
+    return existing;
+  }
+
+  const record: LocalPublicEpochPin = { ...input, createdAt: now, updatedAt: now };
+  store.publicEpochPins.push(record);
+  await writeLocalEpochStore(store, home);
+  return record;
+}
+
 export function createLocalUserEpochKeyMaterial(input: {
   workspaceId: string;
   userId?: string;
@@ -339,10 +404,17 @@ async function readLocalEpochStore(home = configDir()): Promise<LocalEpochStore>
     }
     if (!Array.isArray(parsed.teamEpochs)) parsed.teamEpochs = [];
     if (!Array.isArray(parsed.deviceEnrollments)) parsed.deviceEnrollments = [];
+    if (!Array.isArray(parsed.publicEpochPins)) parsed.publicEpochPins = [];
     return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { schema: STORE_SCHEMA, userEpochs: [], teamEpochs: [], deviceEnrollments: [] };
+      return {
+        schema: STORE_SCHEMA,
+        userEpochs: [],
+        teamEpochs: [],
+        deviceEnrollments: [],
+        publicEpochPins: [],
+      };
     }
     throw error;
   }

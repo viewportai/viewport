@@ -10,7 +10,9 @@ import { readCandidateDecisionApplications } from './local-edge-decision-applica
 import { verifyContextCandidateDecision } from './local-edge-decision-signature.js';
 import { readContextMetadata, touchContextMetadata } from './local-edge-metadata.js';
 import { grantContextHpkeRecipient, revokeContextUser } from './local-edge-store.js';
+import { validateAndPinPublicEpoch } from '../security/epoch-public-pins.js';
 import { getActiveLocalUserEpoch, listActiveLocalTeamEpochs } from '../security/epoch-store.js';
+import type { JsonValue } from '../security/epoch-protocol.js';
 import type {
   ContextCandidateDecisionPullRecord,
   ContextCredentials,
@@ -309,8 +311,33 @@ export async function processPendingContextGrants(options: {
     const userEpoch = objectField(record, 'user_epoch', false);
     if (userEpoch) {
       const userEpochId = String(numberOrStringField(userEpoch, 'id'));
+      const userId = String(numberOrStringField(userEpoch, 'user_id'));
+      const epoch = numberField(userEpoch, 'epoch');
       const fingerprint = stringField(userEpoch, 'fingerprint');
       const encryptionPublicKeyJwk = objectField(userEpoch, 'encryption_public_key_jwk');
+      const signingPublicKeyJwk = objectField(userEpoch, 'signing_public_key_jwk');
+      await validateAndPinPublicEpoch(
+        {
+          platformEpochId: userEpochId,
+          workspaceId: options.workspaceId,
+          subjectType: 'user',
+          subjectId: userId,
+          epoch,
+          schema: 'viewport.user_crypto_epoch/v1',
+          fingerprint,
+          encryptionPublicKeyJwk: encryptionPublicKeyJwk as JsonValue,
+          signingPublicKeyJwk: signingPublicKeyJwk as JsonValue,
+          previousEpochFingerprint: nullableStringField(userEpoch, 'previous_epoch_fingerprint'),
+          continuityPayload: objectField(
+            userEpoch,
+            'continuity_payload',
+            false,
+          ) as JsonValue | null,
+          continuitySignature: nullableStringField(userEpoch, 'continuity_signature'),
+          signedByEpochFingerprint: nullableStringField(userEpoch, 'signed_by_epoch_fingerprint'),
+        },
+        options.home,
+      );
       const recipientName = contextUserEpochRecipientName({ userEpochId, fingerprint });
       const result = await grantContextHpkeRecipient({
         contextResourceId: options.contextResourceId,
@@ -361,8 +388,33 @@ export async function processPendingContextGrants(options: {
     const teamEpoch = objectField(record, 'team_epoch', false);
     if (teamEpoch) {
       const teamEpochId = String(numberOrStringField(teamEpoch, 'id'));
+      const teamId = String(numberOrStringField(teamEpoch, 'team_id'));
+      const epoch = numberField(teamEpoch, 'epoch');
       const fingerprint = stringField(teamEpoch, 'fingerprint');
       const encryptionPublicKeyJwk = objectField(teamEpoch, 'encryption_public_key_jwk');
+      const signingPublicKeyJwk = objectField(teamEpoch, 'signing_public_key_jwk');
+      await validateAndPinPublicEpoch(
+        {
+          platformEpochId: teamEpochId,
+          workspaceId: options.workspaceId,
+          subjectType: 'team',
+          subjectId: teamId,
+          epoch,
+          schema: 'viewport.team_crypto_epoch/v1',
+          fingerprint,
+          encryptionPublicKeyJwk: encryptionPublicKeyJwk as JsonValue,
+          signingPublicKeyJwk: signingPublicKeyJwk as JsonValue,
+          previousEpochFingerprint: nullableStringField(teamEpoch, 'previous_epoch_fingerprint'),
+          continuityPayload: objectField(
+            teamEpoch,
+            'continuity_payload',
+            false,
+          ) as JsonValue | null,
+          continuitySignature: nullableStringField(teamEpoch, 'continuity_signature'),
+          signedByEpochFingerprint: nullableStringField(teamEpoch, 'signed_by_epoch_fingerprint'),
+        },
+        options.home,
+      );
       const recipientName = contextTeamEpochRecipientName({ teamEpochId, fingerprint });
       const result = await grantContextHpkeRecipient({
         contextResourceId: options.contextResourceId,
