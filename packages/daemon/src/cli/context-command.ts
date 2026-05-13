@@ -32,7 +32,12 @@ import {
   approveDeviceEpochEnrollment,
   requestDeviceEpochEnrollment,
 } from '../security/epoch-enrollment.js';
-import { ensureTeamCryptoEpoch, ensureUserCryptoEpoch } from '../security/epoch-sync.js';
+import {
+  ensureTeamCryptoEpoch,
+  ensureUserCryptoEpoch,
+  rotateTeamCryptoEpoch,
+  rotateUserCryptoEpoch,
+} from '../security/epoch-sync.js';
 import {
   acceptTeamEpochMemberGrants,
   grantTeamEpochToUserEpoch,
@@ -118,6 +123,10 @@ export async function context(): Promise<void> {
     await contextEpochPublish();
     return;
   }
+  if (subcommand === 'epoch-rotate') {
+    await contextEpochRotate();
+    return;
+  }
   if (subcommand === 'device-enroll-request') {
     await contextDeviceEnrollRequest();
     return;
@@ -194,7 +203,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
+  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|identity-publish|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|device-enroll-request|device-enroll-approve|device-enroll-accept|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join|identity-export|identity-import|device-request|device-approve|device-accept|grant> ...';
 }
 
 function showContextHelp(): void {
@@ -502,6 +511,48 @@ async function contextEpochPublish(): Promise<void> {
 
   console.log(`${teamId ? 'Team' : 'User'} crypto epoch ready: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
+}
+
+async function contextEpochRotate(): Promise<void> {
+  const target = await resolveWorkspaceSyncTarget('epoch-rotate');
+  const syncTarget = {
+    workspaceId: target.workspaceId,
+    serverUrl: target.serverUrl,
+    credential: target.credential,
+    tlsVerify: target.tlsVerify,
+    caCertPath: target.caCertPath,
+    tlsPins: target.tlsPins,
+  };
+  const reason = epochRotationReason(getFlag('reason') ?? 'manual_rotation');
+  const teamId = getFlag('team');
+  const epoch = teamId
+    ? await rotateTeamCryptoEpoch({
+        target: syncTarget,
+        teamId,
+        reason,
+        home: getFlag('home'),
+      })
+    : await rotateUserCryptoEpoch({
+        target: syncTarget,
+        reason,
+        home: getFlag('home'),
+      });
+
+  if (isJsonMode()) {
+    printJson({ command: 'context epoch-rotate', ok: true, scope: teamId ? 'team' : 'user', reason, epoch });
+    return;
+  }
+
+  console.log(`${teamId ? 'Team' : 'User'} crypto epoch rotated: ${epoch.fingerprint}`);
+  console.log(`Epoch: ${epoch.epoch}`);
+  console.log(`Reason: ${reason}`);
+}
+
+function epochRotationReason(value: string): 'device_revoked' | 'member_revoked' | 'manual_rotation' | 'recovery' {
+  if (value === 'device_revoked' || value === 'member_revoked' || value === 'manual_rotation' || value === 'recovery') {
+    return value;
+  }
+  throw new Error('Epoch rotation reason must be device_revoked, member_revoked, manual_rotation, or recovery.');
 }
 
 async function contextDeviceEnrollRequest(): Promise<void> {
