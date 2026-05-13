@@ -1,3 +1,10 @@
+## [0.5.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.5.0...@viewportai/daemon@0.5.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* resolve tenant-specific relay targets ([8422b1d](https://github.com/viewportai/viewport/commit/8422b1db6a9e43925c15401eccd4b8f8ae06d2c0))
+
 # [0.5.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.4.1...@viewportai/daemon@0.5.0) (2026-05-13)
 
 
