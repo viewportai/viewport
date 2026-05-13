@@ -82,13 +82,36 @@ describe('HTTP context routes', () => {
       keyStore: 'file',
     });
 
+    const resolveWithoutCapability = await app.inject({
+      method: 'POST',
+      url: '/api/context/resolve',
+      payload: credentials({
+        contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
+        actorName: 'alice-laptop',
+        query: 'regression',
+      }),
+    });
+    expect(resolveWithoutCapability.statusCode).toBe(400);
+    expect(JSON.parse(resolveWithoutCapability.payload)).toMatchObject({
+      error: 'Trusted-edge command capability is required.',
+    });
+
+    await configureTrustedEdgeCapability(tempHome, daemon);
+
     const resolved = await app.inject({
       method: 'POST',
       url: '/api/context/resolve',
       payload: credentials({
         contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
         actorName: 'alice-laptop',
         query: 'regression',
+        capabilityToken: capabilityToken({
+          workspaceId: 'workspace-1',
+          purpose: 'context-resolve',
+          contextResourceId: 'context-alpha',
+        }),
       }),
     });
     expect(resolved.statusCode).toBe(200);
@@ -105,8 +128,14 @@ describe('HTTP context routes', () => {
       url: '/api/context/resolve',
       payload: {
         contextResourceId: 'context-alpha',
+        workspaceId: 'workspace-1',
         actorName: 'alice-laptop',
         query: 'regression',
+        capabilityToken: capabilityToken({
+          workspaceId: 'workspace-1',
+          purpose: 'context-resolve',
+          contextResourceId: 'context-alpha',
+        }),
       },
     });
     expect(resolvedFromApprovedDevice.statusCode).toBe(200);
@@ -346,25 +375,7 @@ describe('HTTP context routes', () => {
       error: 'Trusted-edge command capability is required.',
     });
 
-    await fs.writeFile(
-      path.join(tempHome, 'config.json'),
-      JSON.stringify(
-        {
-          daemon: {
-            relay: {
-              workspaceId: 'workspace-1',
-              tokenIssuer: 'viewport-server',
-              tokenAudience: 'viewport-relay',
-              signingKeys: { v1: trustedEdgeSigningKey },
-              tokenClockSkewSec: 30,
-            },
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await daemon.configManager.load();
+    await configureTrustedEdgeCapability(tempHome, daemon);
 
     const preview = await app.inject({
       method: 'POST',
@@ -416,6 +427,28 @@ describe('HTTP context routes', () => {
       }
     }
     return output;
+  }
+
+  async function configureTrustedEdgeCapability(home: string, activeDaemon: Daemon): Promise<void> {
+    await fs.writeFile(
+      path.join(home, 'config.json'),
+      JSON.stringify(
+        {
+          daemon: {
+            relay: {
+              workspaceId: 'workspace-1',
+              tokenIssuer: 'viewport-server',
+              tokenAudience: 'viewport-relay',
+              signingKeys: { v1: trustedEdgeSigningKey },
+              tokenClockSkewSec: 30,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await activeDaemon.configManager.load();
   }
 
   function capabilityToken(claims: Record<string, unknown>): string {

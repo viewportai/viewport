@@ -37,6 +37,7 @@ const AddBodySchema = CredentialsSchema.extend({
 
 const ResolveBodySchema = z.object({
   contextResourceId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
   actorName: z.string().min(1),
   query: z.string().default(''),
   maxItems: z.number().int().min(1).max(500).optional(),
@@ -50,6 +51,7 @@ const ResolveBodySchema = z.object({
     .optional(),
   passphrase: z.string().optional(),
   recoveryCode: z.string().optional(),
+  capabilityToken: z.string().min(1).optional(),
 });
 
 const CandidatePreviewBodySchema = z.object({
@@ -144,20 +146,35 @@ export function registerContextRoutes(app: FastifyInstance, daemon: Daemon): voi
     if (!contextResourceId) {
       return reply.status(400).send({ error: 'contextResourceId is required' });
     }
-    const bundle = await resolveContextBundle({
-      contextResourceId,
-      actorName: parsed.data.actorName,
-      query: parsed.data.query,
-      maxItems: parsed.data.maxItems,
-      includePrivate: parsed.data.includePrivate,
-      profile: parsed.data.profile,
-      profilePin: parsed.data.profilePin,
-      credentials: {
-        passphrase: parsed.data.passphrase ?? '',
-        recoveryCode: parsed.data.recoveryCode ?? '',
-      },
-    });
-    return { bundle };
+    if (!parsed.data.workspaceId) {
+      return reply.status(400).send({ error: 'workspaceId is required for trusted-edge resolve' });
+    }
+    try {
+      await verifyTrustedEdgeCommandCapability(daemon, {
+        token: parsed.data.capabilityToken,
+        workspaceId: parsed.data.workspaceId,
+        purpose: 'context-resolve',
+        contextResourceId,
+      });
+      const bundle = await resolveContextBundle({
+        contextResourceId,
+        actorName: parsed.data.actorName,
+        query: parsed.data.query,
+        maxItems: parsed.data.maxItems,
+        includePrivate: parsed.data.includePrivate,
+        profile: parsed.data.profile,
+        profilePin: parsed.data.profilePin,
+        credentials: {
+          passphrase: parsed.data.passphrase ?? '',
+          recoveryCode: parsed.data.recoveryCode ?? '',
+        },
+      });
+      return { bundle };
+    } catch (error) {
+      return reply
+        .status(400)
+        .send({ error: error instanceof Error ? error.message : 'Context resolve failed' });
+    }
   });
 
   app.post('/api/context/candidates/preview', async (request, reply) => {
