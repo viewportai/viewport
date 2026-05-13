@@ -480,6 +480,9 @@ describe('context access lifecycle CLI commands', () => {
         );
         return jsonResponse({ ok: true, accepted: pushedEvents.length, events: [] }, 202);
       }
+      if (String(url).endsWith('/grants/materialized')) {
+        return jsonResponse({ ok: true, materialized: body.grant_event_ids?.length ?? 0 });
+      }
       return jsonResponse({
         data: pushedEvents.map((event, index) => ({ id: index + 1, signed_event: event })),
       });
