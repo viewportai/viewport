@@ -452,6 +452,7 @@ export async function processPendingContextRevocations(options: {
     const rotationEventIds = result.rotateEvents.map((event) =>
       stringField(objectValue(event), 'id'),
     );
+    const rotationEvents = result.rotateEvents.map((event) => contextGrantRotationReceipt(event));
     const maxKeyEpoch = maxEventEpoch([result.revokeEvent, ...result.rotateEvents]);
 
     const pushResult = await pushContextEvents({
@@ -475,6 +476,7 @@ export async function processPendingContextRevocations(options: {
         crypto_grant_id: stringField(record, 'id'),
         revoke_event_id: revokeEventId,
         rotation_event_ids: rotationEventIds,
+        rotation_events: rotationEvents,
         ...(maxKeyEpoch !== null ? { key_epoch: maxKeyEpoch } : {}),
       },
       {
@@ -496,6 +498,19 @@ function maxEventEpoch(events: unknown[]): number | null {
     if (epoch !== null) max = max === null ? epoch : Math.max(max, epoch);
   }
   return max;
+}
+
+function contextGrantRotationReceipt(event: unknown): {
+  event_id: string;
+  recipient_identity_name?: string;
+} {
+  const object = objectValue(event);
+  const grant = objectField(object, 'grant', false);
+  const recipientName = grant ? nullableStringField(grant, 'recipientName') : null;
+  return {
+    event_id: stringField(object, 'id'),
+    ...(recipientName ? { recipient_identity_name: recipientName } : {}),
+  };
 }
 
 function contextRuntimeUrl(

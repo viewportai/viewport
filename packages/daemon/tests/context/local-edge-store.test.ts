@@ -474,6 +474,13 @@ describe('local trusted-edge context store', () => {
             });
             expect(typeof body.revoke_event_id).toBe('string');
             expect(body.rotation_event_ids).toEqual(expect.arrayContaining([expect.any(String)]));
+            expect(body.rotation_events).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  event_id: expect.any(String),
+                }),
+              ]),
+            );
             expect(typeof body.key_epoch).toBe('number');
             return jsonResponse({ ok: true });
           }
