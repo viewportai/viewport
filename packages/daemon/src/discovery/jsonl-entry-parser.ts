@@ -234,6 +234,34 @@ function claudeLocalCommandEventsFromText(
     ];
   }
 
+  const taskNotification = taggedText(text, 'task-notification');
+  if (taskNotification) {
+    return [
+      {
+        kind: 'event',
+        title: 'Claude task notification',
+        body: taskNotification,
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:task-notification`,
+      },
+    ];
+  }
+
+  const teammateMessage = taggedText(text, 'teammate-message');
+  if (teammateMessage) {
+    return [
+      {
+        kind: 'event',
+        title: 'Teammate message',
+        body: teammateMessage,
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:teammate-message`,
+      },
+    ];
+  }
+
   return [];
 }
 
@@ -258,6 +286,49 @@ function mapClaudeToolUseToRichBlocks(input: {
         },
       ];
     }
+  }
+
+  if (input.toolName === 'Agent') {
+    const subagentType =
+      typeof input.input.subagent_type === 'string' ? input.input.subagent_type.trim() : '';
+    const description =
+      typeof input.input.description === 'string' ? input.input.description.trim() : '';
+    const prompt = typeof input.input.prompt === 'string' ? input.input.prompt.trim() : '';
+    return [
+      {
+        kind: 'event',
+        title: `Subagent started${subagentType ? `: ${subagentType}` : ''}`,
+        body: [description, prompt ? firstLine(prompt) : null].filter(Boolean).join('\n'),
+        tone: 'muted',
+        ts: input.ts,
+        uuid: input.toolId || input.uuid,
+      },
+    ];
+  }
+
+  if (input.toolName.startsWith('Task')) {
+    const subject =
+      typeof input.input.task_subject === 'string'
+        ? input.input.task_subject.trim()
+        : typeof input.input.subject === 'string'
+          ? input.input.subject.trim()
+          : '';
+    const description =
+      typeof input.input.task_description === 'string'
+        ? input.input.task_description.trim()
+        : typeof input.input.description === 'string'
+          ? input.input.description.trim()
+          : '';
+    return [
+      {
+        kind: 'event',
+        title: subject ? `${input.toolName}: ${subject}` : `Claude task: ${input.toolName}`,
+        body: description || safeJsonPreview(input.input),
+        tone: input.toolName === 'TaskCompleted' ? 'success' : 'muted',
+        ts: input.ts,
+        uuid: input.toolId || input.uuid,
+      },
+    ];
   }
 
   if (isClaudeFileMutationTool(input.toolName)) {
@@ -955,8 +1026,17 @@ function extractText(value: unknown): string {
 }
 
 function isClaudeLocalCommandText(text: string): boolean {
-  return /<(?:local-command-caveat|local-command-std(?:out|err)|command-name|command-message|command-args)>/i.test(
+  return /<(?:local-command-caveat|local-command-std(?:out|err)|command-name|command-message|command-args|task-notification|teammate-message)>/i.test(
     text,
+  );
+}
+
+function firstLine(text: string): string {
+  return (
+    text
+      .split(/\r?\n/)
+      .find((line) => line.trim())
+      ?.trim() ?? ''
   );
 }
 

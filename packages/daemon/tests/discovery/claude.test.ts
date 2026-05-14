@@ -326,6 +326,77 @@ describe('jsonl-reader', () => {
       body: 'Set model to Haiku 4.5',
       tone: 'muted',
     });
+
+    expect(
+      parseJSONLEntry({
+        timestamp: '2026-05-14T10:25:03.000Z',
+        type: 'user',
+        uuid: 'task-note',
+        message: {
+          content: '<task-notification>Task completed by Explore agent</task-notification>',
+        },
+      })[0],
+    ).toMatchObject({
+      kind: 'event',
+      title: 'Claude task notification',
+      body: 'Task completed by Explore agent',
+      tone: 'muted',
+    });
+  });
+
+  it('maps Claude subagent and task tools into readable events', () => {
+    expect(
+      parseJSONLEntry({
+        timestamp: '2026-05-14T10:26:00.000Z',
+        type: 'assistant',
+        uuid: 'agent-tool',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-agent',
+              name: 'Agent',
+              input: {
+                subagent_type: 'Explore',
+                description: 'Survey current auth implementation',
+                prompt: 'Survey the current authentication implementation.\nReturn file paths.',
+              },
+            },
+          ],
+        },
+      })[0],
+    ).toMatchObject({
+      kind: 'event',
+      title: 'Subagent started: Explore',
+      body: 'Survey current auth implementation\nSurvey the current authentication implementation.',
+      tone: 'muted',
+    });
+
+    expect(
+      parseJSONLEntry({
+        timestamp: '2026-05-14T10:26:01.000Z',
+        type: 'assistant',
+        uuid: 'task-tool',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu-task',
+              name: 'TaskCompleted',
+              input: {
+                task_subject: 'Audit session rendering',
+                task_description: 'Subagent finished parser review.',
+              },
+            },
+          ],
+        },
+      })[0],
+    ).toMatchObject({
+      kind: 'event',
+      title: 'TaskCompleted: Audit session rendering',
+      body: 'Subagent finished parser review.',
+      tone: 'success',
+    });
   });
 });
 
