@@ -614,7 +614,7 @@ function parseCodexEventMsgEntry(e: Record<string, unknown>): RichSessionMessage
       {
         kind: 'event',
         title: 'Task completed',
-        body: [message, durationMs !== undefined ? `duration_ms ${durationMs}` : null]
+        body: [message, durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null]
           .filter(Boolean)
           .join('\n\n'),
         tone: 'success',
@@ -726,7 +726,7 @@ function parseProviderMetadataEntry(e: Record<string, unknown>): RichSessionMess
       {
         kind: 'event',
         title: 'Task completed',
-        body: [message, durationMs !== undefined ? `duration_ms ${durationMs}` : null]
+        body: [message, durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null]
           .filter(Boolean)
           .join('\n\n'),
         tone: 'success',
@@ -1148,6 +1148,18 @@ function numberOrNull(value: unknown): number | null {
 function numberOrUndefined(value: unknown): number | undefined {
   const n = numberOrNull(value);
   return n === null ? undefined : n;
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(' ');
 }
 
 function durationToMs(value: unknown): number | null {

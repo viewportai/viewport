@@ -75,13 +75,12 @@ describe('parseJSONLEntry', () => {
 
   it('normalizes common provider metadata events for UI rendering', () => {
     expect(parseJSONLEntry({ type: 'ai-title', aiTitle: 'Internal' })).toEqual([]);
-    expect(
-      parseJSONLEntry({
-        type: 'task_complete',
-        last_agent_message: 'Fixed the sessions breakage.',
-        duration_ms: 946705,
-      }),
-    ).toMatchObject([
+    const taskComplete = parseJSONLEntry({
+      type: 'task_complete',
+      last_agent_message: 'Fixed the sessions breakage.',
+      duration_ms: 946705,
+    });
+    expect(taskComplete).toMatchObject([
       {
         kind: 'event',
         title: 'Task completed',
@@ -89,6 +88,33 @@ describe('parseJSONLEntry', () => {
         tone: 'success',
       },
     ]);
+    if (taskComplete[0]?.kind === 'event') {
+      expect(taskComplete[0].body).toContain('Completed in 15m 47s');
+      expect(taskComplete[0].body).not.toContain('duration_ms');
+    }
+  });
+
+  it('renders codex task completion duration as readable time', () => {
+    const taskComplete = parseJSONLEntry({
+      type: 'event_msg',
+      payload: {
+        type: 'task_complete',
+        last_agent_message: 'Finished the run.',
+        duration_ms: 2770940,
+      },
+    });
+    expect(taskComplete).toMatchObject([
+      {
+        kind: 'event',
+        title: 'Task completed',
+        body: expect.stringContaining('Finished the run.'),
+        tone: 'success',
+      },
+    ]);
+    if (taskComplete[0]?.kind === 'event') {
+      expect(taskComplete[0].body).toContain('Completed in 46m 11s');
+      expect(taskComplete[0].body).not.toContain('duration_ms');
+    }
   });
 
   it('returns empty for entry without message', () => {
