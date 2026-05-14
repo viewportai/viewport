@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.6.2...@viewportai/daemon@0.7.0) (2026-05-14)
+
+
+### Features
+
+* enrich session discovery parity ([#97](https://github.com/viewportai/viewport/issues/97)) ([c9f5b32](https://github.com/viewportai/viewport/commit/c9f5b32d61f8612804c8bbb57c71ef032e6ef042))
+
 ## [0.6.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.6.1...@viewportai/daemon@0.6.2) (2026-05-14)
 
 
