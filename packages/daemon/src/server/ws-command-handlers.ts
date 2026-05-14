@@ -11,9 +11,19 @@ import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 import { resolveContextBundle } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { refreshContextFromSavedTarget } from '../context/local-edge-auto-sync.js';
 import { pushContextEvents } from '../context/local-edge-sync.js';
 import { ConfigManager } from '../core/config.js';
-import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
+import {
+  resolveConfiguredContextSyncTarget,
+  resolveConfiguredWorkspaceSyncTarget,
+} from '../cli/context-sync-target.js';
+import {
+  ensureTeamCryptoEpoch,
+  processPendingCryptoRotationRequests,
+} from '../security/epoch-sync.js';
+import { grantTeamEpochToWorkspaceUserEpochs } from '../security/team-epoch-grants.js';
+import type { LocalTeamCryptoEpoch } from '../security/epoch-store.js';
 import {
   decryptTrustedEdgePlanBody,
   decryptTrustedEdgePlanFeedbackField,
@@ -29,6 +39,24 @@ import {
 import { verifyTrustedEdgeCommandCapability } from './trusted-edge-command-capability.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
+
+function publicTeamEpoch(epoch: LocalTeamCryptoEpoch): Record<string, unknown> {
+  return {
+    workspaceId: epoch.workspaceId,
+    teamId: epoch.teamId,
+    platformTeamId: epoch.platformTeamId ?? null,
+    platformEpochId: epoch.platformEpochId ?? null,
+    epoch: epoch.epoch,
+    schema: epoch.schema,
+    status: epoch.status,
+    encryptionPublicKeyJwk: epoch.encryptionPublicKeyJwk,
+    signingPublicKeyJwk: epoch.signingPublicKeyJwk,
+    fingerprint: epoch.fingerprint,
+    previousEpochFingerprint: epoch.previousEpochFingerprint ?? null,
+    createdAt: epoch.createdAt,
+    updatedAt: epoch.updatedAt,
+  };
+}
 
 export function addBoundedSetEntry(set: Set<string>, value: string, maxEntries: number): void {
   if (set.has(value)) return;
@@ -220,6 +248,11 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           candidateEventId: msg.candidateEventId,
           payloadDigest: msg.payloadDigest,
         });
+        await refreshContextFromSavedTarget({
+          contextResourceId: msg.contextResourceId,
+          workspaceId: msg.workspaceId,
+          actorName: msg.actorName,
+        });
         const result = await previewContextCandidateForTrustedEdge({
           contextResourceId: msg.contextResourceId,
           workspaceId: msg.workspaceId,
@@ -248,6 +281,11 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           workspaceId: msg.workspaceId,
           purpose: 'context-resolve',
           contextResourceId: msg.contextResourceId,
+        });
+        await refreshContextFromSavedTarget({
+          contextResourceId: msg.contextResourceId,
+          workspaceId: msg.workspaceId,
+          actorName: msg.actorName,
         });
         const bundle = await resolveContextBundle({
           contextResourceId: msg.contextResourceId,
@@ -467,6 +505,62 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           msg.requestId,
           'error',
           error instanceof Error ? error.message : 'Trusted-edge plan key wrap failed',
+          { errorCode: ErrorCodes.INVALID_INPUT },
+        );
+      }
+    },
+
+    'trusted-edge-team-epoch-publish': async (client, msg) => {
+      try {
+        await verifyTrustedEdgeCommandCapability(daemon, {
+          token: msg.capabilityToken,
+          workspaceId: msg.workspaceId,
+          purpose: 'trusted-edge-team-epoch-publish',
+          teamId: msg.teamId,
+        });
+
+        const daemonConfig = daemon.configManager.getDaemonConfig() ?? {};
+        const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
+          requestedWorkspaceId: msg.workspaceId,
+        });
+        if (!target) {
+          throw new Error('No configured remote workspace credential is available for this team.');
+        }
+
+        await processPendingCryptoRotationRequests({
+          target,
+        });
+
+        const epoch = await ensureTeamCryptoEpoch({
+          target,
+          teamId: msg.teamId,
+        });
+        const memberGrants = epoch.platformEpochId
+          ? await grantTeamEpochToWorkspaceUserEpochs({
+              target,
+              teamCryptoEpochId: epoch.platformEpochId,
+            })
+          : null;
+
+        sendAck(client, msg.requestId, 'ok', undefined, {
+          teamId: msg.teamId,
+          teamEpoch: publicTeamEpoch(epoch),
+          ...(memberGrants
+            ? {
+                teamMemberGrants: {
+                  attempted: memberGrants.attempted,
+                  granted: memberGrants.granted,
+                  skipped: memberGrants.skipped,
+                },
+              }
+            : {}),
+        });
+      } catch (error) {
+        sendAck(
+          client,
+          msg.requestId,
+          'error',
+          error instanceof Error ? error.message : 'Trusted-edge team epoch publish failed',
           { errorCode: ErrorCodes.INVALID_INPUT },
         );
       }

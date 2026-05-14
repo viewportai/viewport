@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="502" height="526" viewBox="0 0 502 526" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Viewport logo</title>
+  <desc id="desc">Three compact layered viewport frames with green focus corners and a center point.</desc>
+  <g stroke="#111418" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M139 12 V52"/>
+    <path d="M139 12 L485 50 Q490 51 490 56 V398 Q490 404 484 403 L437 397"/>
+    <path d="M62 60 V102"/>
+    <path d="M62 60 L418 101 Q424 102 424 108 V447 Q424 453 418 452 L376 447"/>
+    <path d="M12 112 V465 Q12 471 18 472 L356 513 Q362 514 362 508 V154 Q362 148 356 147 L18 108 Q12 107 12 112Z"/>
+  </g>
+  <g stroke="#279c3d" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M51 187 V161 L77 164"/>
+    <path d="M293 191 L319 194 V220"/>
+    <path d="M51 407 V433 L77 436"/>
+    <path d="M319 439 V465 L293 462"/>
+  </g>
+  <path d="M163 288 L201 292 Q206 293 206 298 V336 Q206 341 201 340 L163 336 Q158 335 158 330 V293 Q158 288 163 288Z" fill="#111418"/>
+</svg>

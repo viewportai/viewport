@@ -1,5 +1,8 @@
 # Viewport Daemon Configuration
 
+This page is package-local reference for daemon developers and operators. The
+public setup docs live at <https://docs.getviewport.com>.
+
 ## Precedence
 
 Daemon runtime settings resolve in this order (later wins):
@@ -41,9 +44,6 @@ Session config resolution is separate:
       "tlsPins": ["ab12cd34..."],
       "tokenIssuer": "getviewport-runtime",
       "tokenAudience": "viewport-relay",
-      "signingKeys": {
-        "v1": "replace-me"
-      },
       "tokenClockSkewSec": 30
     }
   }

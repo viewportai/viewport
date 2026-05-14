@@ -356,7 +356,6 @@ describe('local trusted-edge context store', () => {
         },
         bobHome,
       );
-      const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
       const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
       const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
       let pushedGrantEvents: unknown[] = [];
@@ -445,8 +444,6 @@ describe('local trusted-edge context store', () => {
         keyStore: 'file',
         home: bobHome,
       });
-      importContextIdentity({ identity: aliceIdentity, home: bobHome });
-      importContextIdentity({ identity: aliceLaptopIdentity, home: bobHome });
 
       const pull = await pullContextEvents({
         contextResourceId: 'context-alpha',
@@ -468,6 +465,13 @@ describe('local trusted-edge context store', () => {
                 received_at: `2026-05-13T05:10:0${index}.000Z`,
                 signed_event: event,
               })),
+              public_identities: [
+                {
+                  name: 'alice-laptop',
+                  fingerprint: 'sha256:test-alice-laptop',
+                  public_identity: aliceLaptopIdentity,
+                },
+              ],
             });
           }
           if (String(url).endsWith('/grants/materialized')) {
@@ -731,7 +735,6 @@ describe('local trusted-edge context store', () => {
         bobHome,
       );
 
-      const aliceIdentity = exportContextIdentity({ name: 'alice', home: tempHome });
       const aliceLaptopIdentity = exportContextIdentity({ name: 'alice-laptop', home: tempHome });
       let pushedEvents: unknown[] = [];
 
@@ -809,8 +812,6 @@ describe('local trusted-edge context store', () => {
         keyStore: 'file',
         home: bobHome,
       });
-      importContextIdentity({ identity: aliceIdentity, home: bobHome });
-      importContextIdentity({ identity: aliceLaptopIdentity, home: bobHome });
 
       const pull = await pullContextEvents({
         contextResourceId: 'context-alpha',
@@ -832,6 +833,13 @@ describe('local trusted-edge context store', () => {
                 received_at: `2026-05-13T05:20:0${index}.000Z`,
                 signed_event: event,
               })),
+              public_identities: [
+                {
+                  name: 'alice-laptop',
+                  fingerprint: 'sha256:test-alice-laptop',
+                  public_identity: aliceLaptopIdentity,
+                },
+              ],
             });
           }
           if (String(url).endsWith('/grants/materialized')) {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { configDir } from '../core/config.js';
 import { transportFetch, type TlsVerifyMode } from '../cli/network.js';
 import {
@@ -44,6 +45,13 @@ export async function pushContextEvents(options: {
   const metadata = await readContextMetadata(options.contextResourceId, home);
   const vault = createVault(home, metadata.keyStore);
   const events = vault.listSyncEvents({ repoId: metadata.repoId });
+  const publicIdentities = collectPublicIdentities(vault, [
+    metadata.userName,
+    metadata.deviceName,
+    ...events
+      .map((event) => nullableStringField(objectValue(event), 'actorName'))
+      .filter((name): name is string => !!name),
+  ]);
   const candidateDecisionApplications = await readCandidateDecisionApplications({
     home,
     contextResourceId: options.contextResourceId,
@@ -59,6 +67,7 @@ export async function pushContextEvents(options: {
       credential: options.credential,
       ...(options.workspaceId ? { target_workspace_id: options.workspaceId } : {}),
       events,
+      ...(publicIdentities.length > 0 ? { public_identities: publicIdentities } : {}),
       ...(candidateDecisionApplications.length > 0
         ? { candidate_decision_applications: candidateDecisionApplications }
         : {}),
@@ -132,6 +141,7 @@ export async function pullContextEvents(options: {
     },
   );
   const records = extractPulledRecords(response);
+  importPulledPublicIdentities(vault, response);
   const events = records.map((record) => record.signedEvent);
   const grantIdentities = await contextGrantIdentitiesForWorkspace({
     workspaceId: options.workspaceId ?? options.contextResourceId,
@@ -204,6 +214,69 @@ export async function pullContextEvents(options: {
     pulled: events.length,
     repoId: metadata.repoId,
   };
+}
+
+function collectPublicIdentities(
+  vault: ReturnType<typeof createVault>,
+  names: Array<string | null>,
+): Array<{ name: string; fingerprint: string; public_identity: Record<string, unknown> }> {
+  const identities = new Map<
+    string,
+    { name: string; fingerprint: string; public_identity: Record<string, unknown> }
+  >();
+  for (const name of names) {
+    if (!name) continue;
+    try {
+      const publicIdentity = objectValue(vault.exportPublicIdentity(name));
+      const identityName = stringField(publicIdentity, 'name');
+      identities.set(identityName, {
+        name: identityName,
+        fingerprint: publicIdentityFingerprint(publicIdentity),
+        public_identity: publicIdentity,
+      });
+    } catch (error) {
+      if (!isUnknownIdentityError(error)) {
+        throw error;
+      }
+    }
+  }
+  return [...identities.values()];
+}
+
+function importPulledPublicIdentities(
+  vault: ReturnType<typeof createVault>,
+  response: unknown,
+): void {
+  const object = objectValue(response);
+  const identities = Array.isArray(object.public_identities) ? object.public_identities : [];
+  for (const item of identities) {
+    const record = objectValue(item);
+    const identity = objectField(record, 'public_identity');
+    vault.importPublicIdentity(identity);
+  }
+}
+
+function publicIdentityFingerprint(identity: Record<string, unknown>): string {
+  const canonical = JSON.stringify(sortJson(identity));
+  return `sha256:${createHash('sha256').update(canonical).digest('base64url')}`;
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, sortJson(child)]),
+    );
+  }
+  return value;
+}
+
+function isUnknownIdentityError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('Unknown identity:');
 }
 
 export async function recordContextGrantMaterialization(options: {
@@ -782,7 +855,9 @@ async function postJson(
     const reason =
       typeof payload === 'object' && payload && 'reason' in payload
         ? String((payload as { reason?: unknown }).reason)
-        : `${response.status} ${response.statusText}`;
+        : typeof payload === 'object' && payload && 'message' in payload
+          ? String((payload as { message?: unknown }).message)
+          : `${response.status} ${response.statusText}`;
     throw new Error(`Context sync request failed: ${reason}`);
   }
 

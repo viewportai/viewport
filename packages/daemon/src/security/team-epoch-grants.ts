@@ -13,33 +13,19 @@ import {
   TRUSTED_EDGE_CRYPTO_PROTOCOL_VERSION,
   unwrapJsonFromX25519Envelope,
   wrapJsonForX25519Recipient,
-  type JsonValue,
-  type WrappedKeyEnvelope,
 } from './epoch-protocol.js';
 import { validateAndPinPublicEpoch } from './epoch-public-pins.js';
 import type { CryptoEpochSyncTarget } from './epoch-sync.js';
-
-interface PublicUserEpoch {
-  id: string;
-  workspace_id: string;
-  user_id: number | string;
-  epoch: number;
-  fingerprint: string;
-  encryption_public_key_jwk: JsonValue;
-  signing_public_key_jwk: JsonValue;
-  previous_epoch_fingerprint?: string | null;
-  continuity_payload?: JsonValue | null;
-  continuity_signature?: string | null;
-  signed_by_epoch_fingerprint?: string | null;
-}
-
-interface TeamMemberGrantPayload {
-  id: string;
-  team_crypto_epoch_id: string;
-  recipient_user_crypto_epoch_id: string;
-  aad: JsonValue;
-  encrypted_payload: WrappedKeyEnvelope;
-}
+import {
+  arrayField,
+  objectField,
+  publicUserEpochPayload,
+  teamEpochMemberGrantAad,
+  teamMaterialPayload,
+  teamMemberGrantPayload,
+  type PublicUserEpoch,
+  type TeamMemberGrantPayload,
+} from './team-epoch-grant-payloads.js';
 
 export async function grantTeamEpochToUserEpoch(options: {
   target: CryptoEpochSyncTarget;
@@ -91,6 +77,57 @@ export async function grantTeamEpochToUserEpoch(options: {
     options.target,
   );
   return teamMemberGrantPayload(objectField(response, 'data'));
+}
+
+export async function grantTeamEpochToWorkspaceUserEpochs(options: {
+  target: CryptoEpochSyncTarget;
+  teamCryptoEpochId: string;
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{
+  attempted: number;
+  granted: number;
+  skipped: number;
+  grants: TeamMemberGrantPayload[];
+}> {
+  const fetchImpl = options.fetchImpl ?? transportFetch;
+  const response = await getJson(
+    fetchImpl,
+    `${runtimeBaseUrl(options.target)}/crypto/epochs`,
+    options.target,
+  );
+  const userEpochs = arrayField(objectField(response, 'data'), 'user_epochs').map((item) =>
+    publicUserEpochPayload(item),
+  );
+  const grants: TeamMemberGrantPayload[] = [];
+  let skipped = 0;
+
+  for (const userEpoch of userEpochs) {
+    try {
+      grants.push(
+        await grantTeamEpochToUserEpoch({
+          target: options.target,
+          teamCryptoEpochId: options.teamCryptoEpochId,
+          recipientUserCryptoEpochId: userEpoch.id,
+          home: options.home,
+          fetchImpl,
+        }),
+      );
+    } catch (error) {
+      if (isExpectedNonTeamRecipientError(error)) {
+        skipped++;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return {
+    attempted: userEpochs.length,
+    granted: grants.length,
+    skipped,
+    grants,
+  };
 }
 
 export async function acceptTeamEpochMemberGrants(options: {
@@ -161,21 +198,6 @@ export async function acceptTeamEpochMemberGrants(options: {
     teamEpochs.push(teamEpoch);
   }
   return { accepted: teamEpochs.length, teamEpochs };
-}
-
-function teamEpochMemberGrantAad(input: {
-  teamEpoch: LocalTeamCryptoEpoch;
-  recipient: PublicUserEpoch;
-}): JsonValue {
-  return {
-    schema: 'viewport.team_epoch_member_grant_aad/v1',
-    workspaceId: input.teamEpoch.workspaceId,
-    platformTeamId: input.teamEpoch.platformTeamId ?? null,
-    teamEpochId: input.teamEpoch.platformEpochId ?? null,
-    teamEpochFingerprint: input.teamEpoch.fingerprint,
-    recipientUserEpochId: input.recipient.id,
-    recipientUserEpochFingerprint: input.recipient.fingerprint,
-  };
 }
 
 async function fetchPublicUserEpoch(options: {
@@ -281,115 +303,7 @@ function responseError(payload: unknown, response: Response): string {
   return `Team epoch grant sync failed: ${message}`;
 }
 
-function publicUserEpochPayload(value: unknown): PublicUserEpoch {
-  const data = record(value, 'user epoch');
-  return {
-    id: stringField(data, 'id'),
-    workspace_id: stringField(data, 'workspace_id'),
-    user_id: numberOrStringField(data, 'user_id'),
-    epoch: numberField(data, 'epoch'),
-    fingerprint: stringField(data, 'fingerprint'),
-    encryption_public_key_jwk: objectField(data, 'encryption_public_key_jwk') as JsonValue,
-    signing_public_key_jwk: objectField(data, 'signing_public_key_jwk') as JsonValue,
-    previous_epoch_fingerprint:
-      typeof data.previous_epoch_fingerprint === 'string' ? data.previous_epoch_fingerprint : null,
-    continuity_payload:
-      data.continuity_payload && typeof data.continuity_payload === 'object'
-        ? (data.continuity_payload as JsonValue)
-        : null,
-    continuity_signature:
-      typeof data.continuity_signature === 'string' ? data.continuity_signature : null,
-    signed_by_epoch_fingerprint:
-      typeof data.signed_by_epoch_fingerprint === 'string'
-        ? data.signed_by_epoch_fingerprint
-        : null,
-  };
-}
-
-function teamMemberGrantPayload(value: unknown): TeamMemberGrantPayload {
-  const data = record(value, 'team member grant');
-  return {
-    id: stringField(data, 'id'),
-    team_crypto_epoch_id: stringField(data, 'team_crypto_epoch_id'),
-    recipient_user_crypto_epoch_id: stringField(data, 'recipient_user_crypto_epoch_id'),
-    aad: objectField(data, 'aad') as JsonValue,
-    encrypted_payload: objectField(data, 'encrypted_payload') as unknown as WrappedKeyEnvelope,
-  };
-}
-
-function teamMaterialPayload(value: JsonValue): {
-  workspaceId: string;
-  teamId: string;
-  platformTeamId: string | null;
-  platformEpochId: string;
-  epoch: number;
-  fingerprint: string;
-  encryptionPublicKeyJwk: JsonValue;
-  encryptionPrivateKeyJwk: JsonValue;
-  signingPublicKeyJwk: JsonValue;
-  signingPrivateKeyJwk: JsonValue;
-  previousEpochFingerprint: string | null;
-} {
-  const data = record(value, 'team material');
-  return {
-    workspaceId: stringField(data, 'workspaceId'),
-    teamId: stringField(data, 'teamId'),
-    platformTeamId: typeof data.platformTeamId === 'string' ? data.platformTeamId : null,
-    platformEpochId: stringField(data, 'platformEpochId'),
-    epoch: numberField(data, 'epoch'),
-    fingerprint: stringField(data, 'fingerprint'),
-    encryptionPublicKeyJwk: objectField(data, 'encryptionPublicKeyJwk') as JsonValue,
-    encryptionPrivateKeyJwk: objectField(data, 'encryptionPrivateKeyJwk') as JsonValue,
-    signingPublicKeyJwk: objectField(data, 'signingPublicKeyJwk') as JsonValue,
-    signingPrivateKeyJwk: objectField(data, 'signingPrivateKeyJwk') as JsonValue,
-    previousEpochFingerprint:
-      typeof data.previousEpochFingerprint === 'string' ? data.previousEpochFingerprint : null,
-  };
-}
-
-function arrayField(value: unknown, field: string): unknown[] {
-  const data = record(value, 'response');
-  const child = data[field];
-  if (!Array.isArray(child)) throw new Error(`Response did not include ${field} array.`);
-  return child;
-}
-
-function objectField(value: unknown, field: string): Record<string, unknown> {
-  const data = record(value, 'response');
-  const child = data[field];
-  if (!child || typeof child !== 'object' || Array.isArray(child)) {
-    throw new Error(`Response did not include ${field} object.`);
-  }
-  return child as Record<string, unknown>;
-}
-
-function record(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`Expected ${label} object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function stringField(value: Record<string, unknown>, field: string): string {
-  const child = value[field];
-  if (typeof child !== 'string' || child.trim().length === 0) {
-    throw new Error(`Response did not include ${field}.`);
-  }
-  return child;
-}
-
-function numberField(value: Record<string, unknown>, field: string): number {
-  const child = value[field];
-  if (typeof child !== 'number') {
-    throw new Error(`Response did not include numeric ${field}.`);
-  }
-  return child;
-}
-
-function numberOrStringField(value: Record<string, unknown>, field: string): number | string {
-  const child = value[field];
-  if (typeof child !== 'number' && typeof child !== 'string') {
-    throw new Error(`Response did not include ${field}.`);
-  }
-  return child;
+function isExpectedNonTeamRecipientError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('Recipient user is not a team member');
 }

@@ -52,15 +52,15 @@ function importPublicIdentity(home, identity, { allowKeyRotation = false } = {})
   const existing = readJson(identityPath(home, identity.name), {});
   const nextSigningKey = identity.signingPublicKey ?? identity.publicKey;
 
-  if (existing.signingPublicKey && existing.signingPublicKey !== nextSigningKey) {
+  if (existing.signingPublicKey && normalizePublicKey(existing.signingPublicKey) !== normalizePublicKey(nextSigningKey)) {
     throw new Error(`Identity signing key changed for ${identity.name}; explicit key rotation is required`);
   }
 
-  if (!allowKeyRotation && existing.encryptionPublicKey && existing.encryptionPublicKey !== identity.encryptionPublicKey) {
+  if (!allowKeyRotation && existing.encryptionPublicKey && normalizePublicKey(existing.encryptionPublicKey) !== normalizePublicKey(identity.encryptionPublicKey)) {
     throw new Error(`Identity encryption key changed for ${identity.name}; explicit key rotation is required`);
   }
 
-  if (!allowKeyRotation && existing.hpkePublicKey && existing.hpkePublicKey !== identity.hpkePublicKey) {
+  if (!allowKeyRotation && existing.hpkePublicKey && normalizePublicKey(existing.hpkePublicKey) !== normalizePublicKey(identity.hpkePublicKey)) {
     throw new Error(`Identity HPKE key changed for ${identity.name}; explicit key rotation is required`);
   }
 
@@ -73,6 +73,10 @@ function importPublicIdentity(home, identity, { allowKeyRotation = false } = {})
     hpkePublicKey: identity.hpkePublicKey,
     grantRecipientName: identity.grantRecipientName ?? existing.grantRecipientName,
   });
+}
+
+function normalizePublicKey(key) {
+  return typeof key === 'string' ? key.trimEnd() : key;
 }
 
 function updateIdentity(home, name, patch, { keyStore = null } = {}) {

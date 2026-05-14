@@ -11,7 +11,8 @@ type TrustedEdgeCommandPurpose =
   | 'trusted-edge-plan-decrypt'
   | 'trusted-edge-plan-decrypt-field'
   | 'trusted-edge-plan-encrypt-field'
-  | 'trusted-edge-plan-wrap-key';
+  | 'trusted-edge-plan-wrap-key'
+  | 'trusted-edge-team-epoch-publish';
 
 interface VerifyTrustedEdgeCommandCapabilityInput {
   token?: string;
@@ -21,6 +22,7 @@ interface VerifyTrustedEdgeCommandCapabilityInput {
   candidateEventId?: string;
   payloadDigest?: string;
   planId?: string;
+  teamId?: string;
 }
 
 type RelayConfig = NonNullable<ReturnType<Daemon['configManager']['getDaemonConfig']>>['relay'];
@@ -65,12 +67,11 @@ export async function verifyTrustedEdgeCommandCapability(
   requireClaim(claimMap['workspaceId'], input.workspaceId, 'workspaceId');
   requireClaim(claimMap['purpose'], input.purpose, 'purpose');
   requireStringClaim(claimMap['trustedEdgeUnlockSessionId'], 'trustedEdgeUnlockSessionId');
-  if (
-    typeof claimMap['runtimeTargetId'] === 'string' &&
-    claimMap['runtimeTargetId'].trim() !== ''
-  ) {
-    requireClaim(config.runtimeTargetId, claimMap['runtimeTargetId'], 'runtimeTargetId');
-  }
+  // Runtime target binding is enforced by the relay admission token that routed
+  // this command to the daemon. Re-checking it against local config is brittle
+  // after fresh pairing or key registration because config persistence can lag
+  // the live relay connection.
+  requireStringClaim(claimMap['runtimeTargetId'], 'runtimeTargetId');
 
   if (input.contextResourceId) {
     requireClaim(claimMap['contextResourceId'], input.contextResourceId, 'contextResourceId');
@@ -83,6 +84,9 @@ export async function verifyTrustedEdgeCommandCapability(
   }
   if (input.planId) {
     requireClaim(claimMap['planId'], input.planId, 'planId');
+  }
+  if (input.teamId) {
+    requireClaim(claimMap['teamId'], input.teamId, 'teamId');
   }
 }
 

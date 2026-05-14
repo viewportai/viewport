@@ -414,6 +414,14 @@ export const TrustedEdgePlanWrapKeySchema = z.object({
   requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
 });
 
+export const TrustedEdgeTeamEpochPublishSchema = z.object({
+  type: z.literal('trusted-edge-team-epoch-publish'),
+  workspaceId: z.string().min(1).max(256),
+  teamId: z.string().min(1).max(256),
+  capabilityToken: z.string().min(1).max(4096).optional(),
+  requestId: z.string().max(MAX_REQUEST_ID_CHARS).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Discriminated union of all incoming messages
 // ---------------------------------------------------------------------------
@@ -448,6 +456,7 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
   TrustedEdgePlanDecryptFieldSchema,
   TrustedEdgePlanEncryptFieldSchema,
   TrustedEdgePlanWrapKeySchema,
+  TrustedEdgeTeamEpochPublishSchema,
 ]);
 
 export type IncomingMessage = z.infer<typeof IncomingMessageSchema>;

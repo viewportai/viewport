@@ -462,6 +462,7 @@ describe('HTTP context routes', () => {
         role: 'trusted-edge-client',
         scope: 'trusted-edge-command',
         trustedEdgeUnlockSessionId: 'unlock-session-1',
+        runtimeTargetId: 'runtime-target-1',
         iss: 'viewport-server',
         aud: 'viewport-relay',
         iat: now,

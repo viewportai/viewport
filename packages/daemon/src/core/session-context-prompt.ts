@@ -2,6 +2,8 @@ import { resolveSessionResourceManifestSync } from '../config-resolution/index.j
 import { resolveRepoDocsProvider } from '../context-providers/repo-docs-provider.js';
 import { readContextStatus, resolveContextBundle } from '../context/local-edge-store.js';
 import { listLocalPendingContextCandidates } from '../context/local-edge-candidates.js';
+import { refreshContextFromSavedTarget } from '../context/local-edge-auto-sync.js';
+import { resolveLocalOrgBindingSync } from '../cli/org-binding.js';
 import { logger } from './logger.js';
 
 const log = logger.child({ module: 'session-context-prompt' });
@@ -75,6 +77,7 @@ export async function resolveSessionContextSections(options: {
   const manifest = resolveSessionResourceManifestSync({
     workingDirectory: options.workingDirectory,
   });
+  const workspaceId = resolveLocalOrgBindingSync(options.workingDirectory)?.organizationId;
   const sections: string[] = [];
 
   for (const provider of manifest.contract.contextProviders) {
@@ -108,6 +111,12 @@ export async function resolveSessionContextSections(options: {
         }
         continue;
       }
+
+      await refreshContextFromSavedTarget({
+        contextResourceId: context.id,
+        workspaceId,
+        actorName: record.deviceName,
+      });
 
       let bundle = await resolveContextBundle({
         contextResourceId: context.id,
