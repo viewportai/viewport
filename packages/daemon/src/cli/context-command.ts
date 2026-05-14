@@ -24,6 +24,7 @@ import { parseLimit, parseMaxItems, parseSince } from './context-command-parsers
 import { transportFetch } from './network.js';
 import { contextAdd } from './context-add-command.js';
 import { contextGet, contextProviderPropose, contextSearch } from './context-provider-command.js';
+import { contextGitHubUse } from './context-github-use-command.js';
 import { contextVaultCreate, contextVaultsList } from './context-vault-metadata-command.js';
 import { contextVaultUse } from './context-vault-use-command.js';
 import { contextCandidatePreview } from './context-candidate-preview-command.js';
@@ -83,6 +84,10 @@ export async function context(): Promise<void> {
   }
   if (subcommand === 'use') {
     await contextVaultUse();
+    return;
+  }
+  if (subcommand === 'use-github') {
+    await contextGitHubUse();
     return;
   }
   if (subcommand === 'search') {
@@ -197,7 +202,7 @@ export async function context(): Promise<void> {
 }
 
 function contextUsage(): string {
-  return 'Usage: vpd context <create|vaults|use|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|dev-reset-crypto --i-understand|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|recovery-backup [--recovery-key <key>]|recovery-restore --recovery-key <key>|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
+  return 'Usage: vpd context <create|vaults|use|use-github|init|status|add|search|get|propose|resolve|sync-push|sync-pull|sync-all|dev-reset-crypto --i-understand|epoch-publish [--team <team-id>]|epoch-rotate [--team <team-id>] [--reason <reason>]|recovery-backup [--recovery-key <key>]|recovery-restore --recovery-key <key>|rotations-process|device-enroll-request|device-enroll-approve|device-enroll-accept|device-enrollments|team-grant-create|team-grants-accept|grants-process|revokes-process|decisions|candidate-preview|rules install|user-init|join> ...';
 }
 
 function showContextHelp(): void {

@@ -244,6 +244,10 @@ function normalizeContextProviders(
         ? { credentialRef: provider.credential_ref ?? provider.credentialRef }
         : {}),
       ...(provider.vault ? { vault: provider.vault } : {}),
+      ...(provider.repo ? { repo: provider.repo } : {}),
+      ...(provider.remote ? { remote: provider.remote } : {}),
+      ...(provider.ref ? { ref: provider.ref } : {}),
+      ...(provider.branch ? { branch: provider.branch } : {}),
       ...(provider.use_when || provider.useWhen
         ? { useWhen: provider.use_when ?? provider.useWhen }
         : {}),
@@ -316,6 +320,7 @@ function normalizeWorkflowRefs(
 function defaultPrivacy(kind: ViewportContextProviderKind): ViewportContextProviderPrivacy {
   if (kind === 'repo-docs') return 'local_only';
   if (kind === 'viewport-vault') return 'control_plane_blind';
+  if (kind === 'github-repo') return 'third_party_terms';
   if (kind === 'custom-cli' || kind === 'custom-mcp') return 'unknown';
   return 'third_party_terms';
 }
@@ -325,6 +330,7 @@ function defaultCapabilities(
 ): ViewportContextProviderCapability[] {
   if (kind === 'repo-docs') return ['search', 'get'];
   if (kind === 'viewport-vault') return ['search', 'get', 'propose', 'write_approved'];
+  if (kind === 'github-repo') return ['search', 'get', 'propose'];
   if (kind === 'custom-cli' || kind === 'custom-mcp') return ['search'];
   return ['search', 'get'];
 }

@@ -26,6 +26,7 @@ export interface ViewportConfigScope {
 export type ViewportContextProviderKind =
   | 'repo-docs'
   | 'viewport-vault'
+  | 'github-repo'
   | 'notebooklm'
   | 'glean'
   | 'custom-cli'
@@ -49,6 +50,10 @@ export interface ViewportContextProviderRef {
   sourceConfigPath: string;
   credentialRef?: string;
   vault?: string;
+  repo?: string;
+  remote?: string;
+  ref?: string;
+  branch?: string;
   useWhen?: string;
   updateWhen?: string;
   paths?: string[];

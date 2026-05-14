@@ -43,6 +43,10 @@ export type ContextProviderProposeInput = {
 export type ContextProviderProposeResult = {
   candidate_id: string;
   payload_digest: string;
+  status?: string;
+  pull_request_url?: string;
+  branch?: string;
+  source?: string;
 };
 
 export interface ContextProviderAdapter {

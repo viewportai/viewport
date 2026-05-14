@@ -32,10 +32,17 @@ export function fallbackProposeProvider(
   );
 }
 
-export function proposeToViewportVaultProvider(
+export function proposeToContextProvider(
   provider: SessionContextProviderManifest,
   input: ContextProviderProposeInput,
-): Promise<{ id: string; bodyDigest: string }> {
+): Promise<{
+  id: string;
+  bodyDigest: string;
+  status?: string;
+  pullRequestUrl?: string;
+  branch?: string;
+  source?: string;
+}> {
   const adapter = contextProviderAdapterFor(provider);
   if (!adapter?.propose) {
     throw new Error(`Provider ${provider.id} does not have a v1 propose adapter.`);
@@ -48,5 +55,11 @@ export function proposeToViewportVaultProvider(
     .then((result) => ({
       id: result.candidate_id,
       bodyDigest: result.payload_digest,
+      status: result.status,
+      pullRequestUrl: result.pull_request_url,
+      branch: result.branch,
+      source: result.source,
     }));
 }
+
+export const proposeToViewportVaultProvider = proposeToContextProvider;

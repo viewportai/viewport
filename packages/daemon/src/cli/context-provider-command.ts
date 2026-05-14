@@ -8,6 +8,7 @@ import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
   fallbackProposeProvider,
+  proposeToContextProvider,
   proposeToViewportVaultProvider,
 } from './context-provider-propose.js';
 
@@ -193,7 +194,7 @@ export async function contextProviderPropose(): Promise<void> {
     throw new Error(`Provider ${provider.id} does not have a v1 propose adapter.`);
   }
 
-  const candidate = await proposeToViewportVaultProvider(
+  const candidate = await proposeToContextProvider(
     provider,
     proposeInput(manifest.manifestDigest),
   );
@@ -205,17 +206,25 @@ export async function contextProviderPropose(): Promise<void> {
       ok: true,
       provider_id: provider.id,
       provider: provider.provider,
-      status: 'pending_review',
+      status: candidate.status ?? 'pending_review',
       candidate_id: candidate.id,
       payload_digest: candidate.bodyDigest,
+      ...(candidate.pullRequestUrl ? { pull_request_url: candidate.pullRequestUrl } : {}),
+      ...(candidate.branch ? { branch: candidate.branch } : {}),
+      ...(candidate.source ? { source: candidate.source } : {}),
       manifest_digest: manifest.manifestDigest,
-      message: 'Context candidate queued for human review.',
+      message:
+        provider.provider === 'github-repo'
+          ? 'Context update proposed through GitHub provider.'
+          : 'Context candidate queued for human review.',
     });
     return;
   }
   console.log(`Context candidate proposed: ${candidate.id}`);
   console.log(`Provider: ${provider.id}`);
-  console.log('Status: pending review');
+  console.log(`Status: ${candidate.status ?? 'pending review'}`);
+  if (candidate.pullRequestUrl) console.log(`Pull request: ${candidate.pullRequestUrl}`);
+  if (candidate.branch) console.log(`Branch: ${candidate.branch}`);
 }
 
 function orderedProviders(
