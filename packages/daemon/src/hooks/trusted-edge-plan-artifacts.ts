@@ -94,7 +94,12 @@ export async function saveTrustedEdgePlanDraft(options: {
   target: TrustedEdgePlanSyncTarget;
   home?: string;
   fetchImpl?: typeof transportFetch;
-}): Promise<{ planId: string; sourceRef: string; envelope: TrustedEdgePlanEnvelope }> {
+}): Promise<{
+  planId: string;
+  sourceRef: string;
+  envelope: TrustedEdgePlanEnvelope;
+  unlockSessionId?: string;
+}> {
   const sourceRef = options.event.sourceRef ?? `agent-hook:${options.event.sessionId}`;
   const encrypted = await encryptTrustedEdgePlanBody({
     workspaceId: options.target.workspaceId,
@@ -143,6 +148,10 @@ export async function saveTrustedEdgePlanDraft(options: {
 
   const plan = objectField(payload, 'data');
   const planId = stringField(plan, 'id');
+  const unlockSessionId = await activateTrustedEdgeUnlockSession({
+    target: options.target,
+    fetchImpl: options.fetchImpl ?? transportFetch,
+  }).catch(() => undefined);
   await upsertTrustedEdgePlanKey(
     {
       workspaceId: options.target.workspaceId,
@@ -155,7 +164,27 @@ export async function saveTrustedEdgePlanDraft(options: {
     options.home,
   );
 
-  return { planId, sourceRef, envelope: encrypted.envelope };
+  return { planId, sourceRef, envelope: encrypted.envelope, unlockSessionId };
+}
+
+async function activateTrustedEdgeUnlockSession(options: {
+  target: TrustedEdgePlanSyncTarget;
+  fetchImpl: typeof transportFetch;
+}): Promise<string | undefined> {
+  const payload = await postJson(
+    options.fetchImpl,
+    `${options.target.serverUrl.replace(/\/+$/, '')}/api/runtime/workspaces/${encodeURIComponent(options.target.workspaceId)}/trusted-edge-unlock-sessions/activate-from-edge`,
+    {
+      credential: options.target.credential,
+    },
+    {
+      tlsVerify: options.target.tlsVerify,
+      caCertPath: options.target.caCertPath,
+      tlsPins: options.target.tlsPins,
+    },
+  );
+  const data = objectField(payload, 'data');
+  return stringField(data, 'id');
 }
 
 export async function decryptTrustedEdgePlanBody(options: {

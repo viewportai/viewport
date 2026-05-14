@@ -11,6 +11,7 @@ describe('PlatformPlanHookSync', () => {
     const createEphemeralPlanDraft = vi.fn();
     const planSaver = vi.fn(async () => ({
       planId: 'plan_1',
+      unlockSessionId: 'unlock_1',
       sourceRef: 'claude://session/session_1',
       envelope: {
         schema: 'viewport.plan_body_encrypted/v1',
@@ -64,6 +65,7 @@ describe('PlatformPlanHookSync', () => {
     expect(`${url.origin}${url.pathname}`).toBe('https://app.getviewport.test/plans');
     expect(url.searchParams.get('resource_id')).toBe('workspace_1');
     expect(url.searchParams.get('plan_id')).toBe('plan_1');
+    expect(url.searchParams.get('trusted_edge_unlock_session_id')).toBe('unlock_1');
     expect(url.hash).toBe('');
     expect(opened).not.toContain('Inspect%20diff');
     expect(opened).not.toContain('Inspect diff');
@@ -79,6 +81,59 @@ describe('PlatformPlanHookSync', () => {
         credential: 'issue-token',
       }),
     });
+  });
+
+  it('deduplicates the same plan emitted by multiple Claude hook events', async () => {
+    const opener = vi.fn();
+    const planSaver = vi.fn(async () => ({
+      planId: 'plan_1',
+      sourceRef: 'hook://exit-plan-mode/session_1',
+      envelope: {
+        schema: 'viewport.plan_body_encrypted/v1',
+        algorithm: 'AES-GCM-256',
+        key_ref: 'key_1',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        tag: 'tag',
+        digest: 'sha256:abc',
+        aad: {},
+      },
+    }));
+    const sync = new PlatformPlanHookSync(
+      {
+        configManager: {
+          getDaemonConfig: () => ({
+            server: { url: 'https://getviewport.test', appUrl: 'https://app.getviewport.test' },
+            relay: { workspaceId: 'workspace_1', issueToken: 'issue-token' },
+          }),
+        },
+        createEphemeralPlanDraft: vi.fn(),
+      },
+      opener,
+      planSaver,
+    );
+    const event = {
+      sessionId: 'session_1',
+      adapter: 'claude',
+      body: '## Plan\nDo it',
+      source: 'claude-exit-plan-mode',
+      sourceRef: 'hook://exit-plan-mode/session_1',
+    };
+
+    await expect(sync.send(event)).resolves.toMatchObject({ opened: true });
+    await expect(
+      sync.send({
+        ...event,
+        source: 'claude-stop',
+        sourceRef: 'hook://stop/session_1',
+      }),
+    ).resolves.toEqual({
+      opened: false,
+      reason: 'duplicate_plan_event',
+    });
+
+    expect(planSaver).toHaveBeenCalledTimes(1);
+    expect(opener).toHaveBeenCalledTimes(1);
   });
 
   it('skips opening when no relay workspace is configured', async () => {

@@ -13,7 +13,18 @@ export async function readContextMetadata(
   home: string,
 ): Promise<ContextResourceMetadata> {
   const file = contextMetadataPath(contextResourceId, home);
-  const raw = JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
+  let rawText: string;
+  try {
+    rawText = await fs.readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(
+        `Context vault ${contextResourceId} is not bound on this trusted edge. Run \`vpd context use ${contextResourceId}\` in the repo, then retry.`,
+      );
+    }
+    throw error;
+  }
+  const raw = JSON.parse(rawText) as unknown;
   if (!isContextMetadata(raw)) {
     throw new Error(`Invalid canonical context metadata for ${contextResourceId}`);
   }
