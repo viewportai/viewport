@@ -20,7 +20,7 @@ import {
   readDaemonSessionMessagePage,
 } from './session-message-reader.js';
 import type { AckSender } from './ws-command-handlers.js';
-import type { IncomingMessage } from './ws-protocol.js';
+import { MAX_LIST_SESSIONS_LIMIT, type IncomingMessage } from './ws-protocol.js';
 
 const MAX_CLIENT_SUBSCRIPTIONS = 1024;
 const MAX_CLIENT_DISCOVERED_WATCHES = 2048;
@@ -108,7 +108,7 @@ export function createWsSessionCommandHandlers(
       const discovered = daemon.getDiscoveredSessions(msg.directoryId);
       const sessions = discovered.get(msg.directoryId) ?? [];
       const offset = Math.max(0, msg.offset ?? 0);
-      const limit = Math.min(200, Math.max(1, msg.limit ?? 50));
+      const limit = Math.min(MAX_LIST_SESSIONS_LIMIT, Math.max(1, msg.limit ?? 25));
       const sliced = sessions.slice(offset, offset + limit);
       const dir = daemon.directoryManager?.get?.(msg.directoryId);
       const workingDirectoryFallback = dir?.path ?? null;

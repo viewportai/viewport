@@ -26,7 +26,7 @@ const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
     z.record(z.string(), WorkflowInputValueSchema),
   ]),
 );
-const MAX_LIST_SESSIONS_LIMIT = 200;
+export const MAX_LIST_SESSIONS_LIMIT = 50;
 export const MAX_READ_SESSION_MESSAGES_LIMIT = 200;
 
 const ImageSchema = z.object({

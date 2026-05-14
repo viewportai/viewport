@@ -78,7 +78,7 @@ describe('ws-command-handlers', () => {
     expect(sessionList).toBeTruthy();
     expect(sessionList).toMatchObject({
       offset: 0,
-      limit: 50,
+      limit: 25,
       hasMore: false,
     });
     const sessions = sessionList?.['sessions'] as Array<Record<string, unknown>>;
@@ -90,6 +90,47 @@ describe('ws-command-handlers', () => {
     expect(sessions[0]).not.toHaveProperty('projectId');
     expect(sessions[0]).not.toHaveProperty('projectBindingSource');
     expect(sendAck).toHaveBeenCalledWith(client, 'req-1', 'ok');
+  });
+
+  it('caps list-sessions pages to keep relay frames bounded', async () => {
+    const { client, sent } = createClient();
+    const sessions = Array.from({ length: 80 }, (_, i) => ({
+      agentId: 'codex',
+      sessionId: `s${i}`,
+      summary: `Session ${i}`,
+      lastModified: 100 + i,
+      resumable: true,
+      messageCount: 4,
+    }));
+    const daemon = {
+      directoryManager: { get: vi.fn().mockReturnValue({ id: 'dir-1', path: '/tmp/project' }) },
+      configManager: {
+        getConfig: vi.fn().mockReturnValue({}),
+      },
+      getDiscoveredSessions: vi.fn().mockReturnValue(new Map([['dir-1', sessions]])),
+    };
+    const sendAck = vi.fn();
+    const handlers = createWsCommandHandlers({
+      daemon: daemon as any,
+      sendAck,
+      getOrCreateBuffer: getOrCreateBuffer as any,
+    });
+
+    await handlers['list-sessions'](client, {
+      type: 'list-sessions',
+      directoryId: 'dir-1',
+      limit: 200,
+      requestId: 'req-1',
+    } as any);
+
+    const sessionList = sent.find((m) => m['type'] === 'session-list');
+    expect(sessionList).toMatchObject({
+      offset: 0,
+      limit: 50,
+      total: 80,
+      hasMore: true,
+    });
+    expect((sessionList?.['sessions'] as unknown[]).length).toBe(50);
   });
 
   it('resume rejects missing discovered session', async () => {
