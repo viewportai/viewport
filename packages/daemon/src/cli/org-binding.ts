@@ -168,13 +168,16 @@ export function resolveWorkspaceOrgHintSync(startDirectory: string): WorkspaceOr
 export function directoryStreamsToOrganization(options: {
   directory: string | null | undefined;
   organizationId: string;
+  profileName?: string | null;
 }): boolean {
   if (!options.directory) return false;
   const binding = resolveLocalOrgBindingSync(options.directory);
   if (binding?.streamEnabled !== true) return false;
   if (binding.organizationId !== options.organizationId) return false;
-  const currentProfile = normalizeBindingProfileName(activeProfileName());
-  return binding.profileName === currentProfile;
+  const profileName = normalizeBindingProfileName(
+    options.profileName === undefined ? activeProfileName() : options.profileName,
+  );
+  return binding.profileName === profileName;
 }
 
 function findNearestFileSync(

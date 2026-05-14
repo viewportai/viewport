@@ -188,13 +188,13 @@ describe('relay bridge organization routing filter', () => {
     ).toBeNull();
   });
 
-  it('cuts a pinned session if the active daemon profile changes away from the repo binding', async () => {
+  it('keeps routing pinned to the daemon startup profile even if machine default changes', async () => {
     process.env['VIEWPORT_PROFILE'] = 'prod';
     await fs.writeFile(
       path.join(allowedDir, '.viewport/local.yaml'),
       'version: 1\norganization_id: 01ORG\nprofile: prod\nremote:\n  stream: enabled\n',
     );
-    const filter = createOrgRoutingFilter({ organizationId: '01ORG' });
+    const filter = createOrgRoutingFilter({ organizationId: '01ORG', profileName: 'prod' });
     filter.filter(
       JSON.stringify({
         type: 'hello',
@@ -216,6 +216,6 @@ describe('relay bridge organization routing filter', () => {
           update: { updateType: 'state-change' },
         }),
       ),
-    ).toBeNull();
+    ).toBeTruthy();
   });
 });

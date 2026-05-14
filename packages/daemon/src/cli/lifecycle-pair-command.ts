@@ -340,7 +340,7 @@ function resolveAutoUnlockPreference(): { enabled: boolean; ttlSeconds?: number 
     return { enabled: false, ttlSeconds };
   }
 
-  return { enabled: hasFlag('auto-unlock') || hasFlag('trusted'), ttlSeconds };
+  return { enabled: true, ttlSeconds };
 }
 
 async function parseJsonResponse(
