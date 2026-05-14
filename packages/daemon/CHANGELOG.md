@@ -1,3 +1,10 @@
+# [0.9.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.8.0...@viewportai/daemon@0.9.0) (2026-05-14)
+
+
+### Features
+
+* add GitHub context provider ([#99](https://github.com/viewportai/viewport/issues/99)) ([6c8fe62](https://github.com/viewportai/viewport/commit/6c8fe62ddf0b6b2a981139a81f67db767f4a7b91))
+
 # [0.8.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.7.0...@viewportai/daemon@0.8.0) (2026-05-14)
 
 
