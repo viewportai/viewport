@@ -192,6 +192,46 @@ describe('jsonl-reader', () => {
       tone: 'warning',
     });
   });
+
+  it('surfaces explicit Viewport plan blocks as product timeline events without exposing plan body', () => {
+    const blocks = parseJSONLEntry({
+      timestamp: '2026-05-14T10:15:00.000Z',
+      type: 'assistant',
+      uuid: 'assistant-plan-block',
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: [
+              'Here is the plan.',
+              '```viewport-plan',
+              JSON.stringify({
+                schema: 'viewport.plan_proposal/v1',
+                title: 'Migrate sessions UI',
+                summary: 'Make sessions match native provider behavior.',
+                body: 'Sensitive long plan body should stay in the normal transcript text.',
+              }),
+              '```',
+            ].join('\n'),
+          },
+        ],
+      },
+    });
+
+    expect(blocks[0]).toMatchObject({
+      kind: 'text',
+      role: 'assistant',
+    });
+    expect(blocks[1]).toMatchObject({
+      kind: 'event',
+      title: 'Plan draft emitted: Migrate sessions UI',
+      body: 'Make sessions match native provider behavior.',
+      tone: 'warning',
+    });
+    expect(blocks[1]).not.toMatchObject({
+      body: expect.stringContaining('Sensitive long plan body'),
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

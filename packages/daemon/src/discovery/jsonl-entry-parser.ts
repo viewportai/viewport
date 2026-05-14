@@ -102,6 +102,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
   if (typeof content === 'string') {
     if (content) {
       blocks.push({ kind: 'text', role: type, text: content, ts, uuid });
+      blocks.push(...viewportPlanEventsFromText(content, ts, `${uuid}-viewport-plan`));
     }
     return blocks;
   }
@@ -124,6 +125,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
       case 'text':
         if (typeof b.text === 'string' && b.text) {
           blocks.push({ kind: 'text', role: type, text: b.text, ts, uuid });
+          blocks.push(...viewportPlanEventsFromText(b.text, ts, `${uuid}-viewport-plan`));
         }
         break;
 
@@ -248,6 +250,7 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
       const text = content.trim();
       if (text) {
         messageBlocks.push({ kind: 'text', role, text, ts, uuid: baseUuid });
+        messageBlocks.push(...viewportPlanEventsFromText(text, ts, `${baseUuid}-viewport-plan`));
       }
       return messageBlocks;
     }
@@ -267,6 +270,9 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
         ts,
         uuid: `${baseUuid}-${i}`,
       });
+      messageBlocks.push(
+        ...viewportPlanEventsFromText(text, ts, `${baseUuid}-${i}-viewport-plan`),
+      );
     }
     return messageBlocks;
   }
@@ -355,7 +361,12 @@ function parseCodexEventMsgEntry(e: Record<string, unknown>): RichSessionMessage
 
   if (itemType === 'agent_message' || itemType === 'assistant_message') {
     const text = extractText(payload.message ?? payload.text);
-    return text ? [{ kind: 'text', role: 'assistant', text, ts, uuid }] : [];
+    return text
+      ? [
+          { kind: 'text', role: 'assistant', text, ts, uuid },
+          ...viewportPlanEventsFromText(text, ts, `${uuid}-viewport-plan`),
+        ]
+      : [];
   }
 
   if (itemType === 'agent_message_delta' || itemType === 'agent_message_content_delta') {
@@ -628,6 +639,45 @@ function viewportCliEventsFromOutput(output: string, ts: string, uuidPrefix: str
   }
 
   return [];
+}
+
+function viewportPlanEventsFromText(text: string, ts: string, uuidPrefix: string): RichSessionMessage[] {
+  const payload = parseViewportPlanPayload(text);
+  if (!payload) return [];
+  const schema = stringField(payload, 'schema');
+  if (schema !== 'viewport.plan_proposal/v1') return [];
+  const title = stringField(payload, 'title') || 'Plan proposal';
+  const summary = stringField(payload, 'summary');
+  const source = stringField(payload, 'source');
+  const body = [summary, source ? `source ${source}` : null].filter(Boolean).join('\n');
+  return [
+    {
+      kind: 'event',
+      title: `Plan draft emitted: ${title}`,
+      body: body || 'A Viewport plan proposal block was emitted for trusted-edge capture.',
+      tone: 'warning',
+      ts,
+      uuid: `${uuidPrefix}:${title}`,
+    },
+  ];
+}
+
+function parseViewportPlanPayload(text: string): Record<string, unknown> | null {
+  const fence = /```viewport-plan\s*\n([\s\S]*?)```/i.exec(text);
+  const comment = /<!--\s*viewport-plan\s*\n([\s\S]*?)-->/i.exec(text);
+  const raw = fence?.[1] ?? comment?.[1];
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.includes('viewport.plan_proposal/v1')) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>;
+  } catch {
+    // YAML-frontmatter style plan blocks are allowed elsewhere. The session
+    // reader keeps them as normal transcript text until a structured parser is
+    // needed for timeline links.
+  }
+  return null;
 }
 
 function parseViewportCliJson(output: string): Record<string, unknown> | null {
