@@ -15,6 +15,7 @@ describe('daemon settings resolution', () => {
     delete process.env['VPD_ALLOWED_HOSTS'];
     delete process.env['VPD_ALLOWED_ORIGINS'];
     delete process.env['VPD_PROFILE'];
+    delete process.env['VPD_RUNTIME_PROFILE'];
     delete process.env['VPD_AUTH'];
     delete process.env['VPD_RELAY_ENABLED'];
     delete process.env['VPD_RELAY_ENDPOINT'];
@@ -33,6 +34,7 @@ describe('daemon settings resolution', () => {
     delete process.env['VPD_ALLOWED_HOSTS'];
     delete process.env['VPD_ALLOWED_ORIGINS'];
     delete process.env['VPD_PROFILE'];
+    delete process.env['VPD_RUNTIME_PROFILE'];
     delete process.env['VPD_AUTH'];
     delete process.env['VPD_RELAY_ENABLED'];
     delete process.env['VPD_RELAY_ENDPOINT'];
@@ -100,7 +102,7 @@ describe('daemon settings resolution', () => {
     expect(resolved.launch.host).toBe('127.0.0.1');
   });
 
-  it('resolves profile/auth precedence as cli > env > config', async () => {
+  it('resolves runtime profile/auth precedence as cli > env > config', async () => {
     await fs.mkdir(homeDir, { recursive: true });
     await fs.writeFile(
       path.join(homeDir, 'config.json'),
@@ -115,7 +117,7 @@ describe('daemon settings resolution', () => {
       'utf-8',
     );
 
-    process.env['VPD_PROFILE'] = 'relay';
+    process.env['VPD_RUNTIME_PROFILE'] = 'relay';
     process.env['VPD_AUTH'] = 'false';
     process.argv = [
       'node',
@@ -134,6 +136,16 @@ describe('daemon settings resolution', () => {
     expect(resolved.launch.profile).toBe('lan');
     expect(resolved.launch.authEnabled).toBe(true);
     expect(resolved.launch.allowedHostsRaw).toBe('config.example.test,cli.example.test');
+  });
+
+  it('keeps daemon environment profile separate from runtime exposure profile', async () => {
+    process.env['VPD_PROFILE'] = 'relay';
+    process.argv = ['node', 'vpd', 'start'];
+
+    const { resolveDaemonSettingsFromSources } = await import('../../src/cli/daemon-settings.js');
+    const resolved = await resolveDaemonSettingsFromSources();
+
+    expect(resolved.launch.profile).toBe('local');
   });
 
   it('resolves relay runtime settings from config/env/cli', async () => {

@@ -16,6 +16,7 @@ import type { AgentRegistry } from './agent-registry.js';
 import { ViewportConfigSchema } from './config-schema.js';
 import type { RuntimeLaunchConfig } from '../cli/supervisor-protocol.js';
 import { validateRelayRuntimeSecurity } from '../startup-relay-security.js';
+import { resolveProfileAwareViewportHome } from './profiles.js';
 
 // ---------------------------------------------------------------------------
 // Built-in defaults — AGENT-AGNOSTIC framework defaults only.
@@ -216,11 +217,7 @@ export interface ViewportConfig {
 }
 
 export function resolveViewportHome(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = env['VIEWPORT_HOME'] ?? env['VPD_HOME'];
-  if (typeof explicit === 'string' && explicit.trim().length > 0) {
-    return path.resolve(explicit.trim());
-  }
-  return path.join(os.homedir(), '.viewport');
+  return resolveProfileAwareViewportHome(env);
 }
 
 /** Returns the path to the Viewport config directory. */

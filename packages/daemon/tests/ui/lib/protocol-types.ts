@@ -156,6 +156,7 @@ export interface ActiveSessionInfo {
   id: string;
   directoryId: string;
   state: SessionState;
+  capabilities?: SessionInteractionCapabilities;
 }
 
 export interface MachineInfo {
@@ -167,11 +168,32 @@ export interface DiscoveredSessionInfo {
   agentId?: string;
   directoryId: string;
   summary: string;
+  nativeTitle?: string;
+  generatedTitle?: string;
+  displayTitle?: string;
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  firstPrompt?: string;
+  lastPrompt?: string;
+  latestModel?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  reasoningEffort?: string;
   lastActivity: number;
   messageCount: number;
   resumable: boolean;
+  capabilities?: SessionInteractionCapabilities;
   waiting?: boolean;
   waitingToolName?: string;
+}
+
+export interface SessionInteractionCapabilities {
+  readTranscript: boolean;
+  tailTranscript: boolean;
+  resume: boolean;
+  sendPrompt: boolean;
+  interrupt: boolean;
+  respondToPermissions: boolean;
+  modelOverride: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +215,49 @@ export type RichSessionMessage =
       toolId: string;
       output: string;
       isError: boolean;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'command';
+      command: string;
+      cwd?: string;
+      status: 'started' | 'completed';
+      exitCode?: number | null;
+      output?: string;
+      durationMs?: number | null;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'file_change';
+      path?: string;
+      diff?: string;
+      operation?: string;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'approval';
+      title: string;
+      body: string;
+      input?: Record<string, unknown>;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'event';
+      title: string;
+      body: string;
+      tone?: 'default' | 'success' | 'warning' | 'danger' | 'muted';
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'usage';
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
       ts: string;
       uuid: string;
     }

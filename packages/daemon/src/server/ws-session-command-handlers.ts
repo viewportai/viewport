@@ -48,11 +48,33 @@ interface SessionListSource {
   sessionId: string;
   agentId: string;
   summary: string;
+  nativeTitle?: string;
+  generatedTitle?: string;
+  displayTitle?: string;
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  firstPrompt?: string;
+  lastPrompt?: string;
+  latestModel?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  reasoningEffort?: string;
   lastModified: number;
   messageCount?: number;
   resumable: boolean;
+  capabilities?: SessionInteractionCapabilities;
   cwd?: string;
+  sourcePath?: string;
   worktreePath?: string;
+}
+
+interface SessionInteractionCapabilities {
+  readTranscript: boolean;
+  tailTranscript: boolean;
+  resume: boolean;
+  sendPrompt: boolean;
+  interrupt: boolean;
+  respondToPermissions: boolean;
+  modelOverride: boolean;
 }
 
 interface SessionCommandContext {
@@ -274,6 +296,8 @@ export function createWsSessionCommandHandlers(
           agent: discoveredMatch.agentId,
           resourceId,
           summary: discoveredMatch.summary,
+          displayTitle: discoveredMatch.displayTitle,
+          titleSource: discoveredMatch.titleSource,
           resourceManifest: resolveManifest(resumeDir.path),
         }),
       );
@@ -348,10 +372,29 @@ function trimLargeMessage(message: RichSessionMessage): RichSessionMessage {
   if (message.kind === 'tool_result') {
     return { ...message, output: trimString(message.output) };
   }
-  return {
-    ...message,
-    input: trimLargeInput(message.input),
-  };
+  if (message.kind === 'tool_use') {
+    return {
+      ...message,
+      input: trimLargeInput(message.input),
+    };
+  }
+  if (message.kind === 'command') {
+    return { ...message, output: message.output ? trimString(message.output) : message.output };
+  }
+  if (message.kind === 'file_change') {
+    return { ...message, diff: message.diff ? trimString(message.diff) : message.diff };
+  }
+  if (message.kind === 'approval') {
+    return {
+      ...message,
+      body: trimString(message.body),
+      input: message.input ? trimLargeInput(message.input) : message.input,
+    };
+  }
+  if (message.kind === 'event') {
+    return { ...message, body: trimString(message.body) };
+  }
+  return message;
 }
 
 function trimLargeInput(input: Record<string, unknown>): Record<string, unknown> {
@@ -380,15 +423,42 @@ function toSessionListEntry(
     agentId: session.agentId,
     directoryId,
     summary: session.summary,
+    nativeTitle: session.nativeTitle,
+    generatedTitle: session.generatedTitle,
+    displayTitle: session.displayTitle,
+    titleSource: session.titleSource,
+    firstPrompt: session.firstPrompt,
+    lastPrompt: session.lastPrompt,
+    latestModel: session.latestModel,
+    approvalPolicy: session.approvalPolicy,
+    sandboxMode: session.sandboxMode,
+    reasoningEffort: session.reasoningEffort,
     lastActivity: session.lastModified,
     messageCount: session.messageCount ?? 0,
     resumable: session.resumable,
+    capabilities: sessionCapabilitiesForDiscovered(session),
     workingDirectory,
     repoRoot: git.repoRoot,
     repoRemoteUrl: git.repoRemoteUrl,
     repoBranch: git.repoBranch,
     repoSha: git.repoSha,
     resourceManifest: resolveManifest(workingDirectory),
+  };
+}
+
+function sessionCapabilitiesForDiscovered(input: {
+  resumable: boolean;
+  sourcePath?: string;
+  capabilities?: Partial<SessionInteractionCapabilities>;
+}): SessionInteractionCapabilities {
+  return {
+    readTranscript: input.capabilities?.readTranscript ?? Boolean(input.sourcePath),
+    tailTranscript: input.capabilities?.tailTranscript ?? Boolean(input.sourcePath),
+    resume: input.capabilities?.resume ?? input.resumable,
+    sendPrompt: input.capabilities?.sendPrompt ?? false,
+    interrupt: input.capabilities?.interrupt ?? false,
+    respondToPermissions: input.capabilities?.respondToPermissions ?? false,
+    modelOverride: input.capabilities?.modelOverride ?? input.resumable,
   };
 }
 

@@ -143,7 +143,7 @@ function resolveListenInput(configListen: string | undefined): string {
 function resolveProfile(configProfile: DeploymentProfile | undefined): DeploymentProfile {
   const cliProfile = parseProfile(getFlag('profile'));
   if (cliProfile) return cliProfile;
-  const envProfile = parseProfile(envValue('VPD_PROFILE', 'VIEWPORT_PROFILE'));
+  const envProfile = parseProfile(envValue('VPD_RUNTIME_PROFILE', 'VIEWPORT_RUNTIME_PROFILE'));
   if (envProfile) return envProfile;
   return configProfile ?? 'local';
 }

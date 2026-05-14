@@ -70,15 +70,27 @@ export interface SnapshotPayload {
     repoBranch: string | null;
     repoSha: string | null;
     resourceManifest: SessionResourceManifest;
+    capabilities: SessionInteractionCapabilitiesSnapshot;
   }>;
   discoveredSessions: Array<{
     id: string;
     agentId: string;
     directoryId: string;
     summary: string;
+    nativeTitle?: string;
+    generatedTitle?: string;
+    displayTitle?: string;
+    titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+    firstPrompt?: string;
+    lastPrompt?: string;
+    latestModel?: string;
+    approvalPolicy?: string;
+    sandboxMode?: string;
+    reasoningEffort?: string;
     lastActivity: number;
     messageCount: number;
     resumable: boolean;
+    capabilities: SessionInteractionCapabilitiesSnapshot;
     workflowRunId?: string;
     workflowNodeId?: string;
     parentDirectoryId?: string;
@@ -95,6 +107,16 @@ export interface SnapshotPayload {
   availableAgents: string[];
   agents: Array<unknown>;
   models: Array<unknown>;
+}
+
+interface SessionInteractionCapabilitiesSnapshot {
+  readTranscript: boolean;
+  tailTranscript: boolean;
+  resume: boolean;
+  sendPrompt: boolean;
+  interrupt: boolean;
+  respondToPermissions: boolean;
+  modelOverride: boolean;
 }
 
 export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): SnapshotPayload {
@@ -128,6 +150,15 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
       repoBranch: git.repoBranch,
       repoSha: git.repoSha,
       resourceManifest: resolveManifest(workingDirectory),
+      capabilities: {
+        readTranscript: false,
+        tailTranscript: true,
+        resume: false,
+        sendPrompt: true,
+        interrupt: true,
+        respondToPermissions: true,
+        modelOverride: false,
+      },
     };
   });
 
@@ -148,9 +179,20 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
         agentId: s.agentId,
         directoryId,
         summary: s.summary,
+        nativeTitle: s.nativeTitle,
+        generatedTitle: s.generatedTitle,
+        displayTitle: s.displayTitle,
+        titleSource: s.titleSource,
+        firstPrompt: s.firstPrompt,
+        lastPrompt: s.lastPrompt,
+        latestModel: s.latestModel,
+        approvalPolicy: s.approvalPolicy,
+        sandboxMode: s.sandboxMode,
+        reasoningEffort: s.reasoningEffort,
         lastActivity: s.lastModified,
         messageCount: s.messageCount ?? 0,
         resumable: s.resumable,
+        capabilities: sessionCapabilitiesForDiscovered(s),
         workingDirectory,
         repoRoot: git.repoRoot,
         repoRemoteUrl: git.repoRemoteUrl,
@@ -217,6 +259,22 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
     availableAgents: daemon.getAvailableAgents(),
     agents,
     models,
+  };
+}
+
+function sessionCapabilitiesForDiscovered(input: {
+  resumable: boolean;
+  sourcePath?: string;
+  capabilities?: Partial<SessionInteractionCapabilitiesSnapshot>;
+}): SessionInteractionCapabilitiesSnapshot {
+  return {
+    readTranscript: input.capabilities?.readTranscript ?? Boolean(input.sourcePath),
+    tailTranscript: input.capabilities?.tailTranscript ?? Boolean(input.sourcePath),
+    resume: input.capabilities?.resume ?? input.resumable,
+    sendPrompt: input.capabilities?.sendPrompt ?? false,
+    interrupt: input.capabilities?.interrupt ?? false,
+    respondToPermissions: input.capabilities?.respondToPermissions ?? false,
+    modelOverride: input.capabilities?.modelOverride ?? input.resumable,
   };
 }
 

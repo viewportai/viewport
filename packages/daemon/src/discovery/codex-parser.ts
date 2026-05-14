@@ -8,6 +8,16 @@ export interface ParsedCodexSession {
   sessionId: string;
   cwd?: string;
   summary: string;
+  nativeTitle?: string;
+  generatedTitle?: string;
+  displayTitle?: string;
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  firstPrompt?: string;
+  lastPrompt?: string;
+  latestModel?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  reasoningEffort?: string;
   messageCount?: number;
   lastModified: number;
   sourcePath?: string;
@@ -40,17 +50,38 @@ async function parseJsonSession(filePath: string): Promise<ParsedCodexSession | 
   if (!rec) return null;
 
   const messages = readMessages(rec);
-  const summary =
-    firstMeaningfulUserSummary(messages) || cleanCodexSummary(guessSummary(rec)) || 'Codex session';
+  const firstPrompt = firstMeaningfulUserSummary(messages);
+  const lastPrompt = lastMeaningfulUserSummary(messages);
+  const nativeTitle = detectNativeTitle(rec);
+  const guessed = cleanCodexSummary(guessSummary(rec));
+  const summary = firstPrompt || guessed || nativeTitle || 'Codex session';
   const messageCount = messages.length || undefined;
   const sessionId = detectSessionId(rec) ?? path.basename(filePath, '.json');
   const cwd = detectCwd(rec);
   const lastModified = detectTimestamp(rec) ?? stat?.mtimeMs ?? Date.now();
+  const latestModel = detectLatestModel(rec);
+  const approvalPolicy = detectStringField(rec, ['approvalPolicy', 'approval_policy']);
+  const sandboxMode = detectStringField(rec, ['sandboxMode', 'sandbox_mode']);
+  const reasoningEffort = detectStringField(rec, [
+    'modelReasoningEffort',
+    'model_reasoning_effort',
+    'reasoningEffort',
+    'reasoning_effort',
+  ]);
 
   return {
     sessionId,
     cwd,
     summary,
+    nativeTitle,
+    displayTitle: nativeTitle || firstPrompt || guessed || 'Codex session',
+    titleSource: nativeTitle ? 'native' : firstPrompt ? 'first_prompt' : 'fallback',
+    firstPrompt: firstPrompt || undefined,
+    lastPrompt: lastPrompt || undefined,
+    latestModel,
+    approvalPolicy,
+    sandboxMode,
+    reasoningEffort,
     messageCount,
     lastModified,
     sourcePath: filePath,
@@ -65,6 +96,13 @@ async function parseJsonlSession(filePath: string): Promise<ParsedCodexSession |
 
   let sessionId: string | undefined;
   let cwd: string | undefined;
+  let nativeTitle: string | undefined;
+  let firstPrompt = '';
+  let lastPrompt = '';
+  let latestModel: string | undefined;
+  let approvalPolicy: string | undefined;
+  let sandboxMode: string | undefined;
+  let reasoningEffort: string | undefined;
   let summary = '';
   let messageCount = 0;
   let lastModified = 0;
@@ -82,13 +120,30 @@ async function parseJsonlSession(filePath: string): Promise<ParsedCodexSession |
 
     sessionId = sessionId ?? detectSessionId(rec);
     cwd = cwd ?? detectCwd(rec);
+    nativeTitle = detectNativeTitle(rec) ?? nativeTitle;
+    latestModel = detectLatestModel(rec) ?? latestModel;
+    approvalPolicy =
+      detectStringField(rec, ['approvalPolicy', 'approval_policy']) ?? approvalPolicy;
+    sandboxMode = detectStringField(rec, ['sandboxMode', 'sandbox_mode']) ?? sandboxMode;
+    reasoningEffort =
+      detectStringField(rec, [
+        'modelReasoningEffort',
+        'model_reasoning_effort',
+        'reasoningEffort',
+        'reasoning_effort',
+      ]) ?? reasoningEffort;
     lastModified = Math.max(lastModified, detectTimestamp(rec) ?? 0);
 
     const messages = readMessages(rec);
     for (const msg of messages) {
       messageCount += 1;
-      if (!summary && msg.role === 'user' && msg.text) {
-        summary = cleanCodexSummary(msg.text);
+      if (msg.role === 'user' && msg.text) {
+        const clean = cleanCodexSummary(msg.text);
+        if (clean) {
+          if (!firstPrompt) firstPrompt = clean;
+          lastPrompt = clean;
+          if (!summary) summary = clean;
+        }
       }
     }
 
@@ -104,11 +159,30 @@ async function parseJsonlSession(filePath: string): Promise<ParsedCodexSession |
   return {
     sessionId,
     cwd,
-    summary: summary || 'Codex session',
+    summary: summary || nativeTitle || 'Codex session',
+    nativeTitle,
+    displayTitle: nativeTitle || firstPrompt || summary || 'Codex session',
+    titleSource: nativeTitle ? 'native' : firstPrompt ? 'first_prompt' : 'fallback',
+    firstPrompt: firstPrompt || undefined,
+    lastPrompt: lastPrompt || undefined,
+    latestModel,
+    approvalPolicy,
+    sandboxMode,
+    reasoningEffort,
     messageCount: messageCount || undefined,
     lastModified: lastModified || stat?.mtimeMs || Date.now(),
     sourcePath: filePath,
   };
+}
+
+function lastMeaningfulUserSummary(messages: Array<{ role: string; text: string }>): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const msg = messages[index];
+    if (!msg || msg.role !== 'user') continue;
+    const clean = cleanCodexSummary(msg.text);
+    if (clean) return clean;
+  }
+  return '';
 }
 
 function detectSessionId(rec: Record<string, unknown>): string | undefined {
@@ -142,6 +216,59 @@ function detectCwd(rec: Record<string, unknown>): string | undefined {
     if (!nestedRec) continue;
     const candidate = detectCwd(nestedRec);
     if (candidate) return candidate;
+  }
+  return undefined;
+}
+
+function detectNativeTitle(rec: Record<string, unknown>): string | undefined {
+  const payload = toRecord(rec['payload']);
+  const candidates = [
+    rec['thread_name'],
+    rec['threadName'],
+    rec['customTitle'],
+    rec['title'],
+    payload?.['thread_name'],
+    payload?.['threadName'],
+    payload?.['customTitle'],
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const clean = cleanCodexSummary(candidate);
+      if (clean) return clean;
+    }
+  }
+  return undefined;
+}
+
+function detectLatestModel(rec: Record<string, unknown>): string | undefined {
+  const payload = toRecord(rec['payload']);
+  const candidates = [
+    rec['model'],
+    rec['modelId'],
+    rec['model_id'],
+    payload?.['model'],
+    payload?.['modelId'],
+    payload?.['model_id'],
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  const provider =
+    typeof payload?.['provider_id'] === 'string' ? payload['provider_id'] : undefined;
+  const model = typeof payload?.['model_id'] === 'string' ? payload['model_id'] : undefined;
+  if (provider && model) return `${provider}/${model}`;
+  return undefined;
+}
+
+function detectStringField(rec: Record<string, unknown>, names: string[]): string | undefined {
+  const payload = toRecord(rec['payload']);
+  const nested = [rec, payload, toRecord(payload?.['config']), toRecord(payload?.['settings'])];
+  for (const source of nested) {
+    if (!source) continue;
+    for (const name of names) {
+      const value = source[name];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
   }
   return undefined;
 }
@@ -198,9 +325,19 @@ function readMessages(rec: Record<string, unknown>): Array<{ role: string; text:
 function readCodexEnvelopeMessages(
   rec: Record<string, unknown>,
 ): Array<{ role: string; text: string }> {
-  if (rec['type'] !== 'response_item') return [];
   const payload = toRecord(rec['payload']);
   if (!payload) return [];
+  if (rec['type'] === 'event_msg') {
+    if (payload['type'] === 'user_message') {
+      const text = extractText(payload['message']);
+      return text ? [{ role: 'user', text }] : [];
+    }
+    if (payload['type'] === 'agent_message' || payload['type'] === 'assistant_message') {
+      const text = extractText(payload['message'] ?? payload['text']);
+      return text ? [{ role: 'assistant', text }] : [];
+    }
+  }
+  if (rec['type'] !== 'response_item') return [];
   if (payload['type'] !== 'message') return [];
 
   const role = typeof payload['role'] === 'string' ? payload['role'] : 'assistant';

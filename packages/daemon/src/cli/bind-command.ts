@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
+import { activeProfileName } from '../core/profiles.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
@@ -34,21 +35,24 @@ export async function bind(): Promise<void> {
   }
 
   const current = resolveLocalOrgBindingSync(directory);
-  const replacing = current && current.organizationId !== orgId;
+  const profileName = activeProfileName() ?? 'default';
+  const replacing =
+    current && (current.organizationId !== orgId || current.profileName !== profileName);
   const force = hasFlag('yes') || hasFlag('force');
   if (replacing && !force) {
     throw new Error(
-      `Directory is already bound to ${current.organizationId}. Re-run with --yes to replace it with ${orgId}.`,
+      `Directory is already bound to ${current.organizationId} using profile "${current.profileName}". Re-run with --yes to replace it with ${orgId} using profile "${profileName}".`,
     );
   }
 
-  const binding = await writeLocalOrgBinding({ directory, organizationId: orgId });
+  const binding = await writeLocalOrgBinding({ directory, organizationId: orgId, profileName });
   const payload = {
     command: 'bind',
     ok: true,
     directory: binding.directory,
     localConfig: binding.filePath,
     organizationId: binding.organizationId,
+    profileName: binding.profileName,
     streamEnabled: binding.streamEnabled,
     replaced: Boolean(replacing),
     hint: hint
@@ -66,6 +70,7 @@ export async function bind(): Promise<void> {
   }
 
   console.log(`Bound ${binding.directory} to ${binding.organizationId}.`);
+  console.log(`Profile: ${binding.profileName}`);
   console.log(`Local config: ${binding.filePath}`);
   console.log('Remote streaming is enabled for this directory and its children.');
   console.log(`Gitignored local binding: ${localBindingPath(binding.directory)}`);

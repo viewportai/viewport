@@ -103,6 +103,68 @@ For user-level systemd service auto-start after reboot, enable linger once:
 sudo loginctl enable-linger "$USER"
 ```
 
+## Profiles
+
+Profiles isolate daemon environments on one machine. Use them when switching
+between local development and production, or when demoing multiple users from
+separate terminals.
+
+Fresh managed installs create and select `prod` during `vpd setup`, so ordinary
+users can install and pair without learning this command surface.
+
+```bash
+vpd profile create local --copy-current --server https://api.getviewport.test --app-url https://app.getviewport.test --relay wss://relay.getviewport.test:7781/ws
+vpd profile create prod --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws
+vpd profile use prod
+vpd profile status
+```
+
+Profile state lives in `~/.viewport/profiles/<name>`. That includes the config,
+auth token, pairing state, keys, relay identity, and runtime stores. The base
+`~/.viewport` home keeps only the profile registry and current-profile pointer
+once you move to named profiles.
+
+`vpd profile use <name>` and `vpd use <name>` change the machine default. This
+is shared by new shells. For one terminal or one command, use scoped profile
+execution:
+
+```bash
+eval "$(vpd profile env prod)"
+VPD_PROFILE=prod vpd status
+vpd --profile prod status
+vpd profile doctor prod
+```
+
+`vpd start --profile local|lan|relay` still controls the daemon network
+exposure mode. Put daemon profile flags before the command, or use
+`VPD_PROFILE`, to avoid ambiguity.
+
+Multiple daemons:
+
+```bash
+vpd profile create prod-user-1 --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws --listen 127.0.0.1:7071
+vpd profile create prod-user-2 --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws --listen 127.0.0.1:7072
+vpd profile start prod-user-1
+vpd profile start prod-user-2
+vpd profile ps
+```
+
+Each running profile owns a separate supervisor/owner process, worker process,
+state file, auth token, and key store. The OS service manages the currently
+selected default profile; for multi-profile demos, start profiles explicitly.
+
+Repo bindings include the active profile:
+
+```bash
+cd /path/to/repo
+vpd bind .
+```
+
+The generated `.viewport/local.yaml` is gitignored and includes
+`profile: <name>`. Relay streaming is allowed only when both the organization
+and active daemon profile match. This prevents a repo bound in local development
+from accidentally streaming to production after `vpd profile use prod`.
+
 ## Quality gates
 
 ```bash
@@ -112,6 +174,19 @@ npm run format:check
 npm run test
 npm run check
 ```
+
+## Package operations
+
+```bash
+vpd upgrade --restart
+vpd uninstall --yes
+vpd uninstall --yes --purge-home
+```
+
+`upgrade` installs the latest global `@viewportai/daemon` package. `uninstall`
+stops known profile daemons, removes the user service when present, and removes
+the global package. It does not remove `~/.viewport` unless `--purge-home` is
+explicitly passed.
 
 ## Testing Setup Flow
 

@@ -244,6 +244,12 @@ function normalizeContextProviders(
         ? { credentialRef: provider.credential_ref ?? provider.credentialRef }
         : {}),
       ...(provider.vault ? { vault: provider.vault } : {}),
+      ...(provider.use_when || provider.useWhen
+        ? { useWhen: provider.use_when ?? provider.useWhen }
+        : {}),
+      ...(provider.update_when || provider.updateWhen
+        ? { updateWhen: provider.update_when ?? provider.updateWhen }
+        : {}),
       ...(provider.paths ? { paths: provider.paths } : {}),
       ...(provider.notebook ? { notebook: provider.notebook } : {}),
       ...(provider.command ? { command: provider.command } : {}),

@@ -154,6 +154,23 @@ export interface SessionDiscovery {
   discoverSessions(projectPath: string): Promise<DiscoveredSession[]>;
 }
 
+export interface SessionInteractionCapabilities {
+  /** Transcript/history can be read from the owning machine. */
+  readTranscript: boolean;
+  /** Transcript tail updates can be streamed while the source file changes. */
+  tailTranscript: boolean;
+  /** The provider can resume this session by id. */
+  resume: boolean;
+  /** The daemon can send a new prompt to the running session. */
+  sendPrompt: boolean;
+  /** The daemon can interrupt the running session. */
+  interrupt: boolean;
+  /** Pending permission requests can be answered through Viewport. */
+  respondToPermissions: boolean;
+  /** Resume accepts a model override. */
+  modelOverride: boolean;
+}
+
 export interface DiscoveredSession {
   /** Source agent that owns this session (e.g. 'claude', 'codex', 'gemini'). */
   agentId: string;
@@ -161,6 +178,26 @@ export interface DiscoveredSession {
   sessionId: string;
   /** First user prompt or summary. */
   summary: string;
+  /** Provider-native user-facing title, when the agent stores one. */
+  nativeTitle?: string;
+  /** Viewport-generated fallback title, when no provider-native title exists. */
+  generatedTitle?: string;
+  /** Title the UI should render. */
+  displayTitle?: string;
+  /** Where displayTitle came from. */
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  /** First meaningful user prompt, excluding injected environment/context metadata. */
+  firstPrompt?: string;
+  /** Last meaningful user prompt, excluding injected environment/context metadata. */
+  lastPrompt?: string;
+  /** Latest known provider/model label. */
+  latestModel?: string;
+  /** Latest known provider approval policy. */
+  approvalPolicy?: string;
+  /** Latest known sandbox mode. */
+  sandboxMode?: string;
+  /** Latest known reasoning effort or thinking mode. */
+  reasoningEffort?: string;
   /** Last modified timestamp (ms since epoch). */
   lastModified: number;
   /** Working directory for the session. */
@@ -169,6 +206,8 @@ export interface DiscoveredSession {
   gitBranch?: string;
   /** Whether this session can be resumed. */
   resumable: boolean;
+  /** Explicit interaction capabilities for this session. */
+  capabilities?: SessionInteractionCapabilities;
   /** Number of messages in the session. */
   messageCount?: number;
   /** Optional source file backing this discovered session. */

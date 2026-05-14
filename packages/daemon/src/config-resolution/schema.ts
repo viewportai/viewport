@@ -57,6 +57,10 @@ const ContextProviderSchema = z
     credentialRef: CredentialRefSchema.optional(),
     paths: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
     vault: z.string().trim().min(1).max(256).optional(),
+    use_when: z.string().trim().min(1).max(5000).optional(),
+    useWhen: z.string().trim().min(1).max(5000).optional(),
+    update_when: z.string().trim().min(1).max(5000).optional(),
+    updateWhen: z.string().trim().min(1).max(5000).optional(),
     notebook: z.string().trim().min(1).max(256).optional(),
     command: z.string().trim().min(1).max(512).optional(),
   })

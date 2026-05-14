@@ -24,6 +24,7 @@ import {
   resolvePackageSourceInfo,
 } from '../core/package-meta.js';
 import { resolveLocalOrgBindingSync, resolveWorkspaceOrgHintSync } from './org-binding.js';
+import { activeProfileInfo } from '../core/profiles.js';
 
 interface RelayBindingStatusView {
   workspaceId?: string;
@@ -113,6 +114,7 @@ export async function status(): Promise<void> {
   });
   const cwdBinding = resolveLocalOrgBindingSync(process.cwd());
   const cwdHint = resolveWorkspaceOrgHintSync(process.cwd());
+  const daemonProfile = activeProfileInfo();
   const configPaths = manager.getConfigPaths();
   let latestCliVersion = 'skipped';
   let updateStatus = 'skipped (use --check-updates)';
@@ -139,6 +141,7 @@ export async function status(): Promise<void> {
     status: statusValue,
     endpoint: url,
     home: configDir(),
+    daemonProfile,
     ownerPid: state?.ownerPid ?? null,
     workerPid: state?.workerPid ?? health?.pid ?? null,
     owner,
@@ -170,8 +173,10 @@ export async function status(): Promise<void> {
       ? {
           directory: cwdBinding.directory,
           organizationId: cwdBinding.organizationId,
+          profileName: cwdBinding.profileName,
           streamEnabled: cwdBinding.streamEnabled,
           matchesActiveOrg: activeRelayWorkspaceIds.has(cwdBinding.organizationId),
+          matchesActiveProfile: cwdBinding.profileName === (daemonProfile.name ?? 'default'),
         }
       : null,
     cwdHint: cwdHint
@@ -219,6 +224,9 @@ export async function status(): Promise<void> {
   console.log(`Status:      ${payload.status}`);
   console.log(
     `Runtime:     ${formatRuntimeKindLabel(payload.runtimeKind)} (${payload.daemonHomeScope})`,
+  );
+  console.log(
+    `VPD profile: ${payload.daemonProfile.name ?? 'default'} (${payload.daemonProfile.source})`,
   );
   console.log(`Home:        ${formatDaemonHomeLabel(runtimeIdentity)}`);
   console.log(`Listen:      ${payload.listen}`);

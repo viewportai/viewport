@@ -129,6 +129,109 @@ describe('CodexDiscovery', () => {
     await fs.rm(projectPath, { recursive: true, force: true });
   });
 
+  it('prefers Codex native thread names and captures session settings', async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-title-project-'));
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '22');
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    const filePath = path.join(sessionsDir, 'rollout-native-title.jsonl');
+    await fs.writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-22T17:07:37.196Z',
+          type: 'session_meta',
+          payload: {
+            id: 'codex-native-title',
+            cwd: projectPath,
+            thread_name: 'Multi DB Migration Plan',
+            model: 'gpt-5.3-codex',
+            approval_policy: 'on-request',
+            sandbox_mode: 'workspace-write',
+            model_reasoning_effort: 'high',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-22T17:07:37.198Z',
+          type: 'event_msg',
+          payload: { type: 'user_message', message: 'plan a database tenancy migration' },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-22T17:07:38.198Z',
+          type: 'event_msg',
+          payload: {
+            type: 'thread_name_updated',
+            thread_id: 'codex-native-title',
+            thread_name: 'Tenant Database Cutover',
+          },
+        }),
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const discovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
+    const sessions = await discovery.discoverSessions(projectPath);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      nativeTitle: 'Tenant Database Cutover',
+      displayTitle: 'Tenant Database Cutover',
+      titleSource: 'native',
+      firstPrompt: 'plan a database tenancy migration',
+      latestModel: 'gpt-5.3-codex',
+      approvalPolicy: 'on-request',
+      sandboxMode: 'workspace-write',
+      reasoningEffort: 'high',
+    });
+
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it('uses Codex session_index thread names when rollout history has no title event', async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-index-project-'));
+    const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '23');
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    await fs.writeFile(
+      path.join(tempHome, 'session_index.jsonl'),
+      JSON.stringify({
+        id: 'codex-index-title',
+        thread_name: 'Indexed Codex Session Name',
+        updated_at: '2026-04-23T17:00:00Z',
+      }) + '\n',
+      'utf-8',
+    );
+    await fs.writeFile(
+      path.join(sessionsDir, 'rollout-index-title.jsonl'),
+      [
+        JSON.stringify({
+          timestamp: '2026-04-23T17:07:37.196Z',
+          type: 'session_meta',
+          payload: { id: 'codex-index-title', cwd: projectPath },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-23T17:07:37.198Z',
+          type: 'event_msg',
+          payload: { type: 'user_message', message: 'fallback prompt' },
+        }),
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const discovery = new CodexDiscovery({ parsedCacheReuseMs: 0 });
+    const sessions = await discovery.discoverSessions(projectPath);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      nativeTitle: 'Indexed Codex Session Name',
+      displayTitle: 'Indexed Codex Session Name',
+      titleSource: 'native',
+      firstPrompt: 'fallback prompt',
+    });
+
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
   it('does not use injected environment metadata as the session summary', async () => {
     const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-project-jsonl-'));
     const sessionsDir = path.join(codexSessionsDir(), '2026', '04', '19');

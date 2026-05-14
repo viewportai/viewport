@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createOrgRoutingFilter } from '../../src/relay/bridge-org-routing-filter.js';
 
 describe('relay bridge organization routing filter', () => {
+  const originalViewportProfile = process.env['VIEWPORT_PROFILE'];
   let allowedDir = '';
   let blockedDir = '';
   let hintOnlyDir = '';
@@ -15,6 +16,7 @@ describe('relay bridge organization routing filter', () => {
     blockedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-blocked-'));
     hintOnlyDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-hint-only-'));
     disabledDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-disabled-'));
+    delete process.env['VIEWPORT_PROFILE'];
     await fs.mkdir(path.join(allowedDir, '.viewport'), { recursive: true });
     await fs.writeFile(
       path.join(allowedDir, '.viewport/local.yaml'),
@@ -37,6 +39,8 @@ describe('relay bridge organization routing filter', () => {
     await fs.rm(blockedDir, { recursive: true, force: true });
     await fs.rm(hintOnlyDir, { recursive: true, force: true });
     await fs.rm(disabledDir, { recursive: true, force: true });
+    if (originalViewportProfile) process.env['VIEWPORT_PROFILE'] = originalViewportProfile;
+    else delete process.env['VIEWPORT_PROFILE'];
   });
 
   it('filters hello payloads down to directories bound to the active organization', () => {
@@ -172,6 +176,37 @@ describe('relay bridge organization routing filter', () => {
       path.join(allowedDir, '.viewport/local.yaml'),
       'version: 1\norganization_id: 01OTHER\nremote:\n  stream: enabled\n',
     );
+
+    expect(
+      filter.filter(
+        JSON.stringify({
+          type: 'session-update',
+          sessionId: 'session_allowed',
+          update: { updateType: 'state-change' },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('cuts a pinned session if the active daemon profile changes away from the repo binding', async () => {
+    process.env['VIEWPORT_PROFILE'] = 'prod';
+    await fs.writeFile(
+      path.join(allowedDir, '.viewport/local.yaml'),
+      'version: 1\norganization_id: 01ORG\nprofile: prod\nremote:\n  stream: enabled\n',
+    );
+    const filter = createOrgRoutingFilter({ organizationId: '01ORG' });
+    filter.filter(
+      JSON.stringify({
+        type: 'hello',
+        directories: [{ id: 'allowed', path: allowedDir }],
+        activeSessions: [
+          { id: 'session_allowed', directoryId: 'allowed', workingDirectory: allowedDir },
+        ],
+        discoveredSessions: [],
+      }),
+    );
+
+    process.env['VIEWPORT_PROFILE'] = 'local';
 
     expect(
       filter.filter(

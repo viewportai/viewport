@@ -7,6 +7,7 @@ import YAML from 'yaml';
 describe('bind CLI command', () => {
   const originalArgv = process.argv.slice();
   const originalViewportHome = process.env['VIEWPORT_HOME'];
+  const originalViewportProfile = process.env['VIEWPORT_PROFILE'];
   const originalCwd = process.cwd();
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -19,6 +20,7 @@ describe('bind CLI command', () => {
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-bind-home-'));
     repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-bind-repo-'));
     process.env['VIEWPORT_HOME'] = homeDir;
+    delete process.env['VIEWPORT_PROFILE'];
     process.chdir(repoDir);
   });
 
@@ -27,6 +29,8 @@ describe('bind CLI command', () => {
     process.chdir(originalCwd);
     if (originalViewportHome) process.env['VIEWPORT_HOME'] = originalViewportHome;
     else delete process.env['VIEWPORT_HOME'];
+    if (originalViewportProfile) process.env['VIEWPORT_PROFILE'] = originalViewportProfile;
+    else delete process.env['VIEWPORT_PROFILE'];
     await fs.rm(homeDir, { recursive: true, force: true });
     await fs.rm(repoDir, { recursive: true, force: true });
   });
@@ -47,6 +51,7 @@ describe('bind CLI command', () => {
 
     const local = YAML.parse(await fs.readFile(path.join(repoDir, '.viewport/local.yaml'), 'utf8'));
     expect(local.organization_id).toBe('01ORG');
+    expect(local.profile).toBe('default');
     expect(local.remote.stream).toBe('enabled');
     await expect(
       fs.readFile(path.join(repoDir, '.viewport/.gitignore'), 'utf8'),
@@ -80,6 +85,32 @@ describe('bind CLI command', () => {
     process.argv = ['node', 'vpd', 'bind', '.', '--org', '01SECOND', '--json'];
     const { bind: bindAgain } = await import('../../src/cli/bind-command.js');
     await expect(bindAgain()).rejects.toThrow('Re-run with --yes');
+  });
+
+  it('records and enforces the active daemon profile on repo bindings', async () => {
+    process.env['VIEWPORT_PROFILE'] = 'prod';
+    process.argv = ['node', 'vpd', 'bind', '.', '--org', '01ORG', '--json'];
+
+    const { bind } = await import('../../src/cli/bind-command.js');
+    await bind();
+
+    const local = YAML.parse(await fs.readFile(path.join(repoDir, '.viewport/local.yaml'), 'utf8'));
+    expect(local.profile).toBe('prod');
+
+    const { directoryStreamsToOrganization } = await import('../../src/cli/org-binding.js');
+    expect(directoryStreamsToOrganization({ directory: repoDir, organizationId: '01ORG' })).toBe(
+      true,
+    );
+
+    process.env['VIEWPORT_PROFILE'] = 'local';
+    expect(directoryStreamsToOrganization({ directory: repoDir, organizationId: '01ORG' })).toBe(
+      false,
+    );
+
+    vi.resetModules();
+    process.argv = ['node', 'vpd', 'bind', '.', '--org', '01ORG', '--json'];
+    const { bind: bindAgain } = await import('../../src/cli/bind-command.js');
+    await expect(bindAgain()).rejects.toThrow('using profile "prod"');
   });
 
   it('records declined workspace hints as gitignored local-only state', async () => {

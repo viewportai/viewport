@@ -61,10 +61,16 @@ describe('parseJSONLEntry', () => {
     expect(parseJSONLEntry(true)).toEqual([]);
   });
 
-  it('returns empty for non-user/assistant type', () => {
-    expect(parseJSONLEntry({ type: 'progress', data: {} })).toEqual([]);
-    expect(parseJSONLEntry({ type: 'system', data: {} })).toEqual([]);
-    expect(parseJSONLEntry({ type: 'file-history-snapshot' })).toEqual([]);
+  it('surfaces unknown provider events instead of silently dropping them', () => {
+    expect(parseJSONLEntry({ type: 'progress', data: {} })).toMatchObject([
+      { kind: 'event', title: 'Provider event: progress', tone: 'muted' },
+    ]);
+    expect(parseJSONLEntry({ type: 'system', data: {} })).toMatchObject([
+      { kind: 'event', title: 'Provider event: system', tone: 'muted' },
+    ]);
+    expect(parseJSONLEntry({ type: 'file-history-snapshot' })).toMatchObject([
+      { kind: 'event', title: 'Provider event: file-history-snapshot', tone: 'muted' },
+    ]);
   });
 
   it('returns empty for entry without message', () => {
@@ -134,11 +140,10 @@ describe('parseJSONLEntry', () => {
     };
     const blocks = parseJSONLEntry(entry);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.kind).toBe('tool_use');
-    if (blocks[0]!.kind === 'tool_use') {
-      expect(blocks[0]!.toolName).toBe('Edit');
-      expect(blocks[0]!.toolId).toBe('tu-1');
-      expect(blocks[0]!.input).toEqual({ file_path: '/test.ts' });
+    expect(blocks[0]!.kind).toBe('file_change');
+    if (blocks[0]!.kind === 'file_change') {
+      expect(blocks[0]!.path).toBe('/test.ts');
+      expect(blocks[0]!.operation).toBe('Edit');
     }
   });
 
@@ -225,7 +230,7 @@ describe('parseJSONLEntry', () => {
     expect(blocks).toHaveLength(3);
     expect(blocks[0]!.kind).toBe('thinking');
     expect(blocks[1]!.kind).toBe('text');
-    expect(blocks[2]!.kind).toBe('tool_use');
+    expect(blocks[2]!.kind).toBe('file_change');
   });
 
   it('skips empty text blocks', () => {
@@ -511,7 +516,10 @@ describe('readRichSessionMessagesTailFromFile', () => {
         chunkSize: 64,
         maxBytes: 512,
       });
-      expect(blocks).toEqual([]);
+      expect(
+        blocks.some((block) => block.kind === 'text' && block.text === 'outside the scan budget'),
+      ).toBe(false);
+      expect(blocks.every((block) => block.kind === 'event')).toBe(true);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

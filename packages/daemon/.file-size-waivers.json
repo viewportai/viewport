@@ -9,6 +9,7 @@
     "src/core/config.ts",
     "src/core/session-manager.ts",
     "src/discovery/jsonl-reader.ts",
+    "src/discovery/jsonl-entry-parser.ts",
     "src/hooks/trusted-edge-plan-artifacts.ts",
     "src/relay/bridge-noise-v3.ts",
     "src/relay/daemon-relay-bridge.ts",
@@ -23,6 +24,7 @@
     "src/server/ws-protocol.ts",
     "src/server/ws-command-handlers.ts",
     "src/server/ws-daemon-event-bridge.ts",
+    "src/server/ws-session-command-handlers.ts",
     "src/server/ws-server.ts",
     "src/startup.ts",
     "src/tracking/git-tracker.ts"

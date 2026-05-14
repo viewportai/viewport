@@ -1,6 +1,49 @@
 export type RichSessionMessage =
   | { kind: 'text'; role: 'user' | 'assistant'; text: string; ts: string; uuid: string }
   | {
+      kind: 'command';
+      command: string;
+      cwd?: string;
+      status: 'started' | 'completed';
+      exitCode?: number | null;
+      output?: string;
+      durationMs?: number | null;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'file_change';
+      path?: string;
+      diff?: string;
+      operation?: string;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'approval';
+      title: string;
+      body: string;
+      input?: Record<string, unknown>;
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'event';
+      title: string;
+      body: string;
+      tone?: 'default' | 'success' | 'warning' | 'danger' | 'muted';
+      ts: string;
+      uuid: string;
+    }
+  | {
+      kind: 'usage';
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+      ts: string;
+      uuid: string;
+    }
+  | {
       kind: 'tool_use';
       toolName: string;
       toolId: string;
@@ -34,7 +77,14 @@ export function parseJSONLEntry(entry: unknown): RichSessionMessage[] {
   if (typeof entry !== 'object' || entry === null) return [];
 
   const e = entry as Record<string, unknown>;
-  return parseClaudeEntry(e) ?? parseCodexEntry(e) ?? parseCodexCompactedEntry(e) ?? [];
+  return (
+    parseClaudeEntry(e) ??
+    parseCodexEventMsgEntry(e) ??
+    parseCodexEntry(e) ??
+    parseCodexCompactedEntry(e) ??
+    parseProviderMetadataEntry(e) ??
+    []
+  );
 }
 
 function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
@@ -52,7 +102,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
   // Simple string content → single text block
   if (typeof content === 'string') {
     if (content) {
-      blocks.push({ kind: 'text', role: type, text: content, ts, uuid });
+      blocks.push(...mapClaudeTextToRichBlocks(type, content, ts, uuid));
     }
     return blocks;
   }
@@ -62,7 +112,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
   for (const block of content) {
     if (typeof block === 'string') {
       if (block) {
-        blocks.push({ kind: 'text', role: type, text: block, ts, uuid });
+        blocks.push(...mapClaudeTextToRichBlocks(type, block, ts, uuid));
       }
       continue;
     }
@@ -74,7 +124,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
     switch (blockType) {
       case 'text':
         if (typeof b.text === 'string' && b.text) {
-          blocks.push({ kind: 'text', role: type, text: b.text, ts, uuid });
+          blocks.push(...mapClaudeTextToRichBlocks(type, b.text, ts, uuid));
         }
         break;
 
@@ -85,17 +135,18 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
         break;
 
       case 'tool_use':
-        blocks.push({
-          kind: 'tool_use',
-          toolName: (b.name as string) || 'unknown',
-          toolId: (b.id as string) || '',
-          input:
-            typeof b.input === 'object' && b.input !== null
-              ? (b.input as Record<string, unknown>)
-              : {},
-          ts,
-          uuid,
-        });
+        blocks.push(
+          ...mapClaudeToolUseToRichBlocks({
+            toolName: (b.name as string) || 'unknown',
+            toolId: (b.id as string) || '',
+            input:
+              typeof b.input === 'object' && b.input !== null
+                ? (b.input as Record<string, unknown>)
+                : {},
+            ts,
+            uuid,
+          }),
+        );
         break;
 
       case 'tool_result': {
@@ -103,12 +154,220 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
         const isError = b.is_error === true;
         const output = extractToolResultContent(b.content);
         blocks.push({ kind: 'tool_result', toolId, output, isError, ts, uuid });
+        blocks.push(...viewportCliEventsFromOutput(output, ts, `${uuid || toolId}-viewport-cli`));
         break;
       }
     }
   }
 
   return blocks;
+}
+
+function mapClaudeTextToRichBlocks(
+  role: 'user' | 'assistant',
+  text: string,
+  ts: string,
+  uuid: string,
+): RichSessionMessage[] {
+  if (role === 'user') {
+    const localCommandBlocks = claudeLocalCommandEventsFromText(text, ts, uuid);
+    if (localCommandBlocks) return localCommandBlocks;
+  }
+  return [
+    { kind: 'text', role, text, ts, uuid },
+    ...viewportPlanEventsFromText(text, ts, `${uuid}-viewport-plan`),
+  ];
+}
+
+function claudeLocalCommandEventsFromText(
+  text: string,
+  ts: string,
+  uuid: string,
+): RichSessionMessage[] | null {
+  if (!isClaudeLocalCommandText(text)) return null;
+  if (/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/i.test(text)) return [];
+
+  const commandName = taggedText(text, 'command-name');
+  if (commandName) {
+    const slashCommand = commandName.startsWith('/') ? commandName : `/${commandName}`;
+    const commandMessage = taggedText(text, 'command-message') || commandName;
+    const commandArgs = taggedText(text, 'command-args');
+    return [
+      {
+        kind: 'event',
+        title: `Claude command: ${slashCommand}`,
+        body: [commandMessage, commandArgs ? `args ${commandArgs}` : null]
+          .filter(Boolean)
+          .join('\n'),
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:local-command:${commandName}`,
+      },
+    ];
+  }
+
+  const stdout = taggedText(text, 'local-command-stdout');
+  if (stdout) {
+    return [
+      {
+        kind: 'event',
+        title: 'Claude command output',
+        body: stdout,
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:local-command-stdout`,
+      },
+    ];
+  }
+
+  const stderr = taggedText(text, 'local-command-stderr');
+  if (stderr) {
+    return [
+      {
+        kind: 'event',
+        title: 'Claude command warning',
+        body: stderr,
+        tone: 'warning',
+        ts,
+        uuid: `${uuid}:local-command-stderr`,
+      },
+    ];
+  }
+
+  const taskNotification = taggedText(text, 'task-notification');
+  if (taskNotification) {
+    return [
+      {
+        kind: 'event',
+        title: 'Claude task notification',
+        body: taskNotification,
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:task-notification`,
+      },
+    ];
+  }
+
+  const teammateMessage = taggedText(text, 'teammate-message');
+  if (teammateMessage) {
+    return [
+      {
+        kind: 'event',
+        title: 'Teammate message',
+        body: teammateMessage,
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:teammate-message`,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function mapClaudeToolUseToRichBlocks(input: {
+  toolName: string;
+  toolId: string;
+  input: Record<string, unknown>;
+  ts: string;
+  uuid: string;
+}): RichSessionMessage[] {
+  if (input.toolName === 'Bash') {
+    const command = typeof input.input.command === 'string' ? input.input.command.trim() : '';
+    if (command) {
+      return [
+        {
+          kind: 'command',
+          command,
+          cwd: typeof input.input.cwd === 'string' ? input.input.cwd : undefined,
+          status: 'started',
+          ts: input.ts,
+          uuid: input.toolId || input.uuid,
+        },
+      ];
+    }
+  }
+
+  if (input.toolName === 'Agent') {
+    const subagentType =
+      typeof input.input.subagent_type === 'string' ? input.input.subagent_type.trim() : '';
+    const description =
+      typeof input.input.description === 'string' ? input.input.description.trim() : '';
+    const prompt = typeof input.input.prompt === 'string' ? input.input.prompt.trim() : '';
+    return [
+      {
+        kind: 'event',
+        title: `Subagent started${subagentType ? `: ${subagentType}` : ''}`,
+        body: [description, prompt ? firstLine(prompt) : null].filter(Boolean).join('\n'),
+        tone: 'muted',
+        ts: input.ts,
+        uuid: input.toolId || input.uuid,
+      },
+    ];
+  }
+
+  if (input.toolName.startsWith('Task')) {
+    const subject =
+      typeof input.input.task_subject === 'string'
+        ? input.input.task_subject.trim()
+        : typeof input.input.subject === 'string'
+          ? input.input.subject.trim()
+          : '';
+    const description =
+      typeof input.input.task_description === 'string'
+        ? input.input.task_description.trim()
+        : typeof input.input.description === 'string'
+          ? input.input.description.trim()
+          : '';
+    return [
+      {
+        kind: 'event',
+        title: subject ? `${input.toolName}: ${subject}` : `Claude task: ${input.toolName}`,
+        body: description || safeJsonPreview(input.input),
+        tone: input.toolName === 'TaskCompleted' ? 'success' : 'muted',
+        ts: input.ts,
+        uuid: input.toolId || input.uuid,
+      },
+    ];
+  }
+
+  if (isClaudeFileMutationTool(input.toolName)) {
+    const filePath =
+      typeof input.input.file_path === 'string'
+        ? input.input.file_path
+        : typeof input.input.path === 'string'
+          ? input.input.path
+          : undefined;
+    return [
+      {
+        kind: 'file_change',
+        path: filePath,
+        operation: input.toolName,
+        ts: input.ts,
+        uuid: input.toolId || input.uuid,
+      },
+    ];
+  }
+
+  return [
+    {
+      kind: 'tool_use',
+      toolName: input.toolName,
+      toolId: input.toolId,
+      input: input.input,
+      ts: input.ts,
+      uuid: input.uuid,
+    },
+  ];
+}
+
+function isClaudeFileMutationTool(toolName: string): boolean {
+  return (
+    toolName === 'Edit' ||
+    toolName === 'Write' ||
+    toolName === 'MultiEdit' ||
+    toolName === 'NotebookEdit'
+  );
 }
 
 function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
@@ -135,6 +394,7 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
       const text = content.trim();
       if (text) {
         messageBlocks.push({ kind: 'text', role, text, ts, uuid: baseUuid });
+        messageBlocks.push(...viewportPlanEventsFromText(text, ts, `${baseUuid}-viewport-plan`));
       }
       return messageBlocks;
     }
@@ -154,6 +414,7 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
         ts,
         uuid: `${baseUuid}-${i}`,
       });
+      messageBlocks.push(...viewportPlanEventsFromText(text, ts, `${baseUuid}-${i}-viewport-plan`));
     }
     return messageBlocks;
   }
@@ -190,6 +451,11 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
         ts,
         uuid: codexUuid(payload, ts, 'tool-result'),
       },
+      ...viewportCliEventsFromOutput(
+        output,
+        ts,
+        `${codexUuid(payload, ts, 'tool-result')}-viewport-cli`,
+      ),
     ];
   }
 
@@ -206,7 +472,151 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
     ];
   }
 
-  return [];
+  return [
+    {
+      kind: 'event',
+      title: `Provider item: ${itemType || 'unknown'}`,
+      body: safeJsonPreview(payload),
+      tone: 'muted',
+      ts,
+      uuid: codexUuid(payload, ts, 'item'),
+    },
+  ];
+}
+
+function parseCodexEventMsgEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
+  if (e.type !== 'event_msg') return null;
+  const payload =
+    typeof e.payload === 'object' && e.payload !== null
+      ? (e.payload as Record<string, unknown>)
+      : null;
+  if (!payload) return [];
+
+  const ts = timestampFromEntry(e, payload);
+  const itemType = payload.type as string;
+  const uuid = codexUuid(payload, ts, itemType || 'event');
+
+  if (itemType === 'user_message') {
+    const text = extractText(payload.message ?? payload.text);
+    return text ? [{ kind: 'text', role: 'user', text, ts, uuid }] : [];
+  }
+
+  if (itemType === 'agent_message' || itemType === 'assistant_message') {
+    const text = extractText(payload.message ?? payload.text);
+    return text
+      ? [
+          { kind: 'text', role: 'assistant', text, ts, uuid },
+          ...viewportPlanEventsFromText(text, ts, `${uuid}-viewport-plan`),
+        ]
+      : [];
+  }
+
+  if (itemType === 'agent_message_delta' || itemType === 'agent_message_content_delta') {
+    const text = extractText(payload.delta ?? payload.text ?? payload.content);
+    return text ? [{ kind: 'text', role: 'assistant', text, ts, uuid }] : [];
+  }
+
+  if (itemType === 'exec_command_begin') {
+    return [
+      {
+        kind: 'command',
+        command: commandToString(payload.command),
+        cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
+        status: 'started',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (itemType === 'exec_command_end') {
+    return [
+      {
+        kind: 'command',
+        command: commandToString(payload.command),
+        cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
+        status: 'completed',
+        exitCode: numberOrNull(payload.exit_code),
+        output: extractText(
+          payload.aggregated_output ?? payload.formatted_output ?? payload.stdout,
+        ),
+        durationMs: durationToMs(payload.duration),
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (itemType === 'exec_approval_request') {
+    const command = commandToString(payload.command);
+    const reason = typeof payload.reason === 'string' ? payload.reason : '';
+    return [
+      {
+        kind: 'approval',
+        title: 'Command approval needed',
+        body: [reason, command].filter(Boolean).join('\n'),
+        input: payload,
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (itemType === 'turn_diff') {
+    return [
+      {
+        kind: 'file_change',
+        diff: typeof payload.unified_diff === 'string' ? payload.unified_diff : undefined,
+        operation: 'diff',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (itemType === 'turn_aborted' || itemType === 'turn_failed') {
+    return [
+      {
+        kind: 'event',
+        title: itemType === 'turn_aborted' ? 'Turn aborted' : 'Turn failed',
+        body: extractText(payload.error ?? payload.message) || itemType,
+        tone: 'danger',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (itemType === 'thread_name_updated') {
+    const title = typeof payload.thread_name === 'string' ? payload.thread_name : '';
+    return title
+      ? [{ kind: 'event', title: 'Session renamed', body: title, tone: 'muted', ts, uuid }]
+      : [];
+  }
+
+  if (itemType === 'token_count') {
+    return [
+      {
+        kind: 'usage',
+        inputTokens: numberOrUndefined(payload.input_tokens ?? payload.inputTokens),
+        outputTokens: numberOrUndefined(payload.output_tokens ?? payload.outputTokens),
+        totalTokens: numberOrUndefined(payload.total_tokens ?? payload.totalTokens),
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  return [
+    {
+      kind: 'event',
+      title: `Provider event: ${itemType || 'unknown'}`,
+      body: safeJsonPreview(payload),
+      tone: 'muted',
+      ts,
+      uuid,
+    },
+  ];
 }
 
 function parseCodexCompactedEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
@@ -242,6 +652,48 @@ function parseCodexCompactedEntry(e: Record<string, unknown>): RichSessionMessag
   return blocks;
 }
 
+function parseProviderMetadataEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
+  const type = typeof e.type === 'string' ? e.type : '';
+  if (!type) return null;
+  const ts = timestampFromEntry(e);
+  const uuid = typeof e.uuid === 'string' && e.uuid ? e.uuid : `provider-${type}-${ts}`;
+
+  if (type === 'custom-title') {
+    const title =
+      stringField(e, 'customTitle') || stringField(e, 'custom_title') || stringField(e, 'title');
+    return title
+      ? [{ kind: 'event', title: 'Session renamed', body: title, tone: 'muted', ts, uuid }]
+      : [];
+  }
+
+  if (type === 'summary' || type === 'compact' || type === 'compaction') {
+    const summary = extractText(e.summary ?? e.message ?? e.content);
+    return [
+      {
+        kind: 'event',
+        title: 'Conversation compacted',
+        body: summary || safeJsonPreview(e),
+        tone: 'muted',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (type === 'system' && isInjectedEnvironmentEntry(e)) return [];
+
+  return [
+    {
+      kind: 'event',
+      title: `Provider event: ${type}`,
+      body: safeJsonPreview(e),
+      tone: 'muted',
+      ts,
+      uuid,
+    },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -267,6 +719,189 @@ function extractToolResultContent(content: unknown): string {
     return parts.join('\n');
   }
   return '';
+}
+
+function viewportCliEventsFromOutput(
+  output: string,
+  ts: string,
+  uuidPrefix: string,
+): RichSessionMessage[] {
+  const payload = parseViewportCliJson(output);
+  if (!payload) return [];
+  const schemaVersion = typeof payload.schema_version === 'string' ? payload.schema_version : '';
+  const ok = payload.ok !== false;
+
+  if (schemaVersion === 'viewport.cli.context_propose/v1') {
+    const candidateId = stringField(payload, 'candidate_id');
+    const providerId = stringField(payload, 'provider_id');
+    const status = stringField(payload, 'status') || (ok ? 'pending_review' : 'not_queued');
+    const digest = stringField(payload, 'payload_digest');
+    return [
+      {
+        kind: 'event',
+        title: ok ? 'Context candidate proposed' : 'Context proposal did not queue',
+        body: [
+          candidateId ? `candidate ${candidateId}` : null,
+          providerId ? `provider ${providerId}` : null,
+          status ? `status ${status}` : null,
+          digest ? digest : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        tone: ok ? 'warning' : 'muted',
+        ts,
+        uuid: `${uuidPrefix}:context-propose:${candidateId || status || schemaVersion}`,
+      },
+    ];
+  }
+
+  if (schemaVersion === 'viewport.cli.context_search/v1') {
+    const count = numberOrUndefined(payload.result_count ?? payload.count);
+    return [
+      {
+        kind: 'event',
+        title: 'Context searched',
+        body:
+          typeof count === 'number'
+            ? `${count.toLocaleString()} result${count === 1 ? '' : 's'}`
+            : 'Context search completed',
+        tone: 'muted',
+        ts,
+        uuid: `${uuidPrefix}:context-search`,
+      },
+    ];
+  }
+
+  if (schemaVersion === 'viewport.cli.context_get/v1') {
+    return [
+      {
+        kind: 'event',
+        title: 'Context loaded',
+        body: stringField(payload, 'provider_id') || 'Context item loaded',
+        tone: 'muted',
+        ts,
+        uuid: `${uuidPrefix}:context-get`,
+      },
+    ];
+  }
+
+  if (schemaVersion === 'viewport.cli.context_use/v1') {
+    const providerId = stringField(payload, 'provider_id');
+    return [
+      {
+        kind: 'event',
+        title: 'Context attached to repo',
+        body: providerId ? `provider ${providerId}` : 'Context provider attached',
+        tone: ok ? 'success' : 'warning',
+        ts,
+        uuid: `${uuidPrefix}:context-use:${providerId || schemaVersion}`,
+      },
+    ];
+  }
+
+  if (schemaVersion === 'viewport.cli.context_create/v1') {
+    const vaultId = stringField(payload, 'vault_id') || stringField(payload, 'id');
+    return [
+      {
+        kind: 'event',
+        title: 'Context vault created',
+        body: vaultId ? `vault ${vaultId}` : 'Context vault created',
+        tone: ok ? 'success' : 'warning',
+        ts,
+        uuid: `${uuidPrefix}:context-create:${vaultId || schemaVersion}`,
+      },
+    ];
+  }
+
+  if (schemaVersion === 'viewport.cli.session_manifest/v1') {
+    return [
+      {
+        kind: 'event',
+        title: 'Viewport repo config read',
+        body: stringField(payload, 'manifest_digest') || 'Session manifest resolved',
+        tone: 'muted',
+        ts,
+        uuid: `${uuidPrefix}:session-manifest`,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function viewportPlanEventsFromText(
+  text: string,
+  ts: string,
+  uuidPrefix: string,
+): RichSessionMessage[] {
+  const payload = parseViewportPlanPayload(text);
+  if (!payload) return [];
+  const schema = stringField(payload, 'schema');
+  if (schema !== 'viewport.plan_proposal/v1') return [];
+  const title = stringField(payload, 'title') || 'Plan proposal';
+  const summary = stringField(payload, 'summary');
+  const source = stringField(payload, 'source');
+  const body = [summary, source ? `source ${source}` : null].filter(Boolean).join('\n');
+  return [
+    {
+      kind: 'event',
+      title: `Plan draft emitted: ${title}`,
+      body: body || 'A Viewport plan proposal block was emitted for trusted-edge capture.',
+      tone: 'warning',
+      ts,
+      uuid: `${uuidPrefix}:${title}`,
+    },
+  ];
+}
+
+function parseViewportPlanPayload(text: string): Record<string, unknown> | null {
+  const fence = /```viewport-plan\s*\n([\s\S]*?)```/i.exec(text);
+  const comment = /<!--\s*viewport-plan\s*\n([\s\S]*?)-->/i.exec(text);
+  const raw = fence?.[1] ?? comment?.[1];
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.includes('viewport.plan_proposal/v1')) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>;
+  } catch {
+    // YAML-frontmatter style plan blocks are allowed elsewhere. The session
+    // reader keeps them as normal transcript text until a structured parser is
+    // needed for timeline links.
+  }
+  return null;
+}
+
+function isInjectedEnvironmentEntry(entry: Record<string, unknown>): boolean {
+  const content = extractText(entry.content ?? entry.message);
+  return content.includes('<environment_context>') || content.includes('<system-reminder>');
+}
+
+function parseViewportCliJson(output: string): Record<string, unknown> | null {
+  const trimmed = output.trim();
+  if (!trimmed.includes('schema_version')) return null;
+  const candidates = [trimmed];
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Keep trying the next candidate.
+    }
+  }
+  return null;
+}
+
+function stringField(record: Record<string, unknown>, field: string): string {
+  const value = record[field];
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function timestampFromEntry(
@@ -362,4 +997,110 @@ function extractCodexReasoning(payload: Record<string, unknown>): string {
   }
   const fallback = extractCodexContentText(payload);
   return fallback;
+}
+
+function extractText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractText(item))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+  if (!value || typeof value !== 'object') return '';
+  const rec = value as Record<string, unknown>;
+  const candidates = [
+    rec.text,
+    rec.output_text,
+    rec.input_text,
+    rec.value,
+    rec.content,
+    rec.message,
+  ];
+  for (const candidate of candidates) {
+    const text = extractText(candidate);
+    if (text) return text;
+  }
+  return '';
+}
+
+function isClaudeLocalCommandText(text: string): boolean {
+  return /<(?:local-command-caveat|local-command-std(?:out|err)|command-name|command-message|command-args|task-notification|teammate-message)>/i.test(
+    text,
+  );
+}
+
+function firstLine(text: string): string {
+  return (
+    text
+      .split(/\r?\n/)
+      .find((line) => line.trim())
+      ?.trim() ?? ''
+  );
+}
+
+function taggedText(text: string, tag: string): string {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`<${escaped}>([\\s\\S]*?)<\\/${escaped}>`, 'i').exec(text);
+  return match
+    ? stripAnsi(match[1] ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    : '';
+}
+
+function stripAnsi(text: string): string {
+  // ANSI CSI escape sequences emitted by Claude local command status lines.
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function commandToString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => String(part))
+      .join(' ')
+      .trim();
+  }
+  if (typeof value === 'string') return value.trim();
+  return '';
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const n = numberOrNull(value);
+  return n === null ? undefined : n;
+}
+
+function durationToMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const rec = value as Record<string, unknown>;
+  return (
+    numberOrNull(rec.ms) ??
+    numberOrNull(rec.millis) ??
+    numberOrNull(rec.milliseconds) ??
+    (typeof rec.secs === 'number' ? rec.secs * 1000 : null)
+  );
+}
+
+function safeJsonPreview(value: unknown): string {
+  try {
+    const json = JSON.stringify(value);
+    return json.length > 2_000 ? `${json.slice(0, 2_000)}…` : json;
+  } catch {
+    return String(value);
+  }
 }

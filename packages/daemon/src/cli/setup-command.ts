@@ -4,6 +4,15 @@ import { createInterface } from 'node:readline/promises';
 import { spawnSync } from 'node:child_process';
 import { hasFlag, getArgs } from './args.js';
 import { configDir } from '../core/config.js';
+import {
+  activeProfileInfo,
+  profileHomePath,
+  readProfileRegistry,
+  resolveViewportBaseHome,
+  setCurrentProfile,
+  upsertProfileRecord,
+  writeProfileRegistry,
+} from '../core/profiles.js';
 import { install } from './install-command.js';
 import { assessAgentPrerequisites, installPrerequisites } from '../startup-prereqs.js';
 import { currentServicePlatform, installUserService } from './service-commands.js';
@@ -11,6 +20,10 @@ import { currentServicePlatform, installUserService } from './service-commands.j
 const SETUP_STATE_FILE = 'setup-state.json';
 const PROMPT_TIMEOUT_MS = 30_000;
 const PROMPT_TIMEOUT_TOKEN = '__VPD_SETUP_TIMEOUT__';
+const MANAGED_PROFILE_NAME = 'prod';
+const MANAGED_SERVER_URL = 'https://api.getviewport.com';
+const MANAGED_APP_URL = 'https://app.getviewport.com';
+const MANAGED_RELAY_ENDPOINT = 'wss://relay.getviewport.com/ws';
 
 export interface SetupPlan {
   recommended: boolean;
@@ -55,6 +68,61 @@ async function saveSetupState(plan: SetupPlan): Promise<void> {
     encoding: 'utf-8',
     mode: 0o600,
   });
+}
+
+export async function ensureManagedProfileForSetup(): Promise<{
+  profileName: string | null;
+  created: boolean;
+  selected: boolean;
+}> {
+  const active = activeProfileInfo();
+  if (active.name) {
+    return { profileName: active.name, created: false, selected: false };
+  }
+
+  const baseHome = resolveViewportBaseHome();
+  const registry = await readProfileRegistry(baseHome);
+  const profileHome = profileHomePath(baseHome, MANAGED_PROFILE_NAME);
+  const existed = Boolean(registry.profiles[MANAGED_PROFILE_NAME]);
+  upsertProfileRecord(registry, {
+    name: MANAGED_PROFILE_NAME,
+    home: profileHome,
+    serverUrl: MANAGED_SERVER_URL,
+    appUrl: MANAGED_APP_URL,
+    relayEndpoint: MANAGED_RELAY_ENDPOINT,
+  });
+  await writeProfileRegistry(registry, baseHome);
+  await fs.mkdir(profileHome, { recursive: true });
+  const profileConfigPath = path.join(profileHome, 'config.json');
+  if (!existed) {
+    await fs.writeFile(
+      profileConfigPath,
+      `${JSON.stringify(
+        {
+          daemon: {
+            server: {
+              url: MANAGED_SERVER_URL,
+              appUrl: MANAGED_APP_URL,
+            },
+            relay: {
+              endpoint: MANAGED_RELAY_ENDPOINT,
+              serverUrl: MANAGED_SERVER_URL,
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf-8', mode: 0o600 },
+    );
+    await fs.chmod(profileConfigPath, 0o600);
+  }
+  await setCurrentProfile(MANAGED_PROFILE_NAME, baseHome);
+  return {
+    profileName: MANAGED_PROFILE_NAME,
+    created: !existed,
+    selected: true,
+  };
 }
 
 async function promptYesNo(question: string, defaultYes = true): Promise<boolean> {
@@ -174,6 +242,15 @@ async function chooseCustomPlan(): Promise<SetupPlan> {
 export async function setup(): Promise<void> {
   if (hasFlag('json')) {
     throw new Error('`vpd setup --json` is not supported. Run interactive setup without --json.');
+  }
+
+  const profileSetup = await ensureManagedProfileForSetup();
+  if (profileSetup.selected) {
+    console.log(
+      profileSetup.created
+        ? 'Created default prod profile for managed Viewport.'
+        : 'Using existing prod profile for managed Viewport.',
+    );
   }
 
   const forceRecommended = hasFlag('yes') || hasFlag('recommended');

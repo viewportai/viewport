@@ -51,8 +51,10 @@ vpd pair
 
 `vpd pair` creates a short-lived pairing code, opens the Viewport pairing page,
 and waits for you to approve the machine in the browser. After approval, the
-daemon stores the workspace-scoped relay credentials in `~/.viewport/` and
-restarts so the machine can connect.
+daemon stores the workspace-scoped relay credentials in its active profile and
+restarts so the machine can connect. A normal managed install creates and uses
+the `prod` profile automatically; you do not need to think about profiles unless
+you are also pointing the same machine at local development or staging.
 
 Bind each repo that should stream sessions or use workspace context:
 
@@ -65,6 +67,45 @@ vpd bind .
 tells the daemon which Viewport workspace owns runs, plans, and context proposed
 from that repo.
 
+## Profiles
+
+Fresh managed installs use `prod` automatically. Use daemon profiles directly
+when one machine needs to talk to more than one Viewport environment:
+
+```bash
+vpd profile create local --copy-current --server https://api.getviewport.test --app-url https://app.getviewport.test --relay wss://relay.getviewport.test:7781/ws
+vpd profile create prod --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws
+vpd profile use local
+```
+
+Each profile has separate config, auth, pairing state, keys, and relay identity
+under `~/.viewport/profiles/<name>`. A repo binding records the active profile,
+so a repo bound while using `local` will not stream after you switch to `prod`
+until you intentionally run `vpd bind . --yes` under the prod profile.
+
+`vpd profile use <name>` and the shorthand `vpd use <name>` change the
+machine-default profile by writing `~/.viewport/current-profile`. They are not
+terminal-local. For terminal-local scope, export `VPD_PROFILE`:
+
+```bash
+VPD_PROFILE=prod-user-1 vpd start --foreground
+VPD_PROFILE=prod-user-2 vpd start --foreground
+```
+
+Helpful profile commands:
+
+```bash
+vpd profile env prod          # prints: export VPD_PROFILE='prod'
+vpd profile start prod        # starts the prod profile daemon
+vpd profile doctor prod       # checks the prod profile daemon
+vpd profile ps                # lists known profile daemons
+```
+
+Multiple daemons can run at the same time when their profiles use different
+listen targets. They are separate owner/supervisor processes with separate
+workers and state files. Use `--listen 127.0.0.1:7071` and
+`--listen 127.0.0.1:7072` when creating demo profiles that run concurrently.
+
 Useful checks:
 
 ```bash
@@ -72,6 +113,16 @@ vpd status
 vpd doctor
 vpd status --json
 ```
+
+Package operations:
+
+```bash
+vpd upgrade --restart
+vpd uninstall --yes
+```
+
+`vpd uninstall` removes the service and package. It only deletes daemon data
+when `--purge-home` is passed.
 
 ## Fresh User Flow
 

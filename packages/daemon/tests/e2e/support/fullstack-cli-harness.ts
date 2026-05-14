@@ -1,10 +1,10 @@
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
-import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import type { AddressInfo } from 'node:net';
 import { promisify } from 'node:util';
 import { Daemon } from '../../../src/core/daemon.js';
 import { registerHttpRoutes } from '../../../src/server/http-server.js';
@@ -31,7 +31,7 @@ export class FullstackCliHarness {
   private tempHome = '';
   private originalHome = '';
   private originalViewportHome = '';
-  private socketPath = '';
+  private listenPort = 0;
 
   get fakeAdapter(): FakeAdapter {
     return this.adapter;
@@ -67,9 +67,6 @@ export class FullstackCliHarness {
     await clearDaemonRuntimeState();
     await this.daemon.shutdown();
     await this.app.close();
-    if (this.socketPath) {
-      await fs.rm(this.socketPath, { force: true });
-    }
     if (this.originalHome) process.env['HOME'] = this.originalHome;
     else delete process.env['HOME'];
     if (this.originalViewportHome) process.env['VIEWPORT_HOME'] = this.originalViewportHome;
@@ -123,21 +120,20 @@ export class FullstackCliHarness {
       securityProfile,
     });
     registerWsServer(this.app, this.daemon, undefined, { securityProfile });
-    this.socketPath = path.join(
-      os.tmpdir(),
-      `viewport-daemon-e2e-${crypto.randomBytes(6).toString('hex')}.sock`,
-    );
-    await fs.rm(this.socketPath, { force: true });
-    await this.app.listen({ path: this.socketPath });
+    await this.app.listen({ host: '127.0.0.1', port: 0 });
+    const address = this.app.server.address() as AddressInfo | null;
+    this.listenPort = address?.port ?? 0;
+    if (this.listenPort <= 0) {
+      throw new Error('Failed to allocate fullstack CLI harness port.');
+    }
 
     await writeDaemonRuntimeState({
       ownerPid: process.pid,
       pid: process.pid,
       workerPid: process.pid,
-      port: 0,
+      port: this.listenPort,
       host: '127.0.0.1',
-      listen: `unix://${this.socketPath}`,
-      socketPath: this.socketPath,
+      listen: `127.0.0.1:${this.listenPort}`,
       startedAt: Date.now(),
       version: 'e2e',
       mode: 'worker',
