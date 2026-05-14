@@ -2,7 +2,7 @@ import { resolveDaemonRuntimeIdentity, toInstallCapabilities } from '../core/run
 import { resolveDisplayVersion } from '../core/package-meta.js';
 import { loadOrCreateIdentity as loadOrCreateRelayIdentity } from '../relay/bridge-key-exchange.js';
 import { getOrCreateTrustAnchor, rotateAuthToken } from '../server/pairing-offers.js';
-import { getArgs } from './args.js';
+import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson, waitForDaemonReady } from './command-shared.js';
 import { transportFetch } from './network.js';
 import { openUrl } from './open-url.js';
@@ -129,6 +129,7 @@ async function pairWithCode(
     daemonVersion: resolveDisplayVersion(),
     daemonConfig: server.daemonConfig,
   });
+  const autoUnlock = resolveAutoUnlockPreference();
   const installCapabilities = toInstallCapabilities({
     ...runtimeIdentity,
     serverUrl: server.url,
@@ -157,6 +158,8 @@ async function pairWithCode(
           server_url: installCapabilities.runtime.serverUrl,
           relay_endpoint: installCapabilities.runtime.relayEndpoint,
           relay_server_url: installCapabilities.runtime.relayServerUrl,
+          auto_unlock_requested: autoUnlock.enabled,
+          auto_unlock_ttl_seconds: autoUnlock.ttlSeconds,
         }),
         tlsVerify: server.tlsVerify,
         caCertPath: server.caCertPath,
@@ -228,6 +231,7 @@ async function pairWithoutCode(
     daemonVersion: resolveDisplayVersion(),
     daemonConfig: server.daemonConfig,
   });
+  const autoUnlock = resolveAutoUnlockPreference();
   const installCapabilities = toInstallCapabilities({
     ...runtimeIdentity,
     serverUrl: server.url,
@@ -250,6 +254,8 @@ async function pairWithoutCode(
         server_url: installCapabilities.runtime.serverUrl,
         relay_endpoint: installCapabilities.runtime.relayEndpoint,
         relay_server_url: installCapabilities.runtime.relayServerUrl,
+        auto_unlock_requested: autoUnlock.enabled,
+        auto_unlock_ttl_seconds: autoUnlock.ttlSeconds,
       }),
       tlsVerify: server.tlsVerify,
       caCertPath: server.caCertPath,
@@ -322,6 +328,19 @@ async function pairWithoutCode(
     console.log(`  Workspace: ${approved.workspace_name}`);
   }
   console.log('');
+}
+
+function resolveAutoUnlockPreference(): { enabled: boolean; ttlSeconds?: number } {
+  const ttlFlag = getFlag('auto-unlock-ttl') ?? getFlag('unlock-ttl');
+  const parsedTtl = ttlFlag ? Number.parseInt(ttlFlag, 10) : undefined;
+  const ttlSeconds =
+    parsedTtl && Number.isFinite(parsedTtl) ? Math.max(300, Math.min(parsedTtl, 3600)) : undefined;
+
+  if (hasFlag('no-auto-unlock')) {
+    return { enabled: false, ttlSeconds };
+  }
+
+  return { enabled: hasFlag('auto-unlock') || hasFlag('trusted'), ttlSeconds };
 }
 
 async function parseJsonResponse(
