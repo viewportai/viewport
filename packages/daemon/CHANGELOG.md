@@ -1,3 +1,10 @@
+## [0.6.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.6.0...@viewportai/daemon@0.6.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* clean runtime docs and daemon checks ([#95](https://github.com/viewportai/viewport/issues/95)) ([3ba3f19](https://github.com/viewportai/viewport/commit/3ba3f1921e77904aa5065eafd19643cebb623e8c))
+
 # [0.6.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.5.3...@viewportai/daemon@0.6.0) (2026-05-13)
 
 
