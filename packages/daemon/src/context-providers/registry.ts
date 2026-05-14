@@ -5,10 +5,9 @@ import type { ContextProviderAdapter } from './types.js';
 import { viewportVaultProviderAdapter } from './viewport-vault-provider.js';
 
 const ADAPTERS = new Map<SessionContextProviderManifest['provider'], ContextProviderAdapter>(
-  [repoDocsProviderAdapter, viewportVaultProviderAdapter, githubRepoProviderAdapter].map((adapter) => [
-    adapter.kind,
-    adapter,
-  ]),
+  [repoDocsProviderAdapter, viewportVaultProviderAdapter, githubRepoProviderAdapter].map(
+    (adapter) => [adapter.kind, adapter],
+  ),
 );
 
 export function contextProviderAdapterFor(

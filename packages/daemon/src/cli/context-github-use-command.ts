@@ -22,7 +22,10 @@ export async function contextGitHubUse(): Promise<void> {
     updateWhen: getFlag('update-when') ?? getFlag('updateWhen'),
   });
   const manifest = resolveSessionResourceManifestSync({ workingDirectory });
-  const createCommand = repo.includes('://') || repo.startsWith('git@') ? undefined : `gh repo create ${repo} --private --clone`;
+  const createCommand =
+    repo.includes('://') || repo.startsWith('git@')
+      ? undefined
+      : `gh repo create ${repo} --private --clone`;
 
   if (isJsonMode()) {
     printJson({

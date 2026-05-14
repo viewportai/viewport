@@ -64,12 +64,17 @@ describe('github-repo provider', () => {
     expect(proposal).toBeDefined();
     expect(proposal?.status).toBe('branch_pushed');
     expect(proposal?.branch).toMatch(/^viewport\/context\/roses-policy-/);
-    expect(proposal?.candidate_id).toContain('github-pr:team_memory:viewport/context/roses-policy-');
+    expect(proposal?.candidate_id).toContain(
+      'github-pr:team_memory:viewport/context/roses-policy-',
+    );
 
     const heads = await runGit(['ls-remote', '--heads', bareRepo], undefined);
     expect(heads.stdout).toContain(`refs/heads/${proposal?.branch}`);
 
-    const mainTree = await runGit(['--git-dir', bareRepo, 'ls-tree', '-r', '--name-only', 'main'], undefined);
+    const mainTree = await runGit(
+      ['--git-dir', bareRepo, 'ls-tree', '-r', '--name-only', 'main'],
+      undefined,
+    );
     expect(mainTree.stdout).not.toContain('context/proposals');
   });
 });
@@ -118,7 +123,10 @@ async function createProductRepo(remoteUrl: string): Promise<string> {
   return repo;
 }
 
-function runGit(args: string[], cwd: string | undefined): Promise<{ stdout: string; stderr: string }> {
+function runGit(
+  args: string[],
+  cwd: string | undefined,
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd }, (error, stdout, stderr) => {
       if (error) {

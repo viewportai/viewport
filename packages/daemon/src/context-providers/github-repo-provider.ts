@@ -42,10 +42,7 @@ export const githubRepoProviderAdapter: ContextProviderAdapter = {
     const filePath = await writeProposalFile(input, repo);
     await ensureGitIdentity(repo);
     await runGit(['add', filePath], repo);
-    await runGit(
-      ['commit', '-m', `docs(context): ${singleLine(input.title).slice(0, 72)}`],
-      repo,
-    );
+    await runGit(['commit', '-m', `docs(context): ${singleLine(input.title).slice(0, 72)}`], repo);
     await runGit(['push', '-u', 'origin', branch], repo);
 
     const pr = await tryCreatePullRequest(input, repo);
@@ -66,7 +63,9 @@ async function resolveGitHubContextItems(
   repoRoot: string,
 ): Promise<GitHubContextItem[]> {
   const budget = input.sizeBudgetBytes ?? DEFAULT_SIZE_BUDGET_BYTES;
-  const patterns = input.provider.paths?.length ? input.provider.paths : ['context/**/*.md', '**/*.md'];
+  const patterns = input.provider.paths?.length
+    ? input.provider.paths
+    : ['context/**/*.md', '**/*.md'];
   const files = await discoverProviderFiles(repoRoot, patterns);
   const ranked = rankFiles(files, input.query);
   const items: GitHubContextItem[] = [];
@@ -179,7 +178,11 @@ async function ensureGitIdentity(repoRoot: string): Promise<void> {
   }
 }
 
-function resultForItem(providerId: string, item: GitHubContextItem, query?: string): ContextProviderResult {
+function resultForItem(
+  providerId: string,
+  item: GitHubContextItem,
+  query?: string,
+): ContextProviderResult {
   return {
     id: item.id,
     provider_id: providerId,
@@ -327,7 +330,10 @@ function searchSnippet(body: string, query: string): string {
   return snippet;
 }
 
-function runGit(args: string[], cwd: string | undefined): Promise<{ stdout: string; stderr: string }> {
+function runGit(
+  args: string[],
+  cwd: string | undefined,
+): Promise<{ stdout: string; stderr: string }> {
   return runCommand('git', args, cwd);
 }
 

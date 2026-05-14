@@ -194,10 +194,7 @@ export async function contextProviderPropose(): Promise<void> {
     throw new Error(`Provider ${provider.id} does not have a v1 propose adapter.`);
   }
 
-  const candidate = await proposeToContextProvider(
-    provider,
-    proposeInput(manifest.manifestDigest),
-  );
+  const candidate = await proposeToContextProvider(provider, proposeInput(manifest.manifestDigest));
 
   if (isJsonMode()) {
     printJson({
