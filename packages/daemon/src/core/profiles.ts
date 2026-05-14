@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-export const PROFILE_ENV_NAMES = ['VIEWPORT_PROFILE', 'VPD_PROFILE'] as const;
+export const PROFILE_ENV_NAMES = ['VPD_PROFILE', 'VIEWPORT_PROFILE'] as const;
 export const PROFILE_REGISTRY_FILE = 'profiles.json';
 export const CURRENT_PROFILE_FILE = 'current-profile';
 export const PROFILES_DIR = 'profiles';

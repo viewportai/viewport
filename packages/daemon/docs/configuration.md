@@ -10,7 +10,7 @@ Daemon home resolution happens before config loading:
 1. Base home defaults to `~/.viewport`.
 2. `VIEWPORT_HOME`, `VPD_HOME`, or top-level `vpd --home <path> ...` change the
    base home.
-3. `VIEWPORT_PROFILE`, `VPD_PROFILE`, or top-level `vpd --profile <name> ...`
+3. `VPD_PROFILE`, `VIEWPORT_PROFILE`, or top-level `vpd --profile <name> ...`
    select `profiles/<name>` under that base home.
 4. If no environment profile is set, `vpd profile use <name>` selects the
    current profile stored in `<base-home>/current-profile`.
@@ -84,11 +84,9 @@ Use `appUrl` only when the browser pairing app is intentionally hosted at a diff
 ## Environment variables
 
 - `VIEWPORT_HOME` / `VPD_HOME`
-- `VIEWPORT_PROFILE` / `VPD_PROFILE` (daemon environment profile)
+- `VPD_PROFILE` / `VIEWPORT_PROFILE` (daemon environment profile)
 - `VIEWPORT_LISTEN`
-- `VIEWPORT_PROFILE` is also used by older runtime config references; on `vpd start`,
-  prefer `--profile local|lan|relay` for network exposure mode and
-  `VPD_PROFILE=<name>` for daemon environment selection.
+- `VPD_RUNTIME_PROFILE` / `VIEWPORT_RUNTIME_PROFILE` (`local|lan|relay`) for daemon network exposure mode.
 - `VIEWPORT_ALLOWED_HOSTS`
 - `VIEWPORT_ALLOWED_ORIGINS`
 - `VIEWPORT_AUTH`
@@ -152,6 +150,31 @@ vpd profile create local --copy-current --server https://api.getviewport.test --
 vpd profile create prod --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws
 vpd profile use prod
 ```
+
+`vpd profile use <name>` writes the machine-default profile to
+`~/.viewport/current-profile`. It is shared by future shells. Use these forms for
+temporary scope:
+
+```bash
+eval "$(vpd profile env prod)"
+VPD_PROFILE=prod vpd status
+vpd --profile prod status
+vpd profile start prod
+vpd profile doctor prod
+```
+
+Multiple running daemons require distinct listen targets:
+
+```bash
+vpd profile create alice --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws --listen 127.0.0.1:7071
+vpd profile create bob --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws --listen 127.0.0.1:7072
+vpd profile start alice
+vpd profile start bob
+vpd profile ps
+```
+
+Each profile uses its own `daemon-state.json`, so concurrent profiles are
+separate owner/supervisor processes with separate workers.
 
 Profile homes:
 

@@ -83,16 +83,28 @@ under `~/.viewport/profiles/<name>`. A repo binding records the active profile,
 so a repo bound while using `local` will not stream after you switch to `prod`
 until you intentionally run `vpd bind . --yes` under the prod profile.
 
-Temporary profile scope is useful for demos:
+`vpd profile use <name>` and the shorthand `vpd use <name>` change the
+machine-default profile by writing `~/.viewport/current-profile`. They are not
+terminal-local. For terminal-local scope, export `VPD_PROFILE`:
 
 ```bash
 VPD_PROFILE=prod-user-1 vpd start --foreground
 VPD_PROFILE=prod-user-2 vpd start --foreground
 ```
 
-Use different listen ports when running multiple daemons at once, for example
-`--listen 127.0.0.1:7071` and `--listen 127.0.0.1:7072` when creating those
-profiles.
+Helpful profile commands:
+
+```bash
+vpd profile env prod          # prints: export VPD_PROFILE='prod'
+vpd profile start prod        # starts the prod profile daemon
+vpd profile doctor prod       # checks the prod profile daemon
+vpd profile ps                # lists known profile daemons
+```
+
+Multiple daemons can run at the same time when their profiles use different
+listen targets. They are separate owner/supervisor processes with separate
+workers and state files. Use `--listen 127.0.0.1:7071` and
+`--listen 127.0.0.1:7072` when creating demo profiles that run concurrently.
 
 Useful checks:
 
@@ -101,6 +113,16 @@ vpd status
 vpd doctor
 vpd status --json
 ```
+
+Package operations:
+
+```bash
+vpd upgrade --restart
+vpd uninstall --yes
+```
+
+`vpd uninstall` removes the service and package. It only deletes daemon data
+when `--purge-home` is passed.
 
 ## Fresh User Flow
 

@@ -142,4 +142,57 @@ describe('profile CLI command', () => {
       'prod\n',
     );
   });
+
+  it('prints shell-scoped profile exports', async () => {
+    process.argv = ['node', 'vpd', 'profile', 'env', 'prod'];
+
+    const { profile } = await import('../../src/cli/profile-command.js');
+    await profile();
+
+    expect(logSpy.mock.calls.at(-1)?.[0]).toBe("export VPD_PROFILE='prod'");
+  });
+
+  it('lists profile daemon process state without switching profiles', async () => {
+    const profileHome = path.join(homeDir, 'profiles/prod');
+    await fs.mkdir(profileHome, { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, 'profiles.json'),
+      `${JSON.stringify({
+        version: 1,
+        profiles: {
+          prod: {
+            name: 'prod',
+            home: profileHome,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      })}\n`,
+    );
+    await fs.writeFile(
+      path.join(profileHome, 'daemon-state.json'),
+      `${JSON.stringify({
+        ownerPid: 99999999,
+        workerPid: 99999998,
+        host: '127.0.0.1',
+        port: 7071,
+        listen: '127.0.0.1:7071',
+      })}\n`,
+    );
+    process.argv = ['node', 'vpd', 'profile', 'ps', '--json'];
+
+    const { profile } = await import('../../src/cli/profile-command.js');
+    await profile();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      profiles: Array<{ profile: string; running: boolean; listen: string }>;
+    };
+    expect(payload.profiles).toEqual([
+      expect.objectContaining({
+        profile: 'prod',
+        running: false,
+        listen: '127.0.0.1:7071',
+      }),
+    ]);
+  });
 });

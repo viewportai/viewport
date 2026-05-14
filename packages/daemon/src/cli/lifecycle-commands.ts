@@ -323,6 +323,10 @@ export function showHelp(): void {
   );
   console.log('  setup [--yes|--choose]       First-run guided setup (recommended or custom)');
   console.log('  profile <cmd>                Manage local/prod daemon profiles');
+  console.log('  use <profile>                Set the machine-default daemon profile');
+  console.log('  upgrade [--restart|--yes]    Upgrade the global vpd package');
+  console.log('  uninstall [--yes] [--purge-home] [--no-package]');
+  console.log('                               Stop daemons, remove service, and uninstall vpd');
   console.log('  install [--json]             Detect available agents and install hooks');
   console.log('  bind [path] [--org <organization-id>] [--yes] [--json]');
   console.log(

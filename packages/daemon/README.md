@@ -124,16 +124,34 @@ auth token, pairing state, keys, relay identity, and runtime stores. The base
 `~/.viewport` home keeps only the profile registry and current-profile pointer
 once you move to named profiles.
 
-Temporary scope:
+`vpd profile use <name>` and `vpd use <name>` change the machine default. This
+is shared by new shells. For one terminal or one command, use scoped profile
+execution:
 
 ```bash
+eval "$(vpd profile env prod)"
 VPD_PROFILE=prod vpd status
 vpd --profile prod status
+vpd profile doctor prod
 ```
 
 `vpd start --profile local|lan|relay` still controls the daemon network
 exposure mode. Put daemon profile flags before the command, or use
 `VPD_PROFILE`, to avoid ambiguity.
+
+Multiple daemons:
+
+```bash
+vpd profile create prod-user-1 --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws --listen 127.0.0.1:7071
+vpd profile create prod-user-2 --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws --listen 127.0.0.1:7072
+vpd profile start prod-user-1
+vpd profile start prod-user-2
+vpd profile ps
+```
+
+Each running profile owns a separate supervisor/owner process, worker process,
+state file, auth token, and key store. The OS service manages the currently
+selected default profile; for multi-profile demos, start profiles explicitly.
 
 Repo bindings include the active profile:
 
@@ -156,6 +174,19 @@ npm run format:check
 npm run test
 npm run check
 ```
+
+## Package operations
+
+```bash
+vpd upgrade --restart
+vpd uninstall --yes
+vpd uninstall --yes --purge-home
+```
+
+`upgrade` installs the latest global `@viewportai/daemon` package. `uninstall`
+stops known profile daemons, removes the user service when present, and removes
+the global package. It does not remove `~/.viewport` unless `--purge-home` is
+explicitly passed.
 
 ## Testing Setup Flow
 
