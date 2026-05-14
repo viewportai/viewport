@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.7.0...@viewportai/daemon@0.8.0) (2026-05-14)
+
+
+### Features
+
+* send auto unlock preference during pairing ([#98](https://github.com/viewportai/viewport/issues/98)) ([dd43b75](https://github.com/viewportai/viewport/commit/dd43b7575e30e96dceab4f2a9320d570fcb3e395))
+
 # [0.7.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.6.2...@viewportai/daemon@0.7.0) (2026-05-14)
 
 
