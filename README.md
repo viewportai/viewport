@@ -1,123 +1,170 @@
-# Viewport
+<p align="center">
+  <img src="./assets/logo.svg" alt="Viewport" width="88" />
+</p>
 
-Self-hostable orchestration and control plane for coding agents.
+<h1 align="center">Viewport</h1>
 
-Viewport lets developers and teams supervise, control, and automate AI coding agents running across laptops, devboxes, and remote machines — from a browser or phone.
+<p align="center">
+  Privacy-first runtime infrastructure for coding agents.
+</p>
 
-## System docs
+<p align="center">
+  <a href="https://getviewport.com">Website</a>
+  ·
+  <a href="https://docs.getviewport.com">Docs</a>
+  ·
+  <a href="https://www.npmjs.com/package/@viewportai/daemon">npm</a>
+</p>
 
-The docs app in the sibling `../docs` repo is the canonical explanation of:
+Viewport is the open-source runtime layer behind Viewport: a daemon that runs
+where your coding agents run, plus a relay that connects those machines to the
+hosted or self-hosted control plane.
 
-- hosted URL roles
-- local versus managed versus self-hosted runtime shapes
-- pairing and relay admission
-- full-stack local development from the platform repo
+The daemon is the trusted edge. It supervises Claude Code, Codex, and custom
+terminal-based agents; streams session state; handles pairing; and performs
+local decrypt/resolve work for encrypted plans and context when configured. The
+relay routes WebSocket traffic between authenticated clients and paired daemons.
 
-## Packages
+Viewport is currently in alpha. The daemon and relay are usable, but product
+surfaces and hosted workflows are still changing.
 
-| Package | Description | Status |
-|---|---|---|
-| [`@viewportai/daemon`](packages/daemon) | Agent runtime manager — launches, supervises, and exposes agent sessions via HTTP/WS | Published on [npm](https://www.npmjs.com/package/@viewportai/daemon) |
-| [`relay`](services/relay) | Stateless WebSocket router for remote runtime access | Docker image |
+## What This Repo Contains
 
-## Quick Start
+| Path | Purpose |
+| --- | --- |
+| [`packages/daemon`](packages/daemon) | `vpd`, the local trusted-edge daemon and CLI. |
+| [`services/relay`](services/relay) | Stateless WebSocket relay for remote daemon connectivity. |
+| [`integration`](integration) | End-to-end and protocol conformance harnesses. |
 
-### Daemon
+The hosted web app and server API live outside this open-source runtime repo.
+Public product and security docs live at
+[docs.getviewport.com](https://docs.getviewport.com).
+
+## Install
+
+For the managed alpha:
 
 ```bash
 npm install -g @viewportai/daemon
-vpd setup
-vpd service status
-vpd status
+vpd pair
 ```
 
-`vpd setup` installs and starts the user-level boot service when you accept the recommended defaults. Run `vpd start` manually only if you skipped service install.
+`vpd pair` creates a short-lived pairing code, opens the Viewport pairing page,
+and waits for you to approve the machine in the browser. After approval, the
+daemon stores the workspace-scoped relay credentials in `~/.viewport/` and
+restarts so the machine can connect.
 
-To attach the daemon to the managed control plane after you approve pairing in the app:
+Bind each repo that should stream sessions or use workspace context:
 
 ```bash
-vpd remote login --server https://api.getviewport.com --workspace <workspace-id> --token <issue-token> --enable
-vpd restart
+cd /path/to/repo
+vpd bind .
 ```
 
-The daemon defaults to the managed relay and control-plane topology unless you explicitly override the server or relay endpoint for local or self-hosted use.
+`vpd bind .` writes a gitignored local binding under `.viewport/`. That binding
+tells the daemon which Viewport workspace owns runs, plans, and context proposed
+from that repo.
 
-Use `vpd pair --app-url <url>` only when the browser pairing app is hosted at a different origin than the API server. The managed defaults are:
+Useful checks:
 
-- API server: `https://api.getviewport.com`
-- browser app: `https://app.getviewport.com`
+```bash
+vpd status
+vpd doctor
+vpd status --json
+```
 
-### Relay (self-hosted)
+## Fresh User Flow
+
+1. Create a Viewport account and workspace in the web app.
+2. Install the daemon: `npm install -g @viewportai/daemon`.
+3. Pair the machine: `vpd pair`.
+4. Approve the pairing request in the browser.
+5. Bind a repo: `vpd bind .`.
+6. Open Claude Code, Codex, or your custom terminal agent in that repo.
+
+After binding, sessions can stream to Viewport when the daemon is online. Plans
+created through the installed Viewport hooks can open as encrypted drafts.
+Context proposals resolve against the workspace selected by the repo binding.
+
+## Architecture
+
+Viewport separates the runtime into three planes:
+
+| Plane | Role |
+| --- | --- |
+| Trusted edge | The local or remote daemon. It owns machine-local state, agent processes, and runtime decrypt operations. |
+| Relay | WebSocket transport. It routes authenticated frames and should not be treated as an application database. |
+| Control plane | Identity, workspace membership, pairing approval, metadata, and policy. |
+
+The server stores product metadata needed for collaboration. Encrypted plan and
+context bodies are stored as ciphertext when using trusted-edge flows. Hosted
+web can render plaintext only after a paired daemon returns it for an active,
+short-lived review session.
+
+## Local Development
+
+Install dependencies once:
+
+```bash
+npm install
+```
+
+Run the daemon from this checkout:
+
+```bash
+npm run daemon
+vpd start --foreground
+```
+
+Common checks:
+
+```bash
+npm run daemon:check
+npm run relay:check
+npm run daemon:install:verify
+```
+
+`npm run daemon` builds and links `@viewportai/daemon` globally, so normal
+`vpd ...` commands point at this checkout until you reinstall or relink.
+
+For package-level details, see:
+
+- [Daemon README](packages/daemon/README.md)
+- [Daemon configuration](packages/daemon/docs/configuration.md)
+- [Daemon security notes](packages/daemon/docs/security.md)
+- [Testing guide](packages/daemon/docs/testing.md)
+- [Release checklist](packages/daemon/docs/releasing.md)
+
+## Self-Hosting
+
+The daemon and relay are open source. A self-hosted deployment also needs a
+compatible server API/control plane for identity, pairing, workspace policy, and
+metadata.
+
+Relay example:
 
 ```bash
 docker build -t viewport-relay services/relay
 docker run --rm -p 7781:7781 \
   -e HOST=0.0.0.0 \
   -e RELAY_MODE=prod \
-  -e SERVER_URL=https://platform.example.com \
+  -e SERVER_URL=https://api.example.com \
   -e RELAY_PUBLIC_WS_BASE_URL=wss://relay.example.com/ws \
   viewport-relay
 ```
 
-`SERVER_URL` and `RELAY_PUBLIC_WS_BASE_URL` are required for any non-local deployment.
+See the self-hosting docs:
+[docs.getviewport.com/self-host/overview](https://docs.getviewport.com/self-host/overview).
 
-## Development
+## Security Posture
 
-```bash
-npm run daemon
+Viewport’s strongest privacy guarantees come from keeping sensitive runtime
+operations on paired trusted edges. This repo avoids claiming that hosted web is
+zero-knowledge: if hosted web renders plaintext, the browser is part of the
+trusted display path for that session.
 
-npm run daemon:start
-npm run daemon:status
-npm run daemon:doctor
-npm run daemon:stop
-npm run daemon:restart
-npm run relay
-npm run daemon:test
-npm run daemon:install:verify
-npm run daemon:check
-npm run relay:test
-npm run relay:check
-```
-
-`npm run daemon` prepares this checkout as the active global daemon build by running `npm link` for `@viewportai/daemon`. After that, normal `vpd ...` usage points at the daemon code from this repo until you relink or reinstall a different build.
-
-Viewport uses one daemon model:
-
-- global state lives in `~/.viewport/`
-- optional project overrides live in the nearest `.viewport/config.json`
-
-That means:
-
-- `vpd ...` always talks to the globally linked or installed daemon
-- `npm run daemon:start` runs `vpd start --foreground` against that same global home
-- a local `.viewport/config.json` only overrides selected targeting values such as server, relay, and listen settings
-- `npm run daemon:install:verify` exercises the packaged install path in an isolated prefix so we keep testing the real `curl | bash` story
-
-For local-domain development, keep the runtime override in `.viewport/config.json` and stage certificates into `~/.viewport/certs` or `.viewport/certs`. The repo wrapper will promote project certs into the global daemon home when needed so restart keeps working.
-
-`npm run relay` starts only the relay. If pairing stalls on relay reconnect, run `npm run daemon:status` and look for the `Relay state` and `Relay last` lines before digging into raw logs.
-
-Everything else is package-local or maintainer-only and should be run from the relevant package directory rather than surfaced at the repo root.
-
-## Contribution Naming
-
-- Branches: `feat/...`, `fix/...`, `refactor/...`, `docs/...`, `test/...`, `chore/...`
-- PR titles: semantic format with optional scope, for example `feat(runtime): ...`
-- Do not use roadmap labels or temporary agent labels in branch names or PR titles.
-
-## Architecture
-
-Viewport has three runtime planes:
-
-- **Control plane** — identity, workspace access, token issuance, policy (lives in a [separate private repo](https://github.com/viewportai/platform))
-- **Runtime plane** — daemon-owned session authority, permissions, agent lifecycle
-- **Data plane** — relay-mediated transport for remote connectivity
-
-The daemon runs on the machine where your agents run. The relay routes WebSocket traffic between daemons and clients. The control plane manages identity, workspaces, and policy.
-
-## Self-Hosting
-
-Viewport is designed to be self-hosted. The daemon and relay are open source. You can run the full runtime stack on your own infrastructure without depending on any hosted service.
+The public security docs describe the current trust split and known limits:
+[docs.getviewport.com/concepts/trust-and-privacy](https://docs.getviewport.com/concepts/trust-and-privacy).
 
 ## License
 

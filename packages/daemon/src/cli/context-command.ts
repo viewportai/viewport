@@ -575,7 +575,8 @@ async function contextEpochPublish(): Promise<void> {
     tlsPins: target.tlsPins,
   };
   const teamId = getFlag('team');
-  let teamMemberGrants: Awaited<ReturnType<typeof grantTeamEpochToWorkspaceUserEpochs>> | null = null;
+  let teamMemberGrants: Awaited<ReturnType<typeof grantTeamEpochToWorkspaceUserEpochs>> | null =
+    null;
   const epoch = teamId
     ? await ensureTeamCryptoEpoch({
         target: syncTarget,
@@ -622,12 +623,14 @@ async function contextEpochPublish(): Promise<void> {
   }
 }
 
-function publicEpochForOutput(epoch: LocalTeamCryptoEpoch | LocalUserCryptoEpoch): Record<string, unknown> {
+function publicEpochForOutput(
+  epoch: LocalTeamCryptoEpoch | LocalUserCryptoEpoch,
+): Record<string, unknown> {
   return {
     workspaceId: epoch.workspaceId,
     userId: 'userId' in epoch ? epoch.userId : undefined,
     teamId: 'teamId' in epoch ? epoch.teamId : undefined,
-    platformTeamId: 'platformTeamId' in epoch ? epoch.platformTeamId ?? null : undefined,
+    platformTeamId: 'platformTeamId' in epoch ? (epoch.platformTeamId ?? null) : undefined,
     platformEpochId: epoch.platformEpochId ?? null,
     epoch: epoch.epoch,
     schema: epoch.schema,

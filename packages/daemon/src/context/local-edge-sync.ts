@@ -220,7 +220,10 @@ function collectPublicIdentities(
   vault: ReturnType<typeof createVault>,
   names: Array<string | null>,
 ): Array<{ name: string; fingerprint: string; public_identity: Record<string, unknown> }> {
-  const identities = new Map<string, { name: string; fingerprint: string; public_identity: Record<string, unknown> }>();
+  const identities = new Map<
+    string,
+    { name: string; fingerprint: string; public_identity: Record<string, unknown> }
+  >();
   for (const name of names) {
     if (!name) continue;
     try {
@@ -240,7 +243,10 @@ function collectPublicIdentities(
   return [...identities.values()];
 }
 
-function importPulledPublicIdentities(vault: ReturnType<typeof createVault>, response: unknown): void {
+function importPulledPublicIdentities(
+  vault: ReturnType<typeof createVault>,
+  response: unknown,
+): void {
   const object = objectValue(response);
   const identities = Array.isArray(object.public_identities) ? object.public_identities : [];
   for (const item of identities) {
@@ -851,7 +857,7 @@ async function postJson(
         ? String((payload as { reason?: unknown }).reason)
         : typeof payload === 'object' && payload && 'message' in payload
           ? String((payload as { message?: unknown }).message)
-        : `${response.status} ${response.statusText}`;
+          : `${response.status} ${response.statusText}`;
     throw new Error(`Context sync request failed: ${reason}`);
   }
 
