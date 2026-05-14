@@ -98,15 +98,25 @@ export async function resolveSessionContextSections(options: {
 
   const requestedContexts = manifest.resources.contexts;
   for (const context of requestedContexts) {
+    const provider = manifest.contract.contextProviders.find(
+      (candidate) => candidate.provider === 'viewport-vault' && candidate.vault === context.id,
+    );
+    const guidance = contextGuidanceLines(provider?.useWhen, provider?.updateWhen);
     try {
       const status = await readContextStatus({ contextResourceId: context.id });
       const record = status.contexts.find(
         (candidate) => candidate.contextResourceId === context.id,
       );
       if (!record) {
-        if (context.required) {
+        if (guidance.length > 0 || context.required) {
           sections.push(
-            `## ${context.id}\nRequired Context Vault is configured but not available on this machine.`,
+            [
+              `## ${context.id}`,
+              ...guidance,
+              context.required
+                ? 'Required Context Vault is configured but not available on this machine.'
+                : 'Context Vault is configured but not available on this machine.',
+            ].join('\n'),
           );
         }
         continue;
@@ -157,8 +167,8 @@ export async function resolveSessionContextSections(options: {
         );
       }
 
-      if (contextSections.length === 0) continue;
-      sections.push([`## ${context.id}`, ...contextSections].join('\n\n'));
+      if (contextSections.length === 0 && guidance.length === 0) continue;
+      sections.push([`## ${context.id}`, ...guidance, ...contextSections].join('\n\n'));
     } catch (error) {
       log.warn(
         { err: error, contextResourceId: context.id },
@@ -178,4 +188,16 @@ export async function resolveSessionContextSections(options: {
     manifestDigest: manifest.manifestDigest,
     sections,
   };
+}
+
+function contextGuidanceLines(
+  useWhen: string | undefined,
+  updateWhen: string | undefined,
+): string[] {
+  const lines: string[] = [];
+  const use = useWhen?.trim();
+  const update = updateWhen?.trim();
+  if (use) lines.push(`Use this context when: ${use}`);
+  if (update) lines.push(`Propose an update when: ${update}`);
+  return lines;
 }

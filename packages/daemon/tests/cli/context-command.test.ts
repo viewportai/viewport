@@ -320,6 +320,10 @@ describe('context CLI command', () => {
       repo,
       '--provider',
       'platform-arch',
+      '--use-when',
+      'Use for platform architecture changes.',
+      '--update-when',
+      'Update after a durable platform decision changes.',
       '--json',
     ]);
 
@@ -327,6 +331,8 @@ describe('context CLI command', () => {
     expect(config).toContain('id: platform-arch');
     expect(config).toContain('provider: viewport-vault');
     expect(config).toContain('vault: ctx_platform_arch');
+    expect(config).toContain('use_when: Use for platform architecture changes.');
+    expect(config).toContain('update_when: Update after a durable platform decision changes.');
 
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     expect(output).toContain('"command": "context create"');
@@ -369,6 +375,10 @@ describe('context CLI command', () => {
       repo,
       '--provider',
       'platform-arch',
+      '--use-when',
+      'Use for platform architecture changes.',
+      '--update-when',
+      'Update after a durable platform decision changes.',
       '--json',
     ]);
 
@@ -377,12 +387,16 @@ describe('context CLI command', () => {
     expect(config).toContain('id: platform-arch');
     expect(config).toContain('provider: viewport-vault');
     expect(config).toContain('vault: ctx_platform_arch');
+    expect(config).toContain('use_when: Use for platform architecture changes.');
+    expect(config).toContain('update_when: Update after a durable platform decision changes.');
 
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     expect(output).toContain('"command": "context use"');
     expect(output).toContain('"changed": true');
     expect(output).toContain('"provider": "viewport-vault"');
     expect(output).toContain('"vault": "ctx_platform_arch"');
+    expect(output).toContain('"use_when": "Use for platform architecture changes."');
+    expect(output).toContain('"update_when": "Update after a durable platform decision changes."');
   });
 
   it('keeps context use idempotent for an existing vault provider', async () => {

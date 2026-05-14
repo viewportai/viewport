@@ -49,6 +49,8 @@ export interface ViewportContextProviderRef {
   sourceConfigPath: string;
   credentialRef?: string;
   vault?: string;
+  useWhen?: string;
+  updateWhen?: string;
   paths?: string[];
   notebook?: string;
   command?: string;

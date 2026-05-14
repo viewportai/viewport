@@ -21,11 +21,13 @@ type ContextVaultAccess = {
   can_share?: boolean;
 };
 
-type ContextVaultMetadata = {
+export type ContextVaultMetadata = {
   id: string;
   vault_id: string;
   name: string;
   description?: string | null;
+  use_when?: string | null;
+  update_when?: string | null;
   workspace_id: string;
   encryption?: {
     protocol?: string;
@@ -50,11 +52,13 @@ type ContextVaultMetadataConfig = {
     provider: 'viewport-vault';
     vault: string;
     required: boolean;
+    use_when?: string;
+    update_when?: string;
   };
   manifest_digest: string;
 };
 
-type RuntimeContextVaultTarget = {
+export type RuntimeContextVaultTarget = {
   serverUrl: string;
   workspaceId: string;
   credential: string;
@@ -99,9 +103,15 @@ export async function contextVaultCreate(): Promise<void> {
     name,
     vault_id: getFlag('vault') ?? getFlag('vault-id') ?? undefined,
     description: getFlag('description') ?? undefined,
+    use_when: getFlag('use-when') ?? getFlag('useWhen') ?? undefined,
+    update_when: getFlag('update-when') ?? getFlag('updateWhen') ?? undefined,
   });
   const localContext = await maybeInitLocalContext(vault.vault_id);
-  const config = await maybeAttachVaultToConfig(vault.vault_id);
+  const config = await maybeAttachVaultToConfig({
+    ...vault,
+    use_when: getFlag('use-when') ?? getFlag('useWhen') ?? vault.use_when,
+    update_when: getFlag('update-when') ?? getFlag('updateWhen') ?? vault.update_when,
+  });
 
   if (isJsonMode()) {
     printJson({
@@ -159,15 +169,17 @@ async function maybeInitLocalContext(
 }
 
 async function maybeAttachVaultToConfig(
-  vaultId: string,
+  vault: ContextVaultMetadata,
 ): Promise<ContextVaultMetadataConfig | null> {
   if (!hasFlagCompat('use')) return null;
   const workingDirectory = getFlag('path') ?? getFlag('cwd') ?? process.cwd();
   const result = await useViewportVaultProvider({
     workingDirectory,
-    vaultId,
+    vaultId: vault.vault_id,
     providerId: getFlag('provider') ?? getFlag('id'),
     required: !hasFlagCompat('optional'),
+    useWhen: vault?.use_when ?? undefined,
+    updateWhen: vault?.update_when ?? undefined,
   });
   const manifest = resolveSessionResourceManifestSync({ workingDirectory });
   return {
@@ -178,8 +190,8 @@ async function maybeAttachVaultToConfig(
   };
 }
 
-async function resolveRuntimeContextVaultTarget(
-  commandName: 'vaults' | 'create',
+export async function resolveRuntimeContextVaultTarget(
+  commandName: 'vaults' | 'create' | 'use',
 ): Promise<RuntimeContextVaultTarget> {
   const manager = new ConfigManager();
   await manager.load();
@@ -207,7 +219,7 @@ async function resolveRuntimeContextVaultTarget(
   };
 }
 
-async function requestRuntimeContextVaults(
+export async function requestRuntimeContextVaults(
   target: RuntimeContextVaultTarget,
 ): Promise<ContextVaultMetadata[]> {
   const query = new URLSearchParams({ credential: target.credential });
@@ -221,7 +233,13 @@ async function requestRuntimeContextVaults(
 
 async function requestRuntimeContextVaultCreate(
   target: RuntimeContextVaultTarget,
-  input: { name: string; vault_id?: string; description?: string },
+  input: {
+    name: string;
+    vault_id?: string;
+    description?: string;
+    use_when?: string;
+    update_when?: string;
+  },
 ): Promise<ContextVaultMetadata> {
   const payload = await requestJson(target, runtimeContextVaultsUrl(target), {
     method: 'POST',
@@ -308,6 +326,8 @@ function readVault(value: unknown): ContextVaultMetadata {
     name,
     workspace_id: workspaceId,
     description: readString(record['description']),
+    use_when: readString(record['use_when']),
+    update_when: readString(record['update_when']),
     encryption: readRecord(record['encryption']) as ContextVaultMetadata['encryption'],
     access: readRecord(record['access']) as ContextVaultAccess | null,
   };

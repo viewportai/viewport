@@ -9,6 +9,8 @@ export interface UseViewportVaultOptions {
   vaultId: string;
   providerId?: string;
   required?: boolean;
+  useWhen?: string | null;
+  updateWhen?: string | null;
 }
 
 export interface UseViewportVaultResult {
@@ -19,6 +21,8 @@ export interface UseViewportVaultResult {
     provider: 'viewport-vault';
     vault: string;
     required: boolean;
+    use_when?: string;
+    update_when?: string;
   };
 }
 
@@ -37,6 +41,10 @@ export async function useViewportVaultProvider(
     provider: 'viewport-vault' as const,
     vault: options.vaultId,
     required,
+    ...(normalizeGuidance(options.useWhen) ? { use_when: normalizeGuidance(options.useWhen) } : {}),
+    ...(normalizeGuidance(options.updateWhen)
+      ? { update_when: normalizeGuidance(options.updateWhen) }
+      : {}),
   };
 
   if (existingIndex >= 0) {
@@ -46,8 +54,17 @@ export async function useViewportVaultProvider(
         `Provider id "${providerId}" already exists for a different context provider.`,
       );
     }
-    const changed = current.required !== required;
-    providers[existingIndex] = { ...current, required };
+    const next = {
+      ...current,
+      required,
+      ...(provider.use_when ? { use_when: provider.use_when } : {}),
+      ...(provider.update_when ? { update_when: provider.update_when } : {}),
+    };
+    const changed =
+      current.required !== required ||
+      current.use_when !== next.use_when ||
+      current.update_when !== next.update_when;
+    providers[existingIndex] = next;
     if (changed) {
       await writeConfig(configPath, { ...existing, context: { ...existing.context, providers } });
     }
@@ -57,6 +74,11 @@ export async function useViewportVaultProvider(
   providers.push(provider);
   await writeConfig(configPath, { ...existing, context: { ...existing.context, providers } });
   return { configPath, changed: true, provider };
+}
+
+function normalizeGuidance(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
 }
 
 async function nearestYamlConfigPath(workingDirectory: string): Promise<string> {

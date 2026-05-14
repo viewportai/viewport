@@ -112,6 +112,43 @@ describe('session context prompt', () => {
     await fs.rm(repo, { recursive: true, force: true });
   });
 
+  it('injects viewport-vault use and update guidance before body retrieval', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-session-vault-guidance-'));
+    await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(repo, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: platform_guardrails',
+        '      provider: viewport-vault',
+        '      vault: ctx-platform',
+        '      use_when: Use when changing auth, billing, or permissions.',
+        '      update_when: Update after durable policy or incident lessons change.',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const block = await buildSessionContextBlock({
+      workingDirectory: repo,
+      query: 'change auth permissions',
+      includePendingLocal: true,
+    });
+
+    expect(block).toContain('## ctx-platform');
+    expect(block).toContain(
+      'Use this context when: Use when changing auth, billing, or permissions.',
+    );
+    expect(block).toContain(
+      'Propose an update when: Update after durable policy or incident lessons change.',
+    );
+    expect(block).toContain('Context Vault is configured but not available on this machine.');
+
+    await fs.rm(repo, { recursive: true, force: true });
+  });
+
   it('leaves prompts unchanged when no repo config requests context', async () => {
     const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-session-context-empty-'));
 
