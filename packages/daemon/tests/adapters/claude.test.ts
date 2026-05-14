@@ -153,6 +153,34 @@ describe('ClaudeAdapter', () => {
     await adapter.resumeSession('existing-id', '/test/dir');
     expect(queryFn).not.toHaveBeenCalled();
   });
+
+  it('resumeSession with deferred initial prompt stays idle until a real prompt is sent', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'existing-id' },
+    ]);
+    const adapter = new ClaudeAdapter(queryFn);
+
+    const session = await adapter.resumeSession('existing-id', '/test/dir', {
+      initialPrompt: 'Resume this',
+      deferInitialPrompt: true,
+    });
+
+    expect(session.state).toBe('idle');
+    expect(queryFn).not.toHaveBeenCalled();
+
+    await session.sendPrompt('Resume this');
+
+    expect(queryFn).toHaveBeenCalledTimes(1);
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Resume this',
+        options: expect.objectContaining({
+          cwd: '/test/dir',
+          resume: 'existing-id',
+        }),
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
