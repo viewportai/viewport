@@ -1,3 +1,10 @@
+## [0.6.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.6.1...@viewportai/daemon@0.6.2) (2026-05-14)
+
+
+### Bug Fixes
+
+* stabilize plan auto-open and context binding errors ([#96](https://github.com/viewportai/viewport/issues/96)) ([f039e15](https://github.com/viewportai/viewport/commit/f039e158fc85bea7a2d917d1e6a605de7fa21fbf))
+
 ## [0.6.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.6.0...@viewportai/daemon@0.6.1) (2026-05-14)
 
 
