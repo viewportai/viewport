@@ -51,11 +51,15 @@ describe('trusted-edge plan artifacts', () => {
     });
 
     expect(result.planId).toBe('plan-trusted-edge-1');
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
     expect(requests[0]?.url).toBe(
       'https://api.getviewport.test/api/runtime/workspaces/workspace-1/agent-hooks/plans',
     );
+    expect(requests[1]?.url).toBe(
+      'https://api.getviewport.test/api/runtime/workspaces/workspace-1/trusted-edge-unlock-sessions/activate-from-edge',
+    );
     expect(JSON.stringify(requests[0]?.body)).not.toContain('Do not leak plaintext');
+    expect(JSON.stringify(requests[1]?.body)).not.toContain('Do not leak plaintext');
     expect(requests[0]?.body).toMatchObject({
       credential: 'issue-token',
       body_encryption: expect.objectContaining({

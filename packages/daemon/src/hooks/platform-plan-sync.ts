@@ -16,6 +16,8 @@ export interface PlatformPlanHookSyncResult {
 }
 
 export class PlatformPlanHookSync {
+  private readonly recentlyOpened = new Map<string, number>();
+
   constructor(
     private readonly daemon: Pick<Daemon, 'configManager'>,
     private readonly urlOpener: UrlOpener = openUrl,
@@ -26,22 +28,46 @@ export class PlatformPlanHookSync {
     const target = this.targetFor(event);
     if (!target) return { opened: false, reason: 'missing_platform_target' };
 
+    const dedupeKey = this.dedupeKeyFor(event);
+    const now = Date.now();
+    this.pruneRecentlyOpened(now);
+    if (this.recentlyOpened.has(dedupeKey)) {
+      return { opened: false, reason: 'duplicate_plan_event' };
+    }
+    this.recentlyOpened.set(dedupeKey, now);
+
     let planId: string;
+    let unlockSessionId: string | undefined;
     try {
       const saved = await this.planSaver({ event, target });
       planId = saved.planId;
+      unlockSessionId = saved.unlockSessionId;
     } catch {
+      this.recentlyOpened.delete(dedupeKey);
       return { opened: false, reason: 'trusted_edge_save_failed' };
     }
 
-    const planUrl = buildSavedPlanUrl(target.appUrl, target.workspaceId, planId);
+    const planUrl = buildSavedPlanUrl(target.appUrl, target.workspaceId, planId, unlockSessionId);
     try {
       this.urlOpener(planUrl);
     } catch {
+      this.recentlyOpened.delete(dedupeKey);
       return { opened: false, reason: 'browser_open_failed', planUrl };
     }
 
     return { opened: true, planUrl };
+  }
+
+  private dedupeKeyFor(event: PlanProposedEvent): string {
+    return [event.sessionId, event.body.trim()].join('\0');
+  }
+
+  private pruneRecentlyOpened(now: number): void {
+    for (const [key, seenAt] of this.recentlyOpened) {
+      if (now - seenAt > 30_000) {
+        this.recentlyOpened.delete(key);
+      }
+    }
   }
 
   private targetFor(event: PlanProposedEvent): {
@@ -77,10 +103,18 @@ export class PlatformPlanHookSync {
   }
 }
 
-function buildSavedPlanUrl(appUrl: string, workspaceId: string, planId: string): string {
+function buildSavedPlanUrl(
+  appUrl: string,
+  workspaceId: string,
+  planId: string,
+  unlockSessionId?: string,
+): string {
   const url = new URL('/plans', appUrl);
   url.searchParams.set('resource_id', workspaceId);
   url.searchParams.set('plan_id', planId);
+  if (unlockSessionId) {
+    url.searchParams.set('trusted_edge_unlock_session_id', unlockSessionId);
+  }
   return url.toString();
 }
 
