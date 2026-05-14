@@ -261,7 +261,7 @@ function cleanSessionText(value: string): string {
     .replace(/<current_date>[\s\S]*?<\/current_date>/gi, ' ')
     .replace(/<timezone>[\s\S]*?<\/timezone>/gi, ' ')
     .replace(
-      /^<(?:local-command-caveat|local-command-std(?:err|out)|task-notification|teammate-message|bash-(?:input|stdout))>[\s\S]*/i,
+      /^<(?:local-command-caveat|local-command-std(?:err|out)|command-(?:name|message|args)|task-notification|teammate-message|bash-(?:input|stdout))>[\s\S]*/i,
       ' ',
     )
     .replace(/<\/?[a-zA-Z_][^>]*>/g, ' ')

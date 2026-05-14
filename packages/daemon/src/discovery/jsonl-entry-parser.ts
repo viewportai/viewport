@@ -102,8 +102,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
   // Simple string content → single text block
   if (typeof content === 'string') {
     if (content) {
-      blocks.push({ kind: 'text', role: type, text: content, ts, uuid });
-      blocks.push(...viewportPlanEventsFromText(content, ts, `${uuid}-viewport-plan`));
+      blocks.push(...mapClaudeTextToRichBlocks(type, content, ts, uuid));
     }
     return blocks;
   }
@@ -113,7 +112,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
   for (const block of content) {
     if (typeof block === 'string') {
       if (block) {
-        blocks.push({ kind: 'text', role: type, text: block, ts, uuid });
+        blocks.push(...mapClaudeTextToRichBlocks(type, block, ts, uuid));
       }
       continue;
     }
@@ -125,8 +124,7 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
     switch (blockType) {
       case 'text':
         if (typeof b.text === 'string' && b.text) {
-          blocks.push({ kind: 'text', role: type, text: b.text, ts, uuid });
-          blocks.push(...viewportPlanEventsFromText(b.text, ts, `${uuid}-viewport-plan`));
+          blocks.push(...mapClaudeTextToRichBlocks(type, b.text, ts, uuid));
         }
         break;
 
@@ -163,6 +161,80 @@ function parseClaudeEntry(e: Record<string, unknown>): RichSessionMessage[] | nu
   }
 
   return blocks;
+}
+
+function mapClaudeTextToRichBlocks(
+  role: 'user' | 'assistant',
+  text: string,
+  ts: string,
+  uuid: string,
+): RichSessionMessage[] {
+  if (role === 'user') {
+    const localCommandBlocks = claudeLocalCommandEventsFromText(text, ts, uuid);
+    if (localCommandBlocks) return localCommandBlocks;
+  }
+  return [
+    { kind: 'text', role, text, ts, uuid },
+    ...viewportPlanEventsFromText(text, ts, `${uuid}-viewport-plan`),
+  ];
+}
+
+function claudeLocalCommandEventsFromText(
+  text: string,
+  ts: string,
+  uuid: string,
+): RichSessionMessage[] | null {
+  if (!isClaudeLocalCommandText(text)) return null;
+  if (/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/i.test(text)) return [];
+
+  const commandName = taggedText(text, 'command-name');
+  if (commandName) {
+    const slashCommand = commandName.startsWith('/') ? commandName : `/${commandName}`;
+    const commandMessage = taggedText(text, 'command-message') || commandName;
+    const commandArgs = taggedText(text, 'command-args');
+    return [
+      {
+        kind: 'event',
+        title: `Claude command: ${slashCommand}`,
+        body: [commandMessage, commandArgs ? `args ${commandArgs}` : null]
+          .filter(Boolean)
+          .join('\n'),
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:local-command:${commandName}`,
+      },
+    ];
+  }
+
+  const stdout = taggedText(text, 'local-command-stdout');
+  if (stdout) {
+    return [
+      {
+        kind: 'event',
+        title: 'Claude command output',
+        body: stdout,
+        tone: 'muted',
+        ts,
+        uuid: `${uuid}:local-command-stdout`,
+      },
+    ];
+  }
+
+  const stderr = taggedText(text, 'local-command-stderr');
+  if (stderr) {
+    return [
+      {
+        kind: 'event',
+        title: 'Claude command warning',
+        body: stderr,
+        tone: 'warning',
+        ts,
+        uuid: `${uuid}:local-command-stderr`,
+      },
+    ];
+  }
+
+  return [];
 }
 
 function mapClaudeToolUseToRichBlocks(input: {
@@ -880,6 +952,27 @@ function extractText(value: unknown): string {
     if (text) return text;
   }
   return '';
+}
+
+function isClaudeLocalCommandText(text: string): boolean {
+  return /<(?:local-command-caveat|local-command-std(?:out|err)|command-name|command-message|command-args)>/i.test(
+    text,
+  );
+}
+
+function taggedText(text: string, tag: string): string {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`<${escaped}>([\\s\\S]*?)<\\/${escaped}>`, 'i').exec(text);
+  return match
+    ? stripAnsi(match[1] ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    : '';
+}
+
+function stripAnsi(text: string): string {
+  // ANSI CSI escape sequences emitted by Claude local command status lines.
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
 function commandToString(value: unknown): string {
