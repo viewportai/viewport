@@ -154,6 +154,23 @@ export interface SessionDiscovery {
   discoverSessions(projectPath: string): Promise<DiscoveredSession[]>;
 }
 
+export interface SessionInteractionCapabilities {
+  /** Transcript/history can be read from the owning machine. */
+  readTranscript: boolean;
+  /** Transcript tail updates can be streamed while the source file changes. */
+  tailTranscript: boolean;
+  /** The provider can resume this session by id. */
+  resume: boolean;
+  /** The daemon can send a new prompt to the running session. */
+  sendPrompt: boolean;
+  /** The daemon can interrupt the running session. */
+  interrupt: boolean;
+  /** Pending permission requests can be answered through Viewport. */
+  respondToPermissions: boolean;
+  /** Resume accepts a model override. */
+  modelOverride: boolean;
+}
+
 export interface DiscoveredSession {
   /** Source agent that owns this session (e.g. 'claude', 'codex', 'gemini'). */
   agentId: string;
@@ -189,6 +206,8 @@ export interface DiscoveredSession {
   gitBranch?: string;
   /** Whether this session can be resumed. */
   resumable: boolean;
+  /** Explicit interaction capabilities for this session. */
+  capabilities?: SessionInteractionCapabilities;
   /** Number of messages in the session. */
   messageCount?: number;
   /** Optional source file backing this discovered session. */

@@ -61,8 +61,20 @@ interface SessionListSource {
   lastModified: number;
   messageCount?: number;
   resumable: boolean;
+  capabilities?: SessionInteractionCapabilities;
   cwd?: string;
+  sourcePath?: string;
   worktreePath?: string;
+}
+
+interface SessionInteractionCapabilities {
+  readTranscript: boolean;
+  tailTranscript: boolean;
+  resume: boolean;
+  sendPrompt: boolean;
+  interrupt: boolean;
+  respondToPermissions: boolean;
+  modelOverride: boolean;
 }
 
 interface SessionCommandContext {
@@ -424,12 +436,29 @@ function toSessionListEntry(
     lastActivity: session.lastModified,
     messageCount: session.messageCount ?? 0,
     resumable: session.resumable,
+    capabilities: sessionCapabilitiesForDiscovered(session),
     workingDirectory,
     repoRoot: git.repoRoot,
     repoRemoteUrl: git.repoRemoteUrl,
     repoBranch: git.repoBranch,
     repoSha: git.repoSha,
     resourceManifest: resolveManifest(workingDirectory),
+  };
+}
+
+function sessionCapabilitiesForDiscovered(input: {
+  resumable: boolean;
+  sourcePath?: string;
+  capabilities?: Partial<SessionInteractionCapabilities>;
+}): SessionInteractionCapabilities {
+  return {
+    readTranscript: input.capabilities?.readTranscript ?? Boolean(input.sourcePath),
+    tailTranscript: input.capabilities?.tailTranscript ?? Boolean(input.sourcePath),
+    resume: input.capabilities?.resume ?? input.resumable,
+    sendPrompt: input.capabilities?.sendPrompt ?? false,
+    interrupt: input.capabilities?.interrupt ?? false,
+    respondToPermissions: input.capabilities?.respondToPermissions ?? false,
+    modelOverride: input.capabilities?.modelOverride ?? input.resumable,
   };
 }
 

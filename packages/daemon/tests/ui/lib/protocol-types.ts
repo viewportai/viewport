@@ -156,6 +156,7 @@ export interface ActiveSessionInfo {
   id: string;
   directoryId: string;
   state: SessionState;
+  capabilities?: SessionInteractionCapabilities;
 }
 
 export interface MachineInfo {
@@ -180,8 +181,19 @@ export interface DiscoveredSessionInfo {
   lastActivity: number;
   messageCount: number;
   resumable: boolean;
+  capabilities?: SessionInteractionCapabilities;
   waiting?: boolean;
   waitingToolName?: string;
+}
+
+export interface SessionInteractionCapabilities {
+  readTranscript: boolean;
+  tailTranscript: boolean;
+  resume: boolean;
+  sendPrompt: boolean;
+  interrupt: boolean;
+  respondToPermissions: boolean;
+  modelOverride: boolean;
 }
 
 // ---------------------------------------------------------------------------

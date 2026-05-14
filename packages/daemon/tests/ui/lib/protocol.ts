@@ -209,6 +209,16 @@ export const UnknownUpdateSchema = z.object({
   timestamp: TimestampSchema,
 });
 
+const SessionInteractionCapabilitiesSchema = z.object({
+  readTranscript: z.boolean(),
+  tailTranscript: z.boolean(),
+  resume: z.boolean(),
+  sendPrompt: z.boolean(),
+  interrupt: z.boolean(),
+  respondToPermissions: z.boolean(),
+  modelOverride: z.boolean(),
+});
+
 export const SessionUpdatePayloadSchema = z.discriminatedUnion('updateType', [
   AgentMessageUpdateSchema,
   AgentMessageChunkUpdateSchema,
@@ -249,6 +259,7 @@ export const HelloMessageSchema = z.object({
       id: z.string(),
       directoryId: z.string(),
       state: z.enum(['starting', 'running', 'waiting_permission', 'idle', 'completed', 'errored']),
+      capabilities: SessionInteractionCapabilitiesSchema.optional(),
     }),
   ),
   discoveredSessions: z
@@ -261,6 +272,7 @@ export const HelloMessageSchema = z.object({
         lastActivity: z.number(),
         messageCount: z.number(),
         resumable: z.boolean(),
+        capabilities: SessionInteractionCapabilitiesSchema.optional(),
         workflowRunId: z.string().optional(),
         workflowNodeId: z.string().optional(),
         parentDirectoryId: z.string().optional(),

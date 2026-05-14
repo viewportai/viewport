@@ -710,10 +710,30 @@ describe('HTTP Server', () => {
     };
     expect(olderBody).toMatchObject({
       nextOffset: 2,
-      hasMoreBefore: false,
+      hasMoreBefore: true,
     });
     expect(olderBody.messages).toHaveLength(1);
     expect(olderBody.messages[0]).toMatchObject({ kind: 'text', text: 'hello codex' });
+
+    const oldest = await app.inject({
+      method: 'GET',
+      url: `/api/directories/${dir.id}/sessions/codex-session-1/messages?limit=1&offset=2`,
+    });
+    expect(oldest.statusCode).toBe(200);
+    const oldestBody = JSON.parse(oldest.payload) as {
+      messages: Array<{ kind: string; title?: string }>;
+      nextOffset?: number;
+      hasMoreBefore?: boolean;
+    };
+    expect(oldestBody).toMatchObject({
+      nextOffset: 3,
+      hasMoreBefore: false,
+    });
+    expect(oldestBody.messages).toHaveLength(1);
+    expect(oldestBody.messages[0]).toMatchObject({
+      kind: 'event',
+      title: 'Provider event: session_meta',
+    });
   });
 
   // ---------------------------------------------------------------------------
