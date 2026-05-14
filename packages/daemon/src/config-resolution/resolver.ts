@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { manifestRiskyPathRules, normalizeRiskyPathRules } from './approval-rules.js';
 import { discoverViewportConfigPaths, discoverViewportConfigPathsSync } from './discovery.js';
+import { defaultCapabilities, defaultPrivacy } from './provider-defaults.js';
 import { ViewportConfigSchema, type ViewportConfigInput } from './schema.js';
 import { digestJson } from './stable-json.js';
 import YAML from 'yaml';
@@ -18,7 +19,6 @@ import {
   type SessionWorkflowManifest,
   type ViewportContextProviderCapability,
   type ViewportContextProviderKind,
-  type ViewportContextProviderPrivacy,
   type ViewportContextProviderRef,
   type ViewportContextResolution,
   type ViewportConfigDefaults,
@@ -315,24 +315,6 @@ function normalizeWorkflowRefs(
       ...(workflow.digest ? { digest: workflow.digest } : {}),
     };
   });
-}
-
-function defaultPrivacy(kind: ViewportContextProviderKind): ViewportContextProviderPrivacy {
-  if (kind === 'repo-docs') return 'local_only';
-  if (kind === 'viewport-vault') return 'control_plane_blind';
-  if (kind === 'github-repo') return 'third_party_terms';
-  if (kind === 'custom-cli' || kind === 'custom-mcp') return 'unknown';
-  return 'third_party_terms';
-}
-
-function defaultCapabilities(
-  kind: ViewportContextProviderKind,
-): ViewportContextProviderCapability[] {
-  if (kind === 'repo-docs') return ['search', 'get'];
-  if (kind === 'viewport-vault') return ['search', 'get', 'propose', 'write_approved'];
-  if (kind === 'github-repo') return ['search', 'get', 'propose'];
-  if (kind === 'custom-cli' || kind === 'custom-mcp') return ['search'];
-  return ['search', 'get'];
 }
 
 function manifestContextProviders(
