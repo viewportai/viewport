@@ -161,6 +161,26 @@ export interface DiscoveredSession {
   sessionId: string;
   /** First user prompt or summary. */
   summary: string;
+  /** Provider-native user-facing title, when the agent stores one. */
+  nativeTitle?: string;
+  /** Viewport-generated fallback title, when no provider-native title exists. */
+  generatedTitle?: string;
+  /** Title the UI should render. */
+  displayTitle?: string;
+  /** Where displayTitle came from. */
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  /** First meaningful user prompt, excluding injected environment/context metadata. */
+  firstPrompt?: string;
+  /** Last meaningful user prompt, excluding injected environment/context metadata. */
+  lastPrompt?: string;
+  /** Latest known provider/model label. */
+  latestModel?: string;
+  /** Latest known provider approval policy. */
+  approvalPolicy?: string;
+  /** Latest known sandbox mode. */
+  sandboxMode?: string;
+  /** Latest known reasoning effort or thinking mode. */
+  reasoningEffort?: string;
   /** Last modified timestamp (ms since epoch). */
   lastModified: number;
   /** Working directory for the session. */

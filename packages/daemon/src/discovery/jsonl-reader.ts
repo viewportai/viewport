@@ -33,6 +33,16 @@ export interface SessionSummary {
   sessionId: string;
   /** First user message (truncated). */
   summary: string;
+  nativeTitle?: string;
+  generatedTitle?: string;
+  displayTitle?: string;
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  firstPrompt?: string;
+  lastPrompt?: string;
+  latestModel?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  reasoningEffort?: string;
   /** Message count (user + assistant). */
   messageCount: number;
   /** Last activity ISO timestamp. */
@@ -140,6 +150,12 @@ async function parseSessionSummary(
   sessionId: string,
 ): Promise<SessionSummary | null> {
   let firstUserMessage = '';
+  let lastUserMessage = '';
+  let nativeTitle = '';
+  let latestModel: string | undefined;
+  let approvalPolicy: string | undefined;
+  let sandboxMode: string | undefined;
+  let reasoningEffort: string | undefined;
   let messageCount = 0;
   let lastTimestamp = '';
   let cwd = '';
@@ -165,6 +181,18 @@ async function parseSessionSummary(
         gitBranch = entry.gitBranch;
       }
 
+      if (type === 'custom-title' && typeof entry.customTitle === 'string') {
+        nativeTitle = cleanSessionText(entry.customTitle).slice(0, 120);
+      }
+      if (!latestModel && typeof entry.model === 'string') latestModel = entry.model;
+      if (!approvalPolicy && typeof entry.permissionMode === 'string') {
+        approvalPolicy = entry.permissionMode;
+      }
+      if (!sandboxMode && typeof entry.sandboxMode === 'string') sandboxMode = entry.sandboxMode;
+      if (!reasoningEffort && typeof entry.modelReasoningEffort === 'string') {
+        reasoningEffort = entry.modelReasoningEffort;
+      }
+
       if (type === 'user' || type === 'assistant') {
         messageCount++;
 
@@ -186,8 +214,12 @@ async function parseSessionSummary(
         }
 
         // Get first user message as summary
-        if (type === 'user' && !firstUserMessage) {
-          firstUserMessage = extractTextContent(message);
+        if (type === 'user') {
+          const text = cleanSessionText(extractTextContent(message));
+          if (text) {
+            if (!firstUserMessage) firstUserMessage = text;
+            lastUserMessage = text;
+          }
         }
       }
     } catch {
@@ -203,6 +235,15 @@ async function parseSessionSummary(
   return {
     sessionId,
     summary: firstUserMessage.slice(0, 120),
+    nativeTitle: nativeTitle || undefined,
+    displayTitle: nativeTitle || firstUserMessage.slice(0, 120) || undefined,
+    titleSource: nativeTitle ? 'native' : 'first_prompt',
+    firstPrompt: firstUserMessage || undefined,
+    lastPrompt: lastUserMessage || undefined,
+    latestModel,
+    approvalPolicy,
+    sandboxMode,
+    reasoningEffort,
     messageCount,
     lastActivity: lastTimestamp || new Date().toISOString(),
     cwd,
@@ -210,6 +251,24 @@ async function parseSessionSummary(
     resumable: !resumePoisoned,
     sourcePath: filePath,
   };
+}
+
+function cleanSessionText(value: string): string {
+  const text = value
+    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, ' ')
+    .replace(/<cwd>[\s\S]*?<\/cwd>/gi, ' ')
+    .replace(/<shell>[\s\S]*?<\/shell>/gi, ' ')
+    .replace(/<current_date>[\s\S]*?<\/current_date>/gi, ' ')
+    .replace(/<timezone>[\s\S]*?<\/timezone>/gi, ' ')
+    .replace(
+      /^<(?:local-command-caveat|local-command-std(?:err|out)|task-notification|teammate-message|bash-(?:input|stdout))>[\s\S]*/i,
+      ' ',
+    )
+    .replace(/<\/?[a-zA-Z_][^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text || /^(none|null|n\/a|na|-|—)$/i.test(text)) return '';
+  return text;
 }
 
 /**

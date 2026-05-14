@@ -76,6 +76,16 @@ export interface SnapshotPayload {
     agentId: string;
     directoryId: string;
     summary: string;
+    nativeTitle?: string;
+    generatedTitle?: string;
+    displayTitle?: string;
+    titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+    firstPrompt?: string;
+    lastPrompt?: string;
+    latestModel?: string;
+    approvalPolicy?: string;
+    sandboxMode?: string;
+    reasoningEffort?: string;
     lastActivity: number;
     messageCount: number;
     resumable: boolean;
@@ -148,6 +158,16 @@ export function buildSnapshotPayload(daemon: Daemon, registry?: AgentRegistry): 
         agentId: s.agentId,
         directoryId,
         summary: s.summary,
+        nativeTitle: s.nativeTitle,
+        generatedTitle: s.generatedTitle,
+        displayTitle: s.displayTitle,
+        titleSource: s.titleSource,
+        firstPrompt: s.firstPrompt,
+        lastPrompt: s.lastPrompt,
+        latestModel: s.latestModel,
+        approvalPolicy: s.approvalPolicy,
+        sandboxMode: s.sandboxMode,
+        reasoningEffort: s.reasoningEffort,
         lastActivity: s.lastModified,
         messageCount: s.messageCount ?? 0,
         resumable: s.resumable,

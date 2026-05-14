@@ -51,6 +51,16 @@ export class CodexDiscovery implements SessionDiscovery {
         agentId: this.agentId,
         sessionId: parsed.sessionId,
         summary: parsed.summary,
+        nativeTitle: parsed.nativeTitle,
+        generatedTitle: parsed.generatedTitle,
+        displayTitle: parsed.displayTitle,
+        titleSource: parsed.titleSource,
+        firstPrompt: parsed.firstPrompt,
+        lastPrompt: parsed.lastPrompt,
+        latestModel: parsed.latestModel,
+        approvalPolicy: parsed.approvalPolicy,
+        sandboxMode: parsed.sandboxMode,
+        reasoningEffort: parsed.reasoningEffort,
         lastModified: parsed.lastModified,
         cwd: parsed.cwd,
         resumable: true,
@@ -78,13 +88,51 @@ export class CodexDiscovery implements SessionDiscovery {
     }
 
     const sessions: ParsedCodexSession[] = [];
+    const sessionNames = await loadCodexSessionNameMap();
     for (const filePath of files) {
       const parsed = await parseCodexSessionFile(filePath);
-      if (parsed) sessions.push(parsed);
+      if (parsed) {
+        const indexedName = sessionNames.get(parsed.sessionId);
+        sessions.push(
+          indexedName
+            ? {
+                ...parsed,
+                nativeTitle: indexedName,
+                displayTitle: indexedName,
+                titleSource: 'native',
+              }
+            : parsed,
+        );
+      }
     }
     this.parsedCache = { loadedAt: now, sessions, fingerprint };
     return sessions;
   }
+}
+
+async function loadCodexSessionNameMap(): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  const indexPath = path.join(codexHomeDir(), 'session_index.jsonl');
+  let raw = '';
+  try {
+    raw = await fs.readFile(indexPath, 'utf-8');
+  } catch {
+    return names;
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      const id = entry['id'];
+      const threadName = entry['thread_name'];
+      if (typeof id === 'string' && typeof threadName === 'string' && threadName.trim()) {
+        names.set(id, threadName.trim());
+      }
+    } catch {
+      // Ignore malformed index entries.
+    }
+  }
+  return names;
 }
 
 interface SessionFileFingerprint {

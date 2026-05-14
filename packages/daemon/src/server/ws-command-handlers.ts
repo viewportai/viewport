@@ -139,6 +139,7 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           model: overrides.model,
           resourceId,
           cwd: dir?.path,
+          summary: initialPrompt || undefined,
           resourceManifest: resolveManifest(dir?.path ?? null),
         }),
       );

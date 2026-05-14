@@ -48,6 +48,16 @@ interface SessionListSource {
   sessionId: string;
   agentId: string;
   summary: string;
+  nativeTitle?: string;
+  generatedTitle?: string;
+  displayTitle?: string;
+  titleSource?: 'native' | 'generated' | 'first_prompt' | 'fallback';
+  firstPrompt?: string;
+  lastPrompt?: string;
+  latestModel?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  reasoningEffort?: string;
   lastModified: number;
   messageCount?: number;
   resumable: boolean;
@@ -274,6 +284,8 @@ export function createWsSessionCommandHandlers(
           agent: discoveredMatch.agentId,
           resourceId,
           summary: discoveredMatch.summary,
+          displayTitle: discoveredMatch.displayTitle,
+          titleSource: discoveredMatch.titleSource,
           resourceManifest: resolveManifest(resumeDir.path),
         }),
       );
@@ -348,10 +360,29 @@ function trimLargeMessage(message: RichSessionMessage): RichSessionMessage {
   if (message.kind === 'tool_result') {
     return { ...message, output: trimString(message.output) };
   }
-  return {
-    ...message,
-    input: trimLargeInput(message.input),
-  };
+  if (message.kind === 'tool_use') {
+    return {
+      ...message,
+      input: trimLargeInput(message.input),
+    };
+  }
+  if (message.kind === 'command') {
+    return { ...message, output: message.output ? trimString(message.output) : message.output };
+  }
+  if (message.kind === 'file_change') {
+    return { ...message, diff: message.diff ? trimString(message.diff) : message.diff };
+  }
+  if (message.kind === 'approval') {
+    return {
+      ...message,
+      body: trimString(message.body),
+      input: message.input ? trimLargeInput(message.input) : message.input,
+    };
+  }
+  if (message.kind === 'event') {
+    return { ...message, body: trimString(message.body) };
+  }
+  return message;
 }
 
 function trimLargeInput(input: Record<string, unknown>): Record<string, unknown> {
@@ -380,6 +411,16 @@ function toSessionListEntry(
     agentId: session.agentId,
     directoryId,
     summary: session.summary,
+    nativeTitle: session.nativeTitle,
+    generatedTitle: session.generatedTitle,
+    displayTitle: session.displayTitle,
+    titleSource: session.titleSource,
+    firstPrompt: session.firstPrompt,
+    lastPrompt: session.lastPrompt,
+    latestModel: session.latestModel,
+    approvalPolicy: session.approvalPolicy,
+    sandboxMode: session.sandboxMode,
+    reasoningEffort: session.reasoningEffort,
     lastActivity: session.lastModified,
     messageCount: session.messageCount ?? 0,
     resumable: session.resumable,
