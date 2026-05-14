@@ -59,6 +59,7 @@ import {
   service,
   setup,
   remote,
+  profile,
   bind,
   unlock,
 } from './cli/commands.js';
@@ -111,6 +112,7 @@ const commands: Record<string, () => Promise<void>> = {
   service,
   setup,
   remote,
+  profile,
   bind,
   unlock,
 };

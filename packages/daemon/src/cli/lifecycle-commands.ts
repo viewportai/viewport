@@ -322,6 +322,7 @@ export function showHelp(): void {
     '  daemon <subcommand>          Lifecycle ops (start, doctor, status, stop, restart, pair, update, service, setup)',
   );
   console.log('  setup [--yes|--choose]       First-run guided setup (recommended or custom)');
+  console.log('  profile <cmd>                Manage local/prod daemon profiles');
   console.log('  install [--json]             Detect available agents and install hooks');
   console.log('  bind [path] [--org <organization-id>] [--yes] [--json]');
   console.log(

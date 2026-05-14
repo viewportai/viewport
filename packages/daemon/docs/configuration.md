@@ -5,10 +5,23 @@ public setup docs live at <https://docs.getviewport.com>.
 
 ## Precedence
 
-Daemon runtime settings resolve in this order (later wins):
+Daemon home resolution happens before config loading:
+
+1. Base home defaults to `~/.viewport`.
+2. `VIEWPORT_HOME`, `VPD_HOME`, or top-level `vpd --home <path> ...` change the
+   base home.
+3. `VIEWPORT_PROFILE`, `VPD_PROFILE`, or top-level `vpd --profile <name> ...`
+   select `profiles/<name>` under that base home.
+4. If no environment profile is set, `vpd profile use <name>` selects the
+   current profile stored in `<base-home>/current-profile`.
+
+The resolved daemon home contains `config.json`, `auth-token`, pairing state,
+keys, relay identity, and local runtime stores.
+
+Daemon runtime settings resolve inside the selected home in this order (later wins):
 
 1. Built-in defaults
-2. `~/.viewport/config.json` (`daemon.*`)
+2. `<selected-home>/config.json` (`daemon.*`)
 3. Environment variables (`VIEWPORT_*`)
 4. CLI flags
 
@@ -70,8 +83,12 @@ Use `appUrl` only when the browser pairing app is intentionally hosted at a diff
 
 ## Environment variables
 
+- `VIEWPORT_HOME` / `VPD_HOME`
+- `VIEWPORT_PROFILE` / `VPD_PROFILE` (daemon environment profile)
 - `VIEWPORT_LISTEN`
-- `VIEWPORT_PROFILE`
+- `VIEWPORT_PROFILE` is also used by older runtime config references; on `vpd start`,
+  prefer `--profile local|lan|relay` for network exposure mode and
+  `VPD_PROFILE=<name>` for daemon environment selection.
 - `VIEWPORT_ALLOWED_HOSTS`
 - `VIEWPORT_ALLOWED_ORIGINS`
 - `VIEWPORT_AUTH`
@@ -95,8 +112,10 @@ Use `appUrl` only when the browser pairing app is intentionally hosted at a diff
 
 ## CLI flags
 
+- Top-level `--home <path>`
+- Top-level `--profile <name>` for daemon environment selection
 - `--listen`
-- `--profile`
+- `start --profile local|lan|relay` for network exposure mode
 - `--allowed-hosts`
 - `--allowed-origins`
 - `--auth`
@@ -119,6 +138,51 @@ Pairing-only flags:
 
 - `--server`
 - `--app-url`
+
+## Profiles
+
+`vpd setup` creates and selects the managed `prod` profile on a fresh install.
+Users installing the daemon for the hosted product do not need to run profile
+commands manually.
+
+Create profiles for each environment:
+
+```bash
+vpd profile create local --copy-current --server https://api.getviewport.test --app-url https://app.getviewport.test --relay wss://relay.getviewport.test:7781/ws
+vpd profile create prod --server https://api.getviewport.com --app-url https://app.getviewport.com --relay wss://relay.getviewport.com/ws
+vpd profile use prod
+```
+
+Profile homes:
+
+```text
+~/.viewport/
+  profiles.json
+  current-profile
+  profiles/
+    local/
+      config.json
+      auth-token
+      ...
+    prod/
+      config.json
+      auth-token
+      ...
+```
+
+Repo bindings record the active profile in `.viewport/local.yaml`:
+
+```yaml
+version: 1
+organization_id: 01...
+profile: prod
+remote:
+  stream: enabled
+```
+
+Relay streaming requires the organization and profile to match. Switching from
+`local` to `prod` does not cause local-bound repos to stream to production until
+you intentionally re-run `vpd bind . --yes` under `prod`.
 
 ## Relay bootstrap
 

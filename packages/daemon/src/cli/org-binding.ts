@@ -2,6 +2,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
+import { activeProfileName } from '../core/profiles.js';
 
 export const VIEWPORT_DIR = '.viewport';
 export const LOCAL_BINDING_FILE = 'local.yaml';
@@ -12,6 +13,7 @@ export interface LocalOrgBinding {
   filePath: string;
   directory: string;
   organizationId: string;
+  profileName: string;
   streamEnabled: boolean;
 }
 
@@ -31,6 +33,7 @@ interface BindingDocument {
   workspace?: {
     id?: unknown;
   };
+  profile?: unknown;
   remote?: {
     stream?: unknown;
   };
@@ -47,15 +50,20 @@ export function workspaceHintPath(directory: string): string {
 export async function writeLocalOrgBinding(options: {
   directory: string;
   organizationId: string;
+  profileName?: string | null;
   streamEnabled?: boolean;
 }): Promise<LocalOrgBinding> {
   const directory = path.resolve(options.directory);
+  const profileName = normalizeBindingProfileName(
+    options.profileName === undefined ? activeProfileName() : options.profileName,
+  );
   const viewportDir = path.join(directory, VIEWPORT_DIR);
   await fs.mkdir(viewportDir, { recursive: true });
   const filePath = localBindingPath(directory);
   const document = {
     version: 1,
     organization_id: options.organizationId,
+    profile: profileName,
     remote: {
       stream: (options.streamEnabled ?? true) ? 'enabled' : 'disabled',
     },
@@ -67,6 +75,7 @@ export async function writeLocalOrgBinding(options: {
     filePath,
     directory,
     organizationId: options.organizationId,
+    profileName,
     streamEnabled: options.streamEnabled ?? true,
   };
 }
@@ -138,6 +147,7 @@ export function resolveLocalOrgBindingSync(startDirectory: string): LocalOrgBind
     filePath: match.filePath,
     directory: match.directory,
     organizationId,
+    profileName: readProfileName(parsed),
     streamEnabled: readStreamEnabled(parsed),
   };
 }
@@ -161,7 +171,10 @@ export function directoryStreamsToOrganization(options: {
 }): boolean {
   if (!options.directory) return false;
   const binding = resolveLocalOrgBindingSync(options.directory);
-  return binding?.streamEnabled === true && binding.organizationId === options.organizationId;
+  if (binding?.streamEnabled !== true) return false;
+  if (binding.organizationId !== options.organizationId) return false;
+  const currentProfile = normalizeBindingProfileName(activeProfileName());
+  return binding.profileName === currentProfile;
 }
 
 function findNearestFileSync(
@@ -249,4 +262,14 @@ function readStreamEnabled(document: BindingDocument): boolean {
   return (
     normalized === 'enabled' || normalized === 'true' || normalized === '1' || normalized === 'on'
   );
+}
+
+function readProfileName(document: BindingDocument): string {
+  return normalizeBindingProfileName(document.profile);
+}
+
+function normalizeBindingProfileName(value: unknown): string {
+  if (typeof value !== 'string') return 'default';
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : 'default';
 }
