@@ -271,9 +271,7 @@ function parseCodexEntry(e: Record<string, unknown>): RichSessionMessage[] | nul
         ts,
         uuid: `${baseUuid}-${i}`,
       });
-      messageBlocks.push(
-        ...viewportPlanEventsFromText(text, ts, `${baseUuid}-${i}-viewport-plan`),
-      );
+      messageBlocks.push(...viewportPlanEventsFromText(text, ts, `${baseUuid}-${i}-viewport-plan`));
     }
     return messageBlocks;
   }
@@ -580,7 +578,11 @@ function extractToolResultContent(content: unknown): string {
   return '';
 }
 
-function viewportCliEventsFromOutput(output: string, ts: string, uuidPrefix: string): RichSessionMessage[] {
+function viewportCliEventsFromOutput(
+  output: string,
+  ts: string,
+  uuidPrefix: string,
+): RichSessionMessage[] {
   const payload = parseViewportCliJson(output);
   if (!payload) return [];
   const schemaVersion = typeof payload.schema_version === 'string' ? payload.schema_version : '';
@@ -684,7 +686,11 @@ function viewportCliEventsFromOutput(output: string, ts: string, uuidPrefix: str
   return [];
 }
 
-function viewportPlanEventsFromText(text: string, ts: string, uuidPrefix: string): RichSessionMessage[] {
+function viewportPlanEventsFromText(
+  text: string,
+  ts: string,
+  uuidPrefix: string,
+): RichSessionMessage[] {
   const payload = parseViewportPlanPayload(text);
   if (!payload) return [];
   const schema = stringField(payload, 'schema');
