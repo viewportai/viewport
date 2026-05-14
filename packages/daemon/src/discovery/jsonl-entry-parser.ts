@@ -82,6 +82,7 @@ export function parseJSONLEntry(entry: unknown): RichSessionMessage[] {
     parseCodexEventMsgEntry(e) ??
     parseCodexEntry(e) ??
     parseCodexCompactedEntry(e) ??
+    parseProviderMetadataEntry(e) ??
     []
   );
 }
@@ -510,6 +511,48 @@ function parseCodexCompactedEntry(e: Record<string, unknown>): RichSessionMessag
   return blocks;
 }
 
+function parseProviderMetadataEntry(e: Record<string, unknown>): RichSessionMessage[] | null {
+  const type = typeof e.type === 'string' ? e.type : '';
+  if (!type) return null;
+  const ts = timestampFromEntry(e);
+  const uuid = typeof e.uuid === 'string' && e.uuid ? e.uuid : `provider-${type}-${ts}`;
+
+  if (type === 'custom-title') {
+    const title =
+      stringField(e, 'customTitle') || stringField(e, 'custom_title') || stringField(e, 'title');
+    return title
+      ? [{ kind: 'event', title: 'Session renamed', body: title, tone: 'muted', ts, uuid }]
+      : [];
+  }
+
+  if (type === 'summary' || type === 'compact' || type === 'compaction') {
+    const summary = extractText(e.summary ?? e.message ?? e.content);
+    return [
+      {
+        kind: 'event',
+        title: 'Conversation compacted',
+        body: summary || safeJsonPreview(e),
+        tone: 'muted',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (type === 'system' && isInjectedEnvironmentEntry(e)) return [];
+
+  return [
+    {
+      kind: 'event',
+      title: `Provider event: ${type}`,
+      body: safeJsonPreview(e),
+      tone: 'muted',
+      ts,
+      uuid,
+    },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -678,6 +721,11 @@ function parseViewportPlanPayload(text: string): Record<string, unknown> | null 
     // needed for timeline links.
   }
   return null;
+}
+
+function isInjectedEnvironmentEntry(entry: Record<string, unknown>): boolean {
+  const content = extractText(entry.content ?? entry.message);
+  return content.includes('<environment_context>') || content.includes('<system-reminder>');
 }
 
 function parseViewportCliJson(output: string): Record<string, unknown> | null {

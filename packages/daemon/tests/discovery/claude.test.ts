@@ -232,6 +232,45 @@ describe('jsonl-reader', () => {
       body: expect.stringContaining('Sensitive long plan body'),
     });
   });
+
+  it('keeps Claude lifecycle metadata visible without rendering injected environment noise', () => {
+    expect(
+      parseJSONLEntry({
+        timestamp: '2026-05-14T10:20:00.000Z',
+        type: 'summary',
+        uuid: 'summary-1',
+        summary: 'User asked to compact before continuing.',
+      })[0],
+    ).toMatchObject({
+      kind: 'event',
+      title: 'Conversation compacted',
+      body: 'User asked to compact before continuing.',
+      tone: 'muted',
+    });
+
+    expect(
+      parseJSONLEntry({
+        timestamp: '2026-05-14T10:21:00.000Z',
+        type: 'future-claude-event',
+        uuid: 'future-1',
+        value: 'keep visible',
+      })[0],
+    ).toMatchObject({
+      kind: 'event',
+      title: 'Provider event: future-claude-event',
+      body: '{"timestamp":"2026-05-14T10:21:00.000Z","type":"future-claude-event","uuid":"future-1","value":"keep visible"}',
+      tone: 'muted',
+    });
+
+    expect(
+      parseJSONLEntry({
+        timestamp: '2026-05-14T10:22:00.000Z',
+        type: 'system',
+        uuid: 'system-env',
+        content: '<environment_context><cwd>/tmp/project</cwd></environment_context>',
+      }),
+    ).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
