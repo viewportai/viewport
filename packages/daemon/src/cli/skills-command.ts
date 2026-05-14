@@ -76,9 +76,9 @@ personal data, or facts that are already present in existing context.
 
 When the user asks for a plan, or before starting multi-step implementation work,
 open a Viewport plan draft instead of leaving the plan only in chat. The browser
-encrypts and saves the draft to Viewport as soon as it receives the local draft
-from the daemon. Keep waiting until the user continues, rejects, shares, or asks
-for changes in the web app.
+opens the draft saved by the local daemon. Hook-created drafts are encrypted by
+the trusted edge before they are saved to Viewport. Keep waiting until the user
+continues, rejects, shares, or asks for changes in the web app.
 
 Preferred path:
 

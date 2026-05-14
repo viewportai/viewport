@@ -19,3 +19,21 @@ test('public identity import refuses silent key replacement', () => {
     /Identity signing key changed/,
   );
 });
+
+test('public identity import accepts equivalent PEM keys with different trailing newlines', () => {
+  const aliceVault = new ContextVault(tempHome('vault-identity-newline-alice'));
+  const bobVault = new ContextVault(tempHome('vault-identity-newline-bob'));
+
+  aliceVault.createIdentity('alice');
+  bobVault.createIdentity('bob');
+
+  const identity = bobVault.exportPublicIdentity('bob');
+  aliceVault.importPublicIdentity(identity);
+
+  aliceVault.importPublicIdentity({
+    ...identity,
+    publicKey: identity.publicKey.trimEnd(),
+    signingPublicKey: identity.signingPublicKey.trimEnd(),
+    encryptionPublicKey: identity.encryptionPublicKey.trimEnd(),
+  });
+});

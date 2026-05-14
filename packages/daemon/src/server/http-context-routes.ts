@@ -8,6 +8,7 @@ import {
 } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
 import { pushContextEvents } from '../context/local-edge-sync.js';
+import { refreshContextFromSavedTarget } from '../context/local-edge-auto-sync.js';
 import { resolveConfiguredContextSyncTarget } from '../cli/context-sync-target.js';
 import { ConfigManager } from '../core/config.js';
 import type { Daemon } from '../core/daemon.js';
@@ -156,6 +157,11 @@ export function registerContextRoutes(app: FastifyInstance, daemon: Daemon): voi
         purpose: 'context-resolve',
         contextResourceId,
       });
+      await refreshContextFromSavedTarget({
+        contextResourceId,
+        workspaceId: parsed.data.workspaceId,
+        actorName: parsed.data.actorName,
+      });
       const bundle = await resolveContextBundle({
         contextResourceId,
         actorName: parsed.data.actorName,
@@ -199,6 +205,11 @@ export function registerContextRoutes(app: FastifyInstance, daemon: Daemon): voi
         contextResourceId,
         candidateEventId: parsed.data.candidateEventId,
         payloadDigest: parsed.data.payloadDigest,
+      });
+      await refreshContextFromSavedTarget({
+        contextResourceId,
+        workspaceId: parsed.data.workspaceId,
+        actorName: parsed.data.actorName,
       });
       return await previewContextCandidateForTrustedEdge({
         contextResourceId,

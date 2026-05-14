@@ -1,5 +1,6 @@
 import { resolveContextBundle, type ContextBundle } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { refreshContextFromSavedTarget } from '../context/local-edge-auto-sync.js';
 import type { ContextProviderAdapter, ContextProviderResult } from './types.js';
 
 const DEFAULT_VAULT_MAX_ITEMS = 25;
@@ -10,6 +11,11 @@ export const viewportVaultProviderAdapter: ContextProviderAdapter = {
   kind: 'viewport-vault',
   async search(input) {
     if (!input.provider.vault) throw new Error('viewport-vault provider missing vault id');
+    await refreshContextFromSavedTarget({
+      contextResourceId: input.provider.vault,
+      actorName: input.actorName,
+      home: input.home,
+    });
     const bundle = await resolveContextBundle({
       contextResourceId: input.provider.vault,
       actorName: input.actorName,
@@ -22,6 +28,11 @@ export const viewportVaultProviderAdapter: ContextProviderAdapter = {
   },
   async get(input) {
     if (!input.provider.vault) throw new Error('viewport-vault provider missing vault id');
+    await refreshContextFromSavedTarget({
+      contextResourceId: input.provider.vault,
+      actorName: input.actorName,
+      home: input.home,
+    });
     const bundle = await resolveContextBundle({
       contextResourceId: input.provider.vault,
       actorName: input.actorName,

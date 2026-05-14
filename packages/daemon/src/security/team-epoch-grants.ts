@@ -93,6 +93,52 @@ export async function grantTeamEpochToUserEpoch(options: {
   return teamMemberGrantPayload(objectField(response, 'data'));
 }
 
+export async function grantTeamEpochToWorkspaceUserEpochs(options: {
+  target: CryptoEpochSyncTarget;
+  teamCryptoEpochId: string;
+  home?: string;
+  fetchImpl?: typeof transportFetch;
+}): Promise<{ attempted: number; granted: number; skipped: number; grants: TeamMemberGrantPayload[] }> {
+  const fetchImpl = options.fetchImpl ?? transportFetch;
+  const response = await getJson(
+    fetchImpl,
+    `${runtimeBaseUrl(options.target)}/crypto/epochs`,
+    options.target,
+  );
+  const userEpochs = arrayField(objectField(response, 'data'), 'user_epochs').map((item) =>
+    publicUserEpochPayload(item),
+  );
+  const grants: TeamMemberGrantPayload[] = [];
+  let skipped = 0;
+
+  for (const userEpoch of userEpochs) {
+    try {
+      grants.push(
+        await grantTeamEpochToUserEpoch({
+          target: options.target,
+          teamCryptoEpochId: options.teamCryptoEpochId,
+          recipientUserCryptoEpochId: userEpoch.id,
+          home: options.home,
+          fetchImpl,
+        }),
+      );
+    } catch (error) {
+      if (isExpectedNonTeamRecipientError(error)) {
+        skipped++;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return {
+    attempted: userEpochs.length,
+    granted: grants.length,
+    skipped,
+    grants,
+  };
+}
+
 export async function acceptTeamEpochMemberGrants(options: {
   target: CryptoEpochSyncTarget;
   home?: string;
@@ -279,6 +325,13 @@ function responseError(payload: unknown, response: Response): string {
       ? String((payload as { message?: unknown }).message)
       : `${response.status} ${response.statusText}`;
   return `Team epoch grant sync failed: ${message}`;
+}
+
+function isExpectedNonTeamRecipientError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message.includes('Recipient user is not a team member')
+  );
 }
 
 function publicUserEpochPayload(value: unknown): PublicUserEpoch {

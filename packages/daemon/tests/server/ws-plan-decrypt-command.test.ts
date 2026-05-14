@@ -14,6 +14,10 @@ vi.mock('../../src/security/epoch-sync.js', () => ({
   processPendingCryptoRotationRequests: vi.fn(),
 }));
 
+vi.mock('../../src/security/team-epoch-grants.js', () => ({
+  grantTeamEpochToWorkspaceUserEpochs: vi.fn(),
+}));
+
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import {
   decryptTrustedEdgePlanBody,
@@ -25,6 +29,7 @@ import {
   ensureTeamCryptoEpoch,
   processPendingCryptoRotationRequests,
 } from '../../src/security/epoch-sync.js';
+import { grantTeamEpochToWorkspaceUserEpochs } from '../../src/security/team-epoch-grants.js';
 
 function createClient(): ConnectedClient {
   return {
@@ -114,6 +119,12 @@ describe('trusted-edge-plan-decrypt websocket command', () => {
       previousEpochFingerprint: null,
       createdAt: '2026-05-13T00:00:00.000Z',
       updatedAt: '2026-05-13T00:00:00.000Z',
+    });
+    vi.mocked(grantTeamEpochToWorkspaceUserEpochs).mockResolvedValue({
+      attempted: 2,
+      granted: 2,
+      skipped: 0,
+      grants: [],
     });
     const handlers = createWsCommandHandlers({
       daemon: createDaemon(),

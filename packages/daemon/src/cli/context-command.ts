@@ -48,6 +48,7 @@ import {
 } from '../security/epoch-recovery.js';
 import {
   acceptTeamEpochMemberGrants,
+  grantTeamEpochToWorkspaceUserEpochs,
   grantTeamEpochToUserEpoch,
 } from '../security/team-epoch-grants.js';
 import { contextJoin, contextUserInit } from './context-access-command.js';
@@ -574,6 +575,7 @@ async function contextEpochPublish(): Promise<void> {
     tlsPins: target.tlsPins,
   };
   const teamId = getFlag('team');
+  let teamMemberGrants: Awaited<ReturnType<typeof grantTeamEpochToWorkspaceUserEpochs>> | null = null;
   const epoch = teamId
     ? await ensureTeamCryptoEpoch({
         target: syncTarget,
@@ -584,6 +586,13 @@ async function contextEpochPublish(): Promise<void> {
         target: syncTarget,
         home: getFlag('home'),
       });
+  if (teamId && 'platformEpochId' in epoch && epoch.platformEpochId) {
+    teamMemberGrants = await grantTeamEpochToWorkspaceUserEpochs({
+      target: syncTarget,
+      teamCryptoEpochId: epoch.platformEpochId,
+      home: getFlag('home'),
+    });
+  }
 
   if (isJsonMode()) {
     printJson({
@@ -591,12 +600,26 @@ async function contextEpochPublish(): Promise<void> {
       ok: true,
       scope: teamId ? 'team' : 'user',
       epoch: publicEpochForOutput(epoch),
+      ...(teamMemberGrants
+        ? {
+            teamMemberGrants: {
+              attempted: teamMemberGrants.attempted,
+              granted: teamMemberGrants.granted,
+              skipped: teamMemberGrants.skipped,
+            },
+          }
+        : {}),
     });
     return;
   }
 
   console.log(`${teamId ? 'Team' : 'User'} crypto epoch ready: ${epoch.fingerprint}`);
   console.log(`Epoch: ${epoch.epoch}`);
+  if (teamMemberGrants) {
+    console.log(
+      `Team epoch member grants: ${teamMemberGrants.granted}/${teamMemberGrants.attempted}`,
+    );
+  }
 }
 
 function publicEpochForOutput(epoch: LocalTeamCryptoEpoch | LocalUserCryptoEpoch): Record<string, unknown> {

@@ -11,6 +11,7 @@ import { createWsSessionCommandHandlers } from './ws-session-command-handlers.js
 import { previewContextCandidateForTrustedEdge } from './context-preview-service.js';
 import { resolveContextBundle } from '../context/local-edge-store.js';
 import { proposeContextEntry } from '../context/local-edge-candidates.js';
+import { refreshContextFromSavedTarget } from '../context/local-edge-auto-sync.js';
 import { pushContextEvents } from '../context/local-edge-sync.js';
 import { ConfigManager } from '../core/config.js';
 import {
@@ -21,6 +22,7 @@ import {
   ensureTeamCryptoEpoch,
   processPendingCryptoRotationRequests,
 } from '../security/epoch-sync.js';
+import { grantTeamEpochToWorkspaceUserEpochs } from '../security/team-epoch-grants.js';
 import type { LocalTeamCryptoEpoch } from '../security/epoch-store.js';
 import {
   decryptTrustedEdgePlanBody,
@@ -246,6 +248,11 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           candidateEventId: msg.candidateEventId,
           payloadDigest: msg.payloadDigest,
         });
+        await refreshContextFromSavedTarget({
+          contextResourceId: msg.contextResourceId,
+          workspaceId: msg.workspaceId,
+          actorName: msg.actorName,
+        });
         const result = await previewContextCandidateForTrustedEdge({
           contextResourceId: msg.contextResourceId,
           workspaceId: msg.workspaceId,
@@ -274,6 +281,11 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           workspaceId: msg.workspaceId,
           purpose: 'context-resolve',
           contextResourceId: msg.contextResourceId,
+        });
+        await refreshContextFromSavedTarget({
+          contextResourceId: msg.contextResourceId,
+          workspaceId: msg.workspaceId,
+          actorName: msg.actorName,
         });
         const bundle = await resolveContextBundle({
           contextResourceId: msg.contextResourceId,
@@ -523,10 +535,25 @@ export function createWsCommandHandlers(ctx: HandlerContext): HandlerMap {
           target,
           teamId: msg.teamId,
         });
+        const memberGrants = epoch.platformEpochId
+          ? await grantTeamEpochToWorkspaceUserEpochs({
+              target,
+              teamCryptoEpochId: epoch.platformEpochId,
+            })
+          : null;
 
         sendAck(client, msg.requestId, 'ok', undefined, {
           teamId: msg.teamId,
           teamEpoch: publicTeamEpoch(epoch),
+          ...(memberGrants
+            ? {
+                teamMemberGrants: {
+                  attempted: memberGrants.attempted,
+                  granted: memberGrants.granted,
+                  skipped: memberGrants.skipped,
+                },
+              }
+            : {}),
         });
       } catch (error) {
         sendAck(
