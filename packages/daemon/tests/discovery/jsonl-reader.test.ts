@@ -69,7 +69,25 @@ describe('parseJSONLEntry', () => {
       { kind: 'event', title: 'Provider event: system', tone: 'muted' },
     ]);
     expect(parseJSONLEntry({ type: 'file-history-snapshot' })).toMatchObject([
-      { kind: 'event', title: 'Provider event: file-history-snapshot', tone: 'muted' },
+      { kind: 'event', title: 'File snapshot captured', tone: 'muted' },
+    ]);
+  });
+
+  it('normalizes common provider metadata events for UI rendering', () => {
+    expect(parseJSONLEntry({ type: 'ai-title', aiTitle: 'Internal' })).toEqual([]);
+    expect(
+      parseJSONLEntry({
+        type: 'task_complete',
+        last_agent_message: 'Fixed the sessions breakage.',
+        duration_ms: 946705,
+      }),
+    ).toMatchObject([
+      {
+        kind: 'event',
+        title: 'Task completed',
+        body: expect.stringContaining('Fixed the sessions breakage.'),
+        tone: 'success',
+      },
     ]);
   });
 
