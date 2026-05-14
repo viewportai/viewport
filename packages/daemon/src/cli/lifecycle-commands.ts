@@ -417,6 +417,9 @@ export function showHelp(): void {
     '  context add (--context <id>|--provider <id> --path <repo>) --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(
+    '  context use-github --repo <owner/repo|url> [--provider <id>] [--path <repo>] [--json]',
+  );
+  console.log(
     '  context propose --context <id> --device <name> --title <text> --body <text> --passphrase <text> --recovery-code <text> [--json]',
   );
   console.log(

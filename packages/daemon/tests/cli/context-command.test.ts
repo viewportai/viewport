@@ -399,6 +399,43 @@ describe('context CLI command', () => {
     expect(output).toContain('"update_when": "Update after a durable platform decision changes."');
   });
 
+  it('attaches a GitHub-backed context provider to repo config', async () => {
+    const repo = path.join(tempHome, 'use-github-repo');
+
+    await runContext([
+      'context',
+      'use-github',
+      '--repo',
+      'viewportai/team-memory',
+      '--path',
+      repo,
+      '--provider',
+      'team-memory',
+      '--paths',
+      'context/**/*.md,docs/**/*.md',
+      '--use-when',
+      'Use for shared team decisions.',
+      '--update-when',
+      'Propose updates after durable incidents.',
+      '--json',
+    ]);
+
+    const config = await fs.readFile(path.join(repo, '.viewport', 'config.yaml'), 'utf8');
+    expect(config).toContain('id: team-memory');
+    expect(config).toContain('provider: github-repo');
+    expect(config).toContain('repo: viewportai/team-memory');
+    expect(config).toContain('context/**/*.md');
+    expect(config).toContain('docs/**/*.md');
+    expect(config).toContain('use_when: Use for shared team decisions.');
+    expect(config).toContain('update_when: Propose updates after durable incidents.');
+
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(output).toContain('"command": "context use-github"');
+    expect(output).toContain('"provider": "github-repo"');
+    expect(output).toContain('"repo": "viewportai/team-memory"');
+    expect(output).toContain('gh repo create viewportai/team-memory --private --clone');
+  });
+
   it('keeps context use idempotent for an existing vault provider', async () => {
     const repo = path.join(tempHome, 'use-existing-repo');
     await fs.mkdir(path.join(repo, '.viewport'), { recursive: true });

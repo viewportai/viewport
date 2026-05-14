@@ -21,6 +21,7 @@ const ProviderPrivacySchema = z.enum([
 const ProviderKindSchema = z.enum([
   'repo-docs',
   'viewport-vault',
+  'github-repo',
   'notebooklm',
   'glean',
   'custom-cli',
@@ -57,6 +58,10 @@ const ContextProviderSchema = z
     credentialRef: CredentialRefSchema.optional(),
     paths: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
     vault: z.string().trim().min(1).max(256).optional(),
+    repo: z.string().trim().min(1).max(512).optional(),
+    remote: z.string().trim().min(1).max(512).optional(),
+    ref: z.string().trim().min(1).max(128).optional(),
+    branch: z.string().trim().min(1).max(128).optional(),
     use_when: z.string().trim().min(1).max(5000).optional(),
     useWhen: z.string().trim().min(1).max(5000).optional(),
     update_when: z.string().trim().min(1).max(5000).optional(),

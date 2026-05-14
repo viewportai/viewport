@@ -104,7 +104,7 @@
       "properties": {
         "id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "provider": {
-          "enum": ["repo-docs", "viewport-vault", "notebooklm", "glean", "custom-cli", "custom-mcp"]
+          "enum": ["repo-docs", "viewport-vault", "github-repo", "notebooklm", "glean", "custom-cli", "custom-mcp"]
         },
         "required": { "type": "boolean" },
         "privacy": {
@@ -123,6 +123,10 @@
           "items": { "type": "string", "minLength": 1, "maxLength": 512 }
         },
         "vault": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "repo": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "remote": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "branch": { "type": "string", "minLength": 1, "maxLength": 128 },
         "notebook": { "type": "string", "minLength": 1, "maxLength": 256 },
         "command": { "type": "string", "minLength": 1, "maxLength": 512 }
       },
