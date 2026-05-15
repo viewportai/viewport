@@ -1,3 +1,10 @@
+## [0.9.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.9.0...@viewportai/daemon@0.9.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* stabilize daemon profile routing and session resume ([#100](https://github.com/viewportai/viewport/issues/100)) ([b5a534b](https://github.com/viewportai/viewport/commit/b5a534b496fedd5fb30d0fab2a7a37197b541eeb))
+
 # [0.9.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.8.0...@viewportai/daemon@0.9.0) (2026-05-14)
 
 
