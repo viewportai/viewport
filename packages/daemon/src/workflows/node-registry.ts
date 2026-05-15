@@ -1,4 +1,5 @@
 import { executeLoopNode } from './loop-executor.js';
+import { executeContextNode } from './context-node-resolver.js';
 import { executeActionAdapter, WorkflowActionError } from './action-adapters.js';
 import {
   addEvent,
@@ -159,22 +160,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
 
   context: async (_context, run, nodeId, node) => {
     if (node.type !== 'context') return { result: 'completed' };
-    const state = run.nodes[nodeId];
-    const refs = node.refs ?? [];
-    const output = JSON.stringify({
-      query: node.query ?? null,
-      refs,
-      refresh: node.refresh ?? 'before_run',
-      status: 'declared',
-    });
-    if (state) state.output = output;
-    addEvent(
-      run,
-      'node-output',
-      `Context node ${nodeId} declared context requirements`,
-      { query: node.query ?? null, refs, refresh: node.refresh ?? null },
-      nodeId,
-    );
+    await executeContextNode(run, nodeId, node);
     return { result: 'completed' };
   },
 
