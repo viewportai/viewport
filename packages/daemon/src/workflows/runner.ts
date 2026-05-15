@@ -244,7 +244,9 @@ export class WorkflowRunner {
       typeof currentActionDigest === 'string' &&
       currentActionDigest !== decision.expectedActionDigest
     ) {
-      throw new Error('The proposed action changed before approval. Refresh the run and review it again.');
+      throw new Error(
+        'The proposed action changed before approval. Refresh the run and review it again.',
+      );
     }
 
     const resolvedAt = Date.now();

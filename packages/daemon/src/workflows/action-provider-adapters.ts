@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { addEvent } from './runtime-helpers.js';
+import { rememberExecutedAction } from './action-execution-ledger.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
@@ -57,6 +58,7 @@ async function executeGitHubAction(
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
+      proposalInput: actionInput,
       body: {
         title: stringValue(actionInput['title']) ?? 'Viewport workflow change',
         head: stringValue(actionInput['head']) ?? stringValue(actionInput['branch']),
@@ -78,6 +80,7 @@ async function executeGitHubAction(
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(issueNumber)}/comments`,
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
+      proposalInput: actionInput,
       body: { body },
     });
   }
@@ -113,11 +116,13 @@ async function executeJiraAction(
     node.action === 'issue.comment'
   ) {
     const body = stringValue(actionInput['body']);
-    if (!body) return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
+    if (!body)
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
       headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
+      proposalInput: actionInput,
       body: { body: jiraDocument(body) },
     });
   }
@@ -125,11 +130,13 @@ async function executeJiraAction(
   if (node.action === 'transition' || node.action === 'issue.transition') {
     const transitionId =
       stringValue(actionInput['transition_id']) ?? stringValue(actionInput['transitionId']);
-    if (!transitionId) return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
+    if (!transitionId)
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
       headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
+      proposalInput: actionInput,
       body: { transition: { id: transitionId } },
     });
   }
@@ -160,6 +167,7 @@ async function executeSlackAction(
       method: 'POST',
       url: 'https://slack.com/api/chat.postMessage',
       headers: withIdempotencyHeader({ Authorization: `Bearer ${token}` }, options.idempotencyKey),
+      proposalInput: actionInput,
       body: {
         channel,
         text,
@@ -181,6 +189,7 @@ async function executeJsonApiAction(
     method: string;
     url: string;
     headers: Record<string, string>;
+    proposalInput: Record<string, WorkflowInputValue>;
     body: Record<string, unknown>;
     okFromBody?: boolean;
   },
@@ -207,9 +216,9 @@ async function executeJsonApiAction(
       status: ok ? 'executed' : 'failed',
       digest: workflowActionProposalDigest(node, {
         idempotencyKey: idempotencyKeyFromHeaders(request.headers),
-        input: request.body as Record<string, WorkflowInputValue>,
+        input: request.proposalInput,
       }),
-      input: sanitizeActionInput(request.body as Record<string, WorkflowInputValue>),
+      input: sanitizeActionInput(request.proposalInput),
       request: { method: request.method, url: request.url },
       response: {
         status: response.status,
@@ -244,6 +253,18 @@ async function executeJsonApiAction(
       },
     );
   }
+
+  rememberExecutedAction(
+    run,
+    nodeId,
+    node,
+    idempotencyKeyFromHeaders(request.headers),
+    request.proposalInput,
+    {
+      output: `${node.adapter}.${node.action} ${response.status}`,
+      response: metadata.action.response,
+    },
+  );
 
   return {
     output: `${node.adapter}.${node.action} ${response.status}`,

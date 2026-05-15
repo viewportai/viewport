@@ -113,6 +113,125 @@ nodes:
     );
   });
 
+  it('suppresses duplicate side effects with the same idempotency key in one run', async () => {
+    const fetchMock = vi.fn(async () => new Response('created once', { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: webhook-action-idempotency-proof
+nodes:
+  create_once:
+    type: action
+    adapter: webhook
+    action: post
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: ready
+  duplicate_create:
+    type: action
+    adapter: webhook
+    action: post
+    needs: [create_once]
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: ready
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.actionLedger?.['idempotency:issue:PAY-1842']).toMatchObject({
+      nodeId: 'create_once',
+      idempotencyKey: 'issue:PAY-1842',
+    });
+    expect(completed?.nodes.duplicate_create?.metadata?.action).toMatchObject({
+      status: 'already_executed',
+      duplicateOfNodeId: 'create_once',
+      idempotencyKey: 'issue:PAY-1842',
+    });
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'action-duplicate-suppressed',
+        nodeId: 'duplicate_create',
+      }),
+    );
+  });
+
+  it('fails closed when an idempotency key is reused with a different action payload', async () => {
+    const fetchMock = vi.fn(async () => new Response('created once', { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: webhook-action-idempotency-conflict-proof
+nodes:
+  create_once:
+    type: action
+    adapter: webhook
+    action: post
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: ready
+  conflicting_create:
+    type: action
+    adapter: webhook
+    action: post
+    needs: [create_once]
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: different
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.conflicting_create?.status).toBe('failed');
+    expect(failed?.nodes.conflicting_create?.error).toContain(
+      "Action idempotency key 'issue:PAY-1842' was already used with a different proposed action",
+    );
+  });
+
   it('blocks approved side-effect actions until approval, then executes on resume', async () => {
     const fetchMock = vi.fn(async () => new Response('approved action', { status: 200 }));
     global.fetch = fetchMock as typeof fetch;
@@ -234,7 +353,8 @@ nodes:
     const blocked = await waitForRunState(
       daemon,
       run.id,
-      (candidate) => candidate.status === 'blocked' && candidate.nodes.open_pr?.status === 'blocked',
+      (candidate) =>
+        candidate.status === 'blocked' && candidate.nodes.open_pr?.status === 'blocked',
     );
 
     await daemon.workflowRunner.decideApproval(run.id, 'open_pr', {

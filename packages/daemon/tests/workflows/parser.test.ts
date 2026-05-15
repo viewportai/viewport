@@ -354,9 +354,7 @@ nodes:
   });
 
   it('accepts the shared Jira autofix golden workflow fixture', async () => {
-    const workflowPath = path.resolve(
-      'tests/fixtures/workflows/jira-autofix-golden.yaml',
-    );
+    const workflowPath = path.resolve('tests/fixtures/workflows/jira-autofix-golden.yaml');
     const parsed = parseWorkflow(await fs.readFile(workflowPath, 'utf-8'), workflowPath);
 
     expect(parsed.definition.name).toBe('payments/jira-autofix');

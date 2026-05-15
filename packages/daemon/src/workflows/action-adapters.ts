@@ -1,6 +1,7 @@
 import { addEvent, renderTemplate } from './runtime-helpers.js';
 import { executeProviderAction, type ActionResult } from './action-provider-adapters.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
+import { rememberExecutedAction, suppressDuplicateAction } from './action-execution-ledger.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -15,6 +16,9 @@ export async function executeActionAdapter(
 ): Promise<ActionResult> {
   const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
   const actionInput = await renderActionInput(run, node.with ?? {});
+  const duplicate = suppressDuplicateAction(run, nodeId, node, idempotencyKey, actionInput);
+  if (duplicate) return duplicate;
+
   if (node.requiresApproval === true && options.approved !== true) {
     return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey, actionInput);
   }
@@ -86,6 +90,11 @@ async function executeWebhookAction(
   if (!response.ok) {
     throw new Error(`Action ${nodeId} failed with HTTP ${response.status}: ${responseText}`);
   }
+
+  rememberExecutedAction(run, nodeId, node, idempotencyKey, actionInput, {
+    output: `${node.adapter}.${node.action} ${response.status}`,
+    response: metadata.action.response,
+  });
 
   return {
     output: `${node.adapter}.${node.action} ${response.status}`,

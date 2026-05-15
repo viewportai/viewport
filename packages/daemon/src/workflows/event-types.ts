@@ -21,6 +21,7 @@ export interface WorkflowRunEvent {
     | 'action-executed'
     | 'action-failed'
     | 'action-dead-letter'
+    | 'action-duplicate-suppressed'
     | 'approval-requested'
     | 'approval-resolved'
     | 'gate-blocked'

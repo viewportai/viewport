@@ -104,7 +104,8 @@ export async function executeWorkflowNode(
   run.updatedAt = state.completedAt;
   if (node.type === 'action') {
     const action = isRecord(state.metadata?.['action']) ? state.metadata['action'] : {};
-    const idempotencyKey = typeof action['idempotencyKey'] === 'string' ? action['idempotencyKey'] : null;
+    const idempotencyKey =
+      typeof action['idempotencyKey'] === 'string' ? action['idempotencyKey'] : null;
     const digest = typeof action['digest'] === 'string' ? action['digest'] : null;
     const recovery = {
       state: 'dead_letter',

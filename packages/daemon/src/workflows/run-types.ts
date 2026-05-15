@@ -117,6 +117,17 @@ export interface WorkflowRunArtifactRecord {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowActionExecutionLedgerEntry {
+  nodeId: string;
+  adapter: string;
+  action: string;
+  idempotencyKey: string;
+  digest: string;
+  output: string;
+  executedAt: number;
+  response?: Record<string, unknown>;
+}
+
 export interface WorkflowDataCapturePolicy {
   /**
    * Controls whether prompt-node transcript previews leave the machine.
@@ -159,6 +170,12 @@ export interface WorkflowRunRecord {
   preflight: WorkflowPreflightResult;
   nodes: Record<string, WorkflowNodeRunState>;
   artifacts: WorkflowRunArtifactRecord[];
+  /**
+   * Local trusted-edge ledger of side effects that have already executed for
+   * this run. The runner only keys this by explicit idempotency keys. Actions
+   * without idempotency keys are never guessed as duplicate-safe.
+   */
+  actionLedger?: Record<string, WorkflowActionExecutionLedgerEntry>;
   events: WorkflowRunEvent[];
   createdAt: number;
   startedAt?: number;
