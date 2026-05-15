@@ -18,6 +18,10 @@ interface WorkflowRunResponse {
   run: WorkflowRunJsonInput;
 }
 
+interface DaemonAgentInventory {
+  agents?: Array<string | { id?: unknown; available?: unknown; displayName?: unknown }>;
+}
+
 export async function workflow(): Promise<void> {
   const subcommand = getArgs()[1];
   if (!subcommand) {
@@ -123,6 +127,7 @@ async function smokeWorkflow(): Promise<void> {
   await ensureDaemonRunningOrThrow();
   const directory = await resolveDirectoryFromInput(getFlag('path') ?? getFlag('directory'));
   const agent = getFlag('agent');
+  if (agent) await ensureAgentAvailableForSmoke(agent);
   const sentinel = `VIEWPORT_WORKFLOW_SMOKE_${Date.now()}`;
   const workflowYaml = agent
     ? agentSmokeWorkflowYaml(agent, sentinel)
@@ -307,6 +312,31 @@ nodes:
     title: Agent smoke
     prompt: "Reply with exactly this sentinel: ${sentinel}"
 `;
+}
+
+async function ensureAgentAvailableForSmoke(agentId: string): Promise<void> {
+  const response = await daemonFetch('/api/agents', {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  if (!response?.ok) {
+    throw new Error(`Daemon request failed: ${response?.status ?? 'no response'}`);
+  }
+
+  const body = (await response.json()) as DaemonAgentInventory;
+  const availableAgents = new Set(
+    (body.agents ?? []).flatMap((agent) => {
+      if (typeof agent === 'string') return [agent];
+      if (!agent || typeof agent !== 'object') return [];
+      if (agent.available === false) return [];
+      return typeof agent.id === 'string' ? [agent.id] : [];
+    }),
+  );
+  if (availableAgents.has(agentId)) return;
+
+  throw new Error(
+    `Daemon cannot launch workflow agent '${agentId}'. Start the daemon with that built-in agent available, or configure VIEWPORT_CUSTOM_AGENT_COMMAND and VIEWPORT_CUSTOM_AGENT_ID=${agentId}.`,
+  );
 }
 
 async function ensureDaemonRunningOrThrow(): Promise<void> {

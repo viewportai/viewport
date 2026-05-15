@@ -64,6 +64,11 @@ describe('workflow smoke CLI', () => {
       if (urlPath === '/api/directories') {
         return jsonResponse([{ id: 'dir_1', path: tempDir }]);
       }
+      if (urlPath === '/api/agents') {
+        return jsonResponse({
+          agents: [{ id: 'custom', displayName: 'Custom agent', available: true }],
+        });
+      }
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
         const body = JSON.parse(String(init.body));
         expect(body.workflowYaml).toContain('type: agent');
@@ -85,6 +90,32 @@ describe('workflow smoke CLI', () => {
     expect(String(logSpy.mock.calls.flat().join('\n'))).toContain(
       'Workflow:     viewport-agent-smoke',
     );
+  });
+
+  it('refuses an agent smoke when the daemon cannot launch that agent', async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-workflow-smoke-'));
+    process.argv = ['node', 'vpd', 'workflow', 'smoke', '--path', tempDir, '--agent', 'codex'];
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/directories') {
+        return jsonResponse([{ id: 'dir_1', path: tempDir }]);
+      }
+      if (urlPath === '/api/agents') {
+        return jsonResponse({
+          agents: [{ id: 'codex', displayName: 'Codex', available: false }],
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await expect(workflow()).rejects.toThrow("Daemon cannot launch workflow agent 'codex'");
+
+    expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 });
 
