@@ -27,6 +27,7 @@ export interface ManagedAssignment {
   yaml_snapshot?: string | null;
   source_ref?: string | null;
   directory_path?: string | null;
+  runtime_run_id?: string | null;
   runtime_target_id?: string | null;
   input_snapshot?: Record<string, WorkflowInputValue> | null;
   data_capture_policy?: {

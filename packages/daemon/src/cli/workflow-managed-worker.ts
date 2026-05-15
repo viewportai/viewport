@@ -147,6 +147,11 @@ async function runAssignmentLocally(
   }
 
   await heartbeat(options, 'online', 'busy');
+  const existingRun = await readExistingLocalRun(assignment.runtime_run_id);
+  if (existingRun) {
+    return existingRun;
+  }
+
   const directory = await ensureDirectory(
     options.workdir ?? assignment.directory_path ?? process.cwd(),
   );
@@ -168,6 +173,21 @@ async function runAssignmentLocally(
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
+}
+
+async function readExistingLocalRun(runId?: string | null): Promise<WorkflowRunRecord | null> {
+  if (!runId) return null;
+  const response = await daemonFetch(`/api/workflows/runs/${encodeURIComponent(runId)}`, {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  if (response?.status === 404) return null;
+  if (!response?.ok) {
+    throw new Error(
+      `Daemon request failed: ${response?.status ?? 'no response'} ${await safeText(response ?? undefined)}`,
+    );
+  }
+  return readRun(await response.json());
 }
 
 async function waitForApprovalAndResume(

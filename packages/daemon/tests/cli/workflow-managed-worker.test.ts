@@ -245,6 +245,125 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 1');
   });
 
+  it('resumes an already-started local run after a blocked assignment is reclaimed', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_reclaimed',
+            assignment_claim_token: 'vpclaim_reclaimed',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: reclaimed\nnodes: {}\n',
+            directory_path: '/repo',
+            runtime_run_id: 'local_run_reclaimed',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'approve',
+                type: 'approval',
+                status: 'blocked',
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_reclaimed') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_reclaimed');
+        return jsonResponse({
+          data: {
+            id: 'run_platform_reclaimed',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'approve',
+                type: 'approval',
+                status: 'completed',
+                output: 'Approved',
+                metadata: {
+                  approval: {
+                    message: 'Resume after restart',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_reclaimed/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_reclaimed');
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ data: { id: 'run_platform_reclaimed', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let localApproved = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/workflows/runs/local_run_reclaimed' && init?.method === 'GET') {
+        return jsonResponse({
+          run: localApproved
+            ? completedLocalRun({ id: 'local_run_reclaimed' })
+            : blockedLocalRun('local_run_reclaimed'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_reclaimed/approvals/approve') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          approved: true,
+          message: 'Resume after restart',
+          actor: { name: 'Alice', source: 'viewport-web' },
+        });
+        localApproved = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_reclaimed' }) });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        throw new Error(
+          'Reclaimed assignments must resume the existing local run, not start over.',
+        );
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
+    expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
+  });
+
   it('syncs running progress before a long local run completes so the platform lease can renew', async () => {
     process.argv = [
       'node',
@@ -521,10 +640,10 @@ function completedLocalRun(overrides: Partial<WorkflowRunRecord> = {}): Workflow
   };
 }
 
-function blockedLocalRun(): WorkflowRunRecord {
+function blockedLocalRun(id = 'local_run_2'): WorkflowRunRecord {
   const now = Date.now();
   return {
-    id: 'local_run_2',
+    id,
     workflowName: 'gated',
     sourceType: 'viewport_snapshot',
     sourcePath: 'viewport://workflow/gated',
@@ -553,7 +672,7 @@ function blockedLocalRun(): WorkflowRunRecord {
     events: [
       {
         id: 'evt_blocked',
-        runId: 'local_run_2',
+        runId: id,
         timestamp: now,
         type: 'approval-requested',
         message: 'Approval requested',
