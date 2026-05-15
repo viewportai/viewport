@@ -22,6 +22,10 @@ export async function executeActionAdapter(
     return executeWebhookAction(run, nodeId, node);
   }
 
+  if (node.adapter === 'github') {
+    return executeGitHubAction(run, nodeId, node);
+  }
+
   return declaredAction(run, nodeId, node, 'declared');
 }
 
@@ -83,11 +87,149 @@ async function executeWebhookAction(
   };
 }
 
+async function executeGitHubAction(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+): Promise<ActionResult> {
+  const actionInput = await renderActionInput(run, node.with ?? {});
+  const owner = stringValue(actionInput['owner']);
+  const repo = stringValue(actionInput['repo']);
+  const token = stringValue(actionInput['token']) ?? process.env['GITHUB_TOKEN'];
+  if (!owner || !repo || !token) return declaredAction(run, nodeId, node, 'missing_url');
+
+  if (node.action === 'create_pr' || node.action === 'create_pull_request') {
+    return executeJsonApiAction(run, nodeId, node, {
+      method: 'POST',
+      url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
+      headers: githubHeaders(token),
+      body: {
+        title: stringValue(actionInput['title']) ?? 'Viewport workflow change',
+        head: stringValue(actionInput['head']) ?? stringValue(actionInput['branch']),
+        base: stringValue(actionInput['base']) ?? 'main',
+        body: stringValue(actionInput['body']),
+        draft: booleanValue(actionInput['draft']),
+      },
+    });
+  }
+
+  if (node.action === 'comment' || node.action === 'comment_issue') {
+    const issueNumber =
+      stringValue(actionInput['issue_number']) ?? stringValue(actionInput['issueNumber']);
+    const body = stringValue(actionInput['body']);
+    if (!issueNumber || !body) return declaredAction(run, nodeId, node, 'missing_url');
+    return executeJsonApiAction(run, nodeId, node, {
+      method: 'POST',
+      url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(issueNumber)}/comments`,
+      headers: githubHeaders(token),
+      body: { body },
+    });
+  }
+
+  return declaredAction(run, nodeId, node, 'declared');
+}
+
 async function renderActionInput(
   run: WorkflowRunRecord,
   value: Record<string, WorkflowInputValue>,
 ): Promise<Record<string, WorkflowInputValue>> {
   return (await renderActionValue(run, value)) as Record<string, WorkflowInputValue>;
+}
+
+async function executeJsonApiAction(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body: Record<string, unknown>;
+  },
+): Promise<ActionResult> {
+  const response = await fetch(request.url, {
+    method: request.method,
+    headers: {
+      Accept: 'application/vnd.github+json, application/json;q=0.9, */*;q=0.8',
+      'Content-Type': 'application/json',
+      ...request.headers,
+    },
+    body: JSON.stringify(compactObject(request.body)),
+  });
+  const responseText = await safeResponseText(response);
+  const parsed = parseJson(responseText);
+  const metadata = {
+    action: {
+      adapter: node.adapter,
+      action: node.action,
+      idempotencyKey: node.idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
+      status: response.ok ? 'executed' : 'failed',
+      request: { method: request.method, url: request.url },
+      response: {
+        status: response.status,
+        ok: response.ok,
+        bodyExcerpt: responseText.slice(0, MAX_RESPONSE_CHARS),
+        htmlUrl: objectString(parsed, 'html_url'),
+        apiUrl: objectString(parsed, 'url'),
+        number: objectNumber(parsed, 'number'),
+      },
+    },
+  };
+
+  addEvent(
+    run,
+    response.ok ? 'action-executed' : 'action-failed',
+    response.ok
+      ? `Action node ${nodeId} executed ${node.adapter}.${node.action}`
+      : `Action node ${nodeId} failed ${node.adapter}.${node.action}`,
+    metadata,
+    nodeId,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Action ${nodeId} failed with HTTP ${response.status}: ${responseText}`);
+  }
+
+  return {
+    output: `${node.adapter}.${node.action} ${response.status}`,
+    metadata,
+  };
+}
+
+function githubHeaders(token: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
+function booleanValue(value: WorkflowInputValue | undefined): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function compactObject(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined));
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function objectString(value: unknown, key: string): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entry = (value as Record<string, unknown>)[key];
+  return typeof entry === 'string' ? entry : null;
+}
+
+function objectNumber(value: unknown, key: string): number | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entry = (value as Record<string, unknown>)[key];
+  return typeof entry === 'number' ? entry : null;
 }
 
 async function renderActionValue(
