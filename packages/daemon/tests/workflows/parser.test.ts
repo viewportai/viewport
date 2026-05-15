@@ -607,6 +607,56 @@ nodes:
     }
   });
 
+  it('accepts a codex claude codex ping pong handoff workflow', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: team/ping-pong
+inputs:
+  feature:
+    type: string
+nodes:
+  codex_backend:
+    type: agent
+    agent: codex
+    model: gpt-5.5
+    prompt: Build backend contract for {{ inputs.feature }}.
+    handoff:
+      artifact: backend-contract.md
+  claude_ui:
+    type: agent
+    needs: [codex_backend]
+    agent: claude
+    model: sonnet
+    prompt: Use backend handoff {{ nodes.codex_backend.output }} and build the UI.
+    handoff:
+      artifact: ui-implementation.md
+  codex_review:
+    type: agent
+    needs: [claude_ui]
+    agent: codex
+    model: gpt-5.5
+    prompt: Review UI {{ nodes.claude_ui.output }} against backend {{ nodes.codex_backend.output }}.
+  human_gate:
+    type: approval
+    needs: [codex_review]
+    prompt: Approve ping pong result for {{ inputs.feature }}?
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(workflowNodeOrder(parsed.definition)).toEqual([
+      'codex_backend',
+      'claude_ui',
+      'codex_review',
+      'human_gate',
+    ]);
+    expect(parsed.definition.nodes.claude_ui?.type).toBe('agent');
+    if (parsed.definition.nodes.claude_ui?.type === 'agent') {
+      expect(parsed.definition.nodes.claude_ui.handoff?.artifact).toBe('ui-implementation.md');
+    }
+  });
+
   it('accepts check, policy, human review, and schedule gates', () => {
     const parsed = parseWorkflow(
       `
