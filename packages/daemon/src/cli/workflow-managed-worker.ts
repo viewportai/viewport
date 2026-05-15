@@ -1,0 +1,381 @@
+import path from 'node:path';
+import { getFlag, hasFlag } from './args.js';
+import { daemonFetch, isDaemonRunning } from './daemon-client.js';
+import { isJsonMode, printJson } from './command-shared.js';
+import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
+import type { WorkflowInputValue, WorkflowRunRecord } from '../workflows/types.js';
+import {
+  approvalActor,
+  approvalMessage,
+  capabilityPayload,
+  dataFrom,
+  localRunToSyncPayload,
+  readRun,
+} from './workflow-managed-worker-format.js';
+
+interface ManagedWorkerOptions {
+  server: string;
+  workspaceId: string;
+  executorId: string;
+  credential: string;
+  workdir?: string;
+  leaseSeconds: number;
+  sleepSeconds: number;
+  maxRuns?: number;
+  once: boolean;
+  capabilities: ManagedWorkerCapabilities;
+}
+
+export interface ManagedWorkerCapabilities {
+  agentCommand?: string;
+  agents: string[];
+  models: string[];
+  integrations: string[];
+  secrets: string[];
+}
+
+export interface ManagedAssignment {
+  id: string;
+  yaml_snapshot?: string | null;
+  source_ref?: string | null;
+  directory_path?: string | null;
+  runtime_target_id?: string | null;
+  input_snapshot?: Record<string, WorkflowInputValue> | null;
+  data_capture_policy?: {
+    transcripts?: 'none' | 'excerpt';
+    logs?: 'metadata' | 'content';
+    artifacts?: 'metadata' | 'local_reference';
+  } | null;
+  status?: string | null;
+  nodes?: Array<{
+    node_key: string;
+    type?: string | null;
+    status?: string | null;
+    output?: string | null;
+    error?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }>;
+}
+
+interface DirectoryInfo {
+  id: string;
+  path: string;
+}
+
+interface WorkerStats {
+  claimed: number;
+  completed: number;
+  blocked: number;
+  failed: number;
+}
+
+export async function workflowWorker(): Promise<void> {
+  const options = resolveWorkerOptions();
+  if (!(await isDaemonRunning())) {
+    throw new Error('Daemon is not running. Start it first with `vpd start`.');
+  }
+
+  const stats: WorkerStats = { claimed: 0, completed: 0, blocked: 0, failed: 0 };
+  do {
+    await heartbeat(options, 'online', 'idle');
+    const assignment = await claimAssignment(options);
+    if (!assignment) {
+      if (options.once) break;
+      await delay(options.sleepSeconds * 1000);
+      continue;
+    }
+
+    stats.claimed += 1;
+    const localRun = await runAssignmentLocally(options, assignment);
+    const synced = await syncLocalRun(options, assignment.id, localRun);
+    if (synced.status === 'blocked') {
+      stats.blocked += 1;
+      if (!options.once) {
+        const resumed = await waitForApprovalAndResume(options, assignment.id, localRun.id);
+        stats.completed += resumed.status === 'completed' ? 1 : 0;
+        stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
+      }
+    } else if (synced.status === 'completed') {
+      stats.completed += 1;
+    } else if (synced.status === 'failed' || synced.status === 'canceled') {
+      stats.failed += 1;
+    }
+
+    if (options.once || (options.maxRuns !== undefined && stats.claimed >= options.maxRuns)) break;
+  } while (true);
+
+  if (isJsonMode()) {
+    printJson({ command: 'workflow worker', ok: stats.failed === 0, stats });
+    return;
+  }
+  console.log(
+    `Workflow worker stopped. Claimed ${stats.claimed}, completed ${stats.completed}, blocked ${stats.blocked}, failed ${stats.failed}.`,
+  );
+}
+
+function resolveWorkerOptions(): ManagedWorkerOptions {
+  const server =
+    getFlag('server') ?? process.env['VIEWPORT_SERVER_URL'] ?? process.env['VPD_SERVER_URL'];
+  const workspaceId =
+    getFlag('workspace') ?? getFlag('resource') ?? process.env['VIEWPORT_WORKSPACE_ID'];
+  const executorId = getFlag('executor') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ID'];
+  const credential =
+    getFlag('credential') ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN'];
+
+  if (!server || !workspaceId || !executorId || !credential) {
+    throw new Error(
+      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--once]',
+    );
+  }
+
+  return {
+    server: server.replace(/\/+$/, ''),
+    workspaceId,
+    executorId,
+    credential,
+    workdir: getFlag('workdir') ? path.resolve(getFlag('workdir')!) : undefined,
+    leaseSeconds: positiveIntFlag('lease') ?? 300,
+    sleepSeconds: positiveIntFlag('sleep') ?? 5,
+    maxRuns: positiveIntFlag('max-runs'),
+    once: hasFlag('once'),
+    capabilities: {
+      agentCommand: getFlag('agent-command') ?? process.env['VIEWPORT_MANAGED_AGENT_COMMAND'],
+      agents: listFlag('agents'),
+      models: listFlag('models'),
+      integrations: listFlag('integrations'),
+      secrets: listFlag('secrets'),
+    },
+  };
+}
+
+async function heartbeat(
+  options: ManagedWorkerOptions,
+  status: 'online' | 'offline' | 'stale',
+  healthStatus: 'idle' | 'busy' | 'degraded' | 'offline',
+): Promise<void> {
+  await platformJson(options, 'POST', 'heartbeat', {
+    status,
+    health_status: healthStatus,
+    capabilities: capabilityPayload(options.capabilities),
+  });
+}
+
+async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAssignment | null> {
+  const response = await platformFetch(options, 'POST', 'claim', {
+    lease_seconds: options.leaseSeconds,
+  });
+  if (response.status === 204) return null;
+  const body = await responseJson(response);
+  return dataFrom(body) as ManagedAssignment;
+}
+
+async function runAssignmentLocally(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+): Promise<WorkflowRunRecord> {
+  if (!assignment.yaml_snapshot) {
+    throw new Error(`Managed workflow assignment ${assignment.id} is missing yaml_snapshot.`);
+  }
+
+  await heartbeat(options, 'online', 'busy');
+  const directory = await ensureDirectory(
+    options.workdir ?? assignment.directory_path ?? process.cwd(),
+  );
+  const started = await daemonJson('POST', '/api/workflows/runs', {
+    workflowYaml: assignment.yaml_snapshot,
+    workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
+    directoryId: directory.id,
+    inputs: assignment.input_snapshot ?? {},
+    resourceId: options.workspaceId,
+    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    platformRunId: assignment.id,
+    initiation: 'cli',
+  });
+  const runId = readRun(started).id;
+  return pollLocalRun(runId);
+}
+
+async function waitForApprovalAndResume(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  localRunId: string,
+): Promise<WorkflowRunRecord> {
+  while (true) {
+    await delay(options.sleepSeconds * 1000);
+    await heartbeat(options, 'online', 'busy');
+    const assignment = await getAssignment(options, platformRunId);
+    const approved = assignment.nodes?.find(
+      (node) =>
+        ['approval', 'gate', 'plan'].includes(String(node.type ?? '')) &&
+        node.status === 'completed',
+    );
+    if (approved) {
+      await daemonJson(
+        'POST',
+        `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
+          approved.node_key,
+        )}`,
+        {
+          approved: true,
+          message: approvalMessage(approved),
+          actor: approvalActor(approved),
+        },
+      );
+      const resumed = await pollLocalRun(localRunId);
+      await syncLocalRun(options, platformRunId, resumed);
+      return resumed;
+    }
+    if (assignment.status === 'canceled' || assignment.status === 'failed') {
+      const canceled = await daemonJson(
+        'POST',
+        `/api/workflows/runs/${encodeURIComponent(localRunId)}/cancel`,
+        {
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        },
+      );
+      const run = readRun(canceled);
+      await syncLocalRun(options, platformRunId, run);
+      return run;
+    }
+  }
+}
+
+async function getAssignment(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+): Promise<ManagedAssignment> {
+  const body = await platformJson(
+    options,
+    'GET',
+    `workflow-runs/${encodeURIComponent(platformRunId)}`,
+  );
+  return dataFrom(body) as ManagedAssignment;
+}
+
+async function syncLocalRun(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  run: WorkflowRunRecord,
+): Promise<ManagedAssignment> {
+  const body = await platformJson(
+    options,
+    'PATCH',
+    `workflow-runs/${encodeURIComponent(platformRunId)}/sync`,
+    localRunToSyncPayload(run),
+  );
+  return dataFrom(body) as ManagedAssignment;
+}
+
+async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
+  const resolvedPath = path.resolve(directoryPath);
+  const directories = (await daemonJson('GET', '/api/directories')) as DirectoryInfo[];
+  const existing = directories.find((directory) => directory.path === resolvedPath);
+  if (existing) return existing;
+  const created = (await daemonJson('POST', '/api/directories', { path: resolvedPath })) as {
+    id?: string;
+  };
+  if (!created.id) throw new Error(`Failed to register workflow worker directory: ${resolvedPath}`);
+  return { id: created.id, path: resolvedPath };
+}
+
+async function pollLocalRun(runId: string): Promise<WorkflowRunRecord> {
+  while (true) {
+    const body = await daemonJson('GET', `/api/workflows/runs/${encodeURIComponent(runId)}`);
+    const run = readRun(body);
+    if (['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) return run;
+    await delay(500);
+  }
+}
+
+async function daemonJson(method: string, urlPath: string, body?: unknown): Promise<unknown> {
+  const response = await daemonFetch(urlPath, {
+    method,
+    ...(body !== undefined
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
+    timeoutMs: 30_000,
+  });
+  if (!response?.ok) {
+    throw new Error(
+      `Daemon request failed: ${response?.status ?? 'no response'} ${await safeText(response ?? undefined)}`,
+    );
+  }
+  return response.json();
+}
+
+async function platformJson(
+  options: ManagedWorkerOptions,
+  method: string,
+  pathSuffix: string,
+  body?: unknown,
+): Promise<unknown> {
+  return responseJson(await platformFetch(options, method, pathSuffix, body));
+}
+
+async function platformFetch(
+  options: ManagedWorkerOptions,
+  method: string,
+  pathSuffix: string,
+  body?: unknown,
+): Promise<Response> {
+  const response = await transportFetch(`${baseManagedUrl(options)}/${pathSuffix}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${options.credential}`,
+      Accept: 'application/json',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    timeoutMs: 30_000,
+    tlsVerify: parseTlsVerifyMode(process.env['VPD_SERVER_TLS_VERIFY']) ?? 'auto',
+    caCertPath: process.env['VPD_SERVER_CA_CERT'],
+    tlsPins: parseCsvList(process.env['VPD_SERVER_TLS_PINS']),
+  });
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`Platform request failed: HTTP ${response.status} ${await response.text()}`);
+  }
+  return response;
+}
+
+async function responseJson(response: Response): Promise<unknown> {
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+function baseManagedUrl(options: ManagedWorkerOptions): string {
+  return `${options.server}/api/runtime/workspaces/${encodeURIComponent(
+    options.workspaceId,
+  )}/managed-executors/${encodeURIComponent(options.executorId)}`;
+}
+
+function listFlag(name: string): string[] {
+  const value = getFlag(name);
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function positiveIntFlag(name: string): number | undefined {
+  const value = getFlag(name);
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function safeText(response: Response | undefined): Promise<string> {
+  if (!response) return '';
+  try {
+    return await response.text();
+  } catch {
+    return '';
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
