@@ -206,6 +206,131 @@ nodes:
     expect(parsed.definition.nodes.review?.type).toBe('prompt');
   });
 
+  it('accepts the production workflow contract used by hosted workflow definitions', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: payments/jira-bug-autofix
+title: Jira bug autofix
+description: Route a Jira bug to a private runner, produce PR evidence, gate side effects, and audit the result.
+triggers:
+  - type: webhook
+    title: Jira bug created
+    provider: jira
+    route: payments-jira
+    eventTypes:
+      - issue_created
+    signature:
+      algorithm: hmac-sha256
+      header: X-Viewport-Signature
+      timestampHeader: X-Viewport-Timestamp
+      toleranceSeconds: 300
+    map:
+      issue_key: payload.issue.key
+      summary: payload.issue.fields.summary
+runner:
+  kind: self_hosted_runner
+  target: self_hosted
+  labels:
+    - payments-vps
+  capabilities:
+    - agent.prompt
+    - files.write
+    - shell
+    - network.egress
+  leaseSeconds: 900
+policies:
+  run:
+    allowed:
+      - team:payments
+    requireOnlineRunner: true
+  approve:
+    allowed:
+      - team:payments-reviewers
+    minApprovals: 1
+  sideEffects:
+    requireApproval: true
+    allowedAdapters:
+      - github
+      - jira
+notifications:
+  inbox:
+    - approval_requested
+    - run_failed
+  email:
+    - run_failed
+dataCapture:
+  logs: compact
+  artifacts: true
+  contextEvidence: true
+  approvalPackets: true
+context:
+  - ref: context://team/payment-guidelines
+    as: payment_guidelines
+    refresh: before_run
+nodes:
+  attach_context:
+    type: context
+    query: Find payment checkout rules relevant to {{ inputs.summary }}
+  investigate:
+    type: agent
+    needs:
+      - attach_context
+    agent: codex
+    model: gpt-5.5
+    prompt: Investigate {{ inputs.issue_key }} and propose the smallest safe fix.
+    outputs:
+      finding:
+        type: string
+  tests:
+    type: shell
+    needs:
+      - investigate
+    command: npm test -- discount
+  review_gate:
+    type: approval
+    needs:
+      - tests
+    prompt: Approve PR creation and Jira side effects for {{ inputs.issue_key }}?
+  create_pr:
+    type: action
+    needs:
+      - review_gate
+    adapter: github
+    action: pull_request.create
+    requiresApproval: true
+    idempotencyKey: pr:{{ inputs.issue_key }}
+    with:
+      title: Fix {{ inputs.issue_key }}
+  jira_update:
+    type: action
+    needs:
+      - create_pr
+    adapter: jira
+    action: issue.transition
+    requiresApproval: true
+    idempotencyKey: jira:{{ inputs.issue_key }}
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
+    expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
+    expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.notifications?.inbox).toContain('approval_requested');
+    expect(parsed.definition.dataCapture?.approvalPackets).toBe(true);
+    expect(parsed.definition.nodes.investigate?.type).toBe('agent');
+    expect(parsed.definition.nodes.create_pr?.type).toBe('action');
+    expect(workflowNodeOrder(parsed.definition)).toEqual([
+      'attach_context',
+      'investigate',
+      'tests',
+      'review_gate',
+      'create_pr',
+      'jira_update',
+    ]);
+  });
+
   it('accepts mature workflow schema fields without losing deterministic parsing', () => {
     const parsed = parseWorkflow(
       `

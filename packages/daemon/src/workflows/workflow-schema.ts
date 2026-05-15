@@ -168,6 +168,117 @@ const ContextReferenceSchema = z
 
 const ContextSchema = z.array(z.union([z.string().trim().min(1), ContextReferenceSchema]));
 
+const WorkflowTriggerDefinitionSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('manual'),
+      title: z.string().trim().min(1).optional(),
+      description: z.string().optional(),
+      inputs: z.record(z.string(), InputValueSchema).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('webhook'),
+      title: z.string().trim().min(1).optional(),
+      provider: z.string().trim().min(1).optional(),
+      route: identifierSchema.optional(),
+      eventTypes: z.array(z.string().trim().min(1)).optional(),
+      signature: z
+        .object({
+          algorithm: z.enum(['hmac-sha256']),
+          header: z.string().trim().min(1),
+          timestampHeader: z.string().trim().min(1).optional(),
+          toleranceSeconds: z.number().int().positive().max(86_400).optional(),
+        })
+        .strict()
+        .optional(),
+      map: z.record(identifierSchema, z.string().trim().min(1)).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('schedule'),
+      title: z.string().trim().min(1).optional(),
+      cron: z.string().trim().min(1),
+      timezone: z.string().trim().min(1).optional(),
+      missedRun: z.enum(['skip', 'catch_up_once', 'route_to_inbox']).optional(),
+    })
+    .strict(),
+]);
+
+const WorkflowRunnerRequirementSchema = z
+  .object({
+    kind: z.enum(['paired_daemon', 'self_hosted_runner']).optional(),
+    target: z.enum(['local_private', 'local_sandbox', 'managed', 'self_hosted', 'ci']).optional(),
+    capabilities: z
+      .array(
+        z.enum([
+          'agent.prompt',
+          'artifacts',
+          'cancel',
+          'files.read',
+          'files.write',
+          'network.egress',
+          'resume',
+          'secrets',
+          'shell',
+          'worktree',
+        ]),
+      )
+      .optional(),
+    labels: z.array(identifierSchema).optional(),
+    profile: identifierSchema.optional(),
+    leaseSeconds: z.number().int().positive().max(86_400).optional(),
+  })
+  .strict();
+
+const WorkflowPolicyDefinitionSchema = z
+  .object({
+    run: z
+      .object({
+        allowed: z.array(z.string().trim().min(1)).optional(),
+        requireOnlineRunner: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    approve: z
+      .object({
+        allowed: z.array(z.string().trim().min(1)).optional(),
+        minApprovals: z.number().int().min(1).max(10).optional(),
+      })
+      .strict()
+      .optional(),
+    sideEffects: z
+      .object({
+        requireApproval: z.boolean().optional(),
+        allowedAdapters: z.array(identifierSchema).optional(),
+      })
+      .strict()
+      .optional(),
+    maxDurationSeconds: z.number().int().positive().max(604_800).optional(),
+  })
+  .strict();
+
+const WorkflowNotificationDefinitionSchema = z
+  .object({
+    inbox: z
+      .array(z.enum(['approval_requested', 'run_failed', 'runner_offline', 'action_failed']))
+      .optional(),
+    email: z.array(z.enum(['approval_requested', 'run_failed', 'run_completed'])).optional(),
+    webhook: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict();
+
+const WorkflowDataCaptureDefinitionSchema = z
+  .object({
+    logs: z.enum(['compact', 'full', 'off']).optional(),
+    artifacts: z.boolean().optional(),
+    contextEvidence: z.boolean().optional(),
+    approvalPackets: z.boolean().optional(),
+  })
+  .strict();
+
 const TriggerRuleSchema = z.enum(['all_success', 'all_done', 'one_success']);
 
 const NodeBaseSchema = z.object({
@@ -192,6 +303,29 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   hooks: HookRulesSchema.optional(),
   agents: z.record(identifierSchema, InlineAgentDefinitionSchema).optional(),
   inlineAgentFailurePolicy: z.enum(['fail', 'continue']).optional(),
+}).strict();
+
+const AgentNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('agent'),
+  prompt: z.string().trim().min(1),
+  agent: z.string().trim().min(1),
+  provider: z.string().trim().min(1).optional(),
+  model: z.string().trim().min(1).optional(),
+  session: z
+    .object({
+      resume: z.boolean().optional(),
+      title: z.string().trim().min(1).optional(),
+    })
+    .strict()
+    .optional(),
+  handoff: z
+    .object({
+      artifact: identifierSchema.optional(),
+      summary: z.string().trim().min(1).optional(),
+    })
+    .strict()
+    .optional(),
+  hooks: HookRulesSchema.optional(),
 }).strict();
 
 const ShellNodeSchema = NodeBaseSchema.extend({
@@ -226,7 +360,7 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
 
 const PlanNodeSchema = NodeBaseSchema.extend({
   type: z.literal('plan'),
-  title: z.string().trim().min(1),
+  title: z.string().trim().min(1).optional(),
   body: z.string().trim().min(1),
   summary: z.string().trim().min(1).optional(),
   source: z.string().trim().min(1).optional(),
@@ -237,6 +371,38 @@ const PlanNodeSchema = NodeBaseSchema.extend({
 const GateNodeSchema = NodeBaseSchema.extend({
   type: z.literal('gate'),
   gate: GateDefinitionSchema,
+}).strict();
+
+const ContextNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('context'),
+  refs: ContextSchema.optional(),
+  query: z.string().trim().min(1).optional(),
+  refresh: z.enum(['manual', 'before_run', 'on_demand']).optional(),
+}).strict();
+
+const ConditionNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('condition'),
+  expression: z.string().trim().min(1),
+  then: z.array(identifierSchema).optional(),
+  else: z.array(identifierSchema).optional(),
+}).strict();
+
+const ArtifactNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('artifact'),
+  name: identifierSchema,
+  from: z.string().trim().min(1).optional(),
+  path: z.string().trim().min(1).optional(),
+  kind: z.enum(['file', 'directory', 'patch', 'report', 'log', 'url']).optional(),
+  description: z.string().optional(),
+}).strict();
+
+const ActionNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('action'),
+  adapter: identifierSchema,
+  action: identifierSchema,
+  with: z.record(identifierSchema, InputValueSchema).optional(),
+  idempotencyKey: z.string().trim().min(1).optional(),
+  requiresApproval: z.boolean().optional(),
 }).strict();
 
 const LoopBodySchema = z.discriminatedUnion('type', [
@@ -304,11 +470,16 @@ const SubflowNodeSchema = NodeBaseSchema.extend({
 }).strict();
 
 const WorkflowNodeSchema = z.discriminatedUnion('type', [
+  AgentNodeSchema,
   PromptNodeSchema,
   ShellNodeSchema,
   ApprovalNodeSchema,
   PlanNodeSchema,
   GateNodeSchema,
+  ContextNodeSchema,
+  ConditionNodeSchema,
+  ArtifactNodeSchema,
+  ActionNodeSchema,
   LoopNodeSchema,
   SubflowNodeSchema,
 ]);
@@ -320,9 +491,14 @@ export const WorkflowDefinitionSchema = z
     title: z.string().trim().min(1).optional(),
     description: z.string().optional(),
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
+    triggers: z.array(WorkflowTriggerDefinitionSchema).optional(),
     context: ContextSchema.optional(),
     requires: RequiresSchema.optional(),
     executor: ExecutorRequirementSchema.optional(),
+    runner: WorkflowRunnerRequirementSchema.optional(),
+    policies: WorkflowPolicyDefinitionSchema.optional(),
+    notifications: WorkflowNotificationDefinitionSchema.optional(),
+    dataCapture: WorkflowDataCaptureDefinitionSchema.optional(),
     capabilityRequests: z.array(CapabilityRequestSchema).optional(),
     nodes: z.record(z.string().trim().min(1), WorkflowNodeSchema),
   })

@@ -31,12 +31,18 @@ const PluginManifestSchema = z
   .strict();
 
 const RESERVED_NODE_TYPES = new Set<WorkflowNode['type']>([
+  'agent',
   'prompt',
   'shell',
   'approval',
+  'context',
+  'condition',
+  'artifact',
+  'action',
   'gate',
   'loop',
   'subflow',
+  'plan',
 ]);
 
 interface LoadedPlugin {

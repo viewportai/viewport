@@ -32,13 +32,37 @@ export function workflowNodeMetadata(
     retry: node.retry ?? null,
     policy: node.policy ?? null,
     timeoutSeconds: node.timeoutSeconds ?? null,
-    ...(node.type === 'prompt'
+    ...(node.type === 'prompt' || node.type === 'agent'
       ? {
           agent: node.agent ?? null,
           provider: node.provider ?? null,
           model: node.model ?? null,
           hooks: node.hooks ?? null,
-          agents: node.agents ?? null,
+          agents: node.type === 'prompt' ? (node.agents ?? null) : null,
+          session: node.type === 'agent' ? (node.session ?? null) : null,
+          handoff: node.type === 'agent' ? (node.handoff ?? null) : null,
+        }
+      : {}),
+    ...(node.type === 'context'
+      ? { refs: node.refs ?? [], query: node.query ?? null, refresh: node.refresh ?? null }
+      : {}),
+    ...(node.type === 'condition'
+      ? { expression: node.expression, then: node.then ?? [], else: node.else ?? [] }
+      : {}),
+    ...(node.type === 'artifact'
+      ? {
+          name: node.name,
+          from: node.from ?? null,
+          path: node.path ?? null,
+          kind: node.kind ?? null,
+        }
+      : {}),
+    ...(node.type === 'action'
+      ? {
+          adapter: node.adapter,
+          action: node.action,
+          idempotencyKey: node.idempotencyKey ?? null,
+          requiresApproval: node.requiresApproval ?? false,
         }
       : {}),
     ...(node.type === 'gate' ? { gate: node.gate } : {}),

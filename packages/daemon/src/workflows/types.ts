@@ -33,9 +33,14 @@ export type {
 } from './run-types.js';
 
 export type WorkflowNodeType =
+  | 'agent'
   | 'prompt'
   | 'shell'
   | 'approval'
+  | 'context'
+  | 'condition'
+  | 'artifact'
+  | 'action'
   | 'gate'
   | 'loop'
   | 'subflow'
@@ -95,6 +100,73 @@ export type WorkflowCapabilityRequest =
   | { type: 'write_scope'; path: string; reason: string }
   | { type: 'repo_access'; ref: string; reason: string }
   | { type: 'context'; ref: string; reason: string };
+
+export type WorkflowTriggerDefinition =
+  | {
+      type: 'manual';
+      title?: string;
+      description?: string;
+      inputs?: Record<string, WorkflowInputValue>;
+    }
+  | {
+      type: 'webhook';
+      title?: string;
+      provider?: string;
+      route?: string;
+      eventTypes?: string[];
+      signature?: {
+        algorithm: 'hmac-sha256';
+        header: string;
+        timestampHeader?: string;
+        toleranceSeconds?: number;
+      };
+      map?: Record<string, string>;
+    }
+  | {
+      type: 'schedule';
+      title?: string;
+      cron: string;
+      timezone?: string;
+      missedRun?: 'skip' | 'catch_up_once' | 'route_to_inbox';
+    };
+
+export interface WorkflowRunnerRequirementV2 {
+  kind?: 'paired_daemon' | 'self_hosted_runner';
+  target?: WorkflowExecutorTargetKind;
+  capabilities?: WorkflowExecutorCapability[];
+  labels?: string[];
+  profile?: string;
+  leaseSeconds?: number;
+}
+
+export interface WorkflowPolicyDefinition {
+  run?: {
+    allowed?: string[];
+    requireOnlineRunner?: boolean;
+  };
+  approve?: {
+    allowed?: string[];
+    minApprovals?: number;
+  };
+  sideEffects?: {
+    requireApproval?: boolean;
+    allowedAdapters?: string[];
+  };
+  maxDurationSeconds?: number;
+}
+
+export interface WorkflowNotificationDefinition {
+  inbox?: Array<'approval_requested' | 'run_failed' | 'runner_offline' | 'action_failed'>;
+  email?: Array<'approval_requested' | 'run_failed' | 'run_completed'>;
+  webhook?: string[];
+}
+
+export interface WorkflowDataCaptureDefinition {
+  logs?: 'compact' | 'full' | 'off';
+  artifacts?: boolean;
+  contextEvidence?: boolean;
+  approvalPackets?: boolean;
+}
 
 export interface WorkflowContextReference {
   ref: string;
@@ -184,6 +256,23 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   inlineAgentFailurePolicy?: 'fail' | 'continue';
 }
 
+export interface WorkflowAgentNode extends WorkflowNodeBase {
+  type: 'agent';
+  prompt: string;
+  agent: string;
+  provider?: string;
+  model?: string;
+  session?: {
+    resume?: boolean;
+    title?: string;
+  };
+  handoff?: {
+    artifact?: string;
+    summary?: string;
+  };
+  hooks?: WorkflowHookRules;
+}
+
 export interface WorkflowShellNode extends WorkflowNodeBase {
   type: 'shell';
   command: string;
@@ -215,7 +304,7 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
 
 export interface WorkflowPlanNode extends WorkflowNodeBase {
   type: 'plan';
-  title: string;
+  title?: string;
   body: string;
   summary?: string;
   source?: string;
@@ -226,6 +315,38 @@ export interface WorkflowPlanNode extends WorkflowNodeBase {
 export interface WorkflowGateNode extends WorkflowNodeBase {
   type: 'gate';
   gate: WorkflowGateDefinition;
+}
+
+export interface WorkflowContextNode extends WorkflowNodeBase {
+  type: 'context';
+  refs?: WorkflowContext;
+  query?: string;
+  refresh?: 'manual' | 'before_run' | 'on_demand';
+}
+
+export interface WorkflowConditionNode extends WorkflowNodeBase {
+  type: 'condition';
+  expression: string;
+  then?: string[];
+  else?: string[];
+}
+
+export interface WorkflowArtifactNode extends WorkflowNodeBase {
+  type: 'artifact';
+  name: string;
+  from?: string;
+  path?: string;
+  kind?: 'file' | 'directory' | 'patch' | 'report' | 'log' | 'url';
+  description?: string;
+}
+
+export interface WorkflowActionNode extends WorkflowNodeBase {
+  type: 'action';
+  adapter: string;
+  action: string;
+  with?: Record<string, WorkflowInputValue>;
+  idempotencyKey?: string;
+  requiresApproval?: boolean;
 }
 
 export type WorkflowLoopBody =
@@ -269,11 +390,16 @@ export interface WorkflowSubflowNode extends WorkflowNodeBase {
 }
 
 export type WorkflowNode =
+  | WorkflowAgentNode
   | WorkflowPromptNode
   | WorkflowShellNode
   | WorkflowApprovalNode
   | WorkflowPlanNode
   | WorkflowGateNode
+  | WorkflowContextNode
+  | WorkflowConditionNode
+  | WorkflowArtifactNode
+  | WorkflowActionNode
   | WorkflowLoopNode
   | WorkflowSubflowNode;
 
@@ -283,9 +409,14 @@ export interface WorkflowDefinition {
   title?: string;
   description?: string;
   inputs?: Record<string, WorkflowInputDefinition>;
+  triggers?: WorkflowTriggerDefinition[];
   context?: WorkflowContext;
   requires?: WorkflowRequires;
   executor?: WorkflowExecutorRequirement;
+  runner?: WorkflowRunnerRequirementV2;
+  policies?: WorkflowPolicyDefinition;
+  notifications?: WorkflowNotificationDefinition;
+  dataCapture?: WorkflowDataCaptureDefinition;
   capabilityRequests?: WorkflowCapabilityRequest[];
   nodes: Record<string, WorkflowNode>;
 }

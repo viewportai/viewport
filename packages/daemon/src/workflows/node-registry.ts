@@ -124,6 +124,25 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'completed' };
   },
 
+  agent: async (context, run, nodeId, node, helpers) => {
+    if (node.type !== 'agent') return { result: 'completed' };
+    const promptNode: Extract<WorkflowNode, { type: 'prompt' }> = {
+      ...node,
+      type: 'prompt',
+    };
+    await helpers.executePromptNode(context, run, nodeId, promptNode);
+    if (node.handoff) {
+      addEvent(
+        run,
+        'node-output',
+        `Agent node ${nodeId} prepared handoff metadata`,
+        { handoff: node.handoff },
+        nodeId,
+      );
+    }
+    return { result: 'completed' };
+  },
+
   approval: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'approval') return { result: 'completed' };
     await helpers.blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
@@ -134,6 +153,93 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     if (node.type !== 'gate') return { result: 'completed' };
     const gateResult = await helpers.executeGateNode(context, run, nodeId, node);
     return { result: gateResult };
+  },
+
+  context: async (_context, run, nodeId, node) => {
+    if (node.type !== 'context') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    const refs = node.refs ?? [];
+    const output = JSON.stringify({
+      query: node.query ?? null,
+      refs,
+      refresh: node.refresh ?? 'before_run',
+      status: 'declared',
+    });
+    if (state) state.output = output;
+    addEvent(
+      run,
+      'node-output',
+      `Context node ${nodeId} declared context requirements`,
+      { query: node.query ?? null, refs, refresh: node.refresh ?? null },
+      nodeId,
+    );
+    return { result: 'completed' };
+  },
+
+  condition: async (_context, run, nodeId, node) => {
+    if (node.type !== 'condition') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    if (state) state.output = node.expression;
+    addEvent(
+      run,
+      'node-output',
+      `Condition node ${nodeId} recorded expression`,
+      { expression: node.expression, then: node.then ?? [], else: node.else ?? [] },
+      nodeId,
+    );
+    return { result: 'completed' };
+  },
+
+  artifact: async (_context, run, nodeId, node) => {
+    if (node.type !== 'artifact') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    const output = node.path ?? node.from ?? node.name;
+    if (state) state.output = output;
+    addEvent(
+      run,
+      'node-output',
+      `Artifact node ${nodeId} recorded ${node.name}`,
+      {
+        name: node.name,
+        from: node.from ?? null,
+        path: node.path ?? null,
+        kind: node.kind ?? null,
+      },
+      nodeId,
+    );
+    return { result: 'completed' };
+  },
+
+  action: async (_context, run, nodeId, node) => {
+    if (node.type !== 'action') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    const output = `${node.adapter}.${node.action}`;
+    if (state) {
+      state.output = output;
+      state.metadata = {
+        ...(state.metadata ?? {}),
+        action: {
+          adapter: node.adapter,
+          action: node.action,
+          idempotencyKey: node.idempotencyKey ?? null,
+          requiresApproval: node.requiresApproval === true,
+          status: 'declared',
+        },
+      };
+    }
+    addEvent(
+      run,
+      'node-output',
+      `Action node ${nodeId} declared ${node.adapter}.${node.action}`,
+      {
+        adapter: node.adapter,
+        action: node.action,
+        idempotencyKey: node.idempotencyKey ?? null,
+        requiresApproval: node.requiresApproval === true,
+      },
+      nodeId,
+    );
+    return { result: 'completed' };
   },
 
   loop: async (context, run, nodeId, node) => {
@@ -151,7 +257,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   plan: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'plan') return { result: 'completed' };
     const state = run.nodes[nodeId];
-    const title = await renderTemplate(node.title, run);
+    const title = await renderTemplate(node.title ?? nodeId, run);
     const body = await renderTemplate(node.body, run);
     const summary = await renderOptionalTemplate(node.summary, run);
     const sourceRef = await renderOptionalTemplate(node.sourceRef, run);

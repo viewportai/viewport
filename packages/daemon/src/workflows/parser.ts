@@ -158,6 +158,11 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 }
 
 function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
+  if (node.type === 'agent') {
+    return [node.prompt, node.session?.title, node.handoff?.artifact, node.handoff?.summary].filter(
+      (value): value is string => typeof value === 'string',
+    );
+  }
   if (node.type === 'prompt') {
     return [node.prompt, ...Object.values(node.agents ?? {}).map((agent) => agent.prompt)];
   }
@@ -179,6 +184,28 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     if (node.gate.type === 'check' || node.gate.type === 'policy') return [node.gate.expression];
     if (node.gate.type === 'human_review') return [node.gate.prompt];
     return [node.gate.waitUntil];
+  }
+  if (node.type === 'context') {
+    return [
+      node.query,
+      ...(node.refs ?? []).map((entry) => (typeof entry === 'string' ? entry : entry.ref)),
+    ].filter((value): value is string => typeof value === 'string');
+  }
+  if (node.type === 'condition') {
+    return [node.expression, ...(node.then ?? []), ...(node.else ?? [])];
+  }
+  if (node.type === 'artifact') {
+    return [node.name, node.from, node.path, node.description].filter(
+      (value): value is string => typeof value === 'string',
+    );
+  }
+  if (node.type === 'action') {
+    return [
+      node.adapter,
+      node.action,
+      node.idempotencyKey,
+      ...Object.values(node.with ?? {}).map((value) => (typeof value === 'string' ? value : '')),
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0);
   }
   if (node.type === 'loop') {
     const templates: string[] = [];

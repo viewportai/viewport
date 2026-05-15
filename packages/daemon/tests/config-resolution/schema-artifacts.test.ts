@@ -93,6 +93,56 @@ nodes:
 
     expect(validate(workflow)).toBe(true);
   });
+
+  it('validates production workflow contract fields in the published workflow schema', async () => {
+    const schema = await readSchema('workflow-v1.schema.json');
+    const ajv = new Ajv({ strict: false });
+    const validate = ajv.compile(schema);
+
+    const workflow = YAML.parse(`
+schema: viewport.workflow/v1
+name: payments/jira-bug-autofix
+triggers:
+  - type: webhook
+    provider: jira
+    route: payments-jira
+    signature:
+      algorithm: hmac-sha256
+      header: X-Viewport-Signature
+runner:
+  kind: self_hosted_runner
+  target: self_hosted
+  labels: [payments-vps]
+  capabilities: [agent.prompt, shell, network.egress]
+policies:
+  sideEffects:
+    requireApproval: true
+    allowedAdapters: [github, jira]
+notifications:
+  inbox: [approval_requested, run_failed]
+dataCapture:
+  logs: compact
+  artifacts: true
+nodes:
+  attach_context:
+    type: context
+    query: Find payment checkout rules relevant to {{ inputs.summary }}
+  investigate:
+    type: agent
+    needs: [attach_context]
+    agent: codex
+    model: gpt-5.5
+    prompt: Investigate {{ inputs.issue_key }}.
+  create_pr:
+    type: action
+    needs: [investigate]
+    adapter: github
+    action: pull_request.create
+    requiresApproval: true
+`);
+
+    expect(validate(workflow)).toBe(true);
+  });
 });
 
 async function readSchema(file: string): Promise<Record<string, unknown>> {
