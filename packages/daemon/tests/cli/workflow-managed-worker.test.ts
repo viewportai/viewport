@@ -1,5 +1,13 @@
+import { execFile } from 'node:child_process';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
+
+const exec = promisify(execFile);
 
 describe('workflow managed worker CLI', () => {
   const originalArgv = process.argv.slice();
@@ -316,6 +324,156 @@ describe('workflow managed worker CLI', () => {
 
     expect(platformSyncStatuses).toEqual(['running', 'completed']);
   });
+
+  it('runs through real CLI HTTP boundaries against platform and daemon endpoints', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-process-'));
+    const platformRequests: Array<{ path: string; method: string; body: unknown; claim?: string }> =
+      [];
+    const daemonRequests: Array<{ path: string; method: string; body: unknown }> = [];
+    const platform = await listen(
+      http.createServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        const claim = req.headers['x-viewport-assignment-claim'];
+        platformRequests.push({
+          path: req.url ?? '',
+          method: req.method ?? 'GET',
+          body,
+          claim: Array.isArray(claim) ? claim[0] : claim,
+        });
+
+        if (req.url?.endsWith('/heartbeat')) {
+          writeJson(res, { data: { id: 'executor_process' } });
+          return;
+        }
+        if (req.url?.endsWith('/claim')) {
+          expect(req.headers.authorization).toBe('Bearer vpexec_process');
+          writeJson(res, {
+            data: {
+              id: 'run_platform_process',
+              assignment_claim_token: 'vpclaim_process',
+              yaml_snapshot: 'schema: viewport.workflow/v1\nname: process-proof\nnodes: {}\n',
+              source_ref: 'viewport://workflow/process-proof',
+              directory_path: tempHome,
+              input_snapshot: { issue: 'PAY-1842' },
+            },
+          });
+          return;
+        }
+        if (req.url?.endsWith('/workflow-runs/run_platform_process/sync')) {
+          expect(claim).toBe('vpclaim_process');
+          expect(body).toMatchObject({
+            runtime_run_id: 'local_run_process',
+            status: 'completed',
+            nodes: [expect.objectContaining({ node_key: 'tests', status: 'completed' })],
+            events: [expect.objectContaining({ type: 'run-completed' })],
+          });
+          writeJson(res, { data: { id: 'run_platform_process', status: 'completed' } });
+          return;
+        }
+        writeJson(res, { message: 'not found' }, 404);
+      }),
+    );
+
+    const daemon = await listen(
+      http.createServer(async (req, res) => {
+        const body = await readRequestJson(req);
+        daemonRequests.push({ path: req.url ?? '', method: req.method ?? 'GET', body });
+
+        if (req.url === '/health') {
+          writeJson(res, { ok: true });
+          return;
+        }
+        if (req.url === '/api/directories' && req.method === 'GET') {
+          writeJson(res, []);
+          return;
+        }
+        if (req.url === '/api/directories' && req.method === 'POST') {
+          expect(body).toMatchObject({ path: tempHome });
+          writeJson(res, { id: 'dir_process' });
+          return;
+        }
+        if (req.url === '/api/workflows/runs' && req.method === 'POST') {
+          expect(body).toMatchObject({
+            workflowYaml: expect.stringContaining('name: process-proof'),
+            directoryId: 'dir_process',
+            resourceId: 'workspace_process',
+            platformRunId: 'run_platform_process',
+          });
+          writeJson(res, { run: { id: 'local_run_process' } });
+          return;
+        }
+        if (req.url === '/api/workflows/runs/local_run_process' && req.method === 'GET') {
+          writeJson(res, { run: completedLocalRun({ id: 'local_run_process' }) });
+          return;
+        }
+        writeJson(res, { message: 'not found' }, 404);
+      }),
+    );
+
+    try {
+      const result = await exec(
+        tsxBin(),
+        [
+          'src/index.ts',
+          'workflow',
+          'worker',
+          '--server',
+          `http://127.0.0.1:${platform.port}`,
+          '--workspace',
+          'workspace_process',
+          '--executor',
+          'executor_process',
+          '--credential',
+          'vpexec_process',
+          '--workdir',
+          tempHome,
+          '--listen',
+          `127.0.0.1:${daemon.port}`,
+          '--once',
+          '--json',
+        ],
+        {
+          cwd: packageRoot(),
+          env: {
+            ...process.env,
+            VIEWPORT_HOME: tempHome,
+            VPD_HOME: tempHome,
+            VPD_PROFILE: '',
+            VIEWPORT_PROFILE: '',
+            NO_COLOR: '1',
+            FORCE_COLOR: '0',
+          },
+          timeout: 20_000,
+          maxBuffer: 1024 * 1024 * 4,
+        },
+      );
+      expect(result.stderr).toBe('');
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        command: 'workflow worker',
+        ok: true,
+        stats: { claimed: 1, completed: 1, blocked: 0, failed: 0 },
+      });
+      expect(platformRequests.map((request) => request.path)).toEqual([
+        '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/heartbeat',
+        '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/claim',
+        '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/heartbeat',
+        '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/workflow-runs/run_platform_process/sync',
+      ]);
+      expect(daemonRequests.map((request) => request.path)).toEqual([
+        '/health',
+        '/api/directories',
+        '/api/directories',
+        '/api/workflows/runs',
+        '/api/workflows/runs/local_run_process',
+      ]);
+    } finally {
+      await Promise.all([
+        closeServer(platform.server),
+        closeServer(daemon.server),
+        fs.rm(tempHome, { recursive: true, force: true }),
+      ]);
+    }
+  });
 });
 
 function completedLocalRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
@@ -467,4 +625,54 @@ function headerValue(headers: HeadersInit | undefined, name: string): string | u
     return found?.[1];
   }
   return Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+}
+
+async function readRequestJson(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  return raw ? JSON.parse(raw) : undefined;
+}
+
+function writeJson(res: http.ServerResponse, payload: unknown, status = 200): void {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+async function listen(server: http.Server): Promise<{ server: http.Server; port: number }> {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Test server did not bind to a TCP port.');
+  }
+  return { server, port: address.port };
+}
+
+async function closeServer(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function packageRoot(): string {
+  return path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+}
+
+function tsxBin(): string {
+  return path.resolve(
+    packageRoot(),
+    '..',
+    '..',
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'tsx.cmd' : 'tsx',
+  );
 }
