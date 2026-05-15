@@ -43,6 +43,7 @@ export interface ManagedWorkerCapabilities {
 
 export interface ManagedAssignment {
   id: string;
+  assignment_claim_token?: string | null;
   yaml_snapshot?: string | null;
   source_ref?: string | null;
   directory_path?: string | null;
@@ -94,11 +95,21 @@ export async function workflowWorker(): Promise<void> {
 
     stats.claimed += 1;
     const localRun = await runAssignmentLocally(options, assignment);
-    const synced = await syncLocalRun(options, assignment.id, localRun);
+    const synced = await syncLocalRun(
+      options,
+      assignment.id,
+      localRun,
+      assignment.assignment_claim_token,
+    );
     if (synced.status === 'blocked') {
       stats.blocked += 1;
       if (!options.once) {
-        const resumed = await waitForApprovalAndResume(options, assignment.id, localRun.id);
+        const resumed = await waitForApprovalAndResume(
+          options,
+          assignment.id,
+          localRun.id,
+          assignment.assignment_claim_token,
+        );
         stats.completed += resumed.status === 'completed' ? 1 : 0;
         stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
       }
@@ -204,7 +215,7 @@ async function runAssignmentLocally(
   return pollLocalRun(
     runId,
     async (run) => {
-      await syncLocalRun(options, assignment.id, run);
+      await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
@@ -214,11 +225,12 @@ async function waitForApprovalAndResume(
   options: ManagedWorkerOptions,
   platformRunId: string,
   localRunId: string,
+  assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
   while (true) {
     await delay(options.sleepSeconds * 1000);
     await heartbeat(options, 'online', 'busy');
-    const assignment = await getAssignment(options, platformRunId);
+    const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
     const approved = assignment.nodes?.find(
       (node) =>
         ['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? '')) &&
@@ -239,11 +251,11 @@ async function waitForApprovalAndResume(
       const resumed = await pollLocalRun(
         localRunId,
         async (run) => {
-          await syncLocalRun(options, platformRunId, run);
+          await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
         },
         progressSyncEveryMs(options.leaseSeconds),
       );
-      await syncLocalRun(options, platformRunId, resumed);
+      await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
       return resumed;
     }
     if (assignment.status === 'canceled' || assignment.status === 'failed') {
@@ -256,7 +268,7 @@ async function waitForApprovalAndResume(
         },
       );
       const run = readRun(canceled);
-      await syncLocalRun(options, platformRunId, run);
+      await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
   }
@@ -265,11 +277,14 @@ async function waitForApprovalAndResume(
 async function getAssignment(
   options: ManagedWorkerOptions,
   platformRunId: string,
+  assignmentClaimToken?: string | null,
 ): Promise<ManagedAssignment> {
   const body = await platformJson(
     options,
     'GET',
     `workflow-runs/${encodeURIComponent(platformRunId)}`,
+    undefined,
+    assignmentClaimToken,
   );
   return dataFrom(body) as ManagedAssignment;
 }
@@ -278,12 +293,14 @@ async function syncLocalRun(
   options: ManagedWorkerOptions,
   platformRunId: string,
   run: WorkflowRunRecord,
+  assignmentClaimToken?: string | null,
 ): Promise<ManagedAssignment> {
   const body = await platformJson(
     options,
     'PATCH',
     `workflow-runs/${encodeURIComponent(platformRunId)}/sync`,
     localRunToSyncPayload(run),
+    assignmentClaimToken,
   );
   return dataFrom(body) as ManagedAssignment;
 }
@@ -339,8 +356,9 @@ async function platformJson(
   method: string,
   pathSuffix: string,
   body?: unknown,
+  assignmentClaimToken?: string | null,
 ): Promise<unknown> {
-  return responseJson(await platformFetch(options, method, pathSuffix, body));
+  return responseJson(await platformFetch(options, method, pathSuffix, body, assignmentClaimToken));
 }
 
 async function platformFetch(
@@ -348,12 +366,14 @@ async function platformFetch(
   method: string,
   pathSuffix: string,
   body?: unknown,
+  assignmentClaimToken?: string | null,
 ): Promise<Response> {
   const response = await transportFetch(`${baseManagedUrl(options)}/${pathSuffix}`, {
     method,
     headers: {
       Authorization: `Bearer ${options.credential}`,
       Accept: 'application/json',
+      ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

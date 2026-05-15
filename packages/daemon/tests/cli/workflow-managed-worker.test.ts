@@ -60,6 +60,7 @@ describe('workflow managed worker CLI', () => {
         return jsonResponse({
           data: {
             id: 'run_platform_1',
+            assignment_claim_token: 'vpclaim_run_platform_1',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
             source_ref: 'viewport://workflow/proof',
             directory_path: '/repo',
@@ -68,6 +69,9 @@ describe('workflow managed worker CLI', () => {
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_1/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_1',
+        );
         expect(body).toMatchObject({
           runtime_run_id: 'local_run_1',
           status: 'completed',
@@ -153,12 +157,16 @@ describe('workflow managed worker CLI', () => {
         return jsonResponse({
           data: {
             id: 'run_platform_2',
+            assignment_claim_token: 'vpclaim_run_platform_2',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: gated\nnodes: {}\n',
             directory_path: '/repo',
           },
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_2') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_2',
+        );
         return jsonResponse({
           data: {
             id: 'run_platform_2',
@@ -181,6 +189,9 @@ describe('workflow managed worker CLI', () => {
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_2/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_2',
+        );
         platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_2', status: body.status } });
       }
@@ -258,12 +269,16 @@ describe('workflow managed worker CLI', () => {
         return jsonResponse({
           data: {
             id: 'run_platform_3',
+            assignment_claim_token: 'vpclaim_run_platform_3',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: long-running\nnodes: {}\n',
             directory_path: '/repo',
           },
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_3/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_3',
+        );
         platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_3', status: body.status } });
       }
@@ -442,4 +457,14 @@ function jsonResponse(payload: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function headerValue(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  if (headers instanceof Headers) return headers.get(name) ?? undefined;
+  if (Array.isArray(headers)) {
+    const found = headers.find(([key]) => key.toLowerCase() === name.toLowerCase());
+    return found?.[1];
+  }
+  return Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
 }
