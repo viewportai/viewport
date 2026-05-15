@@ -63,6 +63,7 @@ nodes:
     type: action
     adapter: webhook
     action: post
+    idempotencyKey: "issue:{{ inputs.issue }}"
     with:
       url: https://hooks.example.test/workflow
       headers:
@@ -88,7 +89,10 @@ nodes:
       'https://hooks.example.test/workflow',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'X-Viewport-Test': 'yes' }),
+        headers: expect.objectContaining({
+          'X-Viewport-Test': 'yes',
+          'Idempotency-Key': 'issue:PAY-1842',
+        }),
         body: JSON.stringify({ issue: 'PAY-1842', status: 'ready' }),
       }),
     );
@@ -97,6 +101,7 @@ nodes:
     expect(completed?.nodes.notify?.metadata?.action).toMatchObject({
       adapter: 'webhook',
       action: 'post',
+      idempotencyKey: 'issue:PAY-1842',
       status: 'executed',
       response: { status: 202, ok: true, bodyExcerpt: 'accepted' },
     });
@@ -208,6 +213,7 @@ nodes:
     type: action
     adapter: github
     action: create_pr
+    idempotencyKey: pr:PAY-1842
     with:
       owner: acme
       repo: payments
@@ -235,6 +241,7 @@ nodes:
           headers: expect.objectContaining({
             Authorization: 'Bearer runner-token',
             'X-GitHub-Api-Version': '2022-11-28',
+            'Idempotency-Key': 'pr:PAY-1842',
           }),
           body: JSON.stringify({
             title: 'Fix checkout discount normalization',
@@ -248,6 +255,7 @@ nodes:
       expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
         adapter: 'github',
         action: 'create_pr',
+        idempotencyKey: 'pr:PAY-1842',
         status: 'executed',
         response: {
           status: 201,

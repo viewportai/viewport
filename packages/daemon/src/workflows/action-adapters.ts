@@ -12,29 +12,33 @@ export async function executeActionAdapter(
   node: WorkflowActionNode,
   options: { approved?: boolean } = {},
 ): Promise<ActionResult> {
+  const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
   if (node.requiresApproval === true && options.approved !== true) {
-    return declaredAction(run, nodeId, node, 'awaiting_approval');
+    return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey);
   }
 
   if (node.adapter === 'webhook' || node.adapter === 'http') {
-    return executeWebhookAction(run, nodeId, node);
+    return executeWebhookAction(run, nodeId, node, idempotencyKey);
   }
 
   const actionInput = await renderActionInput(run, node.with ?? {});
-  const providerAction = await executeProviderAction(run, nodeId, node, actionInput);
+  const providerAction = await executeProviderAction(run, nodeId, node, actionInput, {
+    idempotencyKey,
+  });
   if (providerAction) return providerAction;
 
-  return declaredAction(run, nodeId, node, 'declared');
+  return declaredAction(run, nodeId, node, 'declared', idempotencyKey);
 }
 
 async function executeWebhookAction(
   run: WorkflowRunRecord,
   nodeId: string,
   node: WorkflowActionNode,
+  idempotencyKey: string | undefined,
 ): Promise<ActionResult> {
   const actionInput = await renderActionInput(run, node.with ?? {});
   const url = stringValue(actionInput['url']);
-  if (!url) return declaredAction(run, nodeId, node, 'missing_url');
+  if (!url) return declaredAction(run, nodeId, node, 'missing_url', idempotencyKey);
 
   const method = stringValue(actionInput['method']) ?? actionMethod(node.action);
   const headers = headerRecord(actionInput['headers']);
@@ -45,6 +49,7 @@ async function executeWebhookAction(
       Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       ...headers,
+      ...idempotencyHeader(headers, idempotencyKey),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
@@ -53,7 +58,7 @@ async function executeWebhookAction(
     action: {
       adapter: node.adapter,
       action: node.action,
-      idempotencyKey: node.idempotencyKey ?? null,
+      idempotencyKey: idempotencyKey ?? null,
       requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
       request: { method, url },
@@ -92,6 +97,15 @@ async function renderActionInput(
   return (await renderActionValue(run, value)) as Record<string, WorkflowInputValue>;
 }
 
+async function renderOptionalTemplate(
+  run: WorkflowRunRecord,
+  value: string | undefined,
+): Promise<string | undefined> {
+  if (!value) return undefined;
+  const rendered = await renderTemplate(value, run);
+  return rendered.trim() === '' ? undefined : rendered;
+}
+
 async function renderActionValue(
   run: WorkflowRunRecord,
   value: WorkflowInputValue,
@@ -118,6 +132,7 @@ function declaredAction(
   _nodeId: string,
   node: WorkflowActionNode,
   status: 'awaiting_approval' | 'declared' | 'missing_url',
+  idempotencyKey: string | undefined,
 ): ActionResult {
   return {
     output: `${node.adapter}.${node.action}`,
@@ -125,7 +140,7 @@ function declaredAction(
       action: {
         adapter: node.adapter,
         action: node.action,
-        idempotencyKey: node.idempotencyKey ?? null,
+        idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         status,
       },
@@ -139,6 +154,15 @@ function actionMethod(action: string): string {
   if (action === 'patch') return 'PATCH';
   if (action === 'delete') return 'DELETE';
   return 'POST';
+}
+
+function idempotencyHeader(
+  headers: Record<string, string>,
+  idempotencyKey: string | undefined,
+): Record<string, string> {
+  if (!idempotencyKey) return {};
+  const alreadySet = Object.keys(headers).some((key) => key.toLowerCase() === 'idempotency-key');
+  return alreadySet ? {} : { 'Idempotency-Key': idempotencyKey };
 }
 
 function headerRecord(value: WorkflowInputValue | undefined): Record<string, string> {

@@ -23,15 +23,16 @@ export async function executeProviderAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
+  options: { idempotencyKey?: string } = {},
 ): Promise<ActionResult | null> {
   if (node.adapter === 'github') {
-    return executeGitHubAction(run, nodeId, node, actionInput);
+    return executeGitHubAction(run, nodeId, node, actionInput, options);
   }
   if (node.adapter === 'jira') {
-    return executeJiraAction(run, nodeId, node, actionInput);
+    return executeJiraAction(run, nodeId, node, actionInput, options);
   }
   if (node.adapter === 'slack') {
-    return executeSlackAction(run, nodeId, node, actionInput);
+    return executeSlackAction(run, nodeId, node, actionInput, options);
   }
   return null;
 }
@@ -41,17 +42,20 @@ async function executeGitHubAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
+  options: { idempotencyKey?: string },
 ): Promise<ActionResult> {
   const owner = stringValue(actionInput['owner']);
   const repo = stringValue(actionInput['repo']);
   const token = stringValue(actionInput['token']) ?? process.env['GITHUB_TOKEN'];
-  if (!owner || !repo || !token) return declaredProviderAction(node, 'missing_url');
+  if (!owner || !repo || !token) {
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+  }
 
   if (node.action === 'create_pr' || node.action === 'create_pull_request') {
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
-      headers: githubHeaders(token),
+      headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
       body: {
         title: stringValue(actionInput['title']) ?? 'Viewport workflow change',
         head: stringValue(actionInput['head']) ?? stringValue(actionInput['branch']),
@@ -66,16 +70,18 @@ async function executeGitHubAction(
     const issueNumber =
       stringValue(actionInput['issue_number']) ?? stringValue(actionInput['issueNumber']);
     const body = stringValue(actionInput['body']);
-    if (!issueNumber || !body) return declaredProviderAction(node, 'missing_url');
+    if (!issueNumber || !body) {
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    }
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(issueNumber)}/comments`,
-      headers: githubHeaders(token),
+      headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
       body: { body },
     });
   }
 
-  return declaredProviderAction(node, 'declared');
+  return declaredProviderAction(node, 'declared', options.idempotencyKey);
 }
 
 async function executeJiraAction(
@@ -83,6 +89,7 @@ async function executeJiraAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
+  options: { idempotencyKey?: string },
 ): Promise<ActionResult> {
   const baseUrl = normalizedBaseUrl(
     stringValue(actionInput['base_url']) ??
@@ -95,7 +102,9 @@ async function executeJiraAction(
     stringValue(actionInput['issue_key']) ??
     stringValue(actionInput['issueKey']) ??
     stringValue(actionInput['key']);
-  if (!baseUrl || !token || !issueKey) return declaredProviderAction(node, 'missing_url');
+  if (!baseUrl || !token || !issueKey) {
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+  }
 
   if (
     node.action === 'comment' ||
@@ -103,11 +112,11 @@ async function executeJiraAction(
     node.action === 'issue.comment'
   ) {
     const body = stringValue(actionInput['body']);
-    if (!body) return declaredProviderAction(node, 'missing_url');
+    if (!body) return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
-      headers: jiraHeaders(token, email),
+      headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
       body: { body: jiraDocument(body) },
     });
   }
@@ -115,16 +124,16 @@ async function executeJiraAction(
   if (node.action === 'transition' || node.action === 'issue.transition') {
     const transitionId =
       stringValue(actionInput['transition_id']) ?? stringValue(actionInput['transitionId']);
-    if (!transitionId) return declaredProviderAction(node, 'missing_url');
+    if (!transitionId) return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
-      headers: jiraHeaders(token, email),
+      headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
       body: { transition: { id: transitionId } },
     });
   }
 
-  return declaredProviderAction(node, 'declared');
+  return declaredProviderAction(node, 'declared', options.idempotencyKey);
 }
 
 async function executeSlackAction(
@@ -132,11 +141,14 @@ async function executeSlackAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
+  options: { idempotencyKey?: string },
 ): Promise<ActionResult> {
   const token = stringValue(actionInput['token']) ?? process.env['SLACK_BOT_TOKEN'];
   const channel = stringValue(actionInput['channel']);
   const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
-  if (!token || !channel || !text) return declaredProviderAction(node, 'missing_url');
+  if (!token || !channel || !text) {
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+  }
 
   if (
     node.action === 'post_message' ||
@@ -146,17 +158,18 @@ async function executeSlackAction(
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: 'https://slack.com/api/chat.postMessage',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: withIdempotencyHeader({ Authorization: `Bearer ${token}` }, options.idempotencyKey),
       body: {
         channel,
         text,
+        client_msg_id: options.idempotencyKey,
         thread_ts: stringValue(actionInput['thread_ts']) ?? stringValue(actionInput['threadTs']),
       },
       okFromBody: true,
     });
   }
 
-  return declaredProviderAction(node, 'declared');
+  return declaredProviderAction(node, 'declared', options.idempotencyKey);
 }
 
 async function executeJsonApiAction(
@@ -188,7 +201,7 @@ async function executeJsonApiAction(
     action: {
       adapter: node.adapter,
       action: node.action,
-      idempotencyKey: node.idempotencyKey ?? null,
+      idempotencyKey: idempotencyKeyFromHeaders(request.headers) ?? null,
       requiresApproval: node.requiresApproval === true,
       status: ok ? 'executed' : 'failed',
       request: { method: request.method, url: request.url },
@@ -235,6 +248,7 @@ async function executeJsonApiAction(
 function declaredProviderAction(
   node: WorkflowActionNode,
   status: 'declared' | 'missing_url',
+  idempotencyKey: string | undefined,
 ): ActionResult {
   return {
     output: `${node.adapter}.${node.action}`,
@@ -242,12 +256,26 @@ function declaredProviderAction(
       action: {
         adapter: node.adapter,
         action: node.action,
-        idempotencyKey: node.idempotencyKey ?? null,
+        idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         status,
       },
     },
   };
+}
+
+function withIdempotencyHeader(
+  headers: Record<string, string>,
+  idempotencyKey: string | undefined,
+): Record<string, string> {
+  if (!idempotencyKey) return headers;
+  const alreadySet = Object.keys(headers).some((key) => key.toLowerCase() === 'idempotency-key');
+  return alreadySet ? headers : { ...headers, 'Idempotency-Key': idempotencyKey };
+}
+
+function idempotencyKeyFromHeaders(headers: Record<string, string>): string | undefined {
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'idempotency-key');
+  return entry?.[1];
 }
 
 function githubHeaders(token: string): Record<string, string> {
