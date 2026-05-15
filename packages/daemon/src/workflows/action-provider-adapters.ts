@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { addEvent } from './runtime-helpers.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
@@ -204,6 +205,7 @@ async function executeJsonApiAction(
       idempotencyKey: idempotencyKeyFromHeaders(request.headers) ?? null,
       requiresApproval: node.requiresApproval === true,
       status: ok ? 'executed' : 'failed',
+      digest: actionDigest(node, idempotencyKeyFromHeaders(request.headers)),
       request: { method: request.method, url: request.url },
       response: {
         status: response.status,
@@ -259,6 +261,7 @@ function declaredProviderAction(
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         status,
+        digest: actionDigest(node, idempotencyKey),
       },
     },
   };
@@ -276,6 +279,17 @@ function withIdempotencyHeader(
 function idempotencyKeyFromHeaders(headers: Record<string, string>): string | undefined {
   const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'idempotency-key');
   return entry?.[1];
+}
+
+function actionDigest(node: WorkflowActionNode, idempotencyKey: string | undefined): string {
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify({
+      adapter: node.adapter,
+      action: node.action,
+      idempotencyKey: idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
+    }))
+    .digest('hex')}`;
 }
 
 function githubHeaders(token: string): Record<string, string> {

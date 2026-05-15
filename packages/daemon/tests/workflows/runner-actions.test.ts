@@ -157,10 +157,22 @@ nodes:
       status: 'awaiting_approval',
       requiresApproval: true,
     });
+    expect(blocked.nodes.post_approval?.metadata?.action?.digest).toMatch(/^sha256:/);
+
+    await expect(
+      daemon.workflowRunner.decideApproval(run.id, 'post_approval', {
+        approved: true,
+        message: 'Stale approval',
+        expectedActionDigest: 'sha256:stale',
+      }),
+    ).rejects.toThrow('The proposed action changed before approval');
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await daemon.workflowRunner.decideApproval(run.id, 'post_approval', {
       approved: true,
+      decision: 'approve',
       message: 'Approved by test',
+      expectedActionDigest: String(blocked.nodes.post_approval?.metadata?.action?.digest),
       actor: {
         id: '42',
         name: 'Test User',
@@ -182,6 +194,10 @@ nodes:
       status: 'executed',
       requiresApproval: true,
     });
+    expect(completed?.nodes.post_approval?.metadata?.action?.digest).toBe(
+      blocked.nodes.post_approval?.metadata?.action?.digest,
+    );
+    expect(completed?.nodes.post_approval?.approval?.decision).toBe('approve');
   });
 
   it('executes native GitHub PR actions with runner-local credentials', async () => {

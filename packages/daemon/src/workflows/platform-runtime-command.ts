@@ -4,7 +4,9 @@ export interface WorkflowRuntimeCommand {
   workflow_run_id?: string | null;
   workflow_node_id: string;
   approved: boolean;
+  decision?: 'approve' | 'request_changes' | 'reject';
   message?: string | null;
+  expected_action_digest?: string | null;
   actor?: Record<string, unknown> | null;
   feedback?: Record<string, unknown> | null;
 }
@@ -29,7 +31,9 @@ export function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
         workflow_run_id: readString(value['workflow_run_id']),
         workflow_node_id: workflowNodeId,
         approved: value['approved'],
+        decision: readDecision(value['decision']),
         message: readString(value['message']),
+        expected_action_digest: readString(value['expected_action_digest']),
         actor: readRecord(value['actor']),
         feedback: readRecord(value['feedback']),
       },
@@ -43,4 +47,10 @@ function readString(value: unknown): string | null {
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function readDecision(value: unknown): 'approve' | 'request_changes' | 'reject' | undefined {
+  return value === 'approve' || value === 'request_changes' || value === 'reject'
+    ? value
+    : undefined;
 }

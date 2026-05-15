@@ -55,6 +55,7 @@ export interface WorkflowNodeRunState {
     requestedAt: number;
     resolvedAt?: number;
     approved?: boolean;
+    decision?: 'approve' | 'request_changes' | 'reject';
     message?: string;
     actor?: WorkflowApprovalActor;
     feedback?: Record<string, unknown>;
@@ -214,7 +215,9 @@ export interface WorkflowContractBinding extends WorkflowContractBindingInput {
 
 export interface WorkflowApprovalDecision {
   approved: boolean;
+  decision?: 'approve' | 'request_changes' | 'reject';
   message?: string;
+  expectedActionDigest?: string;
   actor?: WorkflowApprovalActor;
   feedback?: Record<string, unknown>;
 }

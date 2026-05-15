@@ -32,7 +32,11 @@ export class WorkflowRuntimeCommandApplier {
 
     await this.decideApproval(run.id, command.workflow_node_id, {
       approved: command.approved,
+      ...(command.decision ? { decision: command.decision } : {}),
       ...(command.message ? { message: command.message } : {}),
+      ...(command.expected_action_digest
+        ? { expectedActionDigest: command.expected_action_digest }
+        : {}),
       ...(command.feedback ? { feedback: command.feedback } : {}),
       ...approvalActor(command.actor),
     });

@@ -234,6 +234,18 @@ export class WorkflowRunner {
     if (run.status !== 'blocked' || state.status !== 'blocked') {
       throw new Error(`Workflow node is not awaiting approval: ${nodeId}`);
     }
+    const currentActionDigest =
+      state.type === 'action' && state.metadata && typeof state.metadata['action'] === 'object'
+        ? (state.metadata['action'] as { digest?: unknown }).digest
+        : undefined;
+    if (
+      state.type === 'action' &&
+      decision.expectedActionDigest &&
+      typeof currentActionDigest === 'string' &&
+      currentActionDigest !== decision.expectedActionDigest
+    ) {
+      throw new Error('The proposed action changed before approval. Refresh the run and review it again.');
+    }
 
     const resolvedAt = Date.now();
     state.approval = {
@@ -241,6 +253,7 @@ export class WorkflowRunner {
       requestedAt: state.approval?.requestedAt ?? resolvedAt,
       resolvedAt,
       approved: decision.approved,
+      decision: decision.decision ?? (decision.approved ? 'approve' : 'reject'),
       ...(decision.message ? { message: decision.message } : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
       ...(decision.feedback ? { feedback: decision.feedback } : {}),

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { addEvent, renderTemplate } from './runtime-helpers.js';
 import { executeProviderAction, type ActionResult } from './action-provider-adapters.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
@@ -61,6 +62,7 @@ async function executeWebhookAction(
       idempotencyKey: idempotencyKey ?? null,
       requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
+      digest: actionDigest(node, idempotencyKey),
       request: { method, url },
       response: {
         status: response.status,
@@ -143,6 +145,7 @@ function declaredAction(
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         status,
+        digest: actionDigest(node, idempotencyKey),
       },
     },
   };
@@ -176,6 +179,17 @@ function headerRecord(value: WorkflowInputValue | undefined): Record<string, str
 
 function stringValue(value: WorkflowInputValue | undefined): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function actionDigest(node: WorkflowActionNode, idempotencyKey: string | undefined): string {
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify({
+      adapter: node.adapter,
+      action: node.action,
+      idempotencyKey: idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
+    }))
+    .digest('hex')}`;
 }
 
 async function safeResponseText(response: Response): Promise<string> {
