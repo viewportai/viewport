@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import { addEvent, renderTemplate } from './runtime-helpers.js';
 import { executeProviderAction, type ActionResult } from './action-provider-adapters.js';
+import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -14,21 +14,21 @@ export async function executeActionAdapter(
   options: { approved?: boolean } = {},
 ): Promise<ActionResult> {
   const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
+  const actionInput = await renderActionInput(run, node.with ?? {});
   if (node.requiresApproval === true && options.approved !== true) {
-    return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey);
+    return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey, actionInput);
   }
 
   if (node.adapter === 'webhook' || node.adapter === 'http') {
-    return executeWebhookAction(run, nodeId, node, idempotencyKey);
+    return executeWebhookAction(run, nodeId, node, idempotencyKey, actionInput);
   }
 
-  const actionInput = await renderActionInput(run, node.with ?? {});
   const providerAction = await executeProviderAction(run, nodeId, node, actionInput, {
     idempotencyKey,
   });
   if (providerAction) return providerAction;
 
-  return declaredAction(run, nodeId, node, 'declared', idempotencyKey);
+  return declaredAction(run, nodeId, node, 'declared', idempotencyKey, actionInput);
 }
 
 async function executeWebhookAction(
@@ -36,10 +36,10 @@ async function executeWebhookAction(
   nodeId: string,
   node: WorkflowActionNode,
   idempotencyKey: string | undefined,
+  actionInput: Record<string, WorkflowInputValue>,
 ): Promise<ActionResult> {
-  const actionInput = await renderActionInput(run, node.with ?? {});
   const url = stringValue(actionInput['url']);
-  if (!url) return declaredAction(run, nodeId, node, 'missing_url', idempotencyKey);
+  if (!url) return declaredAction(run, nodeId, node, 'missing_url', idempotencyKey, actionInput);
 
   const method = stringValue(actionInput['method']) ?? actionMethod(node.action);
   const headers = headerRecord(actionInput['headers']);
@@ -62,7 +62,8 @@ async function executeWebhookAction(
       idempotencyKey: idempotencyKey ?? null,
       requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
-      digest: actionDigest(node, idempotencyKey),
+      digest: workflowActionProposalDigest(node, { idempotencyKey, input: actionInput }),
+      input: sanitizeActionInput(actionInput),
       request: { method, url },
       response: {
         status: response.status,
@@ -135,6 +136,7 @@ function declaredAction(
   node: WorkflowActionNode,
   status: 'awaiting_approval' | 'declared' | 'missing_url',
   idempotencyKey: string | undefined,
+  actionInput: Record<string, WorkflowInputValue>,
 ): ActionResult {
   return {
     output: `${node.adapter}.${node.action}`,
@@ -145,7 +147,8 @@ function declaredAction(
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         status,
-        digest: actionDigest(node, idempotencyKey),
+        digest: workflowActionProposalDigest(node, { idempotencyKey, input: actionInput }),
+        input: sanitizeActionInput(actionInput),
       },
     },
   };
@@ -179,17 +182,6 @@ function headerRecord(value: WorkflowInputValue | undefined): Record<string, str
 
 function stringValue(value: WorkflowInputValue | undefined): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
-function actionDigest(node: WorkflowActionNode, idempotencyKey: string | undefined): string {
-  return `sha256:${createHash('sha256')
-    .update(JSON.stringify({
-      adapter: node.adapter,
-      action: node.action,
-      idempotencyKey: idempotencyKey ?? null,
-      requiresApproval: node.requiresApproval === true,
-    }))
-    .digest('hex')}`;
 }
 
 async function safeResponseText(response: Response): Promise<string> {

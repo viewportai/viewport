@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
 import { addEvent } from './runtime-helpers.js';
+import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -49,7 +49,7 @@ async function executeGitHubAction(
   const repo = stringValue(actionInput['repo']);
   const token = stringValue(actionInput['token']) ?? process.env['GITHUB_TOKEN'];
   if (!owner || !repo || !token) {
-    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
   if (node.action === 'create_pr' || node.action === 'create_pull_request') {
@@ -72,7 +72,7 @@ async function executeGitHubAction(
       stringValue(actionInput['issue_number']) ?? stringValue(actionInput['issueNumber']);
     const body = stringValue(actionInput['body']);
     if (!issueNumber || !body) {
-      return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     }
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
@@ -82,7 +82,7 @@ async function executeGitHubAction(
     });
   }
 
-  return declaredProviderAction(node, 'declared', options.idempotencyKey);
+  return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
 }
 
 async function executeJiraAction(
@@ -104,7 +104,7 @@ async function executeJiraAction(
     stringValue(actionInput['issueKey']) ??
     stringValue(actionInput['key']);
   if (!baseUrl || !token || !issueKey) {
-    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
   if (
@@ -113,7 +113,7 @@ async function executeJiraAction(
     node.action === 'issue.comment'
   ) {
     const body = stringValue(actionInput['body']);
-    if (!body) return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    if (!body) return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
@@ -125,7 +125,7 @@ async function executeJiraAction(
   if (node.action === 'transition' || node.action === 'issue.transition') {
     const transitionId =
       stringValue(actionInput['transition_id']) ?? stringValue(actionInput['transitionId']);
-    if (!transitionId) return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    if (!transitionId) return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
@@ -134,7 +134,7 @@ async function executeJiraAction(
     });
   }
 
-  return declaredProviderAction(node, 'declared', options.idempotencyKey);
+  return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
 }
 
 async function executeSlackAction(
@@ -148,7 +148,7 @@ async function executeSlackAction(
   const channel = stringValue(actionInput['channel']);
   const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
   if (!token || !channel || !text) {
-    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
   if (
@@ -170,7 +170,7 @@ async function executeSlackAction(
     });
   }
 
-  return declaredProviderAction(node, 'declared', options.idempotencyKey);
+  return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
 }
 
 async function executeJsonApiAction(
@@ -205,7 +205,11 @@ async function executeJsonApiAction(
       idempotencyKey: idempotencyKeyFromHeaders(request.headers) ?? null,
       requiresApproval: node.requiresApproval === true,
       status: ok ? 'executed' : 'failed',
-      digest: actionDigest(node, idempotencyKeyFromHeaders(request.headers)),
+      digest: workflowActionProposalDigest(node, {
+        idempotencyKey: idempotencyKeyFromHeaders(request.headers),
+        input: request.body as Record<string, WorkflowInputValue>,
+      }),
+      input: sanitizeActionInput(request.body as Record<string, WorkflowInputValue>),
       request: { method: request.method, url: request.url },
       response: {
         status: response.status,
@@ -251,6 +255,7 @@ function declaredProviderAction(
   node: WorkflowActionNode,
   status: 'declared' | 'missing_url',
   idempotencyKey: string | undefined,
+  actionInput: Record<string, WorkflowInputValue>,
 ): ActionResult {
   return {
     output: `${node.adapter}.${node.action}`,
@@ -261,7 +266,11 @@ function declaredProviderAction(
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         status,
-        digest: actionDigest(node, idempotencyKey),
+        digest: workflowActionProposalDigest(node, {
+          idempotencyKey,
+          input: actionInput,
+        }),
+        input: sanitizeActionInput(actionInput),
       },
     },
   };
@@ -279,17 +288,6 @@ function withIdempotencyHeader(
 function idempotencyKeyFromHeaders(headers: Record<string, string>): string | undefined {
   const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'idempotency-key');
   return entry?.[1];
-}
-
-function actionDigest(node: WorkflowActionNode, idempotencyKey: string | undefined): string {
-  return `sha256:${createHash('sha256')
-    .update(JSON.stringify({
-      adapter: node.adapter,
-      action: node.action,
-      idempotencyKey: idempotencyKey ?? null,
-      requiresApproval: node.requiresApproval === true,
-    }))
-    .digest('hex')}`;
 }
 
 function githubHeaders(token: string): Record<string, string> {

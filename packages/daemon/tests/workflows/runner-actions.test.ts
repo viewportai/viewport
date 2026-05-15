@@ -200,6 +200,59 @@ nodes:
     expect(completed?.nodes.post_approval?.approval?.decision).toBe('approve');
   });
 
+  it('cancels approved side-effect actions on request changes without executing', async () => {
+    const fetchMock = vi.fn(async () => new Response('should not run', { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: action-request-changes-proof
+nodes:
+  open_pr:
+    type: action
+    adapter: webhook
+    action: post
+    requiresApproval: true
+    with:
+      url: https://hooks.example.test/pr
+      body:
+        title: Fix PAY-1842
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const blocked = await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.status === 'blocked' && candidate.nodes.open_pr?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'open_pr', {
+      approved: false,
+      decision: 'request_changes',
+      message: 'Add a regression test before opening the PR.',
+      expectedActionDigest: String(blocked.nodes.open_pr?.metadata?.action?.digest),
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const canceled = await daemon.workflowRunner.getRun(run.id);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(canceled?.status).toBe('canceled');
+    expect(canceled?.nodes.open_pr?.status).toBe('failed');
+    expect(canceled?.nodes.open_pr?.approval?.decision).toBe('request_changes');
+    expect(canceled?.events.some((event) => event.type === 'action-executed')).toBe(false);
+  });
+
   it('executes native GitHub PR actions with runner-local credentials', async () => {
     const fetchMock = vi.fn(
       async () =>
