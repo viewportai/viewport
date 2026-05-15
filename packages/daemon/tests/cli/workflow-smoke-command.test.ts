@@ -117,6 +117,32 @@ describe('workflow smoke CLI', () => {
 
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
+
+  it('lists daemon workflow agent inventory', async () => {
+    process.argv = ['node', 'vpd', 'workflow', 'agents'];
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch: vi.fn(async (urlPath: string) => {
+        if (urlPath === '/api/agents') {
+          return jsonResponse({
+            agents: [
+              { id: 'codex', displayName: 'Codex', available: true },
+              { id: 'claude', displayName: 'Claude Code', available: false },
+            ],
+          });
+        }
+        return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+      }),
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    const output = String(logSpy.mock.calls.flat().join('\n'));
+    expect(output).toContain('Workflow agents:');
+    expect(output).toContain('codex  available  Codex');
+    expect(output).toContain('claude  unavailable  Claude Code');
+  });
 });
 
 function smokeRun(status: string, workflowName = 'viewport-smoke') {

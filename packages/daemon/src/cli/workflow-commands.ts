@@ -40,6 +40,10 @@ export async function workflow(): Promise<void> {
     await smokeWorkflow();
     return;
   }
+  if (subcommand === 'agents') {
+    await listWorkflowAgents();
+    return;
+  }
   if (subcommand === 'runs') {
     await listWorkflowRuns();
     return;
@@ -69,7 +73,7 @@ export async function workflow(): Promise<void> {
 }
 
 function workflowUsage(): string {
-  return 'Usage: vpd workflow <validate|run|smoke|runs|show|rerun|approve|cancel|worker> ...';
+  return 'Usage: vpd workflow <validate|run|smoke|agents|runs|show|rerun|approve|cancel|worker> ...';
 }
 
 function showWorkflowHelp(): void {
@@ -158,6 +162,34 @@ async function smokeWorkflow(): Promise<void> {
   printRun(completed.run);
   if (completed.run.status === 'completed') {
     console.log(`Smoke:       ${sentinel}`);
+  }
+}
+
+async function listWorkflowAgents(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const body = (await getJson('/api/agents')) as DaemonAgentInventory;
+  const agents = body.agents ?? [];
+
+  if (isJsonMode()) {
+    printJson({ command: 'workflow agents', ok: true, agents });
+    return;
+  }
+
+  if (agents.length === 0) {
+    console.log('No workflow agents registered.');
+    return;
+  }
+
+  console.log('Workflow agents:');
+  for (const agent of agents) {
+    if (typeof agent === 'string') {
+      console.log(`- ${agent}  available`);
+      continue;
+    }
+    const id = typeof agent.id === 'string' ? agent.id : 'unknown';
+    const name = typeof agent.displayName === 'string' ? agent.displayName : id;
+    const status = agent.available === false ? 'unavailable' : 'available';
+    console.log(`- ${id}  ${status}  ${name}`);
   }
 }
 
