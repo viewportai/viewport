@@ -15,6 +15,7 @@ import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import { buildWorkflowContractBinding } from './contract-binding.js';
+import { recordWorkflowHookEvent } from './runner-hook-events.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
@@ -71,7 +72,9 @@ export class WorkflowRunner {
       (run) => this.reconciler.reconcile(run),
     );
     this.daemon.on('workflow:hook-fired', (event) => {
-      void this.recordWorkflowHookEvent(event).catch(() => undefined);
+      void recordWorkflowHookEvent(this.store, (run) => this.saveAndEmit(run), event).catch(
+        () => undefined,
+      );
     });
   }
 
@@ -348,37 +351,6 @@ export class WorkflowRunner {
 
   async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {
     return this.canceler.cancelRun(runId, options);
-  }
-
-  private async recordWorkflowHookEvent(event: {
-    workflowRunId: string;
-    workflowNodeId: string;
-    sessionId: string;
-    kind: string;
-    adapter: string;
-    response?: {
-      passthrough: boolean;
-      decision?: { behavior: 'allow' | 'deny'; message?: string };
-    };
-    payload: Record<string, unknown>;
-  }): Promise<void> {
-    const run = await this.store.get(event.workflowRunId);
-    if (!run) return;
-    addEvent(
-      run,
-      'hook-fired',
-      `Workflow hook ${event.kind} fired for node ${event.workflowNodeId}`,
-      {
-        kind: event.kind,
-        adapter: event.adapter,
-        sessionId: event.sessionId,
-        response: event.response ?? null,
-        payload: event.payload,
-      },
-      event.workflowNodeId,
-    );
-    run.updatedAt = Date.now();
-    await this.saveAndEmit(run);
   }
 
   private async failRun(runId: string, message: string): Promise<void> {

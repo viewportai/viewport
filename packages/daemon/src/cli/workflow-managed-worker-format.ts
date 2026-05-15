@@ -4,7 +4,10 @@ import type {
   WorkflowRunEvent,
   WorkflowRunRecord,
 } from '../workflows/types.js';
-import type { ManagedAssignment, ManagedWorkerCapabilities } from './workflow-managed-worker.js';
+import type {
+  ManagedAssignment,
+  ManagedWorkerCapabilities,
+} from './workflow-managed-worker-types.js';
 
 export function localRunToSyncPayload(run: WorkflowRunRecord): Record<string, unknown> {
   return {
