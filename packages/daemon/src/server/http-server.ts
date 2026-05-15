@@ -300,7 +300,12 @@ export function registerHttpRoutes(
 
   app.post<{
     Params: { id: string; nodeId: string };
-    Body: { approved?: boolean; message?: string };
+    Body: {
+      approved?: boolean;
+      decision?: 'approve' | 'request_changes' | 'reject';
+      expectedActionDigest?: string;
+      message?: string;
+    };
   }>('/api/workflows/runs/:id/approvals/:nodeId', async (request, reply) => {
     const parsedBody = WorkflowApprovalBodySchema.safeParse(request.body);
     if (!parsedBody.success) {

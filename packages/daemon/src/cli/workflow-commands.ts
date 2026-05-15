@@ -244,18 +244,18 @@ async function rerunWorkflowRun(): Promise<void> {
 
 async function approveWorkflowNode(): Promise<void> {
   await ensureDaemonRunningOrThrow();
-  const runId = requiredArg(
-    2,
-    'Usage: vpd workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]',
-  );
-  const nodeId = requiredArg(
-    3,
-    'Usage: vpd workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]',
-  );
+  const usage =
+    'Usage: vpd workflow approve <run-id> <node-id> [--request-changes|--reject|--deny] [--expected-action-digest sha256:...] [--message <text>] [--json]';
+  const runId = requiredArg(2, usage);
+  const nodeId = requiredArg(3, usage);
+  const decision = workflowApprovalDecisionFromFlags();
+  const expectedActionDigest = getFlag('expected-action-digest') ?? getFlag('digest');
   const response = (await postJson(
     `/api/workflows/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(nodeId)}`,
     {
-      approved: !hasFlag('deny'),
+      approved: decision === 'approve',
+      decision,
+      ...(expectedActionDigest ? { expectedActionDigest } : {}),
       ...(getFlag('message') ? { message: getFlag('message') } : {}),
       actor: {
         name: 'Local CLI',
@@ -269,6 +269,18 @@ async function approveWorkflowNode(): Promise<void> {
     return;
   }
   printRun(response.run);
+}
+
+function workflowApprovalDecisionFromFlags(): 'approve' | 'request_changes' | 'reject' {
+  const negativeFlags = [hasFlag('request-changes'), hasFlag('reject'), hasFlag('deny')].filter(
+    Boolean,
+  ).length;
+  if (negativeFlags > 1) {
+    throw new Error('Use only one of --request-changes, --reject, or --deny.');
+  }
+  if (hasFlag('request-changes')) return 'request_changes';
+  if (hasFlag('reject') || hasFlag('deny')) return 'reject';
+  return 'approve';
 }
 
 async function cancelWorkflowRun(): Promise<void> {
