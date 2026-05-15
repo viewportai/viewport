@@ -102,9 +102,40 @@ export async function executeWorkflowNode(
   state.completedAt = Date.now();
   state.attempts = attempt;
   run.updatedAt = state.completedAt;
+  if (node.type === 'action') {
+    const action = isRecord(state.metadata?.['action']) ? state.metadata['action'] : {};
+    const idempotencyKey = typeof action['idempotencyKey'] === 'string' ? action['idempotencyKey'] : null;
+    const digest = typeof action['digest'] === 'string' ? action['digest'] : null;
+    const recovery = {
+      state: 'dead_letter',
+      reason: message,
+      attempts: attempt,
+      retryableByRerun: Boolean(idempotencyKey),
+      idempotencyKey,
+      digest,
+    };
+    state.metadata = {
+      ...(state.metadata ?? {}),
+      action: {
+        ...action,
+        recovery,
+      },
+    };
+    addEvent(
+      run,
+      'action-dead-letter',
+      `Action node ${nodeId} needs remediation after ${attempt} attempt${attempt === 1 ? '' : 's'}`,
+      recovery,
+      nodeId,
+    );
+  }
   addEvent(run, 'node-failed', `Node ${nodeId} failed: ${message}`, { attempts: attempt }, nodeId);
   await context.saveAndEmit(run);
   throw lastError instanceof Error ? lastError : new Error(message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 async function executeGateNode(

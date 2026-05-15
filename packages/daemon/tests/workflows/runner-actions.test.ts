@@ -517,6 +517,9 @@ nodes:
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
       );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['SLACK_BOT_TOKEN'];
@@ -544,6 +547,10 @@ nodes:
     adapter: slack
     action: post_message
     needs: [announce]
+    idempotencyKey: slack-fail:PAY-1842
+    retry:
+      maxAttempts: 2
+      transient: [channel_not_found]
     with:
       channel: missing
       text: "This should fail."
@@ -586,9 +593,22 @@ nodes:
       expect(failed?.nodes.fail_slack?.metadata?.action).toMatchObject({
         adapter: 'slack',
         action: 'post_message',
+        idempotencyKey: 'slack-fail:PAY-1842',
         status: 'failed',
         response: { error: 'channel_not_found' },
+        recovery: {
+          state: 'dead_letter',
+          attempts: 2,
+          retryableByRerun: true,
+          idempotencyKey: 'slack-fail:PAY-1842',
+        },
       });
+      expect(failed?.events).toContainEqual(
+        expect.objectContaining({
+          type: 'action-dead-letter',
+          nodeId: 'fail_slack',
+        }),
+      );
     } finally {
       if (originalToken === undefined) delete process.env['SLACK_BOT_TOKEN'];
       else process.env['SLACK_BOT_TOKEN'] = originalToken;
