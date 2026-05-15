@@ -1,5 +1,5 @@
 import { executeLoopNode } from './loop-executor.js';
-import { executeActionAdapter } from './action-adapters.js';
+import { executeActionAdapter, WorkflowActionError } from './action-adapters.js';
 import {
   addEvent,
   renderOptionalTemplate,
@@ -232,9 +232,21 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       return { result: 'blocked' };
     }
 
-    const action = await executeActionAdapter(run, nodeId, node, {
-      approved: state?.approval?.approved === true,
-    });
+    let action;
+    try {
+      action = await executeActionAdapter(run, nodeId, node, {
+        approved: state?.approval?.approved === true,
+      });
+    } catch (error) {
+      if (error instanceof WorkflowActionError && state) {
+        state.output = error.result.output;
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          ...error.result.metadata,
+        };
+      }
+      throw error;
+    }
     if (state) {
       state.output = action.output;
       state.metadata = {

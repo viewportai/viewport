@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -332,6 +333,174 @@ nodes:
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
+    }
+  });
+
+  it('executes native Jira comments and transitions with runner-local credentials', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ id: '10042' }), { status: 201 }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+    const originalBaseUrl = process.env['JIRA_BASE_URL'];
+    const originalToken = process.env['JIRA_API_TOKEN'];
+    const originalEmail = process.env['JIRA_EMAIL'];
+    process.env['JIRA_BASE_URL'] = 'https://acme.atlassian.net';
+    process.env['JIRA_API_TOKEN'] = 'jira-token';
+    process.env['JIRA_EMAIL'] = 'bot@example.test';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: jira-action-proof
+nodes:
+  comment:
+    type: action
+    adapter: jira
+    action: issue.comment
+    with:
+      issue_key: PAY-1842
+      body: "Fixed in PR #4821."
+  transition:
+    type: action
+    adapter: jira
+    action: issue.transition
+    needs: [comment]
+    with:
+      issue_key: PAY-1842
+      transition_id: "31"
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/comment',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: `Basic ${Buffer.from('bot@example.test:jira-token').toString('base64')}`,
+          }),
+        }),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/transitions',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ transition: { id: '31' } }),
+        }),
+      );
+      expect(completed?.status).toBe('completed');
+      expect(completed?.nodes.comment?.metadata?.action).toMatchObject({
+        adapter: 'jira',
+        action: 'issue.comment',
+        status: 'executed',
+      });
+      expect(completed?.nodes.transition?.metadata?.action).toMatchObject({
+        adapter: 'jira',
+        action: 'issue.transition',
+        status: 'executed',
+      });
+    } finally {
+      if (originalBaseUrl === undefined) delete process.env['JIRA_BASE_URL'];
+      else process.env['JIRA_BASE_URL'] = originalBaseUrl;
+      if (originalToken === undefined) delete process.env['JIRA_API_TOKEN'];
+      else process.env['JIRA_API_TOKEN'] = originalToken;
+      if (originalEmail === undefined) delete process.env['JIRA_EMAIL'];
+      else process.env['JIRA_EMAIL'] = originalEmail;
+    }
+  });
+
+  it('executes native Slack messages and treats Slack ok false as action failure', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, channel: 'C123', ts: '177000.0001' }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalToken = process.env['SLACK_BOT_TOKEN'];
+    process.env['SLACK_BOT_TOKEN'] = 'slack-token';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: slack-action-proof
+nodes:
+  announce:
+    type: action
+    adapter: slack
+    action: post_message
+    with:
+      channel: C123
+      text: "Codex found the bug and tests are passing."
+  fail_slack:
+    type: action
+    adapter: slack
+    action: post_message
+    needs: [announce]
+    with:
+      channel: missing
+      text: "This should fail."
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://slack.com/api/chat.postMessage',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ Authorization: 'Bearer slack-token' }),
+          body: JSON.stringify({
+            channel: 'C123',
+            text: 'Codex found the bug and tests are passing.',
+          }),
+        }),
+      );
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.announce?.metadata?.action).toMatchObject({
+        adapter: 'slack',
+        action: 'post_message',
+        status: 'executed',
+        response: { channel: 'C123', ts: '177000.0001' },
+      });
+      expect(failed?.nodes.fail_slack?.metadata?.action).toMatchObject({
+        adapter: 'slack',
+        action: 'post_message',
+        status: 'failed',
+        response: { error: 'channel_not_found' },
+      });
+    } finally {
+      if (originalToken === undefined) delete process.env['SLACK_BOT_TOKEN'];
+      else process.env['SLACK_BOT_TOKEN'] = originalToken;
     }
   });
 });
