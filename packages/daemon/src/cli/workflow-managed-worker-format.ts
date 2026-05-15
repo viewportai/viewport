@@ -81,6 +81,10 @@ export function approvalActor(
     : { name: 'Viewport', source: 'managed-executor' };
 }
 
+export function progressSyncEveryMs(leaseSeconds: number): number {
+  return Math.max(500, Math.min(30_000, Math.floor(leaseSeconds * 500)));
+}
+
 function formatNode(node: WorkflowNodeRunState): Record<string, unknown> {
   return {
     node_key: node.id,

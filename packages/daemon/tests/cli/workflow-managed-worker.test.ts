@@ -225,6 +225,82 @@ describe('workflow managed worker CLI', () => {
     expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 1');
   });
+
+  it('syncs running progress before a long local run completes so the platform lease can renew', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--lease',
+      '2',
+      '--once',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_3',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: long-running\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_3/sync')) {
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ data: { id: 'run_platform_3', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let pollCount = 0;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_3' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_3') {
+        pollCount += 1;
+        return jsonResponse({
+          run:
+            pollCount === 1
+              ? runningLocalRun({ id: 'local_run_3' })
+              : completedLocalRun({ id: 'local_run_3' }),
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['running', 'completed']);
+  });
 });
 
 function completedLocalRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
@@ -314,6 +390,50 @@ function blockedLocalRun(): WorkflowRunRecord {
     createdAt: now - 2000,
     startedAt: now - 1000,
     updatedAt: now,
+  };
+}
+
+function runningLocalRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    id: 'local_run_3',
+    workflowName: 'long-running',
+    sourceType: 'viewport_snapshot',
+    sourcePath: 'viewport://workflow/long-running',
+    digest: 'sha256:long-running',
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: 'schema: viewport.workflow/v1\nname: long-running\nnodes: {}\n',
+    directoryId: 'dir_1',
+    directoryPath: '/repo',
+    machineId: 'machine_1',
+    initiation: 'cli',
+    status: 'running',
+    inputs: {},
+    preflight: { ok: true, issues: [] },
+    nodes: {
+      inspect: {
+        id: 'inspect',
+        type: 'shell',
+        status: 'running',
+        output: 'still working',
+        startedAt: now - 1000,
+      },
+    },
+    artifacts: [],
+    events: [
+      {
+        id: 'evt_running',
+        runId: 'local_run_3',
+        timestamp: now,
+        type: 'node-started',
+        message: 'Inspect started',
+        nodeId: 'inspect',
+      },
+    ],
+    createdAt: now - 2000,
+    startedAt: now - 1000,
+    updatedAt: now,
+    ...overrides,
   };
 }
 

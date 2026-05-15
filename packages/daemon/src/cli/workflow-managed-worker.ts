@@ -3,6 +3,12 @@ import { getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
+import {
+  delay,
+  listFlagValue,
+  positiveIntFlagValue,
+  safeText,
+} from './workflow-managed-worker-util.js';
 import type { WorkflowInputValue, WorkflowRunRecord } from '../workflows/types.js';
 import {
   approvalActor,
@@ -10,6 +16,7 @@ import {
   capabilityPayload,
   dataFrom,
   localRunToSyncPayload,
+  progressSyncEveryMs,
   readRun,
 } from './workflow-managed-worker-format.js';
 
@@ -136,16 +143,16 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     executorId,
     credential,
     workdir: getFlag('workdir') ? path.resolve(getFlag('workdir')!) : undefined,
-    leaseSeconds: positiveIntFlag('lease') ?? 300,
-    sleepSeconds: positiveIntFlag('sleep') ?? 5,
-    maxRuns: positiveIntFlag('max-runs'),
+    leaseSeconds: positiveIntFlagValue(getFlag('lease')) ?? 300,
+    sleepSeconds: positiveIntFlagValue(getFlag('sleep')) ?? 5,
+    maxRuns: positiveIntFlagValue(getFlag('max-runs')),
     once: hasFlag('once'),
     capabilities: {
       agentCommand: getFlag('agent-command') ?? process.env['VIEWPORT_MANAGED_AGENT_COMMAND'],
-      agents: listFlag('agents'),
-      models: listFlag('models'),
-      integrations: listFlag('integrations'),
-      secrets: listFlag('secrets'),
+      agents: listFlagValue(getFlag('agents')),
+      models: listFlagValue(getFlag('models')),
+      integrations: listFlagValue(getFlag('integrations')),
+      secrets: listFlagValue(getFlag('secrets')),
     },
   };
 }
@@ -194,7 +201,13 @@ async function runAssignmentLocally(
     initiation: 'cli',
   });
   const runId = readRun(started).id;
-  return pollLocalRun(runId);
+  return pollLocalRun(
+    runId,
+    async (run) => {
+      await syncLocalRun(options, assignment.id, run);
+    },
+    progressSyncEveryMs(options.leaseSeconds),
+  );
 }
 
 async function waitForApprovalAndResume(
@@ -223,7 +236,13 @@ async function waitForApprovalAndResume(
           actor: approvalActor(approved),
         },
       );
-      const resumed = await pollLocalRun(localRunId);
+      const resumed = await pollLocalRun(
+        localRunId,
+        async (run) => {
+          await syncLocalRun(options, platformRunId, run);
+        },
+        progressSyncEveryMs(options.leaseSeconds),
+      );
       await syncLocalRun(options, platformRunId, resumed);
       return resumed;
     }
@@ -281,11 +300,20 @@ async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
   return { id: created.id, path: resolvedPath };
 }
 
-async function pollLocalRun(runId: string): Promise<WorkflowRunRecord> {
+async function pollLocalRun(
+  runId: string,
+  onProgress?: (run: WorkflowRunRecord) => Promise<void>,
+  progressEveryMs = 30_000,
+): Promise<WorkflowRunRecord> {
+  let nextProgressAt = 0;
   while (true) {
     const body = await daemonJson('GET', `/api/workflows/runs/${encodeURIComponent(runId)}`);
     const run = readRun(body);
     if (['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) return run;
+    if (onProgress && Date.now() >= nextProgressAt) {
+      await onProgress(run);
+      nextProgressAt = Date.now() + progressEveryMs;
+    }
     await delay(500);
   }
 }
@@ -349,33 +377,4 @@ function baseManagedUrl(options: ManagedWorkerOptions): string {
   return `${options.server}/api/runtime/workspaces/${encodeURIComponent(
     options.workspaceId,
   )}/managed-executors/${encodeURIComponent(options.executorId)}`;
-}
-
-function listFlag(name: string): string[] {
-  const value = getFlag(name);
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function positiveIntFlag(name: string): number | undefined {
-  const value = getFlag(name);
-  if (!value) return undefined;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-async function safeText(response: Response | undefined): Promise<string> {
-  if (!response) return '';
-  try {
-    return await response.text();
-  } catch {
-    return '';
-  }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
