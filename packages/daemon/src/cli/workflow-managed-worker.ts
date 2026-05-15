@@ -31,6 +31,7 @@ export async function workflowWorker(): Promise<void> {
   if (!(await isDaemonRunning())) {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }
+  await validateDaemonAgentCapabilities(options);
 
   const stats: WorkerStats = { claimed: 0, completed: 0, blocked: 0, failed: 0 };
   do {
@@ -77,6 +78,40 @@ export async function workflowWorker(): Promise<void> {
   }
   console.log(
     `Workflow worker stopped. Claimed ${stats.claimed}, completed ${stats.completed}, blocked ${stats.blocked}, failed ${stats.failed}.`,
+  );
+}
+
+async function validateDaemonAgentCapabilities(options: ManagedWorkerOptions): Promise<void> {
+  if (options.capabilities.agents.length === 0) return;
+
+  const response = await daemonFetch('/api/agents', {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  if (!response?.ok) {
+    throw new Error(
+      `Daemon request failed: ${response?.status ?? 'no response'} ${await safeText(response ?? undefined)}`,
+    );
+  }
+
+  const body = (await response.json()) as {
+    agents?: Array<string | { id?: unknown; available?: unknown }>;
+  };
+  const availableAgents = new Set(
+    (body.agents ?? []).flatMap((agent) => {
+      if (typeof agent === 'string') return [agent];
+      if (!agent || typeof agent !== 'object') return [];
+      if (agent.available === false) return [];
+      return typeof agent.id === 'string' ? [agent.id] : [];
+    }),
+  );
+  const missing = options.capabilities.agents.filter((agent) => !availableAgents.has(agent));
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `Daemon is missing workflow agent adapter(s): ${missing.join(
+      ', ',
+    )}. Start the daemon with the matching built-in agent installed, or configure a custom command agent with VIEWPORT_CUSTOM_AGENT_COMMAND.`,
   );
 }
 

@@ -93,6 +93,9 @@ describe('workflow managed worker CLI', () => {
     }) as typeof fetch;
 
     const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
       if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
         return jsonResponse([]);
       }
@@ -130,6 +133,54 @@ describe('workflow managed worker CLI', () => {
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/sync',
     ]);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
+  });
+
+  it('fails before claiming when the advertised agent is unavailable in the daemon', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--agents',
+      'codex',
+      '--agent-command',
+      'codex',
+      '--once',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async () => {
+      throw new Error('The worker must not claim assignments when the daemon lacks the adapter.');
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'claude', available: true }] });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await expect(workflow()).rejects.toThrow('Daemon is missing workflow agent adapter(s): codex');
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('waits for platform approval, approves the local gate, and syncs the resumed run', async () => {
