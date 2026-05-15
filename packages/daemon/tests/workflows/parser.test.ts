@@ -353,6 +353,27 @@ nodes:
     ]);
   });
 
+  it('accepts the shared Jira autofix golden workflow fixture', async () => {
+    const workflowPath = path.resolve(
+      'tests/fixtures/workflows/jira-autofix-golden.yaml',
+    );
+    const parsed = parseWorkflow(await fs.readFile(workflowPath, 'utf-8'), workflowPath);
+
+    expect(parsed.definition.name).toBe('payments/jira-autofix');
+    expect(parsed.definition.runner?.target).toBe('self_hosted');
+    expect(parsed.definition.requires?.agents).toEqual(['codex']);
+    expect(parsed.definition.requires?.integrations).toEqual(['github', 'jira']);
+    expect(parsed.definition.nodes.open_pr?.type).toBe('action');
+    expect(parsed.definition.nodes.update_jira?.type).toBe('action');
+    expect(workflowNodeOrder(parsed.definition)).toEqual([
+      'gather_context',
+      'investigate',
+      'tests',
+      'open_pr',
+      'update_jira',
+    ]);
+  });
+
   it('accepts mature workflow schema fields without losing deterministic parsing', () => {
     const parsed = parseWorkflow(
       `
