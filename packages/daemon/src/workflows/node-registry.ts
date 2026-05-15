@@ -1,4 +1,6 @@
 import { executeLoopNode } from './loop-executor.js';
+import { executeContextNode } from './context-node-resolver.js';
+import { executeActionAdapter, WorkflowActionError } from './action-adapters.js';
 import {
   addEvent,
   renderOptionalTemplate,
@@ -7,6 +9,7 @@ import {
   runShellNode,
 } from './runtime-helpers.js';
 import { executeSubflowNode } from './subflow-executor.js';
+import { buildExpressionContext, evaluateConditionExpression } from './expression.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
@@ -124,6 +127,25 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'completed' };
   },
 
+  agent: async (context, run, nodeId, node, helpers) => {
+    if (node.type !== 'agent') return { result: 'completed' };
+    const promptNode: Extract<WorkflowNode, { type: 'prompt' }> = {
+      ...node,
+      type: 'prompt',
+    };
+    await helpers.executePromptNode(context, run, nodeId, promptNode);
+    if (node.handoff) {
+      addEvent(
+        run,
+        'node-output',
+        `Agent node ${nodeId} prepared handoff metadata`,
+        { handoff: node.handoff },
+        nodeId,
+      );
+    }
+    return { result: 'completed' };
+  },
+
   approval: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'approval') return { result: 'completed' };
     await helpers.blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
@@ -134,6 +156,131 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     if (node.type !== 'gate') return { result: 'completed' };
     const gateResult = await helpers.executeGateNode(context, run, nodeId, node);
     return { result: gateResult };
+  },
+
+  context: async (_context, run, nodeId, node) => {
+    if (node.type !== 'context') return { result: 'completed' };
+    await executeContextNode(run, nodeId, node);
+    return { result: 'completed' };
+  },
+
+  condition: async (_context, run, nodeId, node) => {
+    if (node.type !== 'condition') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    const matched = await evaluateConditionExpression(node.expression, buildExpressionContext(run));
+    const selected = matched ? (node.then ?? []) : (node.else ?? []);
+    const skipped = matched ? (node.else ?? []) : (node.then ?? []);
+    const branch = matched ? 'then' : 'else';
+    if (state) {
+      state.output = matched ? 'true' : 'false';
+      state.outputs = {
+        ...(state.outputs ?? {}),
+        result: matched,
+        branch,
+        selected,
+        skipped,
+      };
+    }
+    for (const branchNodeId of skipped) {
+      const branchState = run.nodes[branchNodeId];
+      if (!branchState || branchState.status !== 'queued') continue;
+      branchState.status = 'skipped';
+      branchState.skipReason = `condition:${nodeId}:${branch}`;
+      branchState.completedAt = Date.now();
+      addEvent(
+        run,
+        'node-skipped',
+        `Node ${branchNodeId} skipped by condition ${nodeId}`,
+        { conditionNodeId: nodeId, branch, expression: node.expression },
+        branchNodeId,
+      );
+    }
+    addEvent(
+      run,
+      'condition-evaluated',
+      `Condition node ${nodeId} selected ${branch}`,
+      { expression: node.expression, result: matched, branch, selected, skipped },
+      nodeId,
+    );
+    return { result: 'completed' };
+  },
+
+  artifact: async (_context, run, nodeId, node) => {
+    if (node.type !== 'artifact') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    const output = node.path ?? node.from ?? node.name;
+    if (state) state.output = output;
+    addEvent(
+      run,
+      'node-output',
+      `Artifact node ${nodeId} recorded ${node.name}`,
+      {
+        name: node.name,
+        from: node.from ?? null,
+        path: node.path ?? null,
+        kind: node.kind ?? null,
+      },
+      nodeId,
+    );
+    return { result: 'completed' };
+  },
+
+  action: async (context, run, nodeId, node, helpers) => {
+    if (node.type !== 'action') return { result: 'completed' };
+    const state = run.nodes[nodeId];
+    if (node.requiresApproval === true && state?.approval?.approved !== true) {
+      const action = await executeActionAdapter(run, nodeId, node);
+      if (state) {
+        state.output = action.output;
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          ...action.metadata,
+        };
+      }
+      await helpers.blockForApproval(
+        context,
+        run,
+        nodeId,
+        `Approve ${node.adapter}.${node.action} side effect?`,
+      );
+      return { result: 'blocked' };
+    }
+
+    let action;
+    try {
+      action = await executeActionAdapter(run, nodeId, node, {
+        approved: state?.approval?.approved === true,
+      });
+    } catch (error) {
+      if (error instanceof WorkflowActionError && state) {
+        state.output = error.result.output;
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          ...error.result.metadata,
+        };
+      }
+      throw error;
+    }
+    if (state) {
+      state.output = action.output;
+      state.metadata = {
+        ...(state.metadata ?? {}),
+        ...action.metadata,
+      };
+    }
+    addEvent(
+      run,
+      'node-output',
+      `Action node ${nodeId} handled ${node.adapter}.${node.action}`,
+      {
+        adapter: node.adapter,
+        action: node.action,
+        idempotencyKey: node.idempotencyKey ?? null,
+        requiresApproval: node.requiresApproval === true,
+      },
+      nodeId,
+    );
+    return { result: 'completed' };
   },
 
   loop: async (context, run, nodeId, node) => {
@@ -151,7 +298,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   plan: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'plan') return { result: 'completed' };
     const state = run.nodes[nodeId];
-    const title = await renderTemplate(node.title, run);
+    const title = await renderTemplate(node.title ?? nodeId, run);
     const body = await renderTemplate(node.body, run);
     const summary = await renderOptionalTemplate(node.summary, run);
     const sourceRef = await renderOptionalTemplate(node.sourceRef, run);

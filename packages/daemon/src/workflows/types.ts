@@ -1,6 +1,16 @@
 import type { WorkflowHookRules } from './hook-types.js';
 import type { WorkflowInlineAgentDefinition } from './inline-agent-types.js';
 import type { WorkflowInputValue } from './run-types.js';
+import type {
+  WorkflowContext,
+  WorkflowDataCaptureDefinition,
+  WorkflowExecutorCapability,
+  WorkflowExecutorTargetKind,
+  WorkflowNotificationDefinition,
+  WorkflowPolicyDefinition,
+  WorkflowRunnerRequirementV2,
+  WorkflowTriggerDefinition,
+} from './workflow-production-types.js';
 export type { WorkflowRunEvent } from './event-types.js';
 export type {
   WorkflowHookRules,
@@ -11,6 +21,17 @@ export type {
   WorkflowInlineAgentDefinition,
   WorkflowInlineAgentRunState,
 } from './inline-agent-types.js';
+export type {
+  WorkflowContext,
+  WorkflowContextReference,
+  WorkflowDataCaptureDefinition,
+  WorkflowExecutorCapability,
+  WorkflowExecutorTargetKind,
+  WorkflowNotificationDefinition,
+  WorkflowPolicyDefinition,
+  WorkflowRunnerRequirementV2,
+  WorkflowTriggerDefinition,
+} from './workflow-production-types.js';
 export type {
   WorkflowApprovalActor,
   WorkflowApprovalDecision,
@@ -33,9 +54,14 @@ export type {
 } from './run-types.js';
 
 export type WorkflowNodeType =
+  | 'agent'
   | 'prompt'
   | 'shell'
   | 'approval'
+  | 'context'
+  | 'condition'
+  | 'artifact'
+  | 'action'
   | 'gate'
   | 'loop'
   | 'subflow'
@@ -64,25 +90,6 @@ export interface WorkflowRequires {
   secrets?: string[];
 }
 
-export type WorkflowExecutorTargetKind =
-  | 'local_private'
-  | 'local_sandbox'
-  | 'managed'
-  | 'self_hosted'
-  | 'ci';
-
-export type WorkflowExecutorCapability =
-  | 'agent.prompt'
-  | 'artifacts'
-  | 'cancel'
-  | 'files.read'
-  | 'files.write'
-  | 'network.egress'
-  | 'resume'
-  | 'secrets'
-  | 'shell'
-  | 'worktree';
-
 export interface WorkflowExecutorRequirement {
   targets?: WorkflowExecutorTargetKind[];
   defaultTarget?: WorkflowExecutorTargetKind;
@@ -95,16 +102,6 @@ export type WorkflowCapabilityRequest =
   | { type: 'write_scope'; path: string; reason: string }
   | { type: 'repo_access'; ref: string; reason: string }
   | { type: 'context'; ref: string; reason: string };
-
-export interface WorkflowContextReference {
-  ref: string;
-  as?: string;
-  required?: boolean;
-  description?: string;
-  refresh?: 'manual' | 'before_run' | 'on_demand';
-}
-
-export type WorkflowContext = Array<string | WorkflowContextReference>;
 
 export interface WorkflowOutputDefinition {
   type: 'string' | 'number' | 'boolean' | 'json' | 'file' | 'artifact';
@@ -184,6 +181,23 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   inlineAgentFailurePolicy?: 'fail' | 'continue';
 }
 
+export interface WorkflowAgentNode extends WorkflowNodeBase {
+  type: 'agent';
+  prompt: string;
+  agent: string;
+  provider?: string;
+  model?: string;
+  session?: {
+    resume?: boolean;
+    title?: string;
+  };
+  handoff?: {
+    artifact?: string;
+    summary?: string;
+  };
+  hooks?: WorkflowHookRules;
+}
+
 export interface WorkflowShellNode extends WorkflowNodeBase {
   type: 'shell';
   command: string;
@@ -215,7 +229,7 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
 
 export interface WorkflowPlanNode extends WorkflowNodeBase {
   type: 'plan';
-  title: string;
+  title?: string;
   body: string;
   summary?: string;
   source?: string;
@@ -226,6 +240,38 @@ export interface WorkflowPlanNode extends WorkflowNodeBase {
 export interface WorkflowGateNode extends WorkflowNodeBase {
   type: 'gate';
   gate: WorkflowGateDefinition;
+}
+
+export interface WorkflowContextNode extends WorkflowNodeBase {
+  type: 'context';
+  refs?: WorkflowContext;
+  query?: string;
+  refresh?: 'manual' | 'before_run' | 'on_demand';
+}
+
+export interface WorkflowConditionNode extends WorkflowNodeBase {
+  type: 'condition';
+  expression: string;
+  then?: string[];
+  else?: string[];
+}
+
+export interface WorkflowArtifactNode extends WorkflowNodeBase {
+  type: 'artifact';
+  name: string;
+  from?: string;
+  path?: string;
+  kind?: 'file' | 'directory' | 'patch' | 'report' | 'log' | 'url';
+  description?: string;
+}
+
+export interface WorkflowActionNode extends WorkflowNodeBase {
+  type: 'action';
+  adapter: string;
+  action: string;
+  with?: Record<string, WorkflowInputValue>;
+  idempotencyKey?: string;
+  requiresApproval?: boolean;
 }
 
 export type WorkflowLoopBody =
@@ -269,11 +315,16 @@ export interface WorkflowSubflowNode extends WorkflowNodeBase {
 }
 
 export type WorkflowNode =
+  | WorkflowAgentNode
   | WorkflowPromptNode
   | WorkflowShellNode
   | WorkflowApprovalNode
   | WorkflowPlanNode
   | WorkflowGateNode
+  | WorkflowContextNode
+  | WorkflowConditionNode
+  | WorkflowArtifactNode
+  | WorkflowActionNode
   | WorkflowLoopNode
   | WorkflowSubflowNode;
 
@@ -283,9 +334,14 @@ export interface WorkflowDefinition {
   title?: string;
   description?: string;
   inputs?: Record<string, WorkflowInputDefinition>;
+  triggers?: WorkflowTriggerDefinition[];
   context?: WorkflowContext;
   requires?: WorkflowRequires;
   executor?: WorkflowExecutorRequirement;
+  runner?: WorkflowRunnerRequirementV2;
+  policies?: WorkflowPolicyDefinition;
+  notifications?: WorkflowNotificationDefinition;
+  dataCapture?: WorkflowDataCaptureDefinition;
   capabilityRequests?: WorkflowCapabilityRequest[];
   nodes: Record<string, WorkflowNode>;
 }

@@ -15,6 +15,10 @@
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/inputDefinition" }
     },
+    "triggers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/triggerDefinition" }
+    },
     "context": {
       "type": "array",
       "items": {
@@ -47,6 +51,46 @@
           "items": { "$ref": "#/$defs/identifier" }
         }
       }
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/executorTarget" }
+        },
+        "defaultTarget": { "$ref": "#/$defs/executorTarget" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/executorCapability" }
+        }
+      }
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["paired_daemon", "self_hosted_runner"] },
+        "target": { "$ref": "#/$defs/executorTarget" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/executorCapability" }
+        },
+        "labels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "profile": { "$ref": "#/$defs/identifier" },
+        "leaseSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+      }
+    },
+    "policies": { "$ref": "#/$defs/workflowPolicies" },
+    "notifications": { "$ref": "#/$defs/workflowNotifications" },
+    "dataCapture": { "$ref": "#/$defs/dataCapture" },
+    "capabilityRequests": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capabilityRequest" }
     },
     "nodes": {
       "type": "object",
@@ -83,6 +127,150 @@
         "required": { "type": "boolean" },
         "default": { "$ref": "#/$defs/inputValue" },
         "description": { "type": "string" }
+      }
+    },
+    "executorTarget": {
+      "enum": ["local_private", "local_sandbox", "managed", "self_hosted", "ci"]
+    },
+    "executorCapability": {
+      "enum": [
+        "agent.prompt",
+        "artifacts",
+        "cancel",
+        "files.read",
+        "files.write",
+        "network.egress",
+        "resume",
+        "secrets",
+        "shell",
+        "worktree"
+      ]
+    },
+    "triggerDefinition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "manual" },
+            "title": { "type": "string", "minLength": 1 },
+            "description": { "type": "string" },
+            "inputs": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/inputValue" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "webhook" },
+            "title": { "type": "string", "minLength": 1 },
+            "provider": { "type": "string", "minLength": 1 },
+            "route": { "$ref": "#/$defs/identifier" },
+            "eventTypes": { "$ref": "#/$defs/stringList" },
+            "signature": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["algorithm", "header"],
+              "properties": {
+                "algorithm": { "const": "hmac-sha256" },
+                "header": { "type": "string", "minLength": 1 },
+                "timestampHeader": { "type": "string", "minLength": 1 },
+                "toleranceSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+              }
+            },
+            "map": {
+              "type": "object",
+              "additionalProperties": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "cron"],
+          "properties": {
+            "type": { "const": "schedule" },
+            "title": { "type": "string", "minLength": 1 },
+            "cron": { "type": "string", "minLength": 1 },
+            "timezone": { "type": "string", "minLength": 1 },
+            "missedRun": { "enum": ["skip", "catch_up_once", "route_to_inbox"] }
+          }
+        }
+      ]
+    },
+    "workflowPolicies": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed": { "$ref": "#/$defs/stringList" },
+            "requireOnlineRunner": { "type": "boolean" }
+          }
+        },
+        "approve": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed": { "$ref": "#/$defs/stringList" },
+            "minApprovals": { "type": "integer", "minimum": 1, "maximum": 10 }
+          }
+        },
+        "sideEffects": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requireApproval": { "type": "boolean" },
+            "allowedAdapters": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/identifier" }
+            }
+          }
+        },
+        "maxDurationSeconds": { "type": "integer", "minimum": 1, "maximum": 604800 }
+      }
+    },
+    "workflowNotifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inbox": {
+          "type": "array",
+          "items": {
+            "enum": ["approval_requested", "run_failed", "runner_offline", "action_failed"]
+          }
+        },
+        "email": {
+          "type": "array",
+          "items": { "enum": ["approval_requested", "run_failed", "run_completed"] }
+        },
+        "webhook": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "dataCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "logs": { "enum": ["compact", "full", "off"] },
+        "artifacts": { "type": "boolean" },
+        "contextEvidence": { "type": "boolean" },
+        "approvalPackets": { "type": "boolean" }
+      }
+    },
+    "capabilityRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "enum": ["secret", "network_egress", "write_scope", "repo_access", "context"] },
+        "reason": { "type": "string", "minLength": 1 }
       }
     },
     "outputDefinition": {
@@ -173,6 +361,20 @@
           "additionalProperties": true,
           "required": ["type", "prompt"],
           "properties": {
+            "type": { "const": "agent" },
+            "prompt": { "type": "string", "minLength": 1 },
+            "agent": { "type": "string", "minLength": 1 },
+            "provider": { "type": "string", "minLength": 1 },
+            "model": { "type": "string", "minLength": 1 },
+            "session": { "type": "object" },
+            "handoff": { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "prompt"],
+          "properties": {
             "type": { "const": "prompt" },
             "prompt": { "type": "string", "minLength": 1 },
             "agent": { "type": "string", "minLength": 1 },
@@ -193,13 +395,72 @@
         {
           "type": "object",
           "additionalProperties": true,
-          "required": ["type", "title", "body"],
+          "required": ["type", "body"],
           "properties": {
             "type": { "const": "plan" },
             "title": { "type": "string", "minLength": 1 },
             "body": { "type": "string", "minLength": 1 },
             "summary": { "type": "string", "minLength": 1 },
             "waitForApproval": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "context" },
+            "refs": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "object", "required": ["ref"], "additionalProperties": true }
+                ]
+              }
+            },
+            "query": { "type": "string", "minLength": 1 },
+            "refresh": { "enum": ["manual", "before_run", "on_demand"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "expression"],
+          "properties": {
+            "type": { "const": "condition" },
+            "expression": { "type": "string", "minLength": 1 },
+            "then": { "$ref": "#/$defs/stringList" },
+            "else": { "$ref": "#/$defs/stringList" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "name"],
+          "properties": {
+            "type": { "const": "artifact" },
+            "name": { "$ref": "#/$defs/identifier" },
+            "from": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "kind": { "enum": ["file", "directory", "patch", "report", "log", "url"] },
+            "description": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "adapter", "action"],
+          "properties": {
+            "type": { "const": "action" },
+            "adapter": { "$ref": "#/$defs/identifier" },
+            "action": { "$ref": "#/$defs/identifier" },
+            "with": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/inputValue" }
+            },
+            "idempotencyKey": { "type": "string", "minLength": 1 },
+            "requiresApproval": { "type": "boolean" }
           }
         },
         {

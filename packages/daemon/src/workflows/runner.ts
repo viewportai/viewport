@@ -15,6 +15,7 @@ import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import { buildWorkflowContractBinding } from './contract-binding.js';
+import { recordWorkflowHookEvent } from './runner-hook-events.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
@@ -71,7 +72,9 @@ export class WorkflowRunner {
       (run) => this.reconciler.reconcile(run),
     );
     this.daemon.on('workflow:hook-fired', (event) => {
-      void this.recordWorkflowHookEvent(event).catch(() => undefined);
+      void recordWorkflowHookEvent(this.store, (run) => this.saveAndEmit(run), event).catch(
+        () => undefined,
+      );
     });
   }
 
@@ -219,7 +222,13 @@ export class WorkflowRunner {
   ): Promise<WorkflowRunRecord> {
     const run = await this.requireRun(runId);
     const state = run.nodes[nodeId];
-    if (!state || (state.type !== 'approval' && state.type !== 'gate' && state.type !== 'plan')) {
+    if (
+      !state ||
+      (state.type !== 'approval' &&
+        state.type !== 'gate' &&
+        state.type !== 'plan' &&
+        state.type !== 'action')
+    ) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
     if (run.status !== 'blocked' || state.status !== 'blocked') {
@@ -281,9 +290,30 @@ export class WorkflowRunner {
     }
 
     const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+    const approvalNode = parsed.definition.nodes[nodeId];
+    if (approvalNode?.type === 'action') {
+      state.status = 'queued';
+      state.completedAt = undefined;
+      state.output = decision.message ?? 'Approved';
+      run.status = 'running';
+      run.updatedAt = resolvedAt;
+      addEvent(
+        run,
+        'approval-resolved',
+        `Approval granted for node ${nodeId}`,
+        { ...decision },
+        nodeId,
+      );
+      await this.saveAndEmit(run);
+
+      void this.scheduler.run(run.id, parsed, { resumed: true }).catch((error) => {
+        void this.failRun(run.id, error instanceof Error ? error.message : String(error));
+      });
+      return run;
+    }
+
     state.status = 'completed';
     state.completedAt = resolvedAt;
-    const approvalNode = parsed.definition.nodes[nodeId];
     // type=approval defaults to constant 'Approved' output so the reviewer's
     // free-text doesn't accidentally flow into downstream prompts. Authors
     // opt into message capture via `captureResponse: true`.
@@ -321,37 +351,6 @@ export class WorkflowRunner {
 
   async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {
     return this.canceler.cancelRun(runId, options);
-  }
-
-  private async recordWorkflowHookEvent(event: {
-    workflowRunId: string;
-    workflowNodeId: string;
-    sessionId: string;
-    kind: string;
-    adapter: string;
-    response?: {
-      passthrough: boolean;
-      decision?: { behavior: 'allow' | 'deny'; message?: string };
-    };
-    payload: Record<string, unknown>;
-  }): Promise<void> {
-    const run = await this.store.get(event.workflowRunId);
-    if (!run) return;
-    addEvent(
-      run,
-      'hook-fired',
-      `Workflow hook ${event.kind} fired for node ${event.workflowNodeId}`,
-      {
-        kind: event.kind,
-        adapter: event.adapter,
-        sessionId: event.sessionId,
-        response: event.response ?? null,
-        payload: event.payload,
-      },
-      event.workflowNodeId,
-    );
-    run.updatedAt = Date.now();
-    await this.saveAndEmit(run);
   }
 
   private async failRun(runId: string, message: string): Promise<void> {

@@ -167,6 +167,28 @@ nodes:
     ).toThrow(/dependency cycle/);
   });
 
+  it('rejects condition branches that reference missing nodes', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: broken-condition
+nodes:
+  choose:
+    type: condition
+    expression: inputs.kind = "bug"
+    then: [fix_bug]
+    else: [missing_docs]
+  fix_bug:
+    type: shell
+    needs: [choose]
+    command: printf fixed
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/condition node choose references missing node missing_docs/);
+  });
+
   it('requires node output references to depend on the producing node', () => {
     expect(() =>
       parseWorkflow(
@@ -204,6 +226,131 @@ nodes:
     );
 
     expect(parsed.definition.nodes.review?.type).toBe('prompt');
+  });
+
+  it('accepts the production workflow contract used by hosted workflow definitions', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: payments/jira-bug-autofix
+title: Jira bug autofix
+description: Route a Jira bug to a private runner, produce PR evidence, gate side effects, and audit the result.
+triggers:
+  - type: webhook
+    title: Jira bug created
+    provider: jira
+    route: payments-jira
+    eventTypes:
+      - issue_created
+    signature:
+      algorithm: hmac-sha256
+      header: X-Viewport-Signature
+      timestampHeader: X-Viewport-Timestamp
+      toleranceSeconds: 300
+    map:
+      issue_key: payload.issue.key
+      summary: payload.issue.fields.summary
+runner:
+  kind: self_hosted_runner
+  target: self_hosted
+  labels:
+    - payments-vps
+  capabilities:
+    - agent.prompt
+    - files.write
+    - shell
+    - network.egress
+  leaseSeconds: 900
+policies:
+  run:
+    allowed:
+      - team:payments
+    requireOnlineRunner: true
+  approve:
+    allowed:
+      - team:payments-reviewers
+    minApprovals: 1
+  sideEffects:
+    requireApproval: true
+    allowedAdapters:
+      - github
+      - jira
+notifications:
+  inbox:
+    - approval_requested
+    - run_failed
+  email:
+    - run_failed
+dataCapture:
+  logs: compact
+  artifacts: true
+  contextEvidence: true
+  approvalPackets: true
+context:
+  - ref: context://team/payment-guidelines
+    as: payment_guidelines
+    refresh: before_run
+nodes:
+  attach_context:
+    type: context
+    query: Find payment checkout rules relevant to {{ inputs.summary }}
+  investigate:
+    type: agent
+    needs:
+      - attach_context
+    agent: codex
+    model: gpt-5.5
+    prompt: Investigate {{ inputs.issue_key }} and propose the smallest safe fix.
+    outputs:
+      finding:
+        type: string
+  tests:
+    type: shell
+    needs:
+      - investigate
+    command: npm test -- discount
+  review_gate:
+    type: approval
+    needs:
+      - tests
+    prompt: Approve PR creation and Jira side effects for {{ inputs.issue_key }}?
+  create_pr:
+    type: action
+    needs:
+      - review_gate
+    adapter: github
+    action: pull_request.create
+    requiresApproval: true
+    idempotencyKey: pr:{{ inputs.issue_key }}
+    with:
+      title: Fix {{ inputs.issue_key }}
+  jira_update:
+    type: action
+    needs:
+      - create_pr
+    adapter: jira
+    action: issue.transition
+    requiresApproval: true
+    idempotencyKey: jira:{{ inputs.issue_key }}
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
+    expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
+    expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.notifications?.inbox).toContain('approval_requested');
+    expect(parsed.definition.dataCapture?.approvalPackets).toBe(true);
+    expect(parsed.definition.nodes.investigate?.type).toBe('agent');
+    expect(parsed.definition.nodes.create_pr?.type).toBe('action');
+    expect(workflowNodeOrder(parsed.definition)).toEqual([
+      'attach_context',
+      'investigate',
+      'tests',
+      'review_gate',
+      'create_pr',
+      'jira_update',
+    ]);
   });
 
   it('accepts mature workflow schema fields without losing deterministic parsing', () => {
@@ -479,6 +626,56 @@ nodes:
       expect(Object.keys(supervisor.agents ?? {})).toEqual(['reviewer', 'tester']);
       expect(supervisor.agents?.reviewer?.agent).toBe('codex');
       expect(supervisor.inlineAgentFailurePolicy).toBe('continue');
+    }
+  });
+
+  it('accepts a codex claude codex ping pong handoff workflow', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: team/ping-pong
+inputs:
+  feature:
+    type: string
+nodes:
+  codex_backend:
+    type: agent
+    agent: codex
+    model: gpt-5.5
+    prompt: Build backend contract for {{ inputs.feature }}.
+    handoff:
+      artifact: backend-contract.md
+  claude_ui:
+    type: agent
+    needs: [codex_backend]
+    agent: claude
+    model: sonnet
+    prompt: Use backend handoff {{ nodes.codex_backend.output }} and build the UI.
+    handoff:
+      artifact: ui-implementation.md
+  codex_review:
+    type: agent
+    needs: [claude_ui]
+    agent: codex
+    model: gpt-5.5
+    prompt: Review UI {{ nodes.claude_ui.output }} against backend {{ nodes.codex_backend.output }}.
+  human_gate:
+    type: approval
+    needs: [codex_review]
+    prompt: Approve ping pong result for {{ inputs.feature }}?
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(workflowNodeOrder(parsed.definition)).toEqual([
+      'codex_backend',
+      'claude_ui',
+      'codex_review',
+      'human_gate',
+    ]);
+    expect(parsed.definition.nodes.claude_ui?.type).toBe('agent');
+    if (parsed.definition.nodes.claude_ui?.type === 'agent') {
+      expect(parsed.definition.nodes.claude_ui.handoff?.artifact).toBe('ui-implementation.md');
     }
   });
 

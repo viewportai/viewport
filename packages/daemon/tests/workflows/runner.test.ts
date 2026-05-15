@@ -241,4 +241,183 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.second?.output).toBe('upstream-downstream');
   });
+
+  it('evaluates condition nodes and skips the non-selected branch', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: condition-branch-proof
+inputs:
+  kind:
+    type: string
+    required: true
+nodes:
+  choose:
+    type: condition
+    expression: inputs.kind = "bug"
+    then: [fix_bug]
+    else: [update_docs]
+  fix_bug:
+    type: shell
+    needs: [choose]
+    command: printf "bug-fixed"
+  update_docs:
+    type: shell
+    needs: [choose]
+    command: printf "docs-updated"
+  summarize:
+    type: shell
+    needs: [fix_bug, update_docs]
+    triggerRule: one_success
+    command: printf "done"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      inputs: { kind: 'bug' },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.choose?.output).toBe('true');
+    expect(completed?.nodes.choose?.outputs).toMatchObject({
+      result: true,
+      branch: 'then',
+      selected: ['fix_bug'],
+      skipped: ['update_docs'],
+    });
+    expect(completed?.nodes.fix_bug?.status).toBe('completed');
+    expect(completed?.nodes.fix_bug?.output).toBe('bug-fixed');
+    expect(completed?.nodes.update_docs?.status).toBe('skipped');
+    expect(completed?.nodes.update_docs?.skipReason).toBe('condition:choose:then');
+    expect(completed?.nodes.summarize?.status).toBe('completed');
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'condition-evaluated',
+        nodeId: 'choose',
+        data: expect.objectContaining({ branch: 'then', result: true }),
+      }),
+    );
+  });
+
+  it('resolves context nodes through configured repo providers', async () => {
+    const daemon = await setup();
+    await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(projectDir, 'docs'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, 'docs', 'workflow-context.md'),
+      'Workflow context proof: attach PAY-1842 checkout runbook before agent execution.',
+      'utf-8',
+    );
+    await fs.writeFile(
+      path.join(projectDir, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: repo_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/**/*.md',
+        '  resolution:',
+        '    size_budget: 16kb',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: context-proof
+nodes:
+  attach_context:
+    type: context
+    refs:
+      - ref: repo_docs
+        as: runbook
+        required: true
+    query: checkout runbook
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const output = JSON.parse(completed?.nodes.attach_context?.output ?? '{}');
+    const contextEvent = completed?.events.find(
+      (event) => event.type === 'node-output' && event.nodeId === 'attach_context',
+    );
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.attach_context?.outputs?.itemCount).toBe(1);
+    expect(output.itemCount).toBe(1);
+    expect(output.items[0]).toMatchObject({
+      provider_id: 'repo_docs',
+      provider: 'repo-docs',
+      alias: 'runbook',
+      title: 'docs/workflow-context.md',
+      body: expect.stringContaining('PAY-1842 checkout runbook'),
+    });
+    expect(contextEvent?.message).toBe('Context node attach_context resolved 1 item');
+    expect(contextEvent?.data?.items).toEqual([
+      expect.objectContaining({
+        provider_id: 'repo_docs',
+        title: 'docs/workflow-context.md',
+        alias: 'runbook',
+        digest: expect.stringMatching(/^sha256:/),
+      }),
+    ]);
+    expect(JSON.stringify(contextEvent?.data)).not.toContain('PAY-1842');
+  });
+
+  it('fails context nodes when a required provider is unavailable', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: missing-context-proof
+nodes:
+  attach_context:
+    type: context
+    refs:
+      - ref: missing_docs
+        required: true
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.attach_context?.status).toBe('failed');
+    expect(failed?.nodes.attach_context?.error).toMatch(
+      /missing required provider\(s\): missing_docs/,
+    );
+  });
 });

@@ -36,20 +36,26 @@ export async function preflightWorkflow(
   }
 
   for (const [nodeId, node] of Object.entries(definition.nodes)) {
-    if (node.type === 'prompt' && node.agent && !availableAgents.has(node.agent)) {
+    if (
+      (node.type === 'prompt' || node.type === 'agent') &&
+      node.agent &&
+      !availableAgents.has(node.agent)
+    ) {
       issues.push({
         kind: 'agent',
         name: node.agent,
         message: `Node ${nodeId} requires unavailable agent: ${node.agent}`,
       });
     }
-    if (node.type === 'prompt') {
+    if (node.type === 'prompt' || node.type === 'agent') {
       addModelIssue(issues, availableModels, {
         nodeId,
         agent: node.agent,
         model: node.model,
         label: `Node ${nodeId}`,
       });
+    }
+    if (node.type === 'prompt') {
       for (const [agentId, inlineAgent] of Object.entries(node.agents ?? {})) {
         const requiredAgent = inlineAgent.agent ?? node.agent;
         if (requiredAgent && !availableAgents.has(requiredAgent)) {
