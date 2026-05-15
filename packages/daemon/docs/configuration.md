@@ -152,8 +152,9 @@ vpd profile use prod
 ```
 
 `vpd profile use <name>` writes the machine-default profile to
-`~/.viewport/current-profile`. It is shared by future shells. Use these forms for
-temporary scope:
+`~/.viewport/current-profile`. It is shared by future CLI commands, but it does
+not retarget daemons that are already running. Use these forms for temporary
+scope:
 
 ```bash
 eval "$(vpd profile env prod)"
@@ -174,7 +175,9 @@ vpd profile ps
 ```
 
 Each profile uses its own `daemon-state.json`, so concurrent profiles are
-separate owner/supervisor processes with separate workers.
+separate owner/supervisor processes with separate workers, credentials, key
+stores, and relay connections. Repo streaming is checked against the daemon's
+startup profile, not the mutable machine-default profile.
 
 Profile homes:
 

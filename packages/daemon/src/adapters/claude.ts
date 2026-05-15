@@ -149,7 +149,7 @@ export class ClaudeSession extends EventEmitter implements Session {
     this.cwd = cwd;
     this.resumedContext = true;
 
-    if (explicitPrompt.length === 0) {
+    if (options?.deferInitialPrompt || explicitPrompt.length === 0) {
       this.setState('idle');
       return;
     }

@@ -607,6 +607,26 @@ function parseCodexEventMsgEntry(e: Record<string, unknown>): RichSessionMessage
     ];
   }
 
+  if (itemType === 'task_complete') {
+    const message = extractText(payload.last_agent_message ?? payload.lastAgentMessage);
+    const durationMs = numberOrUndefined(payload.duration_ms ?? payload.durationMs);
+    return [
+      {
+        kind: 'event',
+        title: 'Task completed',
+        body: [
+          message,
+          durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        tone: 'success',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
   return [
     {
       kind: 'event',
@@ -664,6 +684,63 @@ function parseProviderMetadataEntry(e: Record<string, unknown>): RichSessionMess
     return title
       ? [{ kind: 'event', title: 'Session renamed', body: title, tone: 'muted', ts, uuid }]
       : [];
+  }
+
+  if (type === 'ai-title') {
+    return [];
+  }
+
+  if (type === 'permission-mode') {
+    const mode = stringField(e, 'permissionMode') || stringField(e, 'permission_mode');
+    return mode
+      ? [{ kind: 'event', title: 'Permission mode changed', body: mode, tone: 'muted', ts, uuid }]
+      : [];
+  }
+
+  if (type === 'file-history-snapshot') {
+    const snapshot = e.snapshot;
+    const count =
+      snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+        ? Object.keys(snapshot as Record<string, unknown>).length
+        : 0;
+    return [
+      {
+        kind: 'event',
+        title: 'File snapshot captured',
+        body:
+          count > 0 ? `${count} tracked file${count === 1 ? '' : 's'}` : 'Tracked files captured',
+        tone: 'muted',
+        ts,
+        uuid,
+      },
+    ];
+  }
+
+  if (type === 'last-prompt') {
+    const prompt = stringField(e, 'lastPrompt') || stringField(e, 'last_prompt');
+    return prompt
+      ? [{ kind: 'event', title: 'Prompt updated', body: prompt, tone: 'muted', ts, uuid }]
+      : [];
+  }
+
+  if (type === 'task_complete') {
+    const message = stringField(e, 'last_agent_message') || stringField(e, 'lastAgentMessage');
+    const durationMs = numberOrUndefined(e.duration_ms ?? e.durationMs);
+    return [
+      {
+        kind: 'event',
+        title: 'Task completed',
+        body: [
+          message,
+          durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        tone: 'success',
+        ts,
+        uuid,
+      },
+    ];
   }
 
   if (type === 'summary' || type === 'compact' || type === 'compaction') {
@@ -1078,6 +1155,18 @@ function numberOrNull(value: unknown): number | null {
 function numberOrUndefined(value: unknown): number | undefined {
   const n = numberOrNull(value);
   return n === null ? undefined : n;
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(' ');
 }
 
 function durationToMs(value: unknown): number | null {

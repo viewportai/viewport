@@ -57,6 +57,7 @@ import { DaemonRelayBridge } from './relay/daemon-relay-bridge.js';
 import { createOrgRoutingFilter } from './relay/bridge-org-routing-filter.js';
 import { createRelayMachineId } from './cli/relay-binding-config.js';
 import { configDir } from './core/config.js';
+import { activeProfileName } from './core/profiles.js';
 
 export { decodeAutoRegisterEntry };
 
@@ -528,6 +529,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
     }
 
     const daemonToken = securityProfile.requireAuth ? await readDaemonAuthToken() : null;
+    const daemonProfileName = activeProfileName() ?? 'default';
     const started: DaemonRelayBridge[] = [];
     for (const binding of bindings) {
       try {
@@ -543,6 +545,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
 
         const orgRoutingFilter = createOrgRoutingFilter({
           organizationId: scopedConfig.relayWorkspaceId!,
+          profileName: daemonProfileName,
         });
         const bridge = new DaemonRelayBridge({
           relayEndpoint: scopedConfig.relayEndpoint!,

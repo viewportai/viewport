@@ -480,7 +480,7 @@ describe('ListSessionsSchema', () => {
     const result = ListSessionsSchema.safeParse({
       type: 'list-sessions',
       directoryId: 'dir-1',
-      limit: 10,
+      limit: 50,
       offset: 20,
     });
     expect(result.success).toBe(true);
@@ -490,7 +490,7 @@ describe('ListSessionsSchema', () => {
     const result = ListSessionsSchema.safeParse({
       type: 'list-sessions',
       directoryId: 'dir-1',
-      limit: 500,
+      limit: 51,
     });
     expect(result.success).toBe(false);
   });

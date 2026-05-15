@@ -124,9 +124,9 @@ auth token, pairing state, keys, relay identity, and runtime stores. The base
 `~/.viewport` home keeps only the profile registry and current-profile pointer
 once you move to named profiles.
 
-`vpd profile use <name>` and `vpd use <name>` change the machine default. This
-is shared by new shells. For one terminal or one command, use scoped profile
-execution:
+`vpd profile use <name>` and `vpd use <name>` change the machine default for
+future CLI commands. They do not move or retarget an already-running daemon. For
+one terminal or one command, use scoped profile execution:
 
 ```bash
 eval "$(vpd profile env prod)"
@@ -150,8 +150,9 @@ vpd profile ps
 ```
 
 Each running profile owns a separate supervisor/owner process, worker process,
-state file, auth token, and key store. The OS service manages the currently
-selected default profile; for multi-profile demos, start profiles explicitly.
+state file, auth token, key store, and relay connection. The OS service manages
+the currently selected default profile; for multi-profile demos, start profiles
+explicitly.
 
 Repo bindings include the active profile:
 
@@ -162,8 +163,10 @@ vpd bind .
 
 The generated `.viewport/local.yaml` is gitignored and includes
 `profile: <name>`. Relay streaming is allowed only when both the organization
-and active daemon profile match. This prevents a repo bound in local development
-from accidentally streaming to production after `vpd profile use prod`.
+and the daemon's startup profile match. This prevents a repo bound in local
+development from accidentally streaming to production after `vpd profile use
+prod`, and it also prevents changing a shell default from silently rerouting a
+running daemon.
 
 ## Quality gates
 

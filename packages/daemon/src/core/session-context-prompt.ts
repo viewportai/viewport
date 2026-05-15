@@ -87,11 +87,12 @@ export async function resolveSessionContextSections(options: {
       query: text,
       sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
     });
-    if (items.length === 0) continue;
+    const relevantItems = filterPromptRelevantItems(items, text);
+    if (relevantItems.length === 0) continue;
     sections.push(
       [
         `## ${provider.id} (${provider.provider})`,
-        ...items.map((item) => [`### ${item.title}`, item.body].join('\n')),
+        ...relevantItems.map((item) => [`### ${item.title}`, item.body].join('\n')),
       ].join('\n\n'),
     );
   }
@@ -128,23 +129,15 @@ export async function resolveSessionContextSections(options: {
         actorName: record.deviceName,
       });
 
-      let bundle = await resolveContextBundle({
+      const bundle = await resolveContextBundle({
         contextResourceId: context.id,
         actorName: record.deviceName,
         query: text,
         maxItems: options.maxVaultItems ?? MAX_VAULT_PROMPT_ITEMS,
         includePrivate: false,
       });
-      if (bundle.items.length === 0) {
-        bundle = await resolveContextBundle({
-          contextResourceId: context.id,
-          actorName: record.deviceName,
-          query: '',
-          maxItems: options.maxVaultItems ?? MAX_VAULT_PROMPT_ITEMS,
-          includePrivate: false,
-        });
-      }
-      const contextSections = bundle.items.map((item) =>
+      const relevantItems = filterPromptRelevantItems(bundle.items, text);
+      const contextSections = relevantItems.map((item) =>
         [`### ${item.title}`, `Trust: ${item.trustState}`, item.body].join('\n'),
       );
 
@@ -200,4 +193,80 @@ function contextGuidanceLines(
   if (use) lines.push(`Use this context when: ${use}`);
   if (update) lines.push(`Propose an update when: ${update}`);
   return lines;
+}
+
+const CONTEXT_STOPWORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'also',
+  'and',
+  'are',
+  'been',
+  'because',
+  'before',
+  'being',
+  'below',
+  'context',
+  'could',
+  'does',
+  'done',
+  'down',
+  'from',
+  'have',
+  'into',
+  'just',
+  'like',
+  'more',
+  'need',
+  'only',
+  'repo',
+  'should',
+  'shows',
+  'than',
+  'that',
+  'then',
+  'there',
+  'they',
+  'this',
+  'time',
+  'vault',
+  'viewport',
+  'will',
+  'what',
+  'when',
+  'where',
+  'with',
+  'would',
+]);
+
+function filterPromptRelevantItems<T extends { title: string; body: string }>(
+  items: T[],
+  query: string,
+): T[] {
+  const tokens = meaningfulContextTokens(query);
+  if (tokens.length === 0) return [];
+  return items.filter((item) => {
+    const haystack = new Set(tokenizeContextText(`${item.title}\n${item.body}`));
+    return tokens.some(
+      (token) =>
+        haystack.has(token) ||
+        haystack.has(singularContextToken(token)) ||
+        haystack.has(`${token}s`),
+    );
+  });
+}
+
+function meaningfulContextTokens(value: string): string[] {
+  return tokenizeContextText(value).filter(
+    (token) => token.length >= 4 && !/^\d+$/.test(token) && !CONTEXT_STOPWORDS.has(token),
+  );
+}
+
+function tokenizeContextText(value: string): string[] {
+  return value.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+function singularContextToken(token: string): string {
+  return token.endsWith('s') && token.length > 4 ? token.slice(0, -1) : token;
 }

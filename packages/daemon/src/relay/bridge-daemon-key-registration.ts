@@ -17,6 +17,7 @@ export async function registerDaemonPublicKeyWithControlPlane(input: {
   options: DaemonKeyRegistrationOptions;
   identity: DaemonRelayIdentity | null;
   daemonIssueToken: string | null;
+  fetchImpl?: typeof transportFetch;
 }): Promise<string | null> {
   if (!input.identity) {
     throw new BridgeError('DAEMON_KEY_REGISTER_FAILED', 'daemon identity unavailable');
@@ -31,9 +32,13 @@ export async function registerDaemonPublicKeyWithControlPlane(input: {
 
   let res: Response;
   try {
-    res = await transportFetch(url, {
+    const fetchImpl = input.fetchImpl ?? transportFetch;
+    res = await fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         credential: input.daemonIssueToken ?? undefined,
         daemonPublicKey: input.identity.publicKey,

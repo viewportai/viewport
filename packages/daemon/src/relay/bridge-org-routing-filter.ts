@@ -6,7 +6,10 @@ export interface OrgRoutingFilter {
   filter(payload: string): string | null;
 }
 
-export function createOrgRoutingFilter(options: { organizationId: string }): OrgRoutingFilter {
+export function createOrgRoutingFilter(options: {
+  organizationId: string;
+  profileName?: string | null;
+}): OrgRoutingFilter {
   const directoryPaths = new Map<string, string>();
   const sessionDirectories = new Map<string, string>();
 
@@ -20,6 +23,7 @@ export function createOrgRoutingFilter(options: { organizationId: string }): Org
     return directoryStreamsToOrganization({
       directory: directoryPath,
       organizationId: options.organizationId,
+      profileName: options.profileName,
     });
   }
 

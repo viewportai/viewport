@@ -7,6 +7,7 @@
 
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import type { AgentAdapter, Session, SessionOptions } from '../core/interfaces.js';
 import type { SessionMessage, SessionState } from '../core/types.js';
 import { metrics } from '../core/metrics.js';
@@ -51,12 +52,27 @@ async function defaultClientFactory(apiKey?: string): Promise<CodexClient> {
       'Codex SDK import failed: install @openai/codex-sdk@latest (or @openai/codex@latest)',
     );
   }
+  const codexPathOverride = resolveCodexPathOverride();
   return new loaded.module.Codex({
     apiKey,
+    ...(codexPathOverride ? { codexPathOverride } : {}),
     config: {
       model: DEFAULT_CODEX_MODEL,
     },
   });
+}
+
+export function resolveCodexPathOverride(env: NodeJS.ProcessEnv = process.env): string {
+  if (env['CODEX_CLI_PATH']) {
+    return env['CODEX_CLI_PATH'];
+  }
+
+  const desktopPath = '/Applications/Codex.app/Contents/Resources/codex';
+  if (existsSync(desktopPath)) {
+    return desktopPath;
+  }
+
+  return 'codex';
 }
 
 export class CodexSession extends EventEmitter implements Session {
