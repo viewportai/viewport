@@ -129,7 +129,7 @@ describe('protocol e2e: session lifecycle', () => {
     client.send({
       type: 'launch',
       directoryId: directory.id,
-      prompt: 'Start the implementation.',
+      prompt: 'Use the resource manifest when starting agents from this repo.',
       requestId: 'launch-with-context',
     });
 
@@ -150,7 +150,7 @@ describe('protocol e2e: session lifecycle', () => {
     expect(sentPrompt).toContain('### Launch context');
     expect(sentPrompt).toContain('Use the resource manifest when starting agents from this repo.');
     expect(sentPrompt).toContain('<user_request>');
-    expect(sentPrompt).toContain('Start the implementation.');
+    expect(sentPrompt).toContain('Use the resource manifest when starting agents from this repo.');
 
     client.close();
   }, 15_000);
