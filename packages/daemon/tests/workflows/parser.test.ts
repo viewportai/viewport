@@ -362,6 +362,9 @@ nodes:
     expect(parsed.definition.requires?.agents).toEqual(['codex']);
     expect(parsed.definition.requires?.integrations).toEqual(['github', 'jira']);
     expect(parsed.definition.nodes.open_pr?.type).toBe('action');
+    expect(parsed.definition.nodes.open_pr?.policy?.reason).toBe(
+      'Payment code changes require a human reviewer before a PR is opened.',
+    );
     expect(parsed.definition.nodes.update_jira?.type).toBe('action');
     expect(workflowNodeOrder(parsed.definition)).toEqual([
       'gather_context',

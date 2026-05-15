@@ -275,6 +275,7 @@ nodes:
       action: 'post',
       status: 'awaiting_approval',
       requiresApproval: true,
+      policyReason: 'This side effect is configured to require human approval before execution.',
     });
     expect(blocked.nodes.post_approval?.metadata?.action?.digest).toMatch(/^sha256:/);
 

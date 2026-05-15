@@ -2,6 +2,7 @@ import { addEvent, renderTemplate } from './runtime-helpers.js';
 import { executeProviderAction, type ActionResult } from './action-provider-adapters.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import { rememberExecutedAction, suppressDuplicateAction } from './action-execution-ledger.js';
+import { actionPolicyReason } from './action-policy.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -155,6 +156,7 @@ function declaredAction(
         action: node.action,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
+        policyReason: actionPolicyReason(node),
         status,
         digest: workflowActionProposalDigest(node, { idempotencyKey, input: actionInput }),
         input: sanitizeActionInput(actionInput),

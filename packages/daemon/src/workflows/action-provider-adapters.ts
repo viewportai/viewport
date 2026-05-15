@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { addEvent } from './runtime-helpers.js';
 import { rememberExecutedAction } from './action-execution-ledger.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
+import { actionPolicyReason } from './action-policy.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -213,6 +214,7 @@ async function executeJsonApiAction(
       action: node.action,
       idempotencyKey: idempotencyKeyFromHeaders(request.headers) ?? null,
       requiresApproval: node.requiresApproval === true,
+      policyReason: actionPolicyReason(node),
       status: ok ? 'executed' : 'failed',
       digest: workflowActionProposalDigest(node, {
         idempotencyKey: idempotencyKeyFromHeaders(request.headers),
@@ -286,6 +288,7 @@ function declaredProviderAction(
         action: node.action,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
+        policyReason: actionPolicyReason(node),
         status,
         digest: workflowActionProposalDigest(node, {
           idempotencyKey,

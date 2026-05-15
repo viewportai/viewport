@@ -1,5 +1,6 @@
 import { addEvent } from './runtime-helpers.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
+import { actionPolicyReason } from './action-policy.js';
 import type { ActionResult } from './action-provider-adapters.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
@@ -28,6 +29,7 @@ export function suppressDuplicateAction(
       action: node.action,
       idempotencyKey,
       requiresApproval: node.requiresApproval === true,
+      policyReason: actionPolicyReason(node),
       status: 'already_executed',
       digest,
       input: sanitizeActionInput(actionInput),

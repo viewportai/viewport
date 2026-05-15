@@ -129,6 +129,7 @@ export interface WorkflowRetryPolicy {
 export interface WorkflowNodePolicy {
   onFailure?: 'halt' | 'continue' | 'skip_dependents';
   approvalRequired?: boolean;
+  reason?: string;
 }
 
 export type WorkflowGateDefinition =

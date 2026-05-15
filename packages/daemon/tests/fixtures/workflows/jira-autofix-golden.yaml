@@ -74,6 +74,8 @@ nodes:
     adapter: github
     action: pull_request.create
     requiresApproval: true
+    policy:
+      reason: "Payment code changes require a human reviewer before a PR is opened."
     idempotencyKey: "pr:{{ inputs.integration_event.payload.key }}"
     with:
       title: "Fix {{ inputs.integration_event.payload.key }}"
