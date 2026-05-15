@@ -446,6 +446,7 @@ describe('workflow managed worker CLI', () => {
 
   it('runs through real CLI HTTP boundaries against platform and daemon endpoints', async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-process-'));
+    const goldenYaml = await goldenWorkflowYaml();
     const platformRequests: Array<{ path: string; method: string; body: unknown; claim?: string }> =
       [];
     const daemonRequests: Array<{ path: string; method: string; body: unknown }> = [];
@@ -470,10 +471,15 @@ describe('workflow managed worker CLI', () => {
             data: {
               id: 'run_platform_process',
               assignment_claim_token: 'vpclaim_process',
-              yaml_snapshot: 'schema: viewport.workflow/v1\nname: process-proof\nnodes: {}\n',
-              source_ref: 'viewport://workflow/process-proof',
+              yaml_snapshot: goldenYaml,
+              source_ref: 'viewport://workflow/payments/jira-autofix',
               directory_path: tempHome,
-              input_snapshot: { issue: 'PAY-1842' },
+              input_snapshot: {
+                integration_event: {
+                  provider: 'jira',
+                  payload: { key: 'PAY-1842', summary: 'Checkout fails for lowercase codes' },
+                },
+              },
             },
           });
           return;
@@ -483,8 +489,46 @@ describe('workflow managed worker CLI', () => {
           expect(body).toMatchObject({
             runtime_run_id: 'local_run_process',
             status: 'completed',
-            nodes: [expect.objectContaining({ node_key: 'tests', status: 'completed' })],
-            events: [expect.objectContaining({ type: 'run-completed' })],
+            nodes: expect.arrayContaining([
+              expect.objectContaining({
+                node_key: 'tests',
+                title: 'Tests passing',
+                status: 'completed',
+              }),
+              expect.objectContaining({
+                node_key: 'open_pr',
+                title: 'Open PR',
+                status: 'completed',
+                metadata: expect.objectContaining({
+                  action: expect.objectContaining({
+                    adapter: 'github',
+                    action: 'pull_request.create',
+                    policyReason:
+                      'Payment code changes require a human reviewer before a PR is opened.',
+                    digest: expect.stringMatching(/^sha256:/),
+                    idempotencyKey: 'pr:PAY-1842',
+                  }),
+                }),
+              }),
+              expect.objectContaining({
+                node_key: 'update_jira',
+                title: 'Jira side effects',
+                status: 'completed',
+                metadata: expect.objectContaining({
+                  action: expect.objectContaining({
+                    adapter: 'jira',
+                    action: 'issue.transition',
+                    digest: expect.stringMatching(/^sha256:/),
+                    idempotencyKey: 'jira:PAY-1842',
+                  }),
+                }),
+              }),
+            ]),
+            events: expect.arrayContaining([
+              expect.objectContaining({ type: 'action-executed', node_key: 'open_pr' }),
+              expect.objectContaining({ type: 'action-executed', node_key: 'update_jira' }),
+              expect.objectContaining({ type: 'run-completed' }),
+            ]),
           });
           writeJson(res, { data: { id: 'run_platform_process', status: 'completed' } });
           return;
@@ -513,7 +557,7 @@ describe('workflow managed worker CLI', () => {
         }
         if (req.url === '/api/workflows/runs' && req.method === 'POST') {
           expect(body).toMatchObject({
-            workflowYaml: expect.stringContaining('name: process-proof'),
+            workflowYaml: goldenYaml,
             directoryId: 'dir_process',
             resourceId: 'workspace_process',
             platformRunId: 'run_platform_process',
@@ -522,7 +566,14 @@ describe('workflow managed worker CLI', () => {
           return;
         }
         if (req.url === '/api/workflows/runs/local_run_process' && req.method === 'GET') {
-          writeJson(res, { run: completedLocalRun({ id: 'local_run_process' }) });
+          writeJson(res, {
+            run: completedGoldenLocalRun({
+              id: 'local_run_process',
+              yamlSnapshot: goldenYaml,
+              directoryId: 'dir_process',
+              directoryPath: tempHome,
+            }),
+          });
           return;
         }
         writeJson(res, { message: 'not found' }, 404);
@@ -595,6 +646,13 @@ describe('workflow managed worker CLI', () => {
   });
 });
 
+async function goldenWorkflowYaml(): Promise<string> {
+  return fs.readFile(
+    path.join(packageRoot(), 'tests', 'fixtures', 'workflows', 'jira-autofix-golden.yaml'),
+    'utf8',
+  );
+}
+
 function completedLocalRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
   const now = Date.now();
   return {
@@ -634,6 +692,147 @@ function completedLocalRun(overrides: Partial<WorkflowRunRecord> = {}): Workflow
     ],
     createdAt: now - 2000,
     startedAt: now - 1000,
+    updatedAt: now,
+    completedAt: now,
+    ...overrides,
+  };
+}
+
+function completedGoldenLocalRun(
+  overrides: Partial<WorkflowRunRecord> & { yamlSnapshot: string },
+): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    id: 'local_run_process',
+    workflowName: 'payments/jira-autofix',
+    sourceType: 'viewport_snapshot',
+    sourcePath: 'viewport://workflow/payments/jira-autofix',
+    digest: 'sha256:payments-jira-autofix',
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: overrides.yamlSnapshot,
+    directoryId: 'dir_process',
+    directoryPath: '/repo',
+    machineId: 'machine_1',
+    initiation: 'cli',
+    status: 'completed',
+    inputs: {
+      integration_event: {
+        provider: 'jira',
+        payload: { key: 'PAY-1842', summary: 'Checkout fails for lowercase codes' },
+      },
+    },
+    preflight: { ok: true, issues: [] },
+    nodes: {
+      gather_context: {
+        id: 'gather_context',
+        title: 'Context attached',
+        type: 'context',
+        status: 'completed',
+        output: 'Payment guardrails attached.',
+        startedAt: now - 9000,
+        completedAt: now - 8000,
+      },
+      investigate: {
+        id: 'investigate',
+        title: 'Codex investigates bug',
+        type: 'agent',
+        status: 'completed',
+        output: 'Found lowercase discount code normalization bug.',
+        startedAt: now - 8000,
+        completedAt: now - 5000,
+      },
+      tests: {
+        id: 'tests',
+        title: 'Tests passing',
+        type: 'shell',
+        status: 'completed',
+        output: 'tests-pass',
+        startedAt: now - 5000,
+        completedAt: now - 4000,
+      },
+      open_pr: {
+        id: 'open_pr',
+        title: 'Open PR',
+        type: 'action',
+        status: 'completed',
+        output: 'github.pull_request.create',
+        metadata: {
+          action: {
+            adapter: 'github',
+            action: 'pull_request.create',
+            state: 'executed',
+            idempotencyKey: 'pr:PAY-1842',
+            policyReason: 'Payment code changes require a human reviewer before a PR is opened.',
+            digest: 'sha256:golden-open-pr',
+            input: {
+              title: 'Fix PAY-1842',
+              body: 'Generated by Viewport workflow.',
+            },
+            response: {
+              status: 201,
+              ok: true,
+              body: { html_url: 'https://github.com/acme/payments/pull/4821' },
+            },
+          },
+        },
+        startedAt: now - 4000,
+        completedAt: now - 3000,
+      },
+      update_jira: {
+        id: 'update_jira',
+        title: 'Jira side effects',
+        type: 'action',
+        status: 'completed',
+        output: 'jira.issue.transition',
+        metadata: {
+          action: {
+            adapter: 'jira',
+            action: 'issue.transition',
+            state: 'executed',
+            idempotencyKey: 'jira:PAY-1842',
+            digest: 'sha256:golden-update-jira',
+            input: {
+              issue: 'PAY-1842',
+              status: 'In Review',
+            },
+            response: {
+              status: 204,
+              ok: true,
+            },
+          },
+        },
+        startedAt: now - 3000,
+        completedAt: now - 2000,
+      },
+    },
+    artifacts: [],
+    events: [
+      {
+        id: 'evt_open_pr',
+        runId: 'local_run_process',
+        timestamp: now - 3000,
+        type: 'action-executed',
+        message: 'Action node open_pr executed github.pull_request.create',
+        nodeId: 'open_pr',
+      },
+      {
+        id: 'evt_update_jira',
+        runId: 'local_run_process',
+        timestamp: now - 2000,
+        type: 'action-executed',
+        message: 'Action node update_jira executed jira.issue.transition',
+        nodeId: 'update_jira',
+      },
+      {
+        id: 'evt_completed',
+        runId: 'local_run_process',
+        timestamp: now,
+        type: 'run-completed',
+        message: 'Workflow run completed',
+      },
+    ],
+    createdAt: now - 10_000,
+    startedAt: now - 9000,
     updatedAt: now,
     completedAt: now,
     ...overrides,
