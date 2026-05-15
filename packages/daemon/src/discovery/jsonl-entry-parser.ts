@@ -614,7 +614,10 @@ function parseCodexEventMsgEntry(e: Record<string, unknown>): RichSessionMessage
       {
         kind: 'event',
         title: 'Task completed',
-        body: [message, durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null]
+        body: [
+          message,
+          durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null,
+        ]
           .filter(Boolean)
           .join('\n\n'),
         tone: 'success',
@@ -704,7 +707,8 @@ function parseProviderMetadataEntry(e: Record<string, unknown>): RichSessionMess
       {
         kind: 'event',
         title: 'File snapshot captured',
-        body: count > 0 ? `${count} tracked file${count === 1 ? '' : 's'}` : 'Tracked files captured',
+        body:
+          count > 0 ? `${count} tracked file${count === 1 ? '' : 's'}` : 'Tracked files captured',
         tone: 'muted',
         ts,
         uuid,
@@ -726,7 +730,10 @@ function parseProviderMetadataEntry(e: Record<string, unknown>): RichSessionMess
       {
         kind: 'event',
         title: 'Task completed',
-        body: [message, durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null]
+        body: [
+          message,
+          durationMs !== undefined ? `Completed in ${formatDuration(durationMs)}` : null,
+        ]
           .filter(Boolean)
           .join('\n\n'),
         tone: 'success',

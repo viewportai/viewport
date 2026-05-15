@@ -6,7 +6,9 @@ import type { SessionMessage } from '../../src/core/types.js';
 describe('CodexAdapter', () => {
   it('resolves Codex executable like the Codex app bridge', () => {
     expect(resolveCodexPathOverride({ CODEX_CLI_PATH: '/custom/codex' })).toBe('/custom/codex');
-    expect(resolveCodexPathOverride({})).toMatch(/^(codex|\/Applications\/Codex\.app\/Contents\/Resources\/codex)$/);
+    expect(resolveCodexPathOverride({})).toMatch(
+      /^(codex|\/Applications\/Codex\.app\/Contents\/Resources\/codex)$/,
+    );
   });
 
   it('streams chunks and emits final message for modern runStreamed() result.events', async () => {

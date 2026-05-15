@@ -259,10 +259,7 @@ function filterPromptRelevantItems<T extends { title: string; body: string }>(
 
 function meaningfulContextTokens(value: string): string[] {
   return tokenizeContextText(value).filter(
-    (token) =>
-      token.length >= 4 &&
-      !/^\d+$/.test(token) &&
-      !CONTEXT_STOPWORDS.has(token),
+    (token) => token.length >= 4 && !/^\d+$/.test(token) && !CONTEXT_STOPWORDS.has(token),
   );
 }
 
