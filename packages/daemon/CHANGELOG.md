@@ -1,3 +1,26 @@
+# [0.10.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.9.1...@viewportai/daemon@0.10.0) (2026-05-15)
+
+
+### Bug Fixes
+
+* renew managed workflow leases ([87093d7](https://github.com/viewportai/viewport/commit/87093d7502ebdbb86f359e72f86a03aacf90e231))
+* resume reclaimed workflow runs ([775f681](https://github.com/viewportai/viewport/commit/775f6819e8357787c0dffb3332234fd9e0938190))
+* send workflow assignment claim token ([9e7b889](https://github.com/viewportai/viewport/commit/9e7b88938f55b68b8a8f14708d7042e863bb7765))
+* split workflow contract modules ([b429a8c](https://github.com/viewportai/viewport/commit/b429a8cc676c216466c1a4ff21e7d6b52b3582e5))
+
+
+### Features
+
+* add managed workflow worker ([0a3231f](https://github.com/viewportai/viewport/commit/0a3231f189b58f522ddfec692a6a41d5eb922fa2))
+* align daemon workflow production contract ([7787e5c](https://github.com/viewportai/viewport/commit/7787e5c31b38567eebec9aeedd12d0521d15e1fe))
+* execute github workflow actions ([febe039](https://github.com/viewportai/viewport/commit/febe039b3a1184fa9b3fad1d8c0707b8544efafc))
+* execute jira and slack workflow actions ([adaf522](https://github.com/viewportai/viewport/commit/adaf522e671e3033a38c84bb4cb438c67b5b5eb2))
+* execute webhook workflow actions ([0ce08d7](https://github.com/viewportai/viewport/commit/0ce08d7fb96599760c5a9a038bd227c88851853d))
+* execute workflow condition branches ([9392877](https://github.com/viewportai/viewport/commit/9392877c8acdd437b2ac9e5907f2f2accb16db21))
+* forward workflow action idempotency keys ([205a8c2](https://github.com/viewportai/viewport/commit/205a8c2ee861757aa04c336346280b10a17c5e55))
+* resolve workflow context nodes ([367ee7a](https://github.com/viewportai/viewport/commit/367ee7ae7af328db74a715e9b838f91eb3b4a269))
+* resume approved workflow actions ([23ec00a](https://github.com/viewportai/viewport/commit/23ec00a683b32399084fb81a2cf86973bc60a16c))
+
 ## [0.9.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.9.0...@viewportai/daemon@0.9.1) (2026-05-15)
 
 
