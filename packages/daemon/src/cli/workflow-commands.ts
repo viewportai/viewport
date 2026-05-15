@@ -32,6 +32,10 @@ export async function workflow(): Promise<void> {
     await runWorkflow();
     return;
   }
+  if (subcommand === 'smoke') {
+    await smokeWorkflow();
+    return;
+  }
   if (subcommand === 'runs') {
     await listWorkflowRuns();
     return;
@@ -61,7 +65,7 @@ export async function workflow(): Promise<void> {
 }
 
 function workflowUsage(): string {
-  return 'Usage: vpd workflow <validate|run|runs|show|rerun|approve|cancel|worker> ...';
+  return 'Usage: vpd workflow <validate|run|smoke|runs|show|rerun|approve|cancel|worker> ...';
 }
 
 function showWorkflowHelp(): void {
@@ -113,6 +117,43 @@ async function runWorkflow(): Promise<void> {
 
   const completed = await pollWorkflowRun(started.run.id);
   printRun(completed.run);
+}
+
+async function smokeWorkflow(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const directory = await resolveDirectoryFromInput(getFlag('path') ?? getFlag('directory'));
+  const agent = getFlag('agent');
+  const sentinel = `VIEWPORT_WORKFLOW_SMOKE_${Date.now()}`;
+  const workflowYaml = agent
+    ? agentSmokeWorkflowYaml(agent, sentinel)
+    : shellSmokeWorkflowYaml(sentinel);
+
+  const started = (await postJson('/api/workflows/runs', {
+    workflowYaml,
+    workflowSourceRef: 'viewport://workflow-smoke/local',
+    directoryId: directory.id,
+    inputs: { sentinel },
+    initiation: 'cli',
+  })) as WorkflowRunResponse;
+
+  const completed =
+    hasFlag('detach') || isTerminalWorkflowStatus(started.run.status)
+      ? started
+      : await pollWorkflowRun(started.run.id);
+  if (isJsonMode()) {
+    printJson({
+      command: 'workflow smoke',
+      ok: completed.run.status === 'completed',
+      sentinel,
+      ...buildWorkflowRunJsonOutput(completed.run),
+    });
+    return;
+  }
+
+  printRun(completed.run);
+  if (completed.run.status === 'completed') {
+    console.log(`Smoke:       ${sentinel}`);
+  }
 }
 
 async function listWorkflowRuns(): Promise<void> {
@@ -234,6 +275,38 @@ function printRun(run: WorkflowRunResponse['run']): void {
   console.log(`Digest:       ${run.digest}`);
   if (run.error) console.log(`Error:        ${run.error}`);
   console.log(`Inspect:      vpd workflow show ${run.id}`);
+}
+
+function isTerminalWorkflowStatus(status: string): boolean {
+  return ['completed', 'failed', 'blocked', 'canceled'].includes(status);
+}
+
+function shellSmokeWorkflowYaml(sentinel: string): string {
+  return `schema: viewport.workflow/v1
+name: viewport-smoke
+title: Viewport workflow smoke
+nodes:
+  smoke:
+    type: shell
+    title: Local shell smoke
+    command: ${JSON.stringify(`printf ${sentinel}`)}
+`;
+}
+
+function agentSmokeWorkflowYaml(agent: string, sentinel: string): string {
+  return `schema: viewport.workflow/v1
+name: viewport-agent-smoke
+title: Viewport agent smoke
+requires:
+  agents:
+    - ${JSON.stringify(agent)}
+nodes:
+  smoke:
+    type: agent
+    agent: ${JSON.stringify(agent)}
+    title: Agent smoke
+    prompt: "Reply with exactly this sentinel: ${sentinel}"
+`;
 }
 
 async function ensureDaemonRunningOrThrow(): Promise<void> {
