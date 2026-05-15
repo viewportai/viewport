@@ -18,6 +18,8 @@ export interface WorkflowRunEvent {
     | 'plan-proposed'
     | 'artifact-collected'
     | 'artifact-missing'
+    | 'action-executed'
+    | 'action-failed'
     | 'approval-requested'
     | 'approval-resolved'
     | 'gate-blocked'

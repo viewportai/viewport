@@ -1,4 +1,5 @@
 import { executeLoopNode } from './loop-executor.js';
+import { executeActionAdapter } from './action-adapters.js';
 import {
   addEvent,
   renderOptionalTemplate,
@@ -213,24 +214,18 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   action: async (_context, run, nodeId, node) => {
     if (node.type !== 'action') return { result: 'completed' };
     const state = run.nodes[nodeId];
-    const output = `${node.adapter}.${node.action}`;
+    const action = await executeActionAdapter(run, nodeId, node);
     if (state) {
-      state.output = output;
+      state.output = action.output;
       state.metadata = {
         ...(state.metadata ?? {}),
-        action: {
-          adapter: node.adapter,
-          action: node.action,
-          idempotencyKey: node.idempotencyKey ?? null,
-          requiresApproval: node.requiresApproval === true,
-          status: 'declared',
-        },
+        ...action.metadata,
       };
     }
     addEvent(
       run,
       'node-output',
-      `Action node ${nodeId} declared ${node.adapter}.${node.action}`,
+      `Action node ${nodeId} handled ${node.adapter}.${node.action}`,
       {
         adapter: node.adapter,
         action: node.action,
