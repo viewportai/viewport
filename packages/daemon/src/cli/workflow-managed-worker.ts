@@ -32,6 +32,19 @@ export async function workflowWorker(): Promise<void> {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }
   await validateDaemonAgentCapabilities(options);
+  if (hasFlag('preflight')) {
+    if (isJsonMode()) {
+      printJson({
+        command: 'workflow worker',
+        ok: true,
+        preflight: true,
+        capabilities: options.capabilities,
+      });
+      return;
+    }
+    console.log('Workflow worker preflight passed.');
+    return;
+  }
 
   const stats: WorkerStats = { claimed: 0, completed: 0, blocked: 0, failed: 0 };
   do {

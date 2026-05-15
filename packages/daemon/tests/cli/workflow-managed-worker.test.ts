@@ -183,6 +183,61 @@ describe('workflow managed worker CLI', () => {
     );
   });
 
+  it('preflights advertised daemon capabilities without claiming work', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--agents',
+      'codex,custom',
+      '--integrations',
+      'github,jira',
+      '--preflight',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async () => {
+      throw new Error('Preflight must not contact the platform or claim work.');
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({
+          agents: [
+            { id: 'codex', available: true },
+            { id: 'custom', available: true },
+          ],
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"preflight": true');
+  });
+
   it('waits for platform approval, approves the local gate, and syncs the resumed run', async () => {
     process.argv = [
       'node',
