@@ -369,6 +369,7 @@ nodes:
     type: action
     adapter: jira
     action: issue.comment
+    idempotencyKey: jira-comment:PAY-1842
     with:
       issue_key: PAY-1842
       body: "Fixed in PR #4821."
@@ -376,6 +377,7 @@ nodes:
     type: action
     adapter: jira
     action: issue.transition
+    idempotencyKey: jira-transition:PAY-1842
     needs: [comment]
     with:
       issue_key: PAY-1842
@@ -399,6 +401,7 @@ nodes:
           method: 'POST',
           headers: expect.objectContaining({
             Authorization: `Basic ${Buffer.from('bot@example.test:jira-token').toString('base64')}`,
+            'Idempotency-Key': 'jira-comment:PAY-1842',
           }),
         }),
       );
@@ -406,6 +409,9 @@ nodes:
         'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/transitions',
         expect.objectContaining({
           method: 'POST',
+          headers: expect.objectContaining({
+            'Idempotency-Key': 'jira-transition:PAY-1842',
+          }),
           body: JSON.stringify({ transition: { id: '31' } }),
         }),
       );
@@ -413,11 +419,13 @@ nodes:
       expect(completed?.nodes.comment?.metadata?.action).toMatchObject({
         adapter: 'jira',
         action: 'issue.comment',
+        idempotencyKey: 'jira-comment:PAY-1842',
         status: 'executed',
       });
       expect(completed?.nodes.transition?.metadata?.action).toMatchObject({
         adapter: 'jira',
         action: 'issue.transition',
+        idempotencyKey: 'jira-transition:PAY-1842',
         status: 'executed',
       });
     } finally {
@@ -458,6 +466,7 @@ nodes:
     type: action
     adapter: slack
     action: post_message
+    idempotencyKey: slack-announce:PAY-1842
     with:
       channel: C123
       text: "Codex found the bug and tests are passing."
@@ -486,17 +495,22 @@ nodes:
         'https://slack.com/api/chat.postMessage',
         expect.objectContaining({
           method: 'POST',
-          headers: expect.objectContaining({ Authorization: 'Bearer slack-token' }),
-          body: JSON.stringify({
-            channel: 'C123',
-            text: 'Codex found the bug and tests are passing.',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer slack-token',
+            'Idempotency-Key': 'slack-announce:PAY-1842',
           }),
         }),
       );
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        channel: 'C123',
+        client_msg_id: 'slack-announce:PAY-1842',
+        text: 'Codex found the bug and tests are passing.',
+      });
       expect(failed?.status).toBe('failed');
       expect(failed?.nodes.announce?.metadata?.action).toMatchObject({
         adapter: 'slack',
         action: 'post_message',
+        idempotencyKey: 'slack-announce:PAY-1842',
         status: 'executed',
         response: { channel: 'C123', ts: '177000.0001' },
       });
