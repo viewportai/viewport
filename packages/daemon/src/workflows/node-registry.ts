@@ -211,10 +211,30 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'completed' };
   },
 
-  action: async (_context, run, nodeId, node) => {
+  action: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'action') return { result: 'completed' };
     const state = run.nodes[nodeId];
-    const action = await executeActionAdapter(run, nodeId, node);
+    if (node.requiresApproval === true && state?.approval?.approved !== true) {
+      const action = await executeActionAdapter(run, nodeId, node);
+      if (state) {
+        state.output = action.output;
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          ...action.metadata,
+        };
+      }
+      await helpers.blockForApproval(
+        context,
+        run,
+        nodeId,
+        `Approve ${node.adapter}.${node.action} side effect?`,
+      );
+      return { result: 'blocked' };
+    }
+
+    const action = await executeActionAdapter(run, nodeId, node, {
+      approved: state?.approval?.approved === true,
+    });
     if (state) {
       state.output = action.output;
       state.metadata = {

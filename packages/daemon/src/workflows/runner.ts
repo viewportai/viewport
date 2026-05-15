@@ -219,7 +219,13 @@ export class WorkflowRunner {
   ): Promise<WorkflowRunRecord> {
     const run = await this.requireRun(runId);
     const state = run.nodes[nodeId];
-    if (!state || (state.type !== 'approval' && state.type !== 'gate' && state.type !== 'plan')) {
+    if (
+      !state ||
+      (state.type !== 'approval' &&
+        state.type !== 'gate' &&
+        state.type !== 'plan' &&
+        state.type !== 'action')
+    ) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
     if (run.status !== 'blocked' || state.status !== 'blocked') {
@@ -281,9 +287,30 @@ export class WorkflowRunner {
     }
 
     const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+    const approvalNode = parsed.definition.nodes[nodeId];
+    if (approvalNode?.type === 'action') {
+      state.status = 'queued';
+      state.completedAt = undefined;
+      state.output = decision.message ?? 'Approved';
+      run.status = 'running';
+      run.updatedAt = resolvedAt;
+      addEvent(
+        run,
+        'approval-resolved',
+        `Approval granted for node ${nodeId}`,
+        { ...decision },
+        nodeId,
+      );
+      await this.saveAndEmit(run);
+
+      void this.scheduler.run(run.id, parsed, { resumed: true }).catch((error) => {
+        void this.failRun(run.id, error instanceof Error ? error.message : String(error));
+      });
+      return run;
+    }
+
     state.status = 'completed';
     state.completedAt = resolvedAt;
-    const approvalNode = parsed.definition.nodes[nodeId];
     // type=approval defaults to constant 'Approved' output so the reviewer's
     // free-text doesn't accidentally flow into downstream prompts. Authors
     // opt into message capture via `captureResponse: true`.

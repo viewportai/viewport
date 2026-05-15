@@ -221,7 +221,7 @@ async function waitForApprovalAndResume(
     const assignment = await getAssignment(options, platformRunId);
     const approved = assignment.nodes?.find(
       (node) =>
-        ['approval', 'gate', 'plan'].includes(String(node.type ?? '')) &&
+        ['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? '')) &&
         node.status === 'completed',
     );
     if (approved) {

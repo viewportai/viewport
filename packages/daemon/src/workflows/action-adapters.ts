@@ -12,8 +12,9 @@ export async function executeActionAdapter(
   run: WorkflowRunRecord,
   nodeId: string,
   node: WorkflowActionNode,
+  options: { approved?: boolean } = {},
 ): Promise<ActionResult> {
-  if (node.requiresApproval === true) {
+  if (node.requiresApproval === true && options.approved !== true) {
     return declaredAction(run, nodeId, node, 'awaiting_approval');
   }
 
@@ -51,6 +52,7 @@ async function executeWebhookAction(
       adapter: node.adapter,
       action: node.action,
       idempotencyKey: node.idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
       request: { method, url },
       response: {

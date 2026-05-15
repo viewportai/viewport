@@ -4,7 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
-import { waitForTerminalRun } from './support/workflow-runner-support.js';
+import {
+  waitForCompletedRun,
+  waitForRunState,
+  waitForTerminalRun,
+} from './support/workflow-runner-support.js';
 
 let tempHome: string;
 let projectDir: string;
@@ -103,8 +107,8 @@ nodes:
     );
   });
 
-  it('does not execute action nodes that explicitly require approval', async () => {
-    const fetchMock = vi.fn(async () => new Response('should not run', { status: 200 }));
+  it('blocks approved side-effect actions until approval, then executes on resume', async () => {
+    const fetchMock = vi.fn(async () => new Response('approved action', { status: 200 }));
     global.fetch = fetchMock as typeof fetch;
 
     const daemon = await setup();
@@ -132,15 +136,44 @@ nodes:
       initiation: 'cli',
     });
 
-    await waitForTerminalRun(daemon, run.id);
-    const completed = await daemon.workflowRunner.getRun(run.id);
+    const blocked = await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) =>
+        candidate.status === 'blocked' && candidate.nodes.post_approval?.status === 'blocked',
+    );
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(blocked.nodes.post_approval?.approval?.prompt).toBe('Approve webhook.post side effect?');
+    expect(blocked.nodes.post_approval?.metadata?.action).toMatchObject({
+      adapter: 'webhook',
+      action: 'post',
+      status: 'awaiting_approval',
+      requiresApproval: true,
+    });
+
+    await daemon.workflowRunner.decideApproval(run.id, 'post_approval', {
+      approved: true,
+      message: 'Approved by test',
+      actor: {
+        id: '42',
+        name: 'Test User',
+        email: 'test@example.test',
+        source: 'unit-test',
+      },
+    });
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://hooks.example.test/workflow',
+      expect.objectContaining({ method: 'POST' }),
+    );
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.post_approval?.metadata?.action).toMatchObject({
       adapter: 'webhook',
       action: 'post',
-      status: 'awaiting_approval',
+      status: 'executed',
       requiresApproval: true,
     });
   });
