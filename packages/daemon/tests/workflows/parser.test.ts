@@ -167,6 +167,28 @@ nodes:
     ).toThrow(/dependency cycle/);
   });
 
+  it('rejects condition branches that reference missing nodes', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: broken-condition
+nodes:
+  choose:
+    type: condition
+    expression: inputs.kind = "bug"
+    then: [fix_bug]
+    else: [missing_docs]
+  fix_bug:
+    type: shell
+    needs: [choose]
+    command: printf fixed
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/condition node choose references missing node missing_docs/);
+  });
+
   it('requires node output references to depend on the producing node', () => {
     expect(() =>
       parseWorkflow(

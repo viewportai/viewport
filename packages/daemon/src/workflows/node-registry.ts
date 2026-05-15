@@ -8,6 +8,7 @@ import {
   runShellNode,
 } from './runtime-helpers.js';
 import { executeSubflowNode } from './subflow-executor.js';
+import { buildExpressionContext, evaluateConditionExpression } from './expression.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
@@ -180,12 +181,39 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   condition: async (_context, run, nodeId, node) => {
     if (node.type !== 'condition') return { result: 'completed' };
     const state = run.nodes[nodeId];
-    if (state) state.output = node.expression;
+    const matched = await evaluateConditionExpression(node.expression, buildExpressionContext(run));
+    const selected = matched ? (node.then ?? []) : (node.else ?? []);
+    const skipped = matched ? (node.else ?? []) : (node.then ?? []);
+    const branch = matched ? 'then' : 'else';
+    if (state) {
+      state.output = matched ? 'true' : 'false';
+      state.outputs = {
+        ...(state.outputs ?? {}),
+        result: matched,
+        branch,
+        selected,
+        skipped,
+      };
+    }
+    for (const branchNodeId of skipped) {
+      const branchState = run.nodes[branchNodeId];
+      if (!branchState || branchState.status !== 'queued') continue;
+      branchState.status = 'skipped';
+      branchState.skipReason = `condition:${nodeId}:${branch}`;
+      branchState.completedAt = Date.now();
+      addEvent(
+        run,
+        'node-skipped',
+        `Node ${branchNodeId} skipped by condition ${nodeId}`,
+        { conditionNodeId: nodeId, branch, expression: node.expression },
+        branchNodeId,
+      );
+    }
     addEvent(
       run,
-      'node-output',
-      `Condition node ${nodeId} recorded expression`,
-      { expression: node.expression, then: node.then ?? [], else: node.else ?? [] },
+      'condition-evaluated',
+      `Condition node ${nodeId} selected ${branch}`,
+      { expression: node.expression, result: matched, branch, selected, skipped },
       nodeId,
     );
     return { result: 'completed' };

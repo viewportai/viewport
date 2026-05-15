@@ -112,6 +112,15 @@ function validateWorkflowGraph(definition: WorkflowDefinition): void {
         throw new Error(`Workflow node ${nodeId} depends on missing node ${dependency}`);
       }
     }
+    if (node.type === 'condition') {
+      for (const branchNodeId of [...(node.then ?? []), ...(node.else ?? [])]) {
+        if (!nodeIds.has(branchNodeId)) {
+          throw new Error(
+            `Workflow condition node ${nodeId} references missing node ${branchNodeId}`,
+          );
+        }
+      }
+    }
   }
 
   workflowNodeOrder(definition);
