@@ -1,3 +1,10 @@
+# [0.11.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.10.0...@viewportai/daemon@0.11.0) (2026-05-16)
+
+
+### Features
+
+* add workflow automation foundation ([1d738e6](https://github.com/viewportai/viewport/commit/1d738e6707d90c01b6b812a2e25c3a256130d8a4))
+
 # [0.10.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.9.1...@viewportai/daemon@0.10.0) (2026-05-15)
 
 
