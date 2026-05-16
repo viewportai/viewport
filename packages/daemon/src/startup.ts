@@ -347,7 +347,12 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
 
   const registry = await loadAgents(daemon);
   daemon.setModelProvider(() => registry.fetchAllModels());
-  await autoRegisterDirectories(daemon, registry);
+  const startupDiscoveryDisabled = isStartupDiscoveryDisabled();
+  if (startupDiscoveryDisabled) {
+    logger.log('Startup session discovery disabled by VIEWPORT_DISABLE_STARTUP_DISCOVERY.');
+  } else {
+    await autoRegisterDirectories(daemon, registry);
+  }
 
   daemon.setTrackerFactory(
     (trackerConfig: GitTrackerConfig, sessionId: string) =>
@@ -597,17 +602,19 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       logger.log('Models:  fetch failed (will use fallback)');
     }
 
-    try {
-      await daemon.runDiscovery();
-      daemon.emit('discovery:updated', {});
-    } catch (err) {
-      logger.warn('Initial discovery failed:', err);
-    }
+    if (!startupDiscoveryDisabled) {
+      try {
+        await daemon.runDiscovery();
+        daemon.emit('discovery:updated', {});
+      } catch (err) {
+        logger.warn('Initial discovery failed:', err);
+      }
 
-    try {
-      discoveryWatches = await startDiscoveryWatchers(daemon, registry);
-    } catch (err) {
-      logger.warn('Discovery watcher startup failed:', err);
+      try {
+        discoveryWatches = await startDiscoveryWatchers(daemon, registry);
+      } catch (err) {
+        logger.warn('Discovery watcher startup failed:', err);
+      }
     }
   })();
 
@@ -621,4 +628,12 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
       shutdownPromise = shutdown(0);
     }
   });
+}
+
+function isStartupDiscoveryDisabled(): boolean {
+  const raw =
+    process.env['VIEWPORT_DISABLE_STARTUP_DISCOVERY'] ??
+    process.env['VPD_DISABLE_STARTUP_DISCOVERY'];
+
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }

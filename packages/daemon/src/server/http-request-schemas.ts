@@ -86,6 +86,14 @@ export const WorkflowRunBodySchema = z
       })
       .strict()
       .optional(),
+    dataCapturePolicy: z
+      .object({
+        transcripts: z.enum(['none', 'excerpt']),
+        logs: z.enum(['metadata', 'content']),
+        artifacts: z.enum(['metadata', 'local_reference']),
+      })
+      .strict()
+      .optional(),
     initiation: z.enum(['cli', 'browser', 'agent_skill']).optional(),
   })
   .strict()

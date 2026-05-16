@@ -32,6 +32,7 @@ export function localRunToSyncPayload(run: WorkflowRunRecord): Record<string, un
     nodes: Object.values(run.nodes).map(formatNode),
     artifacts: run.artifacts.map(formatArtifact),
     events: run.events.map(formatEvent),
+    evidence_packets: Object.values(run.nodes).flatMap(formatEvidencePacket),
     action_proposals: Object.values(run.nodes).flatMap(formatActionProposal),
     approval_decisions: Object.values(run.nodes).flatMap(formatApprovalDecision),
     execution_receipts: run.events.flatMap(formatExecutionReceipt),
@@ -196,6 +197,35 @@ function formatActionProposal(node: WorkflowNodeRunState): Array<Record<string, 
   ];
 }
 
+function formatEvidencePacket(node: WorkflowNodeRunState): Array<Record<string, unknown>> {
+  if (node.status !== 'completed') return [];
+  const output = typeof node.output === 'string' ? node.output.trim() : '';
+  if (!output) return [];
+
+  const payload = {
+    nodeId: node.id,
+    nodeType: node.type,
+    outputExcerpt: excerpt(output),
+    outputs: node.outputs ?? null,
+    exitCode: node.exitCode ?? null,
+  };
+
+  return [
+    {
+      evidence_key: `node:${node.id}:output`,
+      node_key: node.id,
+      kind: node.type === 'shell' ? 'command_output' : 'node_output',
+      title: node.title ?? node.id,
+      summary: excerpt(output),
+      confidence: 'observed',
+      visibility: 'team',
+      digest: payloadDigest(payload),
+      payload,
+      occurred_at: iso(node.completedAt ?? node.startedAt),
+    },
+  ];
+}
+
 function formatApprovalDecision(node: WorkflowNodeRunState): Array<Record<string, unknown>> {
   if (!node.approval?.resolvedAt) return [];
   const action = recordValue(node.metadata?.['action']);
@@ -308,6 +338,10 @@ function arrayValue(value: unknown): unknown[] | null {
 function stringValue(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+function excerpt(value: string): string {
+  return value.length <= 1_000 ? value : `${value.slice(0, 1_000)}...`;
 }
 
 function sanitizeSyncPayload(value: unknown): unknown {

@@ -74,6 +74,12 @@ describe('workflow managed worker CLI', () => {
             source_ref: 'viewport://workflow/proof',
             directory_path: '/repo',
             input_snapshot: { issue: 'PAY-1842' },
+            schema_versions: { route: 'viewport.route/v1' },
+            route_snapshot: { key: 'payments-bugs' },
+            execution_profile_snapshot: { key: 'payments-prod' },
+            runner_workspace_snapshot: { runner_pool: 'payments-vps' },
+            context_receipts_snapshot: [{ package: 'payments.domain-rules', version: '1.0.0' }],
+            data_capture_policy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
           },
         });
       }
@@ -86,6 +92,14 @@ describe('workflow managed worker CLI', () => {
           status: 'completed',
           nodes: [expect.objectContaining({ node_key: 'tests', status: 'completed' })],
           events: [expect.objectContaining({ type: 'run-completed' })],
+          evidence_packets: [
+            expect.objectContaining({
+              evidence_key: 'node:tests:output',
+              node_key: 'tests',
+              kind: 'command_output',
+              summary: 'ok',
+            }),
+          ],
         });
         return jsonResponse({ data: { id: 'run_platform_1', status: 'completed' } });
       }
@@ -110,6 +124,18 @@ describe('workflow managed worker CLI', () => {
           directoryId: 'dir_1',
           resourceId: 'workspace_1',
           platformRunId: 'run_platform_1',
+          dataCapturePolicy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
+          inputs: {
+            issue: 'PAY-1842',
+            viewport: {
+              platformRunId: 'run_platform_1',
+              schemaVersions: { route: 'viewport.route/v1' },
+              route: { key: 'payments-bugs' },
+              executionProfile: { key: 'payments-prod' },
+              runnerWorkspace: { runner_pool: 'payments-vps' },
+              contextReceipts: [{ package: 'payments.domain-rules', version: '1.0.0' }],
+            },
+          },
         });
         return jsonResponse({ run: { id: 'local_run_1' } });
       }
