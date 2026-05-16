@@ -5,6 +5,8 @@ export interface ManagedWorkerOptions {
   workspaceId: string;
   executorId: string;
   credential: string;
+  accessMode: ManagedWorkerAccessMode;
+  runnerProfile?: string;
   workdir?: string;
   leaseSeconds: number;
   sleepSeconds: number;
@@ -12,6 +14,8 @@ export interface ManagedWorkerOptions {
   once: boolean;
   capabilities: ManagedWorkerCapabilities;
 }
+
+export type ManagedWorkerAccessMode = 'relay' | 'polling' | 'direct';
 
 export interface ManagedWorkerCapabilities {
   agentCommand?: string;
