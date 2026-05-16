@@ -177,8 +177,10 @@ export async function transportFetch(
               responseHeaders.set(name, value);
             }
           }
+          const responseBody =
+            body.length === 0 || [204, 205, 304].includes(res.statusCode ?? 0) ? null : body;
           resolve(
-            new Response(body, {
+            new Response(responseBody, {
               status: res.statusCode ?? 500,
               statusText: res.statusMessage ?? 'Unknown',
               headers: responseHeaders,

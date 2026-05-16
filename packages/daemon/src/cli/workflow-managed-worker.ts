@@ -12,6 +12,7 @@ import {
 import type { WorkflowRunRecord } from '../workflows/types.js';
 import {
   approvalActor,
+  approvalExpectedActionDigest,
   approvalMessage,
   capabilityPayload,
   dataFrom,
@@ -22,6 +23,7 @@ import {
 import type {
   DirectoryInfo,
   ManagedAssignment,
+  ManagedWorkerAccessMode,
   ManagedWorkerOptions,
   WorkerStats,
 } from './workflow-managed-worker-types.js';
@@ -47,43 +49,54 @@ export async function workflowWorker(): Promise<void> {
   }
 
   const stats: WorkerStats = { claimed: 0, completed: 0, blocked: 0, failed: 0 };
-  do {
-    await heartbeat(options, 'online', 'idle');
-    const assignment = await claimAssignment(options);
-    if (!assignment) {
-      if (options.once) break;
-      await delay(options.sleepSeconds * 1000);
-      continue;
-    }
-
-    stats.claimed += 1;
-    const localRun = await runAssignmentLocally(options, assignment);
-    const synced = await syncLocalRun(
-      options,
-      assignment.id,
-      localRun,
-      assignment.assignment_claim_token,
-    );
-    if (synced.status === 'blocked') {
-      stats.blocked += 1;
-      if (!options.once) {
-        const resumed = await waitForApprovalAndResume(
-          options,
-          assignment.id,
-          localRun.id,
-          assignment.assignment_claim_token,
-        );
-        stats.completed += resumed.status === 'completed' ? 1 : 0;
-        stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
+  let failed = false;
+  try {
+    do {
+      await heartbeat(options, 'online', 'idle');
+      const assignment = await claimAssignment(options);
+      if (!assignment) {
+        if (options.once) break;
+        await delay(options.sleepSeconds * 1000);
+        continue;
       }
-    } else if (synced.status === 'completed') {
-      stats.completed += 1;
-    } else if (synced.status === 'failed' || synced.status === 'canceled') {
-      stats.failed += 1;
-    }
 
-    if (options.once || (options.maxRuns !== undefined && stats.claimed >= options.maxRuns)) break;
-  } while (true);
+      stats.claimed += 1;
+      const localRun = await runAssignmentLocally(options, assignment);
+      const synced = await syncLocalRun(
+        options,
+        assignment.id,
+        localRun,
+        assignment.assignment_claim_token,
+      );
+      if (synced.status === 'blocked') {
+        stats.blocked += 1;
+        if (!options.once) {
+          const resumed = await waitForApprovalAndResume(
+            options,
+            assignment.id,
+            localRun.id,
+            assignment.assignment_claim_token,
+          );
+          stats.completed += resumed.status === 'completed' ? 1 : 0;
+          stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
+        }
+      } else if (synced.status === 'completed') {
+        stats.completed += 1;
+      } else if (synced.status === 'failed' || synced.status === 'canceled') {
+        stats.failed += 1;
+      }
+
+      if (options.once || (options.maxRuns !== undefined && stats.claimed >= options.maxRuns)) {
+        break;
+      }
+    } while (true);
+  } catch (error) {
+    failed = true;
+    await safeHeartbeat(options, 'stale', 'degraded');
+    throw error;
+  } finally {
+    await safeHeartbeat(options, 'offline', failed ? 'degraded' : 'offline');
+  }
 
   if (isJsonMode()) {
     printJson({ command: 'workflow worker', ok: stats.failed === 0, stats });
@@ -150,6 +163,11 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     workspaceId,
     executorId,
     credential,
+    accessMode: managedWorkerAccessMode(
+      getFlag('access-mode') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ACCESS_MODE'],
+    ),
+    runnerProfile:
+      getFlag('runner-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE'] ?? undefined,
     workdir: getFlag('workdir') ? path.resolve(getFlag('workdir')!) : undefined,
     leaseSeconds: positiveIntFlagValue(getFlag('lease')) ?? 300,
     sleepSeconds: positiveIntFlagValue(getFlag('sleep')) ?? 5,
@@ -173,8 +191,32 @@ async function heartbeat(
   await platformJson(options, 'POST', 'heartbeat', {
     status,
     health_status: healthStatus,
+    access_mode: options.accessMode,
+    runner_profile: options.runnerProfile ?? null,
+    runner_posture: {
+      transport: { mode: options.accessMode },
+      execution: { kind: 'customer-managed' },
+      version: process.env['npm_package_version'] ?? null,
+    },
     capabilities: capabilityPayload(options.capabilities),
   });
+}
+
+async function safeHeartbeat(
+  options: ManagedWorkerOptions,
+  status: 'online' | 'offline' | 'stale',
+  healthStatus: 'idle' | 'busy' | 'degraded' | 'offline',
+): Promise<void> {
+  try {
+    await heartbeat(options, status, healthStatus);
+  } catch {
+    // The worker is exiting or already degraded; do not mask the primary result.
+  }
+}
+
+function managedWorkerAccessMode(value: string | undefined): ManagedWorkerAccessMode {
+  if (value === 'polling' || value === 'direct' || value === 'relay') return value;
+  return 'relay';
 }
 
 async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAssignment | null> {
@@ -212,6 +254,7 @@ async function runAssignmentLocally(
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
     initiation: 'cli',
+    dataCapturePolicy: assignment.data_capture_policy ?? undefined,
   });
   const runId = readRun(started).id;
   return pollLocalRun(
@@ -248,11 +291,7 @@ async function waitForApprovalAndResume(
     await delay(options.sleepSeconds * 1000);
     await heartbeat(options, 'online', 'busy');
     const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-    const approved = assignment.nodes?.find(
-      (node) =>
-        ['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? '')) &&
-        node.status === 'completed',
-    );
+    const approved = assignment.nodes?.find(isApprovedManagedGateNode);
     if (approved) {
       await daemonJson(
         'POST',
@@ -263,6 +302,7 @@ async function waitForApprovalAndResume(
           approved: true,
           message: approvalMessage(approved),
           actor: approvalActor(approved),
+          expectedActionDigest: approvalExpectedActionDigest(approved),
         },
       );
       const resumed = await pollLocalRun(
@@ -289,6 +329,18 @@ async function waitForApprovalAndResume(
       return run;
     }
   }
+}
+
+function isApprovedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
+  if (!['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? ''))) return false;
+  if (node.status === 'completed') return true;
+  if (node.type !== 'action' || node.status !== 'queued') return false;
+  const approval = node.metadata?.['approval'];
+  return (
+    !!approval &&
+    typeof approval === 'object' &&
+    (approval as { approved?: unknown }).approved === true
+  );
 }
 
 async function getAssignment(

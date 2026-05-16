@@ -59,8 +59,9 @@ describe('workflow managed worker CLI', () => {
 
       if (url.endsWith('/heartbeat')) {
         expect(body).toMatchObject({
-          status: 'online',
           capabilities: { tools: ['shell'], agents: ['codex'], models: ['gpt-5.5'] },
+          access_mode: 'relay',
+          runner_posture: { transport: { mode: 'relay' } },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
       }
@@ -131,6 +132,7 @@ describe('workflow managed worker CLI', () => {
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
@@ -288,13 +290,18 @@ describe('workflow managed worker CLI', () => {
             nodes: [
               {
                 node_key: 'approve',
-                type: 'approval',
-                status: 'completed',
+                type: 'action',
+                status: 'queued',
                 output: 'Approved',
                 metadata: {
                   approval: {
+                    approved: true,
+                    decision: 'approve',
                     message: 'Ship it',
                     actor: { name: 'Mehr', source: 'viewport-web' },
+                  },
+                  action: {
+                    digest: 'sha256:reviewed-action',
                   },
                 },
               },
@@ -332,6 +339,7 @@ describe('workflow managed worker CLI', () => {
           approved: true,
           message: 'Ship it',
           actor: { name: 'Mehr', source: 'viewport-web' },
+          expectedActionDigest: 'sha256:reviewed-action',
         });
         localApproved = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_2' }) });
@@ -595,6 +603,20 @@ describe('workflow managed worker CLI', () => {
           expect(body).toMatchObject({
             runtime_run_id: 'local_run_process',
             status: 'completed',
+            action_proposals: expect.arrayContaining([
+              expect.objectContaining({
+                proposal_key: 'action:open_pr',
+                adapter: 'github',
+                action: 'pull_request.create',
+                proposal_digest: 'sha256:golden-open-pr',
+              }),
+              expect.objectContaining({
+                proposal_key: 'action:update_jira',
+                adapter: 'jira',
+                action: 'issue.transition',
+                proposal_digest: 'sha256:golden-update-jira',
+              }),
+            ]),
             nodes: expect.arrayContaining([
               expect.objectContaining({
                 node_key: 'tests',
@@ -703,6 +725,10 @@ describe('workflow managed worker CLI', () => {
           'vpexec_process',
           '--workdir',
           tempHome,
+          '--access-mode',
+          'direct',
+          '--runner-profile',
+          'payments-vps',
           '--listen',
           `127.0.0.1:${daemon.port}`,
           '--once',
@@ -734,7 +760,13 @@ describe('workflow managed worker CLI', () => {
         '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/claim',
         '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/heartbeat',
         '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/workflow-runs/run_platform_process/sync',
+        '/api/runtime/workspaces/workspace_process/managed-executors/executor_process/heartbeat',
       ]);
+      expect(platformRequests[0]?.body).toMatchObject({
+        access_mode: 'direct',
+        runner_profile: 'payments-vps',
+        runner_posture: { transport: { mode: 'direct' } },
+      });
       expect(daemonRequests.map((request) => request.path)).toEqual([
         '/health',
         '/api/directories',
