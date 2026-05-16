@@ -62,6 +62,29 @@ export async function workflowWorker(): Promise<void> {
 
       stats.claimed += 1;
       const localRun = await runAssignmentLocally(options, assignment);
+      if (localRun.status === 'blocked' && !options.once) {
+        const approved = await approvedNodeForAssignment(
+          options,
+          assignment.id,
+          assignment.assignment_claim_token,
+        );
+        if (approved) {
+          const resumed = await resumeApprovedLocalRun(
+            options,
+            assignment.id,
+            localRun.id,
+            approved,
+            assignment.assignment_claim_token,
+          );
+          stats.completed += resumed.status === 'completed' ? 1 : 0;
+          stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
+
+          if (options.maxRuns !== undefined && stats.claimed >= options.maxRuns) {
+            break;
+          }
+          continue;
+        }
+      }
       const synced = await syncLocalRun(
         options,
         assignment.id,
@@ -308,32 +331,17 @@ async function waitForApprovalAndResume(
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
   while (true) {
-    await delay(options.sleepSeconds * 1000);
     await heartbeat(options, 'online', 'busy');
     const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
     const approved = assignment.nodes?.find(isApprovedManagedGateNode);
     if (approved) {
-      await daemonJson(
-        'POST',
-        `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
-          approved.node_key,
-        )}`,
-        {
-          approved: true,
-          message: approvalMessage(approved),
-          actor: approvalActor(approved),
-          expectedActionDigest: approvalExpectedActionDigest(approved),
-        },
-      );
-      const resumed = await pollLocalRun(
+      return resumeApprovedLocalRun(
+        options,
+        platformRunId,
         localRunId,
-        async (run) => {
-          await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
-        },
-        progressSyncEveryMs(options.leaseSeconds),
+        approved,
+        assignmentClaimToken,
       );
-      await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
-      return resumed;
     }
     if (assignment.status === 'canceled' || assignment.status === 'failed') {
       const canceled = await daemonJson(
@@ -348,7 +356,47 @@ async function waitForApprovalAndResume(
       await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
+    await delay(options.sleepSeconds * 1000);
   }
+}
+
+async function approvedNodeForAssignment(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  assignmentClaimToken?: string | null,
+): Promise<NonNullable<ManagedAssignment['nodes']>[number] | null> {
+  const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+  return assignment.nodes?.find(isApprovedManagedGateNode) ?? null;
+}
+
+async function resumeApprovedLocalRun(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  localRunId: string,
+  approved: NonNullable<ManagedAssignment['nodes']>[number],
+  assignmentClaimToken?: string | null,
+): Promise<WorkflowRunRecord> {
+  await daemonJson(
+    'POST',
+    `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
+      approved.node_key,
+    )}`,
+    {
+      approved: true,
+      message: approvalMessage(approved),
+      actor: approvalActor(approved),
+      expectedActionDigest: approvalExpectedActionDigest(approved),
+    },
+  );
+  const resumed = await pollLocalRun(
+    localRunId,
+    async (run) => {
+      await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
+    },
+    progressSyncEveryMs(options.leaseSeconds),
+  );
+  await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
+  return resumed;
 }
 
 function isApprovedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {

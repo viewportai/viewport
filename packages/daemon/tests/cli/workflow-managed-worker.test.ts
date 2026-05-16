@@ -381,8 +381,8 @@ describe('workflow managed worker CLI', () => {
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
 
-    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
-    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 1');
+    expect(platformSyncStatuses).toEqual(['completed']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
   });
 
   it('resumes an already-started local run after a blocked assignment is reclaimed', async () => {
@@ -500,7 +500,167 @@ describe('workflow managed worker CLI', () => {
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
 
-    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
+    expect(platformSyncStatuses).toEqual(['completed']);
+    expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
+  });
+
+  it('resumes a reclaimed approved action before syncing stale local blocked state', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_action_reclaimed',
+            assignment_claim_token: 'vpclaim_action_reclaimed',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: action-reclaimed\nnodes: {}\n',
+            directory_path: '/repo',
+            runtime_run_id: 'local_run_action_reclaimed',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'post_to_jira',
+                type: 'action',
+                status: 'queued',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    decision: 'approve',
+                    message: 'Approved while worker was down',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                  },
+                  action: {
+                    digest: 'sha256:approved-action',
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_action_reclaimed') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_action_reclaimed',
+        );
+        return jsonResponse({
+          data: {
+            id: 'run_platform_action_reclaimed',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'post_to_jira',
+                type: 'action',
+                status: 'queued',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    decision: 'approve',
+                    message: 'Approved while worker was down',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                  },
+                  action: {
+                    digest: 'sha256:approved-action',
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_action_reclaimed/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_action_reclaimed',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ data: { id: 'run_platform_action_reclaimed', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let localApproved = false;
+    const now = Date.now();
+    const staleBlockedActionRun: WorkflowRunRecord = {
+      ...blockedLocalRun('local_run_action_reclaimed'),
+      nodes: {
+        post_to_jira: {
+          id: 'post_to_jira',
+          type: 'action',
+          status: 'blocked',
+          approval: {
+            prompt: 'Approve jira.comment side effect?',
+            requestedAt: now,
+          },
+          metadata: {
+            action: {
+              digest: 'sha256:approved-action',
+              status: 'awaiting_approval',
+            },
+          },
+        },
+      },
+    };
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/workflows/runs/local_run_action_reclaimed' && init?.method === 'GET') {
+        return jsonResponse({
+          run: localApproved
+            ? completedLocalRun({ id: 'local_run_action_reclaimed' })
+            : staleBlockedActionRun,
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_action_reclaimed/approvals/post_to_jira') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          approved: true,
+          message: 'Approved while worker was down',
+          actor: { name: 'Alice', source: 'viewport-web' },
+          expectedActionDigest: 'sha256:approved-action',
+        });
+        localApproved = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_action_reclaimed' }) });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        throw new Error(
+          'Reclaimed assignments must resume the existing local run, not start over.',
+        );
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['completed']);
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
