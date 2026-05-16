@@ -253,7 +253,14 @@ function formatApprovalDecision(node: WorkflowNodeRunState): Array<Record<string
 }
 
 function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, unknown>> {
-  if (!['action-executed', 'action-failed', 'action-duplicate-suppressed'].includes(event.type)) {
+  if (
+    ![
+      'action-executed',
+      'action-failed',
+      'action-dead-letter',
+      'action-duplicate-suppressed',
+    ].includes(event.type)
+  ) {
     return [];
   }
   const action = recordValue(event.data?.['action']);
@@ -273,7 +280,9 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
           ? 'executed'
           : event.type === 'action-failed'
             ? 'failed'
-            : 'duplicate_suppressed',
+            : event.type === 'action-dead-letter'
+              ? 'dead_letter'
+              : 'duplicate_suppressed',
       provider_reference:
         stringValue(recordValue(action?.['response'])?.['number']) ??
         stringValue(recordValue(action?.['response'])?.['ts']) ??

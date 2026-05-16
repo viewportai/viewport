@@ -6,6 +6,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
+import { localRunToSyncPayload } from '../../src/cli/workflow-managed-worker-format.js';
 
 const exec = promisify(execFile);
 
@@ -967,6 +968,92 @@ describe('workflow managed worker CLI', () => {
         fs.rm(tempHome, { recursive: true, force: true }),
       ]);
     }
+  });
+
+  it('formats exhausted action failures as dead-letter execution receipts', () => {
+    const now = Date.now();
+    const payload = localRunToSyncPayload({
+      ...completedLocalRun({
+        id: 'local_run_dead_letter',
+        status: 'failed',
+        nodes: {
+          notify_jira: {
+            id: 'notify_jira',
+            type: 'action',
+            status: 'failed',
+            error: 'Jira rejected the transition',
+            metadata: {
+              action: {
+                adapter: 'jira',
+                action: 'transition_issue',
+                status: 'failed',
+                idempotencyKey: 'jira:PAY-1842:transition',
+                digest: 'sha256:jira-transition',
+                response: { status: 400, error: 'invalid_transition' },
+                recovery: {
+                  state: 'dead_letter',
+                  reason: 'Jira rejected the transition',
+                  attempts: 2,
+                  retryableByRerun: true,
+                  idempotencyKey: 'jira:PAY-1842:transition',
+                  digest: 'sha256:jira-transition',
+                },
+              },
+            },
+          },
+        },
+        events: [
+          {
+            id: 'evt_dead_letter',
+            runId: 'local_run_dead_letter',
+            timestamp: now,
+            type: 'action-dead-letter',
+            message: 'Action node notify_jira needs remediation after 2 attempts',
+            nodeId: 'notify_jira',
+            data: {
+              action: {
+                adapter: 'jira',
+                action: 'transition_issue',
+                status: 'failed',
+                idempotencyKey: 'jira:PAY-1842:transition',
+                digest: 'sha256:jira-transition',
+                response: { status: 400, error: 'invalid_transition' },
+                recovery: {
+                  state: 'dead_letter',
+                  reason: 'Jira rejected the transition',
+                  attempts: 2,
+                  retryableByRerun: true,
+                },
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(payload.execution_receipts).toEqual([
+      expect.objectContaining({
+        receipt_key: 'execution:evt_dead_letter',
+        proposal_key: 'action:notify_jira',
+        adapter: 'jira',
+        action: 'transition_issue',
+        status: 'dead_letter',
+        idempotency_key: 'jira:PAY-1842:transition',
+        payload_digest: 'sha256:jira-transition',
+        payload: expect.objectContaining({
+          recovery: expect.objectContaining({
+            state: 'dead_letter',
+            retryableByRerun: true,
+          }),
+        }),
+      }),
+    ]);
+    expect(payload.audit_receipts).toEqual([
+      expect.objectContaining({
+        receipt_key: 'audit:evt_dead_letter',
+        event_type: 'action-dead-letter',
+      }),
+    ]);
   });
 });
 
