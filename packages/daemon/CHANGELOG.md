@@ -1,3 +1,10 @@
+## [0.13.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.13.1...@viewportai/daemon@0.13.2) (2026-05-16)
+
+
+### Bug Fixes
+
+* sync action dead-letter receipts ([1d72ba9](https://github.com/viewportai/viewport/commit/1d72ba9e65ff432c3f73eb9e4644a842df594c39))
+
 ## [0.13.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.13.0...@viewportai/daemon@0.13.1) (2026-05-16)
 
 
