@@ -34,17 +34,17 @@ describe('@viewportai/protocol registry', () => {
       'repoConfig',
       'route',
       'executionProfile',
+      'evidence',
+      'actionProposal',
+      'approvalDecision',
+      'auditReceipt',
     ]);
     expect(targetOnlyContracts().map((contract) => contract.key)).toEqual([
       'runnerWorkspace',
       'contextPackage',
       'agentEvent',
-      'evidence',
-      'actionProposal',
       'authorizationDecision',
-      'approvalDecision',
       'contextReceipt',
-      'auditReceipt',
     ]);
   });
 
@@ -85,6 +85,59 @@ describe('@viewportai/protocol registry', () => {
         document: {
           ...profile!.document,
           runner: {},
+        },
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects malformed operational record samples', async () => {
+    const samples = await readAllSamples();
+    const evidence = samples.find((sample) => sample.contract.key === 'evidence');
+    const action = samples.find((sample) => sample.contract.key === 'actionProposal');
+    const approval = samples.find((sample) => sample.contract.key === 'approvalDecision');
+    const audit = samples.find((sample) => sample.contract.key === 'auditReceipt');
+
+    expect(evidence).toBeDefined();
+    expect(action).toBeDefined();
+    expect(approval).toBeDefined();
+    expect(audit).toBeDefined();
+
+    expect(
+      validateSampleEnvelope({
+        ...evidence!,
+        document: {
+          ...evidence!.document,
+          title: '',
+        },
+      }).ok,
+    ).toBe(false);
+
+    expect(
+      validateSampleEnvelope({
+        ...action!,
+        document: {
+          ...action!.document,
+          proposalDigest: 'not-a-digest',
+        },
+      }).ok,
+    ).toBe(false);
+
+    expect(
+      validateSampleEnvelope({
+        ...approval!,
+        document: {
+          ...approval!.document,
+          subjectDigest: 'not-a-digest',
+        },
+      }).ok,
+    ).toBe(false);
+
+    expect(
+      validateSampleEnvelope({
+        ...audit!,
+        document: {
+          ...audit!.document,
+          payloadDigest: 'not-a-digest',
         },
       }).ok,
     ).toBe(false);
