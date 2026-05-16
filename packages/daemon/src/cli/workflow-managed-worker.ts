@@ -249,7 +249,7 @@ async function runAssignmentLocally(
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignment.input_snapshot ?? {},
+    inputs: assignmentInputs(assignment),
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
@@ -264,6 +264,26 @@ async function runAssignmentLocally(
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
+}
+
+function assignmentInputs(assignment: ManagedAssignment): Record<string, unknown> {
+  const inputs = { ...(assignment.input_snapshot ?? {}) } as Record<string, unknown>;
+  inputs['viewport'] = {
+    ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
+    platformRunId: assignment.id,
+    schemaVersions: assignment.schema_versions ?? null,
+    route: assignment.route_snapshot ?? null,
+    executionProfile: assignment.execution_profile_snapshot ?? null,
+    workflow: assignment.workflow_snapshot ?? null,
+    runnerWorkspace: assignment.runner_workspace_snapshot ?? null,
+    contextReceipts: assignment.context_receipts_snapshot ?? null,
+  };
+
+  return inputs;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 async function readExistingLocalRun(runId?: string | null): Promise<WorkflowRunRecord | null> {

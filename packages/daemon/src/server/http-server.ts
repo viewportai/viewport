@@ -248,6 +248,11 @@ export function registerHttpRoutes(
         mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
         branch?: string;
       };
+      dataCapturePolicy?: {
+        transcripts: 'none' | 'excerpt';
+        logs: 'metadata' | 'content';
+        artifacts: 'metadata' | 'local_reference';
+      };
       initiation?: 'cli' | 'browser' | 'agent_skill';
     };
   }>('/api/workflows/runs', async (request, reply) => {
@@ -269,6 +274,7 @@ export function registerHttpRoutes(
         platformRunId: parsedBody.data.platformRunId,
         rerunOfWorkflowRunId: parsedBody.data.rerunOfWorkflowRunId,
         executionPolicy: parsedBody.data.executionPolicy,
+        dataCapturePolicy: parsedBody.data.dataCapturePolicy,
         initiation: parsedBody.data.initiation ?? 'browser',
       });
       return reply.status(201).send({ run });

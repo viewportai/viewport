@@ -28,6 +28,12 @@ export interface ManagedWorkerCapabilities {
 export interface ManagedAssignment {
   id: string;
   assignment_claim_token?: string | null;
+  schema_versions?: Record<string, unknown> | null;
+  route_snapshot?: Record<string, unknown> | null;
+  execution_profile_snapshot?: Record<string, unknown> | null;
+  workflow_snapshot?: Record<string, unknown> | null;
+  runner_workspace_snapshot?: Record<string, unknown> | null;
+  context_receipts_snapshot?: unknown[] | Record<string, unknown> | null;
   yaml_snapshot?: string | null;
   source_ref?: string | null;
   directory_path?: string | null;
