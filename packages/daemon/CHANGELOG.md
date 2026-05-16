@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.11.0...@viewportai/daemon@0.12.0) (2026-05-16)
+
+
+### Features
+
+* add managed worker trust receipts ([0e48fc2](https://github.com/viewportai/viewport/commit/0e48fc2297f48c7d840ca1f15c9a9016552cbed4))
+
 # [0.11.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.10.0...@viewportai/daemon@0.11.0) (2026-05-16)
 
 
