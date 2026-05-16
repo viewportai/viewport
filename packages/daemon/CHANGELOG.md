@@ -1,3 +1,10 @@
+## [0.13.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.13.0...@viewportai/daemon@0.13.1) (2026-05-16)
+
+
+### Bug Fixes
+
+* resume reclaimed approved actions ([3eff2ea](https://github.com/viewportai/viewport/commit/3eff2eabfdae6998a66951c503284edd1f2d5d18))
+
 # [0.13.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.12.0...@viewportai/daemon@0.13.0) (2026-05-16)
 
 
