@@ -1,0 +1,65 @@
+schema: viewport.execution_profile/v1
+id: payments-production-bugs
+title: Payments production bugs
+ownedBy:
+  team: payments
+
+repos:
+  primary:
+    - acme/payments-api
+    - acme/checkout-web
+  related:
+    - acme/billing-worker
+    - acme/auth-lib
+    - acme/infra
+
+runner:
+  pool: payments
+  workspaceTemplate: payments-vps
+  isolation: worktree
+
+agent:
+  default: codex
+  allowed:
+    - codex
+    - claude-code
+    - openhands
+    - custom-cli
+
+context:
+  packages:
+    - payments.domain-rules@latest-approved
+    - checkout.incident-runbook@latest-approved
+    - security.pii-handling@2.x
+  refresh: before_run
+  cacheTtlSeconds: 3600
+
+approvals:
+  triage:
+    approvers: [payments-pm]
+    minApprovals: 1
+  implementationPlan:
+    approvers: [payments-engineers]
+    minApprovals: 1
+  actions:
+    github.open_pr:
+      approvers: [payments-engineers]
+      minApprovals: 1
+    github.merge_pr:
+      approvers: [staff-engineers]
+      minApprovals: 1
+
+actions:
+  allowed:
+    - jira.comment
+    - jira.transition
+    - github.open_pr
+    - slack.post_message
+  blocked:
+    - github.merge_pr
+    - deploy.production
+
+dataCapture:
+  transcripts: excerpt
+  logs: metadata
+  artifacts: metadata

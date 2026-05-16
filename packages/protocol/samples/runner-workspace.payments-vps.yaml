@@ -1,0 +1,52 @@
+schema: viewport.runner_workspace/v1
+id: payments-vps
+title: Payments VPS workspace
+
+runnerPool: payments
+isolation: worktree
+
+repos:
+  - repository: acme/payments-api
+    path: /srv/viewport/repos/payments-api
+    defaultBranch: main
+  - repository: acme/checkout-web
+    path: /srv/viewport/repos/checkout-web
+    defaultBranch: main
+
+setup:
+  cache:
+    - ~/.npm
+    - ~/.composer/cache
+  commands:
+    - command: pnpm install --frozen-lockfile
+      cwd: /srv/viewport/repos/checkout-web
+    - command: composer install --no-interaction
+      cwd: /srv/viewport/repos/payments-api
+
+services:
+  - name: postgres
+    command: docker compose up -d postgres
+    cwd: /srv/viewport/repos/payments-api
+  - name: redis
+    command: docker compose up -d redis
+    cwd: /srv/viewport/repos/payments-api
+
+healthchecks:
+  - name: payments-tests-list
+    command: php artisan test --list-tests
+    cwd: /srv/viewport/repos/payments-api
+  - name: checkout-typecheck
+    command: pnpm typecheck
+    cwd: /srv/viewport/repos/checkout-web
+
+credentials:
+  sideEffects:
+    github: local-gh-cli
+    jira: local-jira-token
+  agents:
+    codex: local-codex-auth
+    claude-code: local-claude-auth
+
+cleanup:
+  deleteWorktreeOnComplete: true
+  retainFailedWorktreeHours: 24

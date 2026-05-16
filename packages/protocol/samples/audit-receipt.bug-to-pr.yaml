@@ -1,0 +1,45 @@
+schema: viewport.audit_receipt/v1
+id: audit_pay1842_open_pr
+workspaceId: ws_acme
+workflowRunId: run_pay1842
+eventType: side_effect.executed
+occurredAt: "2026-05-16T12:06:00Z"
+actor:
+  kind: runner
+  id: runner_payments_vps_1
+  source: vpd
+route:
+  id: payments-production-bugs
+  version: 1
+executionProfile:
+  id: payments-production-bugs
+  version: 1
+workflow:
+  id: bug-to-pr
+  schema: viewport.workflow/v1
+  digest: sha256:workflow-bug-to-pr
+runner:
+  id: runner_payments_vps_1
+  workspaceTemplate: payments-vps
+  workspaceDigest: sha256:runner-workspace-payments-vps
+contextReceipts:
+  - package: payments.domain-rules
+    version: 2.3.0
+    digest: sha256:payments-domain-rules-230
+evidenceRefs:
+  - ev_pay1842_root_cause
+  - ev_pay1842_tests
+actionProposal:
+  id: act_pay1842_open_pr
+  digest: sha256:action-proposal-pay1842-open-pr
+approvalDecision:
+  id: appr_pay1842_open_pr_alice
+  decision: approve
+  actorId: user_alice
+sideEffectReceipt:
+  adapter: github
+  action: open_pr
+  status: succeeded
+  providerReference: acme/payments-api#4821
+  providerUrl: https://github.com/acme/payments-api/pull/4821
+payloadDigest: sha256:audit-payload-pay1842-open-pr

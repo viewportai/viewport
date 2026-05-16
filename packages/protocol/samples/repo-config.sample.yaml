@@ -1,0 +1,46 @@
+schema: viewport.repo_config/v1
+$schema: https://getviewport.dev/schemas/viewport-config-v1.schema.json
+version: 1
+name: payments-api
+
+resources:
+  contexts:
+    - id: payments.domain-rules@latest-approved
+      required: true
+    - id: security.pii-handling@2.x
+      required: true
+  workflows:
+    - bug-to-pr
+
+context:
+  providers:
+    - id: repo-docs
+      provider: repo-docs
+      privacy: local_only
+      capabilities: [search, get]
+      paths:
+        - CLAUDE.md
+        - docs/
+    - id: payments-vault
+      provider: viewport-vault
+      privacy: control_plane_blind
+      capabilities: [search, get, propose, write_approved]
+      vault: payments
+  resolution:
+    order:
+      - repo-docs
+      - payments-vault
+    strategy: provider_order
+    size_budget: 128kb
+    proposeFallbackProvider: payments-vault
+
+defaults:
+  workflow: bug-to-pr
+  visibility: team
+  contextCandidateReview: single_reviewer
+
+scope:
+  includeChildren: false
+  exclude:
+    - vendor/
+    - node_modules/

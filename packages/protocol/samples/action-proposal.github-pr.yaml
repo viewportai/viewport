@@ -1,0 +1,26 @@
+schema: viewport.action_proposal/v1
+id: act_pay1842_open_pr
+workflowRunId: run_pay1842
+nodeId: open_pr
+adapter: github
+action: open_pr
+payload:
+  repository: acme/payments-api
+  branch: fix/pay-1842-discount-normalization
+  base: main
+  title: "Fix PAY-1842 discount code normalization"
+  body: "Normalizes discount codes before lookup and adds regression coverage."
+idempotencyKey: jira:PAY-1842:github.open_pr
+proposalDigest: sha256:action-proposal-pay1842-open-pr
+evidenceRefs:
+  - ev_pay1842_root_cause
+  - ev_pay1842_tests
+policyEvaluation:
+  decision: require_approval
+  reason: Payments code changes require engineer approval.
+  matchedRules:
+    - payments-code-open-pr
+  evaluatedAt: "2026-05-16T12:02:00Z"
+state: awaiting_approval
+createdAt: "2026-05-16T12:02:01Z"
+expiresAt: "2026-05-17T12:02:01Z"

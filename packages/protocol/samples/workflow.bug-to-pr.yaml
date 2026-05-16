@@ -1,0 +1,102 @@
+schema: viewport.workflow/v1
+name: bug-to-pr
+title: Bug to PR
+description: Triage a bug, produce evidence, ask for approval, and open an approved PR.
+
+inputs:
+  issue:
+    type: json
+    required: true
+    description: Normalized issue or alert payload.
+
+runner:
+  kind: self_hosted_runner
+  target: self_hosted
+  capabilities:
+    - agent.prompt
+    - shell
+    - worktree
+    - artifacts
+    - secrets
+
+policies:
+  sideEffects:
+    requireApproval: true
+    allowedAdapters:
+      - github
+      - jira
+      - slack
+
+dataCapture:
+  logs: compact
+  artifacts: true
+  contextEvidence: true
+  approvalPackets: true
+
+nodes:
+  resolve_context:
+    type: context
+    title: Resolve profile context
+    refs:
+      - payments.domain-rules@latest-approved
+      - checkout.incident-runbook@latest-approved
+    refresh: before_run
+
+  triage:
+    type: agent
+    title: Triage issue
+    agent: codex
+    needs: [resolve_context]
+    prompt: |
+      Triage this issue using the resolved context.
+      Produce evidence with suspected root cause, files to inspect, risk, and proposed next action.
+      Issue: {{ inputs.issue }}
+    outputs:
+      evidence:
+        type: artifact
+        description: Triage evidence packet.
+
+  plan_review:
+    type: approval
+    title: Approve implementation direction
+    needs: [triage]
+    prompt: |
+      Review the triage evidence and approve whether the agent should attempt an implementation.
+    captureResponse: true
+
+  implement:
+    type: agent
+    title: Implement fix
+    agent: codex
+    needs: [plan_review]
+    prompt: |
+      Implement the approved fix. Add tests. Do not open a PR directly.
+      Produce a patch summary, tests run, and risk assessment.
+    artifacts:
+      patch:
+        path: "."
+        type: patch
+
+  propose_pr:
+    type: action
+    title: Propose GitHub PR
+    needs: [implement]
+    adapter: github
+    action: open_pr
+    requiresApproval: true
+    idempotencyKey: "bug-to-pr:{{ inputs.issue.id }}:open_pr"
+    with:
+      title: "Fix {{ inputs.issue.key }}: {{ inputs.issue.title }}"
+      body: "{{ nodes.implement.output }}"
+
+  notify:
+    type: action
+    title: Comment back on Jira
+    needs: [propose_pr]
+    adapter: jira
+    action: comment
+    requiresApproval: false
+    idempotencyKey: "bug-to-pr:{{ inputs.issue.id }}:jira_comment"
+    with:
+      issue: "{{ inputs.issue.key }}"
+      body: "Viewport created an approved PR for this issue."

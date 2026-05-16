@@ -1,0 +1,35 @@
+schema: viewport.evidence/v1
+id: ev_pay1842_root_cause
+workflowRunId: run_pay1842
+nodeId: triage
+kind: root_cause
+title: Root cause identified
+summary: Discount code lookup is case-sensitive, but checkout accepts mixed-case codes.
+confidence: high
+visibility: team
+createdAt: "2026-05-16T12:01:00Z"
+
+references:
+  - kind: file
+    path: app/Services/DiscountCodeLookup.php
+    line: 42
+  - kind: test
+    name: DiscountCodeTest::lowercase_codes_match_existing_codes
+
+findings:
+  - id: finding_case_sensitive_lookup
+    severity: medium
+    body: Existing lookup compares the submitted discount code without normalizing case.
+
+tests:
+  - name: DiscountCodeTest::lowercase_codes_match_existing_codes
+    status: failed_before_fix
+
+risks:
+  - id: customer_display
+    level: low
+    body: Preserve original customer-entered display value while normalizing lookup key.
+
+proposedActions:
+  - type: github.open_pr
+    idempotencyKey: jira:PAY-1842:github.open_pr

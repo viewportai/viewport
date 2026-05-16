@@ -1,0 +1,165 @@
+import { SchemaIds, type SchemaId } from './schema-ids.js';
+
+export type ContractStatus = 'implemented' | 'target-only';
+export type CompatibilityState = 'validated' | 'stubbed' | 'pending' | 'not-applicable';
+
+export interface ContractDefinition {
+  readonly key: string;
+  readonly schemaId: SchemaId;
+  readonly sampleFile: string;
+  readonly status: ContractStatus;
+  readonly daemonCompatibility: CompatibilityState;
+  readonly platformCompatibility: CompatibilityState;
+  readonly webCompatibility: CompatibilityState;
+  readonly notes: string;
+}
+
+export const CONTRACTS = [
+  {
+    key: 'workflow',
+    schemaId: SchemaIds.workflow,
+    sampleFile: 'workflow.bug-to-pr.yaml',
+    status: 'implemented',
+    daemonCompatibility: 'validated',
+    platformCompatibility: 'validated',
+    webCompatibility: 'pending',
+    notes:
+      'Implemented by daemon workflow parser and platform workflow-core/PHP validation family. Web projection fixture is still pending.',
+  },
+  {
+    key: 'repoConfig',
+    schemaId: SchemaIds.repoConfig,
+    sampleFile: 'repo-config.sample.yaml',
+    status: 'implemented',
+    daemonCompatibility: 'validated',
+    platformCompatibility: 'not-applicable',
+    webCompatibility: 'not-applicable',
+    notes:
+      'Validated against daemon ViewportConfigSchema with version: 1. The schema: viewport.repo_config/v1 field is a Batch A protocol overlay accepted by the daemon passthrough parser.',
+  },
+  {
+    key: 'route',
+    schemaId: SchemaIds.route,
+    sampleFile: 'route.payments-bugs.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'No durable route model, validator, or API resource exists yet.',
+  },
+  {
+    key: 'executionProfile',
+    schemaId: SchemaIds.executionProfile,
+    sampleFile: 'execution-profile.payments.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'No execution profile model, version snapshot, or resolver exists yet.',
+  },
+  {
+    key: 'runnerWorkspace',
+    schemaId: SchemaIds.runnerWorkspace,
+    sampleFile: 'runner-workspace.payments-vps.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Runner capabilities exist, but workspace templates are not implemented.',
+  },
+  {
+    key: 'contextPackage',
+    schemaId: SchemaIds.contextPackage,
+    sampleFile: 'context-package.payments-domain-rules.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Context engine exists, but package registry semantics are not implemented.',
+  },
+  {
+    key: 'agentEvent',
+    schemaId: SchemaIds.agentEvent,
+    sampleFile: 'agent-event.evidence.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Current provider/workflow events need a mapper before this is implemented.',
+  },
+  {
+    key: 'evidence',
+    schemaId: SchemaIds.evidence,
+    sampleFile: 'evidence.packet.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Current artifacts/logs are not normalized evidence packets yet.',
+  },
+  {
+    key: 'actionProposal',
+    schemaId: SchemaIds.actionProposal,
+    sampleFile: 'action-proposal.github-pr.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Action proposal digest and durable proposal storage are not first-class yet.',
+  },
+  {
+    key: 'authorizationDecision',
+    schemaId: SchemaIds.authorizationDecision,
+    sampleFile: 'authorization-decision.workflow-run.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes:
+      'Current authorization is spread across controllers/services; no portable decision record exists yet.',
+  },
+  {
+    key: 'approvalDecision',
+    schemaId: SchemaIds.approvalDecision,
+    sampleFile: 'approval-decision.github-pr.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Operational approvals exist, but this portable decision contract is not implemented.',
+  },
+  {
+    key: 'contextReceipt',
+    schemaId: SchemaIds.contextReceipt,
+    sampleFile: 'context-receipt.payments-domain-rules.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Context usage receipts are not emitted as this contract yet.',
+  },
+  {
+    key: 'auditReceipt',
+    schemaId: SchemaIds.auditReceipt,
+    sampleFile: 'audit-receipt.bug-to-pr.yaml',
+    status: 'target-only',
+    daemonCompatibility: 'pending',
+    platformCompatibility: 'pending',
+    webCompatibility: 'pending',
+    notes: 'Current audit logs are generic; tamper-evident receipt linkage is target-only.',
+  },
+] as const satisfies readonly ContractDefinition[];
+
+export type ContractKey = (typeof CONTRACTS)[number]['key'];
+
+export function contractBySampleFile(sampleFile: string): ContractDefinition | undefined {
+  return CONTRACTS.find((contract) => contract.sampleFile === sampleFile);
+}
+
+export function implementedContracts(): ContractDefinition[] {
+  return CONTRACTS.filter((contract) => contract.status === 'implemented');
+}
+
+export function targetOnlyContracts(): ContractDefinition[] {
+  return CONTRACTS.filter((contract) => contract.status === 'target-only');
+}

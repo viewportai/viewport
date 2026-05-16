@@ -1,0 +1,13 @@
+schema: viewport.approval_decision/v1
+id: appr_pay1842_open_pr_alice
+subjectType: action_proposal
+subjectId: act_pay1842_open_pr
+subjectDigest: sha256:action-proposal-pay1842-open-pr
+decision: approve
+actor:
+  kind: user
+  id: user_alice
+  displayName: Alice
+  source: viewport-web
+reason: "Evidence and regression coverage look sufficient for PR creation."
+createdAt: "2026-05-16T12:05:00Z"

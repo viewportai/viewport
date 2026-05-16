@@ -1,0 +1,11 @@
+schema: viewport.context_receipt/v1
+package: payments.domain-rules
+requested: latest-approved
+resolvedVersion: 2.3.0
+provider: viewport-vault
+digest: sha256:payments-domain-rules-230
+freshness: fresh
+usedBy:
+  runId: run_pay1842
+  nodeId: investigate
+resolvedAt: "2026-05-16T12:00:30Z"
