@@ -24,6 +24,9 @@ export function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
     const workflowNodeId = readString(value['workflow_node_id']);
     if (!id || !workflowNodeId || typeof value['approved'] !== 'boolean') return [];
 
+    const decision = readDecision(value['decision']);
+    const expectedActionDigest = readString(value['expected_action_digest']);
+
     return [
       {
         id,
@@ -31,9 +34,9 @@ export function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
         workflow_run_id: readString(value['workflow_run_id']),
         workflow_node_id: workflowNodeId,
         approved: value['approved'],
-        decision: readDecision(value['decision']),
+        ...(decision ? { decision } : {}),
         message: readString(value['message']),
-        expected_action_digest: readString(value['expected_action_digest']),
+        ...(expectedActionDigest ? { expected_action_digest: expectedActionDigest } : {}),
         actor: readRecord(value['actor']),
         feedback: readRecord(value['feedback']),
       },
