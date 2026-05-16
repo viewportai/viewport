@@ -1,0 +1,35 @@
+schema: viewport.authorization_decision/v1
+id: authz_run_pay1842_start
+workspaceId: ws_acme
+occurredAt: "2026-05-16T12:00:10Z"
+
+subject:
+  kind: user
+  id: user_alice
+  source: viewport-web
+
+action: workflow_run.start
+
+resource:
+  kind: execution_profile
+  id: payments-production-bugs
+  team: payments
+
+context:
+  routeId: route_payments_bugs
+  workflowId: bug-to-pr
+  runnerPool: payments
+  source: linear
+
+decision: allow
+reason: User is a member of payments-engineers and the route permits manual starts.
+
+matchedRules:
+  - payments-route-runner-access
+  - manual-trigger-team-member
+
+policy:
+  id: payments-default-policy
+  version: 1
+
+expiresAt: "2026-05-16T12:05:10Z"

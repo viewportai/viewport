@@ -300,7 +300,12 @@ export function registerHttpRoutes(
 
   app.post<{
     Params: { id: string; nodeId: string };
-    Body: { approved?: boolean; message?: string };
+    Body: {
+      approved?: boolean;
+      decision?: 'approve' | 'request_changes' | 'reject';
+      expectedActionDigest?: string;
+      message?: string;
+    };
   }>('/api/workflows/runs/:id/approvals/:nodeId', async (request, reply) => {
     const parsedBody = WorkflowApprovalBodySchema.safeParse(request.body);
     if (!parsedBody.success) {
@@ -401,6 +406,20 @@ export function registerHttpRoutes(
   // ---------------------------------------------------------------------------
   // Models (from agent SDKs)
   // ---------------------------------------------------------------------------
+
+  app.get('/api/agents', async () => {
+    const registered = new Set(daemon.getAvailableAgents());
+    const agents = registry
+      ? registry.getAll().map((definition) => ({
+          id: definition.id,
+          displayName: definition.displayName,
+          tier: definition.tier,
+          available: registered.has(definition.id),
+          capabilities: definition.capabilities,
+        }))
+      : [...registered].map((id) => ({ id, displayName: id, tier: 'pty', available: true }));
+    return { agents };
+  });
 
   app.get('/api/models', async () => {
     if (!registry) return { models: [] };

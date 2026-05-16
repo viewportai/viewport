@@ -4,6 +4,8 @@
     "src/adapters/claude.ts",
     "src/cli/context-command.ts",
     "src/cli/lifecycle-commands.ts",
+    "src/cli/workflow-commands.ts",
+    "src/cli/workflow-managed-worker.ts",
     "src/context/local-edge-store.ts",
     "src/context/local-edge-sync.ts",
     "src/core/config.ts",
@@ -27,6 +29,7 @@
     "src/server/ws-session-command-handlers.ts",
     "src/server/ws-server.ts",
     "src/startup.ts",
-    "src/tracking/git-tracker.ts"
+    "src/tracking/git-tracker.ts",
+    "src/workflows/runner.ts"
   ]
 }

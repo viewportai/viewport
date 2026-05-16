@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { addEvent } from './runtime-helpers.js';
+import { rememberExecutedAction } from './action-execution-ledger.js';
+import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
+import { actionPolicyReason } from './action-policy.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -48,7 +51,7 @@ async function executeGitHubAction(
   const repo = stringValue(actionInput['repo']);
   const token = stringValue(actionInput['token']) ?? process.env['GITHUB_TOKEN'];
   if (!owner || !repo || !token) {
-    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
   if (node.action === 'create_pr' || node.action === 'create_pull_request') {
@@ -56,6 +59,7 @@ async function executeGitHubAction(
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
+      proposalInput: actionInput,
       body: {
         title: stringValue(actionInput['title']) ?? 'Viewport workflow change',
         head: stringValue(actionInput['head']) ?? stringValue(actionInput['branch']),
@@ -71,17 +75,18 @@ async function executeGitHubAction(
       stringValue(actionInput['issue_number']) ?? stringValue(actionInput['issueNumber']);
     const body = stringValue(actionInput['body']);
     if (!issueNumber || !body) {
-      return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     }
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(issueNumber)}/comments`,
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
+      proposalInput: actionInput,
       body: { body },
     });
   }
 
-  return declaredProviderAction(node, 'declared', options.idempotencyKey);
+  return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
 }
 
 async function executeJiraAction(
@@ -103,7 +108,7 @@ async function executeJiraAction(
     stringValue(actionInput['issueKey']) ??
     stringValue(actionInput['key']);
   if (!baseUrl || !token || !issueKey) {
-    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
   if (
@@ -112,11 +117,13 @@ async function executeJiraAction(
     node.action === 'issue.comment'
   ) {
     const body = stringValue(actionInput['body']);
-    if (!body) return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    if (!body)
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
       headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
+      proposalInput: actionInput,
       body: { body: jiraDocument(body) },
     });
   }
@@ -124,16 +131,18 @@ async function executeJiraAction(
   if (node.action === 'transition' || node.action === 'issue.transition') {
     const transitionId =
       stringValue(actionInput['transition_id']) ?? stringValue(actionInput['transitionId']);
-    if (!transitionId) return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    if (!transitionId)
+      return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
       headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
+      proposalInput: actionInput,
       body: { transition: { id: transitionId } },
     });
   }
 
-  return declaredProviderAction(node, 'declared', options.idempotencyKey);
+  return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
 }
 
 async function executeSlackAction(
@@ -147,7 +156,7 @@ async function executeSlackAction(
   const channel = stringValue(actionInput['channel']);
   const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
   if (!token || !channel || !text) {
-    return declaredProviderAction(node, 'missing_url', options.idempotencyKey);
+    return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
   if (
@@ -159,6 +168,7 @@ async function executeSlackAction(
       method: 'POST',
       url: 'https://slack.com/api/chat.postMessage',
       headers: withIdempotencyHeader({ Authorization: `Bearer ${token}` }, options.idempotencyKey),
+      proposalInput: actionInput,
       body: {
         channel,
         text,
@@ -169,7 +179,7 @@ async function executeSlackAction(
     });
   }
 
-  return declaredProviderAction(node, 'declared', options.idempotencyKey);
+  return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
 }
 
 async function executeJsonApiAction(
@@ -180,6 +190,7 @@ async function executeJsonApiAction(
     method: string;
     url: string;
     headers: Record<string, string>;
+    proposalInput: Record<string, WorkflowInputValue>;
     body: Record<string, unknown>;
     okFromBody?: boolean;
   },
@@ -203,7 +214,13 @@ async function executeJsonApiAction(
       action: node.action,
       idempotencyKey: idempotencyKeyFromHeaders(request.headers) ?? null,
       requiresApproval: node.requiresApproval === true,
+      policyReason: actionPolicyReason(node),
       status: ok ? 'executed' : 'failed',
+      digest: workflowActionProposalDigest(node, {
+        idempotencyKey: idempotencyKeyFromHeaders(request.headers),
+        input: request.proposalInput,
+      }),
+      input: sanitizeActionInput(request.proposalInput),
       request: { method: request.method, url: request.url },
       response: {
         status: response.status,
@@ -239,6 +256,18 @@ async function executeJsonApiAction(
     );
   }
 
+  rememberExecutedAction(
+    run,
+    nodeId,
+    node,
+    idempotencyKeyFromHeaders(request.headers),
+    request.proposalInput,
+    {
+      output: `${node.adapter}.${node.action} ${response.status}`,
+      response: metadata.action.response,
+    },
+  );
+
   return {
     output: `${node.adapter}.${node.action} ${response.status}`,
     metadata,
@@ -249,6 +278,7 @@ function declaredProviderAction(
   node: WorkflowActionNode,
   status: 'declared' | 'missing_url',
   idempotencyKey: string | undefined,
+  actionInput: Record<string, WorkflowInputValue>,
 ): ActionResult {
   return {
     output: `${node.adapter}.${node.action}`,
@@ -258,7 +288,13 @@ function declaredProviderAction(
         action: node.action,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
+        policyReason: actionPolicyReason(node),
         status,
+        digest: workflowActionProposalDigest(node, {
+          idempotencyKey,
+          input: actionInput,
+        }),
+        input: sanitizeActionInput(actionInput),
       },
     },
   };

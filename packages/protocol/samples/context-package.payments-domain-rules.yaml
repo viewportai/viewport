@@ -1,0 +1,47 @@
+schema: viewport.context_package/v1
+name: payments.domain-rules
+version: 2.3.0
+channel: latest-approved
+title: Payments domain rules
+
+owners:
+  - payments-pm
+  - payments-staff-eng
+
+appliesWhen:
+  - Jira project PAY
+  - Stripe, refund, chargeback, webhook, invoice, or billing terms appear
+  - files under payments, checkout, billing-worker, or payment webhooks are touched
+
+useFor:
+  - implementation planning
+  - test design
+  - PR review
+  - incident triage
+
+updateWhen:
+  - agent discovers a durable production gotcha
+  - incident postmortem changes expected behavior
+  - implementation contradicts package guidance
+
+approval:
+  required: true
+  approvers:
+    - payments-pm
+    - payments-staff-eng
+
+sections:
+  summary:
+    body: |
+      Payments behavior must preserve auditability, idempotency, and customer-visible consistency.
+  rules:
+    - id: lower-case-discount-codes
+      body: Discount codes must be normalized before lookup and displayed using the original customer-entered value.
+    - id: webhook-idempotency
+      body: Webhook handlers must be idempotent by provider event id.
+  gotchas:
+    - id: refund-race-condition
+      body: Refund jobs can race checkout finalization; tests must cover pending payment state.
+
+receipts:
+  required: true

@@ -18,6 +18,10 @@ interface WorkflowRunResponse {
   run: WorkflowRunJsonInput;
 }
 
+interface DaemonAgentInventory {
+  agents?: Array<string | { id?: unknown; available?: unknown; displayName?: unknown }>;
+}
+
 export async function workflow(): Promise<void> {
   const subcommand = getArgs()[1];
   if (!subcommand) {
@@ -30,6 +34,14 @@ export async function workflow(): Promise<void> {
   }
   if (subcommand === 'run') {
     await runWorkflow();
+    return;
+  }
+  if (subcommand === 'smoke') {
+    await smokeWorkflow();
+    return;
+  }
+  if (subcommand === 'agents') {
+    await listWorkflowAgents();
     return;
   }
   if (subcommand === 'runs') {
@@ -61,7 +73,7 @@ export async function workflow(): Promise<void> {
 }
 
 function workflowUsage(): string {
-  return 'Usage: vpd workflow <validate|run|runs|show|rerun|approve|cancel|worker> ...';
+  return 'Usage: vpd workflow <validate|run|smoke|agents|runs|show|rerun|approve|cancel|worker> ...';
 }
 
 function showWorkflowHelp(): void {
@@ -115,6 +127,72 @@ async function runWorkflow(): Promise<void> {
   printRun(completed.run);
 }
 
+async function smokeWorkflow(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const directory = await resolveDirectoryFromInput(getFlag('path') ?? getFlag('directory'));
+  const agent = getFlag('agent');
+  if (agent) await ensureAgentAvailableForSmoke(agent);
+  const sentinel = `VIEWPORT_WORKFLOW_SMOKE_${Date.now()}`;
+  const workflowYaml = agent
+    ? agentSmokeWorkflowYaml(agent, sentinel)
+    : shellSmokeWorkflowYaml(sentinel);
+
+  const started = (await postJson('/api/workflows/runs', {
+    workflowYaml,
+    workflowSourceRef: 'viewport://workflow-smoke/local',
+    directoryId: directory.id,
+    inputs: { sentinel },
+    initiation: 'cli',
+  })) as WorkflowRunResponse;
+
+  const completed =
+    hasFlag('detach') || isTerminalWorkflowStatus(started.run.status)
+      ? started
+      : await pollWorkflowRun(started.run.id);
+  if (isJsonMode()) {
+    printJson({
+      command: 'workflow smoke',
+      ok: completed.run.status === 'completed',
+      sentinel,
+      ...buildWorkflowRunJsonOutput(completed.run),
+    });
+    return;
+  }
+
+  printRun(completed.run);
+  if (completed.run.status === 'completed') {
+    console.log(`Smoke:       ${sentinel}`);
+  }
+}
+
+async function listWorkflowAgents(): Promise<void> {
+  await ensureDaemonRunningOrThrow();
+  const body = (await getJson('/api/agents')) as DaemonAgentInventory;
+  const agents = body.agents ?? [];
+
+  if (isJsonMode()) {
+    printJson({ command: 'workflow agents', ok: true, agents });
+    return;
+  }
+
+  if (agents.length === 0) {
+    console.log('No workflow agents registered.');
+    return;
+  }
+
+  console.log('Workflow agents:');
+  for (const agent of agents) {
+    if (typeof agent === 'string') {
+      console.log(`- ${agent}  available`);
+      continue;
+    }
+    const id = typeof agent.id === 'string' ? agent.id : 'unknown';
+    const name = typeof agent.displayName === 'string' ? agent.displayName : id;
+    const status = agent.available === false ? 'unavailable' : 'available';
+    console.log(`- ${id}  ${status}  ${name}`);
+  }
+}
+
 async function listWorkflowRuns(): Promise<void> {
   await ensureDaemonRunningOrThrow();
   const response = await getJson('/api/workflows/runs');
@@ -166,18 +244,18 @@ async function rerunWorkflowRun(): Promise<void> {
 
 async function approveWorkflowNode(): Promise<void> {
   await ensureDaemonRunningOrThrow();
-  const runId = requiredArg(
-    2,
-    'Usage: vpd workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]',
-  );
-  const nodeId = requiredArg(
-    3,
-    'Usage: vpd workflow approve <run-id> <node-id> [--deny] [--message <text>] [--json]',
-  );
+  const usage =
+    'Usage: vpd workflow approve <run-id> <node-id> [--request-changes|--reject|--deny] [--expected-action-digest sha256:...] [--message <text>] [--json]';
+  const runId = requiredArg(2, usage);
+  const nodeId = requiredArg(3, usage);
+  const decision = workflowApprovalDecisionFromFlags();
+  const expectedActionDigest = getFlag('expected-action-digest') ?? getFlag('digest');
   const response = (await postJson(
     `/api/workflows/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(nodeId)}`,
     {
-      approved: !hasFlag('deny'),
+      approved: decision === 'approve',
+      decision,
+      ...(expectedActionDigest ? { expectedActionDigest } : {}),
       ...(getFlag('message') ? { message: getFlag('message') } : {}),
       actor: {
         name: 'Local CLI',
@@ -191,6 +269,18 @@ async function approveWorkflowNode(): Promise<void> {
     return;
   }
   printRun(response.run);
+}
+
+function workflowApprovalDecisionFromFlags(): 'approve' | 'request_changes' | 'reject' {
+  const negativeFlags = [hasFlag('request-changes'), hasFlag('reject'), hasFlag('deny')].filter(
+    Boolean,
+  ).length;
+  if (negativeFlags > 1) {
+    throw new Error('Use only one of --request-changes, --reject, or --deny.');
+  }
+  if (hasFlag('request-changes')) return 'request_changes';
+  if (hasFlag('reject') || hasFlag('deny')) return 'reject';
+  return 'approve';
 }
 
 async function cancelWorkflowRun(): Promise<void> {
@@ -234,6 +324,63 @@ function printRun(run: WorkflowRunResponse['run']): void {
   console.log(`Digest:       ${run.digest}`);
   if (run.error) console.log(`Error:        ${run.error}`);
   console.log(`Inspect:      vpd workflow show ${run.id}`);
+}
+
+function isTerminalWorkflowStatus(status: string): boolean {
+  return ['completed', 'failed', 'blocked', 'canceled'].includes(status);
+}
+
+function shellSmokeWorkflowYaml(sentinel: string): string {
+  return `schema: viewport.workflow/v1
+name: viewport-smoke
+title: Viewport workflow smoke
+nodes:
+  smoke:
+    type: shell
+    title: Local shell smoke
+    command: ${JSON.stringify(`printf ${sentinel}`)}
+`;
+}
+
+function agentSmokeWorkflowYaml(agent: string, sentinel: string): string {
+  return `schema: viewport.workflow/v1
+name: viewport-agent-smoke
+title: Viewport agent smoke
+requires:
+  agents:
+    - ${JSON.stringify(agent)}
+nodes:
+  smoke:
+    type: agent
+    agent: ${JSON.stringify(agent)}
+    title: Agent smoke
+    prompt: "Reply with exactly this sentinel: ${sentinel}"
+`;
+}
+
+async function ensureAgentAvailableForSmoke(agentId: string): Promise<void> {
+  const response = await daemonFetch('/api/agents', {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  if (!response?.ok) {
+    throw new Error(`Daemon request failed: ${response?.status ?? 'no response'}`);
+  }
+
+  const body = (await response.json()) as DaemonAgentInventory;
+  const availableAgents = new Set(
+    (body.agents ?? []).flatMap((agent) => {
+      if (typeof agent === 'string') return [agent];
+      if (!agent || typeof agent !== 'object') return [];
+      if (agent.available === false) return [];
+      return typeof agent.id === 'string' ? [agent.id] : [];
+    }),
+  );
+  if (availableAgents.has(agentId)) return;
+
+  throw new Error(
+    `Daemon cannot launch workflow agent '${agentId}'. Start the daemon with that built-in agent available, or configure VIEWPORT_CUSTOM_AGENT_COMMAND and VIEWPORT_CUSTOM_AGENT_ID=${agentId}.`,
+  );
 }
 
 async function ensureDaemonRunningOrThrow(): Promise<void> {

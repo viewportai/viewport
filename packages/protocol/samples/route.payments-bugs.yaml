@@ -1,0 +1,29 @@
+schema: viewport.route/v1
+id: route_payments_bugs
+title: Payments production bugs
+enabled: true
+
+matches:
+  any:
+    - source: jira
+      project: PAY
+      issueTypes: [Bug, Incident]
+      labelsAny: [production, checkout, payments]
+    - source: slack
+      channels: ["#urgent-payments", "#payments-support"]
+      mentionsAny: ["payment", "refund", "chargeback", "checkout"]
+    - source: github
+      repositories: ["acme/payments-api", "acme/checkout-web"]
+      labelsAny: ["bug", "production"]
+
+resolve:
+  executionProfile: payments-production-bugs
+  workflow: bug-to-pr
+
+ambiguity:
+  behavior: fail_closed
+  message: "More than one execution profile matched this event. Pick a team before running an agent."
+
+audit:
+  recordPayloadSummary: true
+  retainRawPayload: false

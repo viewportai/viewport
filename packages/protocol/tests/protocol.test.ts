@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest';
+import {
+  CONTRACTS,
+  SchemaIds,
+  implementedContracts,
+  readAllSamples,
+  sampleFiles,
+  targetOnlyContracts,
+  validateSampleEnvelope,
+} from '../src/index.js';
+
+describe('@viewportai/protocol registry', () => {
+  it('declares schema ids for every first-class contract', () => {
+    expect(Object.values(SchemaIds)).toEqual([
+      'viewport.workflow/v1',
+      'viewport.repo_config/v1',
+      'viewport.route/v1',
+      'viewport.execution_profile/v1',
+      'viewport.runner_workspace/v1',
+      'viewport.context_package/v1',
+      'viewport.agent_event/v1',
+      'viewport.evidence/v1',
+      'viewport.action_proposal/v1',
+      'viewport.authorization_decision/v1',
+      'viewport.approval_decision/v1',
+      'viewport.context_receipt/v1',
+      'viewport.audit_receipt/v1',
+    ]);
+  });
+
+  it('keeps implemented and target-only contracts explicit', () => {
+    expect(implementedContracts().map((contract) => contract.key)).toEqual([
+      'workflow',
+      'repoConfig',
+    ]);
+    expect(targetOnlyContracts().map((contract) => contract.key)).toEqual([
+      'route',
+      'executionProfile',
+      'runnerWorkspace',
+      'contextPackage',
+      'agentEvent',
+      'evidence',
+      'actionProposal',
+      'authorizationDecision',
+      'approvalDecision',
+      'contextReceipt',
+      'auditReceipt',
+    ]);
+  });
+
+  it('has one sample file per contract', () => {
+    expect(sampleFiles()).toHaveLength(CONTRACTS.length);
+    expect(new Set(sampleFiles()).size).toBe(sampleFiles().length);
+  });
+
+  it('loads all sample envelopes', async () => {
+    const samples = await readAllSamples();
+    expect(samples).toHaveLength(CONTRACTS.length);
+    for (const sample of samples) {
+      expect(validateSampleEnvelope(sample)).toEqual({ ok: true, issues: [] });
+    }
+  });
+});

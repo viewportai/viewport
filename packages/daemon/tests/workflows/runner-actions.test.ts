@@ -113,6 +113,125 @@ nodes:
     );
   });
 
+  it('suppresses duplicate side effects with the same idempotency key in one run', async () => {
+    const fetchMock = vi.fn(async () => new Response('created once', { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: webhook-action-idempotency-proof
+nodes:
+  create_once:
+    type: action
+    adapter: webhook
+    action: post
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: ready
+  duplicate_create:
+    type: action
+    adapter: webhook
+    action: post
+    needs: [create_once]
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: ready
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.actionLedger?.['idempotency:issue:PAY-1842']).toMatchObject({
+      nodeId: 'create_once',
+      idempotencyKey: 'issue:PAY-1842',
+    });
+    expect(completed?.nodes.duplicate_create?.metadata?.action).toMatchObject({
+      status: 'already_executed',
+      duplicateOfNodeId: 'create_once',
+      idempotencyKey: 'issue:PAY-1842',
+    });
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'action-duplicate-suppressed',
+        nodeId: 'duplicate_create',
+      }),
+    );
+  });
+
+  it('fails closed when an idempotency key is reused with a different action payload', async () => {
+    const fetchMock = vi.fn(async () => new Response('created once', { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: webhook-action-idempotency-conflict-proof
+nodes:
+  create_once:
+    type: action
+    adapter: webhook
+    action: post
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: ready
+  conflicting_create:
+    type: action
+    adapter: webhook
+    action: post
+    needs: [create_once]
+    idempotencyKey: issue:PAY-1842
+    with:
+      url: https://hooks.example.test/workflow
+      body:
+        issue: PAY-1842
+        status: different
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.conflicting_create?.status).toBe('failed');
+    expect(failed?.nodes.conflicting_create?.error).toContain(
+      "Action idempotency key 'issue:PAY-1842' was already used with a different proposed action",
+    );
+  });
+
   it('blocks approved side-effect actions until approval, then executes on resume', async () => {
     const fetchMock = vi.fn(async () => new Response('approved action', { status: 200 }));
     global.fetch = fetchMock as typeof fetch;
@@ -156,11 +275,24 @@ nodes:
       action: 'post',
       status: 'awaiting_approval',
       requiresApproval: true,
+      policyReason: 'This side effect is configured to require human approval before execution.',
     });
+    expect(blocked.nodes.post_approval?.metadata?.action?.digest).toMatch(/^sha256:/);
+
+    await expect(
+      daemon.workflowRunner.decideApproval(run.id, 'post_approval', {
+        approved: true,
+        message: 'Stale approval',
+        expectedActionDigest: 'sha256:stale',
+      }),
+    ).rejects.toThrow('The proposed action changed before approval');
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await daemon.workflowRunner.decideApproval(run.id, 'post_approval', {
       approved: true,
+      decision: 'approve',
       message: 'Approved by test',
+      expectedActionDigest: String(blocked.nodes.post_approval?.metadata?.action?.digest),
       actor: {
         id: '42',
         name: 'Test User',
@@ -182,6 +314,64 @@ nodes:
       status: 'executed',
       requiresApproval: true,
     });
+    expect(completed?.nodes.post_approval?.metadata?.action?.digest).toBe(
+      blocked.nodes.post_approval?.metadata?.action?.digest,
+    );
+    expect(completed?.nodes.post_approval?.approval?.decision).toBe('approve');
+  });
+
+  it('cancels approved side-effect actions on request changes without executing', async () => {
+    const fetchMock = vi.fn(async () => new Response('should not run', { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: action-request-changes-proof
+nodes:
+  open_pr:
+    type: action
+    adapter: webhook
+    action: post
+    requiresApproval: true
+    with:
+      url: https://hooks.example.test/pr
+      body:
+        title: Fix PAY-1842
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const blocked = await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) =>
+        candidate.status === 'blocked' && candidate.nodes.open_pr?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'open_pr', {
+      approved: false,
+      decision: 'request_changes',
+      message: 'Add a regression test before opening the PR.',
+      expectedActionDigest: String(blocked.nodes.open_pr?.metadata?.action?.digest),
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const canceled = await daemon.workflowRunner.getRun(run.id);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(canceled?.status).toBe('canceled');
+    expect(canceled?.nodes.open_pr?.status).toBe('failed');
+    expect(canceled?.nodes.open_pr?.approval?.decision).toBe('request_changes');
+    expect(canceled?.events.some((event) => event.type === 'action-executed')).toBe(false);
   });
 
   it('executes native GitHub PR actions with runner-local credentials', async () => {
@@ -448,6 +638,9 @@ nodes:
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
       );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['SLACK_BOT_TOKEN'];
@@ -475,6 +668,10 @@ nodes:
     adapter: slack
     action: post_message
     needs: [announce]
+    idempotencyKey: slack-fail:PAY-1842
+    retry:
+      maxAttempts: 2
+      transient: [channel_not_found]
     with:
       channel: missing
       text: "This should fail."
@@ -517,9 +714,22 @@ nodes:
       expect(failed?.nodes.fail_slack?.metadata?.action).toMatchObject({
         adapter: 'slack',
         action: 'post_message',
+        idempotencyKey: 'slack-fail:PAY-1842',
         status: 'failed',
         response: { error: 'channel_not_found' },
+        recovery: {
+          state: 'dead_letter',
+          attempts: 2,
+          retryableByRerun: true,
+          idempotencyKey: 'slack-fail:PAY-1842',
+        },
       });
+      expect(failed?.events).toContainEqual(
+        expect.objectContaining({
+          type: 'action-dead-letter',
+          nodeId: 'fail_slack',
+        }),
+      );
     } finally {
       if (originalToken === undefined) delete process.env['SLACK_BOT_TOKEN'];
       else process.env['SLACK_BOT_TOKEN'] = originalToken;

@@ -20,6 +20,8 @@ export interface WorkflowRunEvent {
     | 'artifact-missing'
     | 'action-executed'
     | 'action-failed'
+    | 'action-dead-letter'
+    | 'action-duplicate-suppressed'
     | 'approval-requested'
     | 'approval-resolved'
     | 'gate-blocked'

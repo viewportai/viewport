@@ -6,12 +6,18 @@ import { AgentRegistry } from './core/agent-registry.js';
 import { decodeProjectDir } from './discovery/jsonl-reader.js';
 import { BUILT_IN_AGENTS } from './agents/built-in.js';
 import { loadPluginAgents } from './plugins/loader.js';
+import { customCommandAgentFromEnv } from './agents/custom-command.js';
 
 export async function loadAgents(daemon: Daemon): Promise<AgentRegistry> {
   const registry = new AgentRegistry();
 
   for (const def of BUILT_IN_AGENTS) {
     registry.register(def);
+  }
+
+  const customCommandAgent = customCommandAgentFromEnv();
+  if (customCommandAgent) {
+    registry.register(customCommandAgent);
   }
 
   try {

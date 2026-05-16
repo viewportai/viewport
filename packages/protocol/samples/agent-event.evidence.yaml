@@ -1,0 +1,27 @@
+schema: viewport.agent_event/v1
+id: evt_01HXEVIDENCE
+runId: run_01HXRUN
+nodeId: triage
+type: evidence.created
+occurredAt: "2026-05-16T12:00:00Z"
+
+agent:
+  provider: codex
+  model: gpt-5.5
+  sessionId: codex-session-123
+
+payload:
+  evidence:
+    id: ev_root_cause
+    title: Root cause identified
+    summary: Discount code lookup is case-sensitive, but the checkout UI accepts mixed-case codes.
+    confidence: high
+    references:
+      - kind: file
+        path: app/Services/DiscountCodeLookup.php
+        line: 42
+      - kind: test
+        name: DiscountCodeTest::lowercase_codes_match_existing_codes
+    proposedActions:
+      - type: github.open_pr
+        idempotencyKey: bug-to-pr:PAY-1842:open_pr

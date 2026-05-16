@@ -56,6 +56,7 @@ export const NodePolicySchema = z
   .object({
     onFailure: z.enum(['halt', 'continue', 'skip_dependents']).optional(),
     approvalRequired: z.boolean().optional(),
+    reason: z.string().trim().min(1).optional(),
   })
   .strict();
 

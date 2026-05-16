@@ -97,6 +97,8 @@ export const WorkflowRunBodySchema = z
 export const WorkflowApprovalBodySchema = z
   .object({
     approved: z.boolean(),
+    decision: z.enum(['approve', 'request_changes', 'reject']).optional(),
+    expectedActionDigest: z.string().trim().min(1).max(255).optional(),
     message: z.string().trim().min(1).max(2_000).optional(),
     actor: z
       .object({

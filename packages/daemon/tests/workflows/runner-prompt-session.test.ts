@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { PtyAdapter } from '../../src/adapters/pty.js';
 import { addContextEntry, initContextResource } from '../../src/context/local-edge-store.js';
 import { buildSessionPromptWithContext } from '../../src/core/session-context-prompt.js';
 import {
@@ -149,6 +150,69 @@ nodes:
         type: 'node-output',
         nodeId: 'review',
         data: { output: 'done' },
+      }),
+    );
+  });
+
+  it('runs a deterministic custom command agent through the daemon workflow runner', async () => {
+    const daemon = await setup();
+    const script = [
+      "process.stdin.once('data', (chunk) => {",
+      "  const prompt = chunk.toString('utf8').trim();",
+      "  console.log(`CUSTOM_AGENT_EVIDENCE:${prompt.includes('PAY-1842') ? 'PAY-1842' : 'missing'}`);",
+      '  process.exit(0);',
+      '});',
+    ].join('\n');
+    daemon.registerAdapter(
+      new PtyAdapter('custom-command', process.execPath, {
+        defaultArgs: ['-e', script],
+        promptMode: 'stdin',
+      }),
+    );
+
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: custom-command-agent-proof
+requires:
+  agents:
+    - custom-command
+nodes:
+  investigate:
+    type: agent
+    agent: custom-command
+    prompt: Investigate PAY-1842 and emit evidence.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.investigate?.status).toBe('completed');
+    expect(completed?.nodes.investigate?.output).toContain('CUSTOM_AGENT_EVIDENCE:PAY-1842');
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'session-started',
+        nodeId: 'investigate',
+      }),
+    );
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-output',
+        nodeId: 'investigate',
+        data: expect.objectContaining({
+          output: expect.stringContaining('CUSTOM_AGENT_EVIDENCE:PAY-1842'),
+        }),
       }),
     );
   });

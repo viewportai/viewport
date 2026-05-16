@@ -22,7 +22,9 @@ describe('WorkflowRuntimeCommandApplier', () => {
       workflow_run_id: run.id,
       workflow_node_id: 'review',
       approved: true,
+      decision: 'approve',
       message: 'Approved.',
+      expected_action_digest: 'sha256:reviewed',
       actor: { id: 123, name: 'Reviewer', source: 'platform', ignored: { nested: true } },
       feedback: { annotations: [{ body: 'Ship it.' }] },
     });
@@ -33,7 +35,9 @@ describe('WorkflowRuntimeCommandApplier', () => {
         nodeId: 'review',
         decision: {
           approved: true,
+          decision: 'approve',
           message: 'Approved.',
+          expectedActionDigest: 'sha256:reviewed',
           actor: { id: '123', name: 'Reviewer', source: 'platform' },
           feedback: { annotations: [{ body: 'Ship it.' }] },
         },

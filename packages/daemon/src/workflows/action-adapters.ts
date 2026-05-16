@@ -1,5 +1,8 @@
 import { addEvent, renderTemplate } from './runtime-helpers.js';
 import { executeProviderAction, type ActionResult } from './action-provider-adapters.js';
+import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
+import { rememberExecutedAction, suppressDuplicateAction } from './action-execution-ledger.js';
+import { actionPolicyReason } from './action-policy.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -13,21 +16,24 @@ export async function executeActionAdapter(
   options: { approved?: boolean } = {},
 ): Promise<ActionResult> {
   const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
+  const actionInput = await renderActionInput(run, node.with ?? {});
+  const duplicate = suppressDuplicateAction(run, nodeId, node, idempotencyKey, actionInput);
+  if (duplicate) return duplicate;
+
   if (node.requiresApproval === true && options.approved !== true) {
-    return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey);
+    return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey, actionInput);
   }
 
   if (node.adapter === 'webhook' || node.adapter === 'http') {
-    return executeWebhookAction(run, nodeId, node, idempotencyKey);
+    return executeWebhookAction(run, nodeId, node, idempotencyKey, actionInput);
   }
 
-  const actionInput = await renderActionInput(run, node.with ?? {});
   const providerAction = await executeProviderAction(run, nodeId, node, actionInput, {
     idempotencyKey,
   });
   if (providerAction) return providerAction;
 
-  return declaredAction(run, nodeId, node, 'declared', idempotencyKey);
+  return declaredAction(run, nodeId, node, 'declared', idempotencyKey, actionInput);
 }
 
 async function executeWebhookAction(
@@ -35,10 +41,10 @@ async function executeWebhookAction(
   nodeId: string,
   node: WorkflowActionNode,
   idempotencyKey: string | undefined,
+  actionInput: Record<string, WorkflowInputValue>,
 ): Promise<ActionResult> {
-  const actionInput = await renderActionInput(run, node.with ?? {});
   const url = stringValue(actionInput['url']);
-  if (!url) return declaredAction(run, nodeId, node, 'missing_url', idempotencyKey);
+  if (!url) return declaredAction(run, nodeId, node, 'missing_url', idempotencyKey, actionInput);
 
   const method = stringValue(actionInput['method']) ?? actionMethod(node.action);
   const headers = headerRecord(actionInput['headers']);
@@ -61,6 +67,8 @@ async function executeWebhookAction(
       idempotencyKey: idempotencyKey ?? null,
       requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
+      digest: workflowActionProposalDigest(node, { idempotencyKey, input: actionInput }),
+      input: sanitizeActionInput(actionInput),
       request: { method, url },
       response: {
         status: response.status,
@@ -83,6 +91,11 @@ async function executeWebhookAction(
   if (!response.ok) {
     throw new Error(`Action ${nodeId} failed with HTTP ${response.status}: ${responseText}`);
   }
+
+  rememberExecutedAction(run, nodeId, node, idempotencyKey, actionInput, {
+    output: `${node.adapter}.${node.action} ${response.status}`,
+    response: metadata.action.response,
+  });
 
   return {
     output: `${node.adapter}.${node.action} ${response.status}`,
@@ -133,6 +146,7 @@ function declaredAction(
   node: WorkflowActionNode,
   status: 'awaiting_approval' | 'declared' | 'missing_url',
   idempotencyKey: string | undefined,
+  actionInput: Record<string, WorkflowInputValue>,
 ): ActionResult {
   return {
     output: `${node.adapter}.${node.action}`,
@@ -142,7 +156,10 @@ function declaredAction(
         action: node.action,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
+        policyReason: actionPolicyReason(node),
         status,
+        digest: workflowActionProposalDigest(node, { idempotencyKey, input: actionInput }),
+        input: sanitizeActionInput(actionInput),
       },
     },
   };
