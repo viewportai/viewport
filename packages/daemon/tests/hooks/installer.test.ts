@@ -138,6 +138,22 @@ describe('ClaudeHookInstaller', () => {
     );
   });
 
+  it('quotes local node js entrypoints without requiring executable file mode', async () => {
+    await installer.install({
+      ...defaultConfig,
+      vpdBinaryPath: 'node /Users/mehr/Herd/viewportai/viewport/packages/daemon/dist/index.js',
+    });
+
+    const settings = JSON.parse(
+      await fs.readFile(path.join(tempHome, '.claude', 'settings.json'), 'utf-8'),
+    );
+
+    const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+    expect(cmd).toContain(
+      "node '/Users/mehr/Herd/viewportai/viewport/packages/daemon/dist/index.js'",
+    );
+  });
+
   it('isInstalled detects installed hooks', async () => {
     expect(await installer.isInstalled()).toBe(false);
     await installer.install(defaultConfig);
@@ -243,5 +259,43 @@ describe('ClaudeHookInstaller', () => {
     expect(settings.hooks.PlanProposed).toBeUndefined();
     expect(settings.hooks.Stop[0].hooks[0].command).toBe('user-stop-hook');
     expect(settings.hooks.Stop[1].hooks[0].command).toContain('--viewport-hook');
+  });
+
+  it('removes stale exec-form viewport hooks on reinstall', async () => {
+    const claudeDir = path.join(tempHome, '.claude');
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.writeFile(
+      path.join(claudeDir, 'settings.json'),
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/usr/local/bin/vpd',
+                  args: [
+                    'hook',
+                    'notify',
+                    '--event',
+                    'Stop',
+                    '--port',
+                    '7070',
+                    '--viewport-hook',
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await installer.install(defaultConfig);
+
+    const settings = JSON.parse(await fs.readFile(path.join(claudeDir, 'settings.json'), 'utf-8'));
+    expect(settings.hooks.Stop).toHaveLength(1);
+    expect(settings.hooks.Stop[0].hooks[0].command).toContain("--listen '127.0.0.1:7070'");
+    expect(settings.hooks.Stop[0].hooks[0].args).toBeUndefined();
   });
 });

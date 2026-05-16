@@ -26,6 +26,11 @@ function resolveVpdPath(): string {
     return `npx tsx ${abs}`;
   }
 
+  if (arg1.endsWith('.js') && process.argv[0]) {
+    const abs = path.resolve(arg1);
+    return `node ${abs}`;
+  }
+
   return arg1;
 }
 

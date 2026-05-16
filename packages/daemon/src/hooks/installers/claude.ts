@@ -30,6 +30,10 @@ function buildVpdCommand(vpdPath: string): string {
     return `npx tsx ${shellQuote(vpdPath.slice('npx tsx '.length))}`;
   }
 
+  if (vpdPath.startsWith('node ')) {
+    return `node ${shellQuote(vpdPath.slice('node '.length))}`;
+  }
+
   return shellQuote(vpdPath);
 }
 
@@ -166,11 +170,23 @@ function removeViewportHookEntries(
 ): Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }> {
   return entries.filter(
     (entry) =>
-      !entry.hooks?.some(
-        (h: Record<string, unknown>) =>
-          typeof h.command === 'string' && h.command.includes(VIEWPORT_MARKER),
-      ),
+      !entry.hooks?.some((h: Record<string, unknown>) => isViewportHookHandler(h)),
   );
+}
+
+function isViewportHookHandler(hook: Record<string, unknown>): boolean {
+  if (typeof hook.command === 'string' && hook.command.includes(VIEWPORT_MARKER)) {
+    return true;
+  }
+
+  if (
+    Array.isArray(hook.args) &&
+    hook.args.some((arg) => typeof arg === 'string' && arg === VIEWPORT_MARKER)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
