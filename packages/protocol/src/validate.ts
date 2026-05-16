@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SchemaIds } from './schema-ids.js';
+import { ProtocolDocumentSchemas } from './schemas.js';
 import type { ProtocolSample } from './samples.js';
 
 export interface ProtocolValidationIssue {
@@ -55,6 +56,20 @@ export function validateSampleEnvelope(sample: ProtocolSample): ProtocolValidati
         },
       ],
     };
+  }
+
+  const contractSchema = ProtocolDocumentSchemas[parsed.data.schema as keyof typeof ProtocolDocumentSchemas];
+  if (contractSchema) {
+    const contractParsed = contractSchema.safeParse(sample.document);
+    return contractParsed.success
+      ? { ok: true, issues: [] }
+      : {
+          ok: false,
+          issues: contractParsed.error.issues.map((issue) => ({
+            path: issue.path.join('.') || '<root>',
+            message: issue.message,
+          })),
+        };
   }
 
   return { ok: true, issues: [] };
