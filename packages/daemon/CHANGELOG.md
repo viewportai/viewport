@@ -1,3 +1,10 @@
+# [0.13.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.12.0...@viewportai/daemon@0.13.0) (2026-05-16)
+
+
+### Features
+
+* pass route context through managed worker ([8dc5d94](https://github.com/viewportai/viewport/commit/8dc5d943b5235349de2533b6fd1943b93162826b))
+
 # [0.12.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.11.0...@viewportai/daemon@0.12.0) (2026-05-16)
 
 
