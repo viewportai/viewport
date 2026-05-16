@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 import {
@@ -113,6 +114,14 @@ async function validatePlatformWorkflowCore(sample: ProtocolSample): Promise<Che
     import.meta.dirname,
     '../../../../platform/packages/workflow-core/src/validate.ts',
   );
+
+  if (!existsSync(platformValidatorPath)) {
+    return {
+      name: `platform workflow-core validator ${sample.fileName}`,
+      ok: true,
+      detail: 'skipped; platform checkout not present',
+    };
+  }
 
   try {
     const moduleUrl = pathToFileURL(platformValidatorPath).href;

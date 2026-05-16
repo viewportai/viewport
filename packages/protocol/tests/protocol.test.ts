@@ -32,10 +32,10 @@ describe('@viewportai/protocol registry', () => {
     expect(implementedContracts().map((contract) => contract.key)).toEqual([
       'workflow',
       'repoConfig',
-    ]);
-    expect(targetOnlyContracts().map((contract) => contract.key)).toEqual([
       'route',
       'executionProfile',
+    ]);
+    expect(targetOnlyContracts().map((contract) => contract.key)).toEqual([
       'runnerWorkspace',
       'contextPackage',
       'agentEvent',
@@ -59,5 +59,34 @@ describe('@viewportai/protocol registry', () => {
     for (const sample of samples) {
       expect(validateSampleEnvelope(sample)).toEqual({ ok: true, issues: [] });
     }
+  });
+
+  it('rejects malformed route and execution profile samples', async () => {
+    const samples = await readAllSamples();
+    const route = samples.find((sample) => sample.contract.key === 'route');
+    const profile = samples.find((sample) => sample.contract.key === 'executionProfile');
+
+    expect(route).toBeDefined();
+    expect(profile).toBeDefined();
+
+    expect(
+      validateSampleEnvelope({
+        ...route!,
+        document: {
+          ...route!.document,
+          resolve: { workflow: 'bug-to-pr' },
+        },
+      }).ok,
+    ).toBe(false);
+
+    expect(
+      validateSampleEnvelope({
+        ...profile!,
+        document: {
+          ...profile!.document,
+          runner: {},
+        },
+      }).ok,
+    ).toBe(false);
   });
 });
