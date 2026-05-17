@@ -83,6 +83,92 @@ describe('WorkflowRunPlatformSync', () => {
     });
   });
 
+  it('syncs durable contract records for local platform-linked runs', async () => {
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push({
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.status = 'completed';
+    run.completedAt = 2_000;
+    run.nodes.inspect.status = 'completed';
+    run.nodes.inspect.completedAt = 2_000;
+    run.nodes.inspect.output = 'Found case-sensitive discount lookup and proposed a PR.';
+    run.nodes.inspect.metadata = {
+      ...run.nodes.inspect.metadata,
+      action: {
+        adapter: 'github',
+        action: 'open_pr',
+        status: 'awaiting_approval',
+        idempotencyKey: 'jira:PAY-1842:github.open_pr',
+        digest: 'sha256:action-proposal-pay1842-open-pr',
+        evidenceRefs: ['node:inspect:output'],
+        input: {
+          repository: 'acme/payments-api',
+          title: 'Fix PAY-1842 discount normalization',
+        },
+      },
+    };
+    run.events.push({
+      id: 'event-action-executed',
+      runId: run.id,
+      timestamp: 2_000,
+      type: 'action-executed',
+      nodeId: 'inspect',
+      message: 'GitHub PR opened',
+      data: {
+        action: {
+          adapter: 'github',
+          action: 'open_pr',
+          idempotencyKey: 'jira:PAY-1842:github.open_pr',
+          digest: 'sha256:action-proposal-pay1842-open-pr',
+          response: {
+            number: 4821,
+            htmlUrl: 'https://github.com/acme/payments-api/pull/4821',
+          },
+        },
+      },
+    });
+
+    await sync.sync(run);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body['evidence_packets']).toEqual([
+      expect.objectContaining({
+        evidence_key: 'node:inspect:output',
+        node_key: 'inspect',
+        kind: 'command_output',
+        digest: expect.stringMatching(/^sha256:/),
+      }),
+    ]);
+    expect(calls[0]?.body['action_proposals']).toEqual([
+      expect.objectContaining({
+        proposal_key: 'action:inspect',
+        adapter: 'github',
+        action: 'open_pr',
+        proposal_digest: 'sha256:action-proposal-pay1842-open-pr',
+      }),
+    ]);
+    expect(calls[0]?.body['execution_receipts']).toEqual([
+      expect.objectContaining({
+        receipt_key: 'execution:event-action-executed',
+        proposal_key: 'action:inspect',
+        provider_reference: '4821',
+        provider_url: 'https://github.com/acme/payments-api/pull/4821',
+      }),
+    ]);
+    expect(calls[0]?.body['audit_receipts']).toEqual([
+      expect.objectContaining({
+        receipt_key: 'audit:event-action-executed',
+        event_type: 'action-executed',
+        actor_type: 'runner',
+      }),
+    ]);
+  });
+
   it('skips sync when the run is not linked to a platform run', async () => {
     const calls: unknown[] = [];
     const sync = new WorkflowRunPlatformSync(configManager(), async () => {
