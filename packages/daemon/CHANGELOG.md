@@ -1,3 +1,10 @@
+# [0.18.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.17.0...@viewportai/daemon@0.18.0) (2026-05-17)
+
+
+### Features
+
+* emit workflow context receipts ([#116](https://github.com/viewportai/viewport/issues/116)) ([3d44092](https://github.com/viewportai/viewport/commit/3d44092f679a4144bc93eeedd22b787504aa0a67))
+
 # [0.17.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.16.0...@viewportai/daemon@0.17.0) (2026-05-17)
 
 
