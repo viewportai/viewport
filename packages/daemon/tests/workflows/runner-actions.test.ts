@@ -375,8 +375,9 @@ nodes:
   });
 
   it('executes native GitHub PR actions with runner-local credentials', async () => {
-    const fetchMock = vi.fn(
-      async () =>
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             number: 4821,
@@ -385,7 +386,17 @@ nodes:
           }),
           { status: 201 },
         ),
-    );
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 4821,
+            html_url: 'https://github.com/acme/payments/pull/4821',
+            url: 'https://api.github.com/repos/acme/payments/pulls/4821',
+          }),
+          { status: 200 },
+        ),
+      );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['GITHUB_TOKEN'];
     process.env['GITHUB_TOKEN'] = 'runner-token';
@@ -441,6 +452,16 @@ nodes:
           }),
         }),
       );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments/pulls/4821',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer runner-token',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }),
+        }),
+      );
       expect(completed?.status).toBe('completed');
       expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
         adapter: 'github',
@@ -452,6 +473,22 @@ nodes:
           htmlUrl: 'https://github.com/acme/payments/pull/4821',
           number: 4821,
         },
+        providerReconciliation: {
+          status: 'verified',
+          method: 'read_after_write',
+          checkedBy: 'vpd.provider_adapter',
+          providerReference: 'https://github.com/acme/payments/pull/4821',
+          providerUrl: 'https://github.com/acme/payments/pull/4821',
+          targetDigest: expect.stringMatching(/^sha256:/),
+          payloadDigest: expect.stringMatching(/^sha256:/),
+          payload: {
+            provider: 'github',
+            kind: 'pull_request',
+            apiUrl: 'https://api.github.com/repos/acme/payments/pulls/4821',
+            htmlUrl: 'https://github.com/acme/payments/pull/4821',
+            number: 4821,
+          },
+        },
       });
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
@@ -460,8 +497,9 @@ nodes:
   });
 
   it('executes native GitHub issue comments with runner-local credentials', async () => {
-    const fetchMock = vi.fn(
-      async () =>
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             html_url: 'https://github.com/acme/payments/issues/1842#issuecomment-42',
@@ -469,7 +507,16 @@ nodes:
           }),
           { status: 201 },
         ),
-    );
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            html_url: 'https://github.com/acme/payments/issues/1842#issuecomment-42',
+            url: 'https://api.github.com/repos/acme/payments/issues/comments/42',
+          }),
+          { status: 200 },
+        ),
+      );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['GITHUB_TOKEN'];
     process.env['GITHUB_TOKEN'] = 'runner-token';
@@ -527,6 +574,12 @@ nodes:
           status: 201,
           htmlUrl: 'https://github.com/acme/payments/issues/1842#issuecomment-42',
         },
+        providerReconciliation: {
+          status: 'verified',
+          method: 'read_after_write',
+          providerReference: 'https://github.com/acme/payments/issues/1842#issuecomment-42',
+          providerUrl: 'https://github.com/acme/payments/issues/1842#issuecomment-42',
+        },
       });
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
@@ -535,9 +588,30 @@ nodes:
   });
 
   it('executes native Jira comments and transitions with runner-local credentials', async () => {
-    const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ id: '10042' }), { status: 201 }),
-    );
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/comment') {
+        expect(init?.method).toBe('POST');
+        return new Response(
+          JSON.stringify({
+            id: '10042',
+            self: 'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/comment/10042',
+          }),
+          { status: 201 },
+        );
+      }
+      if (url === 'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/comment/10042') {
+        expect(init?.method).toBe('GET');
+        return new Response(
+          JSON.stringify({
+            id: '10042',
+            self: 'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/comment/10042',
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ id: 'transition-response' }), { status: 201 });
+    });
     global.fetch = fetchMock as typeof fetch;
     const originalBaseUrl = process.env['JIRA_BASE_URL'];
     const originalToken = process.env['JIRA_API_TOKEN'];
@@ -611,12 +685,23 @@ nodes:
         action: 'issue.comment',
         idempotencyKey: 'jira-comment:PAY-1842',
         status: 'executed',
+        providerReconciliation: {
+          status: 'verified',
+          method: 'read_after_write',
+          providerReference: '10042',
+          providerUrl: 'https://acme.atlassian.net/rest/api/3/issue/PAY-1842/comment/10042',
+        },
       });
       expect(completed?.nodes.transition?.metadata?.action).toMatchObject({
         adapter: 'jira',
         action: 'issue.transition',
         idempotencyKey: 'jira-transition:PAY-1842',
         status: 'executed',
+        providerReconciliation: {
+          status: 'not_checked',
+          method: 'not_supported',
+          checkedBy: 'vpd.provider_adapter',
+        },
       });
     } finally {
       if (originalBaseUrl === undefined) delete process.env['JIRA_BASE_URL'];
@@ -635,6 +720,15 @@ nodes:
         new Response(JSON.stringify({ ok: true, channel: 'C123', ts: '177000.0001' }), {
           status: 200,
         }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            permalink: 'https://acme.slack.com/archives/C123/p1770000001',
+          }),
+          { status: 200 },
+        ),
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
@@ -710,6 +804,12 @@ nodes:
         idempotencyKey: 'slack-announce:PAY-1842',
         status: 'executed',
         response: { channel: 'C123', ts: '177000.0001' },
+        providerReconciliation: {
+          status: 'verified',
+          method: 'read_after_write',
+          providerReference: 'C123:177000.0001',
+          providerUrl: 'https://acme.slack.com/archives/C123/p1770000001',
+        },
       });
       expect(failed?.nodes.fail_slack?.metadata?.action).toMatchObject({
         adapter: 'slack',

@@ -3,6 +3,13 @@ import { addEvent } from './runtime-helpers.js';
 import { rememberExecutedAction } from './action-execution-ledger.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import { actionPolicyReason } from './action-policy.js';
+import {
+  githubReconciliationRequest,
+  jiraCommentReconciliationRequest,
+  reconcileProviderAction,
+  slackMessageReconciliationRequest,
+  type ProviderReconciliationRequest,
+} from './provider-reconciliation.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -67,6 +74,8 @@ async function executeGitHubAction(
         body: stringValue(actionInput['body']),
         draft: booleanValue(actionInput['draft']),
       },
+      reconcile: (parsed) =>
+        githubReconciliationRequest(githubHeaders(token), parsed, 'pull_request'),
     });
   }
 
@@ -83,6 +92,8 @@ async function executeGitHubAction(
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
       proposalInput: actionInput,
       body: { body },
+      reconcile: (parsed) =>
+        githubReconciliationRequest(githubHeaders(token), parsed, 'issue_comment'),
     });
   }
 
@@ -125,6 +136,8 @@ async function executeJiraAction(
       headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
       proposalInput: actionInput,
       body: { body: jiraDocument(body) },
+      reconcile: (parsed) =>
+        jiraCommentReconciliationRequest(baseUrl, jiraHeaders(token, email), parsed),
     });
   }
 
@@ -139,6 +152,8 @@ async function executeJiraAction(
       headers: withIdempotencyHeader(jiraHeaders(token, email), options.idempotencyKey),
       proposalInput: actionInput,
       body: { transition: { id: transitionId } },
+      reconciliationUnsupported:
+        'Jira transition actions need an expected target status before generic read-after-write verification can prove the transition.',
     });
   }
 
@@ -176,6 +191,8 @@ async function executeSlackAction(
         thread_ts: stringValue(actionInput['thread_ts']) ?? stringValue(actionInput['threadTs']),
       },
       okFromBody: true,
+      reconcile: (parsed) =>
+        slackMessageReconciliationRequest({ Authorization: `Bearer ${token}` }, parsed),
     });
   }
 
@@ -193,6 +210,8 @@ async function executeJsonApiAction(
     proposalInput: Record<string, WorkflowInputValue>;
     body: Record<string, unknown>;
     okFromBody?: boolean;
+    reconcile?: (parsed: unknown) => ProviderReconciliationRequest | null;
+    reconciliationUnsupported?: string;
   },
 ): Promise<ActionResult> {
   const response = await fetch(request.url, {
@@ -208,6 +227,13 @@ async function executeJsonApiAction(
   const parsed = parseJson(responseText);
   const appOk = request.okFromBody ? objectBoolean(parsed, 'ok') !== false : true;
   const ok = response.ok && appOk;
+  const providerReconciliation = ok
+    ? await reconcileProviderAction(
+        request.reconcile?.(parsed) ?? null,
+        request.reconciliationUnsupported,
+        parsed,
+      )
+    : null;
   const metadata = {
     action: {
       adapter: node.adapter,
@@ -233,6 +259,12 @@ async function executeJsonApiAction(
         ts: objectString(parsed, 'ts'),
         error: objectString(parsed, 'error'),
       },
+      ...(providerReconciliation
+        ? {
+            providerReconciliation,
+            provider_reconciliation: providerReconciliation,
+          }
+        : {}),
       ...approvedExecutionGrant(run, nodeId, node.requiresApproval === true),
     },
   };
@@ -266,6 +298,7 @@ async function executeJsonApiAction(
     {
       output: `${node.adapter}.${node.action} ${response.status}`,
       response: metadata.action.response,
+      ...(providerReconciliation ? { providerReconciliation } : {}),
     },
   );
 
