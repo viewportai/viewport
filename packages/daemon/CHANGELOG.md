@@ -1,3 +1,10 @@
+# [0.15.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.14.0...@viewportai/daemon@0.15.0) (2026-05-17)
+
+
+### Features
+
+* replay actions with provider adapters ([29345c4](https://github.com/viewportai/viewport/commit/29345c42afade2f632b5096b9bcb191ef1e32460))
+
 # [0.14.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.13.2...@viewportai/daemon@0.14.0) (2026-05-17)
 
 
