@@ -1,11 +1,24 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeLocalOrgBinding } from '../../src/cli/org-binding.js';
 import { PlatformPlanHookSync } from '../../src/hooks/platform-plan-sync.js';
 
 describe('PlatformPlanHookSync', () => {
+  const originalCwd = process.cwd();
+  let tempCwd: string;
+
+  beforeEach(async () => {
+    tempCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-plan-sync-cwd-'));
+    process.chdir(tempCwd);
+  });
+
+  afterEach(async () => {
+    process.chdir(originalCwd);
+    await fs.rm(tempCwd, { recursive: true, force: true });
+  });
+
   it('saves an encrypted trusted-edge plan and opens the saved plan without putting content in the URL', async () => {
     const opener = vi.fn();
     const createEphemeralPlanDraft = vi.fn();
