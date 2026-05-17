@@ -20,6 +20,7 @@ export type ManagedWorkerAccessMode = 'relay' | 'polling' | 'direct';
 export interface ManagedWorkerCapabilities {
   agentCommand?: string;
   actionCommand?: string;
+  providerActions: boolean;
   agents: string[];
   models: string[];
   integrations: string[];
@@ -81,6 +82,16 @@ export interface ManagedActionReplayAssignment {
   payload?: Record<string, unknown> | null;
   provider_response?: Record<string, unknown> | null;
   error?: string | null;
+  action_proposal?: {
+    id?: string | null;
+    node_key?: string | null;
+    proposal_key?: string | null;
+    adapter?: string | null;
+    action?: string | null;
+    idempotency_key?: string | null;
+    proposal_digest?: string | null;
+    payload?: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface WorkerStats {
