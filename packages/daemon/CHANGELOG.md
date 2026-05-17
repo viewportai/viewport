@@ -1,3 +1,16 @@
+# [0.14.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.13.2...@viewportai/daemon@0.14.0) (2026-05-17)
+
+
+### Bug Fixes
+
+* enforce route profile protocol contracts ([#107](https://github.com/viewportai/viewport/issues/107)) ([cb67e62](https://github.com/viewportai/viewport/commit/cb67e6285de7dbc10e150084a9da66e88903fea7))
+* enforce workflow record contracts ([#108](https://github.com/viewportai/viewport/issues/108)) ([9b87fff](https://github.com/viewportai/viewport/commit/9b87fffb3b895607642404b8c455ee95f795c624))
+
+
+### Features
+
+* process managed action replays ([fb573c7](https://github.com/viewportai/viewport/commit/fb573c7d8266e01ae99a78fc7d6eec1d2758b4e3))
+
 ## [0.13.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.13.1...@viewportai/daemon@0.13.2) (2026-05-16)
 
 
