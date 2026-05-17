@@ -713,6 +713,13 @@ describe('workflow managed worker CLI', () => {
                     decision: 'approve',
                     message: 'Ship it',
                     actor: { name: 'Mehr', source: 'viewport-web' },
+                    executionGrant: {
+                      schema: 'viewport.execution_grant/v1',
+                      digest: 'sha256:approved-grant',
+                      proposal_key: 'action:approve',
+                      approval_decision_key: 'approve-open-pr',
+                      issued_at: '2026-05-17T10:00:00.000Z',
+                    },
                   },
                   action: {
                     digest: 'sha256:reviewed-action',
@@ -754,6 +761,13 @@ describe('workflow managed worker CLI', () => {
           message: 'Ship it',
           actor: { name: 'Mehr', source: 'viewport-web' },
           expectedActionDigest: 'sha256:reviewed-action',
+          executionGrant: {
+            schema: 'viewport.execution_grant/v1',
+            digest: 'sha256:approved-grant',
+            proposal_key: 'action:approve',
+            approval_decision_key: 'approve-open-pr',
+            issued_at: '2026-05-17T10:00:00.000Z',
+          },
         });
         localApproved = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_2' }) });

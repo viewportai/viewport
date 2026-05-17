@@ -59,6 +59,7 @@ export interface WorkflowNodeRunState {
     message?: string;
     actor?: WorkflowApprovalActor;
     feedback?: Record<string, unknown>;
+    executionGrant?: WorkflowExecutionGrant;
   };
   /**
    * Per-iteration records for `loop` nodes. Each entry captures one body run.
@@ -237,6 +238,7 @@ export interface WorkflowApprovalDecision {
   expectedActionDigest?: string;
   actor?: WorkflowApprovalActor;
   feedback?: Record<string, unknown>;
+  executionGrant?: WorkflowExecutionGrant;
 }
 
 export interface WorkflowApprovalActor {
@@ -244,4 +246,12 @@ export interface WorkflowApprovalActor {
   name?: string;
   email?: string;
   source?: string;
+}
+
+export interface WorkflowExecutionGrant {
+  schema?: string;
+  digest: string;
+  proposal_key?: string;
+  approval_decision_key?: string;
+  issued_at?: string;
 }

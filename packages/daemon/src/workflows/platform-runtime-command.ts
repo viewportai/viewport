@@ -7,6 +7,13 @@ export interface WorkflowRuntimeCommand {
   decision?: 'approve' | 'request_changes' | 'reject';
   message?: string | null;
   expected_action_digest?: string | null;
+  execution_grant?: {
+    schema?: string;
+    digest: string;
+    proposal_key?: string;
+    approval_decision_key?: string;
+    issued_at?: string;
+  } | null;
   actor?: Record<string, unknown> | null;
   feedback?: Record<string, unknown> | null;
 }
@@ -26,6 +33,7 @@ export function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
 
     const decision = readDecision(value['decision']);
     const expectedActionDigest = readString(value['expected_action_digest']);
+    const executionGrant = readExecutionGrant(value['execution_grant']);
 
     return [
       {
@@ -37,11 +45,33 @@ export function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
         ...(decision ? { decision } : {}),
         message: readString(value['message']),
         ...(expectedActionDigest ? { expected_action_digest: expectedActionDigest } : {}),
+        ...(executionGrant ? { execution_grant: executionGrant } : {}),
         actor: readRecord(value['actor']),
         feedback: readRecord(value['feedback']),
       },
     ];
   });
+}
+
+function readExecutionGrant(value: unknown): WorkflowRuntimeCommand['execution_grant'] {
+  const record = readRecord(value);
+  if (!record) return null;
+  const digest = readString(record['digest']);
+  if (!digest) return null;
+
+  return {
+    ...(readString(record['schema']) ? { schema: readString(record['schema']) as string } : {}),
+    digest,
+    ...(readString(record['proposal_key'])
+      ? { proposal_key: readString(record['proposal_key']) as string }
+      : {}),
+    ...(readString(record['approval_decision_key'])
+      ? { approval_decision_key: readString(record['approval_decision_key']) as string }
+      : {}),
+    ...(readString(record['issued_at'])
+      ? { issued_at: readString(record['issued_at']) as string }
+      : {}),
+  };
 }
 
 function readString(value: unknown): string | null {

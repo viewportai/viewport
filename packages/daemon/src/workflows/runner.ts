@@ -259,6 +259,7 @@ export class WorkflowRunner {
       ...(decision.message ? { message: decision.message } : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
       ...(decision.feedback ? { feedback: decision.feedback } : {}),
+      ...(decision.executionGrant ? { executionGrant: decision.executionGrant } : {}),
     };
 
     if (!decision.approved) {

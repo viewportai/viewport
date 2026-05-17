@@ -75,6 +75,7 @@ async function executeWebhookAction(
         ok: response.ok,
         bodyExcerpt: responseText.slice(0, MAX_RESPONSE_CHARS),
       },
+      ...approvedExecutionGrant(run, nodeId, node.requiresApproval === true),
     },
   };
 
@@ -163,6 +164,16 @@ function declaredAction(
       },
     },
   };
+}
+
+export function approvedExecutionGrant(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  requiresApproval: boolean,
+): Record<string, unknown> {
+  if (!requiresApproval) return {};
+  const grant = run.nodes[nodeId]?.approval?.executionGrant;
+  return grant ? { executionGrant: grant, execution_grant: grant } : {};
 }
 
 function actionMethod(action: string): string {

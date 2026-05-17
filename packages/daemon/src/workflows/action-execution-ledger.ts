@@ -36,6 +36,7 @@ export function suppressDuplicateAction(
       duplicateOfNodeId: existing.nodeId,
       executedAt: existing.executedAt,
       response: existing.response,
+      ...approvedExecutionGrant(run, nodeId, node.requiresApproval === true),
     },
   };
   addEvent(
@@ -78,4 +79,14 @@ export function rememberExecutedAction(
 function actionLedgerKey(idempotencyKey: string | undefined): string | null {
   if (!idempotencyKey) return null;
   return `idempotency:${idempotencyKey}`;
+}
+
+function approvedExecutionGrant(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  requiresApproval: boolean,
+): Record<string, unknown> {
+  if (!requiresApproval) return {};
+  const grant = run.nodes[nodeId]?.approval?.executionGrant;
+  return grant ? { executionGrant: grant, execution_grant: grant } : {};
 }

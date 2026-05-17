@@ -25,6 +25,12 @@ describe('WorkflowRuntimeCommandApplier', () => {
       decision: 'approve',
       message: 'Approved.',
       expected_action_digest: 'sha256:reviewed',
+      execution_grant: {
+        schema: 'viewport.execution_grant/v1',
+        digest: 'sha256:grant',
+        proposal_key: 'action:review',
+        approval_decision_key: 'approve-review',
+      },
       actor: { id: 123, name: 'Reviewer', source: 'platform', ignored: { nested: true } },
       feedback: { annotations: [{ body: 'Ship it.' }] },
     });
@@ -38,6 +44,12 @@ describe('WorkflowRuntimeCommandApplier', () => {
           decision: 'approve',
           message: 'Approved.',
           expectedActionDigest: 'sha256:reviewed',
+          executionGrant: {
+            schema: 'viewport.execution_grant/v1',
+            digest: 'sha256:grant',
+            proposal_key: 'action:review',
+            approval_decision_key: 'approve-review',
+          },
           actor: { id: '123', name: 'Reviewer', source: 'platform' },
           feedback: { annotations: [{ body: 'Ship it.' }] },
         },

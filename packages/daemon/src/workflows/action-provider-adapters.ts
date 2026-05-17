@@ -233,6 +233,7 @@ async function executeJsonApiAction(
         ts: objectString(parsed, 'ts'),
         error: objectString(parsed, 'error'),
       },
+      ...approvedExecutionGrant(run, nodeId, node.requiresApproval === true),
     },
   };
 
@@ -376,6 +377,16 @@ function objectBoolean(value: unknown, key: string): boolean | null {
 
 function stringValue(value: WorkflowInputValue | undefined): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function approvedExecutionGrant(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  requiresApproval: boolean,
+): Record<string, unknown> {
+  if (!requiresApproval) return {};
+  const grant = run.nodes[nodeId]?.approval?.executionGrant;
+  return grant ? { executionGrant: grant, execution_grant: grant } : {};
 }
 
 async function safeResponseText(response: Response): Promise<string> {

@@ -211,6 +211,7 @@ function formatApprovalDecision(node: WorkflowNodeRunState): Array<Record<string
       payload: {
         approved: node.approval.approved,
         feedback: node.approval.feedback ?? null,
+        ...(node.approval.executionGrant ? { execution_grant: node.approval.executionGrant } : {}),
       },
       decided_at: iso(node.approval.resolvedAt),
     },
@@ -231,13 +232,15 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
   const action = recordValue(event.data?.['action']);
   const adapter = stringValue(action?.['adapter']);
   const actionName = stringValue(action?.['action']);
+  const executionGrant =
+    recordValue(action?.['execution_grant']) ?? recordValue(action?.['executionGrant']);
   if (!adapter || !actionName) return [];
 
   return [
     {
       receipt_key: `execution:${event.id}`,
       proposal_key: event.nodeId ? proposalKey(event.nodeId) : null,
-      approval_decision_key: null,
+      approval_decision_key: stringValue(executionGrant?.['approval_decision_key']),
       adapter,
       action: actionName,
       status:
