@@ -1,9 +1,10 @@
 import type { ConfigManager } from '../core/config.js';
 import { transportFetch } from '../cli/network.js';
 import { resolveConfiguredWorkspaceSyncTarget } from '../cli/context-sync-target.js';
-import type { WorkflowRunEvent, WorkflowRunRecord } from './types.js';
+import type { WorkflowRunRecord } from './types.js';
 import { runtimeCommands, type WorkflowRuntimeCommand } from './platform-runtime-command.js';
 import { buildReviewPacket } from './review-packet.js';
+import { workflowRunToSyncPayload } from './platform-sync-payload.js';
 
 type Fetcher = typeof transportFetch;
 
@@ -72,60 +73,19 @@ export class WorkflowRunPlatformSync {
     const eventOffset = this.eventOffsets.get(run.id) ?? 0;
     const newEvents = run.events.slice(eventOffset);
     const reviewPacket = buildReviewPacket(run);
+    const payload = workflowRunToSyncPayload(run, {
+      events: newEvents,
+      enforceDataCapturePolicy: true,
+    });
     const res = await this.fetcher(target.url, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
-        runtime_run_id: run.id,
-        status: run.status,
-        data_capture_policy: dataCapturePolicy(run),
+        ...payload,
         output_snapshot: collectOutputs(run),
-        error_summary: run.error ?? null,
-        started_at: run.startedAt ? new Date(run.startedAt).toISOString() : null,
-        completed_at: run.completedAt ? new Date(run.completedAt).toISOString() : null,
         ...(reviewPacket ? { review_packet: reviewPacket } : {}),
-        nodes: Object.values(run.nodes).map((node) => ({
-          node_key: node.id,
-          title: node.title ?? node.id,
-          type: node.type,
-          status: node.status,
-          session_id: node.sessionId ?? null,
-          worktree_path: node.worktreePath ?? null,
-          output: node.output ?? null,
-          output_snapshot: node.outputs ?? null,
-          transcript_excerpt:
-            dataCapturePolicy(run).transcripts === 'none' ? null : (node.transcriptExcerpt ?? null),
-          error: node.error ?? null,
-          started_at: node.startedAt ? new Date(node.startedAt).toISOString() : null,
-          completed_at: node.completedAt ? new Date(node.completedAt).toISOString() : null,
-          metadata: {
-            ...(node.metadata ?? {}),
-            approval: node.approval ?? null,
-            inlineAgents: node.inlineAgents ?? null,
-            nativeSessionId: node.nativeSessionId ?? null,
-            exitCode: node.exitCode ?? null,
-          },
-        })),
-        artifacts: run.artifacts.map((artifact) => ({
-          node_key: artifact.nodeId,
-          name: artifact.name,
-          kind: artifact.kind ?? null,
-          path:
-            dataCapturePolicy(run).artifacts === 'local_reference' ? artifact.path : artifact.name,
-          uri: null,
-          mime_type: null,
-          digest: artifact.digest ?? readString(artifact.metadata?.['digest']),
-          metadata: {
-            ...(artifact.metadata ?? {}),
-            description: artifact.description ?? null,
-            sizeBytes: artifact.sizeBytes ?? null,
-          },
-        })),
-        ...(newEvents.length > 0
-          ? { events: newEvents.map((event) => formatEvent(run, event)) }
-          : {}),
       }),
       timeoutMs: 5_000,
       tlsVerify: target.tlsVerify,
@@ -283,10 +243,6 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
 async function readResponseJson(res: Response): Promise<unknown> {
   try {
     return await res.json();
@@ -301,57 +257,4 @@ function collectOutputs(run: WorkflowRunRecord): Record<string, string> {
       .filter((node) => typeof node.output === 'string' && node.output.length > 0)
       .map((node) => [node.id, node.output as string]),
   );
-}
-
-function formatEvent(run: WorkflowRunRecord, event: WorkflowRunEvent) {
-  const payload = sanitizeEventPayload(run, event);
-  return {
-    runtime_event_id: event.id,
-    node_key: event.nodeId ?? null,
-    type: event.type,
-    severity: eventSeverity(event),
-    message:
-      event.type === 'node-log' && dataCapturePolicy(run).logs === 'metadata'
-        ? 'Node log content redacted by workflow data capture policy.'
-        : event.message,
-    payload,
-    occurred_at: new Date(event.timestamp).toISOString(),
-  };
-}
-
-function sanitizeEventPayload(
-  run: WorkflowRunRecord,
-  event: WorkflowRunEvent,
-): Record<string, unknown> | null {
-  if (event.type !== 'node-log' || dataCapturePolicy(run).logs === 'content') {
-    return event.data ?? null;
-  }
-
-  return {
-    source: readString(event.data?.['source']) ?? undefined,
-    stream: readString(event.data?.['stream']) ?? undefined,
-    redacted: true,
-    reason: 'workflow_data_capture_policy',
-  };
-}
-
-function dataCapturePolicy(run: WorkflowRunRecord) {
-  return (
-    run.dataCapturePolicy ?? {
-      transcripts: 'none',
-      logs: 'metadata',
-      artifacts: 'metadata',
-    }
-  );
-}
-
-function eventSeverity(event: WorkflowRunEvent): 'debug' | 'info' | 'warning' | 'error' {
-  if (event.type.includes('failed') || event.type.includes('error')) return 'error';
-  if (
-    event.type.includes('blocked') ||
-    event.type.includes('missing') ||
-    event.type.includes('canceled')
-  )
-    return 'warning';
-  return 'info';
 }
