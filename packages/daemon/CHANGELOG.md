@@ -1,3 +1,10 @@
+## [0.15.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.15.1...@viewportai/daemon@0.15.2) (2026-05-17)
+
+
+### Bug Fixes
+
+* sync local workflow contract records ([dc00b11](https://github.com/viewportai/viewport/commit/dc00b113f11ea956a630e50594e91af452f66c6c))
+
 ## [0.15.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.15.0...@viewportai/daemon@0.15.1) (2026-05-17)
 
 
