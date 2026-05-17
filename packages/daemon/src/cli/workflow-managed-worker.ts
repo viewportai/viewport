@@ -12,6 +12,11 @@ import {
 } from './workflow-managed-worker-util.js';
 import type { WorkflowRunRecord } from '../workflows/types.js';
 import {
+  executeProviderAction,
+  WorkflowActionError,
+} from '../workflows/action-provider-adapters.js';
+import type { WorkflowActionNode, WorkflowInputValue } from '../workflows/types.js';
+import {
   approvalActor,
   approvalExpectedActionDigest,
   approvalMessage,
@@ -211,7 +216,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
 
   if (!server || !workspaceId || !executorId || !credential) {
     throw new Error(
-      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--agent-command <command>] [--action-command <command>] [--once]',
+      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--once]',
     );
   }
 
@@ -233,6 +238,8 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     capabilities: {
       agentCommand: getFlag('agent-command') ?? process.env['VIEWPORT_MANAGED_AGENT_COMMAND'],
       actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
+      providerActions:
+        hasFlag('provider-actions') || process.env['VIEWPORT_MANAGED_PROVIDER_ACTIONS'] === '1',
       agents: listFlagValue(getFlag('agents')),
       models: listFlagValue(getFlag('models')),
       integrations: listFlagValue(getFlag('integrations')),
@@ -289,7 +296,10 @@ async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAs
 async function claimActionReplay(
   options: ManagedWorkerOptions,
 ): Promise<ManagedActionReplayAssignment | null> {
-  if (!options.capabilities.actionCommand || options.capabilities.integrations.length === 0) {
+  if (
+    (!options.capabilities.actionCommand && !options.capabilities.providerActions) ||
+    options.capabilities.integrations.length === 0
+  ) {
     return null;
   }
 
@@ -305,15 +315,17 @@ async function completeActionReplay(
   options: ManagedWorkerOptions,
   assignment: ManagedActionReplayAssignment,
 ): Promise<ManagedActionReplayAssignment> {
-  if (!options.capabilities.actionCommand) {
-    throw new Error('Action replay command is not configured.');
+  if (!options.capabilities.actionCommand && !options.capabilities.providerActions) {
+    throw new Error('Action replay execution is not configured.');
   }
   if (!assignment.claim_token) {
     throw new Error(`Managed action replay ${assignment.id} is missing claim_token.`);
   }
 
   await heartbeat(options, 'online', 'busy');
-  const result = await runActionReplayCommand(options.capabilities.actionCommand, assignment);
+  const result = options.capabilities.actionCommand
+    ? await runActionReplayCommand(options.capabilities.actionCommand, assignment)
+    : await runProviderActionReplay(assignment);
   const body = await platformJson(
     options,
     'PATCH',
@@ -323,6 +335,159 @@ async function completeActionReplay(
     { 'X-Viewport-Action-Replay-Claim': assignment.claim_token },
   );
   return dataFrom(body) as ManagedActionReplayAssignment;
+}
+
+async function runProviderActionReplay(
+  assignment: ManagedActionReplayAssignment,
+): Promise<Record<string, unknown>> {
+  const actionInput = actionInputFromReplay(assignment);
+  if (!actionInput) {
+    return {
+      status: 'failed',
+      idempotency_key: assignment.idempotency_key ?? undefined,
+      payload_digest: assignment.action_digest ?? undefined,
+      provider_response: assignment.provider_response ?? undefined,
+      error: 'Action replay is missing the original action proposal payload.',
+    };
+  }
+
+  const nodeId =
+    assignment.action_proposal?.node_key ?? assignment.workflow_run_node_id ?? assignment.id;
+  const node: WorkflowActionNode = {
+    type: 'action',
+    adapter: assignment.adapter,
+    action: normalizeReplayAction(assignment.adapter, assignment.action),
+    with: actionInput,
+    idempotencyKey: assignment.idempotency_key ?? undefined,
+    requiresApproval: false,
+  };
+  const run = actionReplayRunRecord(assignment);
+
+  try {
+    const result = await executeProviderAction(run, nodeId, node, actionInput, {
+      idempotencyKey: assignment.idempotency_key ?? undefined,
+    });
+    if (!result) {
+      return {
+        status: 'failed',
+        idempotency_key: assignment.idempotency_key ?? undefined,
+        payload_digest: assignment.action_digest ?? undefined,
+        provider_response: assignment.provider_response ?? undefined,
+        error: `No built-in provider action adapter exists for ${assignment.adapter}.${assignment.action}.`,
+      };
+    }
+    const action = recordValue(result.metadata['action']);
+    const response = recordValue(action?.['response']);
+    return {
+      status: 'succeeded',
+      provider_reference: replayProviderReference(response),
+      provider_url: replayProviderUrl(response),
+      idempotency_key: assignment.idempotency_key ?? stringField(action, 'idempotencyKey'),
+      payload_digest: assignment.action_digest ?? stringField(action, 'digest'),
+      payload: {
+        action: {
+          adapter: assignment.adapter,
+          action: assignment.action,
+          input: actionInput,
+          response: response ?? null,
+        },
+      },
+      provider_response: response ?? result.metadata,
+    };
+  } catch (error) {
+    if (error instanceof WorkflowActionError) {
+      const action = recordValue(error.result.metadata['action']);
+      const response = recordValue(action?.['response']);
+      return {
+        status: 'failed',
+        idempotency_key: assignment.idempotency_key ?? stringField(action, 'idempotencyKey'),
+        payload_digest: assignment.action_digest ?? stringField(action, 'digest'),
+        payload: {
+          action: {
+            adapter: assignment.adapter,
+            action: assignment.action,
+            input: actionInput,
+            response: response ?? null,
+          },
+        },
+        provider_response: response ?? error.result.metadata,
+        error: error.message,
+      };
+    }
+    throw error;
+  }
+}
+
+function actionInputFromReplay(
+  assignment: ManagedActionReplayAssignment,
+): Record<string, WorkflowInputValue> | null {
+  const proposalPayload = assignment.action_proposal?.payload;
+  const proposalInput = workflowInputRecord(proposalPayload);
+  if (proposalInput) return proposalInput;
+  const payload = assignment.payload ?? {};
+  const actionPayload = recordValue(payload['action_payload']) ?? recordValue(payload['action']);
+  const replayPayload = workflowInputRecord(actionPayload);
+  return replayPayload ?? null;
+}
+
+function normalizeReplayAction(adapter: string, action: string): string {
+  if (adapter === 'github' && action === 'pull_request.create') return 'create_pull_request';
+  if (adapter === 'github' && action === 'issue.comment') return 'comment_issue';
+  if (adapter === 'jira' && action === 'issue.comment') return 'comment_issue';
+  if (adapter === 'slack' && action === 'message') return 'post_message';
+  return action;
+}
+
+function replayProviderReference(
+  response: Record<string, unknown> | undefined,
+): string | undefined {
+  return (
+    stringField(response ?? null, 'htmlUrl') ??
+    stringField(response ?? null, 'apiUrl') ??
+    stringField(response ?? null, 'url') ??
+    stringField(response ?? null, 'channel') ??
+    stringField(response ?? null, 'ts') ??
+    numberField(response ?? null, 'number')?.toString()
+  );
+}
+
+function replayProviderUrl(response: Record<string, unknown> | undefined): string | undefined {
+  return (
+    stringField(response ?? null, 'htmlUrl') ??
+    stringField(response ?? null, 'apiUrl') ??
+    stringField(response ?? null, 'url')
+  );
+}
+
+function workflowInputRecord(value: unknown): Record<string, WorkflowInputValue> | null {
+  if (!isRecord(value)) return null;
+  return value as Record<string, WorkflowInputValue>;
+}
+
+function actionReplayRunRecord(assignment: ManagedActionReplayAssignment): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    id: assignment.workflow_run_id ?? assignment.id,
+    workflowName: 'action-replay',
+    sourceType: 'viewport_snapshot',
+    sourcePath: `viewport://action-replay/${assignment.id}`,
+    digest: assignment.action_digest ?? `action-replay:${assignment.id}`,
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: '',
+    directoryId: 'action-replay',
+    directoryPath: process.cwd(),
+    machineId: 'managed-executor',
+    initiation: 'cli',
+    status: 'running',
+    inputs: {},
+    preflight: { ok: true, issues: [] },
+    nodes: {},
+    artifacts: [],
+    events: [],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+  };
 }
 
 async function runActionReplayCommand(
@@ -393,17 +558,32 @@ function parseCommandJson(stdout: string): Record<string, unknown> | null | 'inv
   }
 }
 
-function stringField(record: Record<string, unknown> | null, key: string): string | undefined {
+function stringField(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): string | undefined {
   const value = record?.[key];
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function recordField(
-  record: Record<string, unknown> | null,
+  record: Record<string, unknown> | null | undefined,
   key: string,
 ): Record<string, unknown> | undefined {
   const value = record?.[key];
   return isRecord(value) ? value : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function numberField(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): number | undefined {
+  const value = record?.[key];
+  return typeof value === 'number' ? value : undefined;
 }
 
 function outputResponse(result: ShellCommandResult): Record<string, unknown> {
