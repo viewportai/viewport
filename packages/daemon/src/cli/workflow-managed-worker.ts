@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
@@ -23,6 +24,7 @@ import {
 import type {
   DirectoryInfo,
   ManagedAssignment,
+  ManagedActionReplayAssignment,
   ManagedWorkerAccessMode,
   ManagedWorkerOptions,
   WorkerStats,
@@ -48,13 +50,38 @@ export async function workflowWorker(): Promise<void> {
     return;
   }
 
-  const stats: WorkerStats = { claimed: 0, completed: 0, blocked: 0, failed: 0 };
+  const stats: WorkerStats = {
+    claimed: 0,
+    actionReplaysClaimed: 0,
+    actionReplaysCompleted: 0,
+    completed: 0,
+    blocked: 0,
+    failed: 0,
+  };
   let failed = false;
   try {
     do {
       await heartbeat(options, 'online', 'idle');
       const assignment = await claimAssignment(options);
       if (!assignment) {
+        const actionReplay = await claimActionReplay(options);
+        if (actionReplay) {
+          stats.actionReplaysClaimed += 1;
+          const completedReplay = await completeActionReplay(options, actionReplay);
+          if (completedReplay.status === 'completed') {
+            stats.actionReplaysCompleted += 1;
+            stats.completed += 1;
+          } else {
+            stats.failed += 1;
+          }
+          if (
+            options.once ||
+            (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+          ) {
+            break;
+          }
+          continue;
+        }
         if (options.once) break;
         await delay(options.sleepSeconds * 1000);
         continue;
@@ -79,7 +106,7 @@ export async function workflowWorker(): Promise<void> {
           stats.completed += resumed.status === 'completed' ? 1 : 0;
           stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
 
-          if (options.maxRuns !== undefined && stats.claimed >= options.maxRuns) {
+          if (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns) {
             break;
           }
           continue;
@@ -109,7 +136,10 @@ export async function workflowWorker(): Promise<void> {
         stats.failed += 1;
       }
 
-      if (options.once || (options.maxRuns !== undefined && stats.claimed >= options.maxRuns)) {
+      if (
+        options.once ||
+        (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+      ) {
         break;
       }
     } while (true);
@@ -126,8 +156,12 @@ export async function workflowWorker(): Promise<void> {
     return;
   }
   console.log(
-    `Workflow worker stopped. Claimed ${stats.claimed}, completed ${stats.completed}, blocked ${stats.blocked}, failed ${stats.failed}.`,
+    `Workflow worker stopped. Claimed ${stats.claimed} workflow run(s), replayed ${stats.actionReplaysCompleted}/${stats.actionReplaysClaimed} action(s), completed ${stats.completed}, blocked ${stats.blocked}, failed ${stats.failed}.`,
   );
+}
+
+function totalClaimed(stats: WorkerStats): number {
+  return stats.claimed + stats.actionReplaysClaimed;
 }
 
 async function validateDaemonAgentCapabilities(options: ManagedWorkerOptions): Promise<void> {
@@ -177,7 +211,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
 
   if (!server || !workspaceId || !executorId || !credential) {
     throw new Error(
-      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--once]',
+      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--agent-command <command>] [--action-command <command>] [--once]',
     );
   }
 
@@ -198,6 +232,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     once: hasFlag('once'),
     capabilities: {
       agentCommand: getFlag('agent-command') ?? process.env['VIEWPORT_MANAGED_AGENT_COMMAND'],
+      actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
       agents: listFlagValue(getFlag('agents')),
       models: listFlagValue(getFlag('models')),
       integrations: listFlagValue(getFlag('integrations')),
@@ -249,6 +284,167 @@ async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAs
   if (response.status === 204) return null;
   const body = await responseJson(response);
   return dataFrom(body) as ManagedAssignment;
+}
+
+async function claimActionReplay(
+  options: ManagedWorkerOptions,
+): Promise<ManagedActionReplayAssignment | null> {
+  if (!options.capabilities.actionCommand || options.capabilities.integrations.length === 0) {
+    return null;
+  }
+
+  const response = await platformFetch(options, 'POST', 'action-replays/claim', {
+    lease_seconds: options.leaseSeconds,
+  });
+  if (response.status === 204) return null;
+  const body = await responseJson(response);
+  return dataFrom(body) as ManagedActionReplayAssignment;
+}
+
+async function completeActionReplay(
+  options: ManagedWorkerOptions,
+  assignment: ManagedActionReplayAssignment,
+): Promise<ManagedActionReplayAssignment> {
+  if (!options.capabilities.actionCommand) {
+    throw new Error('Action replay command is not configured.');
+  }
+  if (!assignment.claim_token) {
+    throw new Error(`Managed action replay ${assignment.id} is missing claim_token.`);
+  }
+
+  await heartbeat(options, 'online', 'busy');
+  const result = await runActionReplayCommand(options.capabilities.actionCommand, assignment);
+  const body = await platformJson(
+    options,
+    'PATCH',
+    `action-replays/${encodeURIComponent(assignment.id)}/complete`,
+    result,
+    undefined,
+    { 'X-Viewport-Action-Replay-Claim': assignment.claim_token },
+  );
+  return dataFrom(body) as ManagedActionReplayAssignment;
+}
+
+async function runActionReplayCommand(
+  command: string,
+  assignment: ManagedActionReplayAssignment,
+): Promise<Record<string, unknown>> {
+  const input = {
+    id: assignment.id,
+    adapter: assignment.adapter,
+    action: assignment.action,
+    idempotency_key: assignment.idempotency_key ?? null,
+    action_digest: assignment.action_digest ?? null,
+    source_runtime_event_id: assignment.source_runtime_event_id ?? null,
+    workflow_run_id: assignment.workflow_run_id ?? null,
+    workflow_action_proposal_id: assignment.workflow_action_proposal_id ?? null,
+    source_execution_receipt_id: assignment.source_execution_receipt_id ?? null,
+    payload: assignment.payload ?? {},
+    provider_response: assignment.provider_response ?? null,
+  };
+  const result = await runShellCommand(command, `${JSON.stringify(input)}\n`);
+  if (result.exitCode !== 0) {
+    return {
+      status: 'failed',
+      idempotency_key: assignment.idempotency_key ?? undefined,
+      payload_digest: assignment.action_digest ?? undefined,
+      provider_response: outputResponse(result),
+      error: result.stderr || result.stdout || `Action replay command exited ${result.exitCode}.`,
+    };
+  }
+
+  const parsed = parseCommandJson(result.stdout);
+  if (parsed === 'invalid') {
+    return {
+      status: 'failed',
+      idempotency_key: assignment.idempotency_key ?? undefined,
+      payload_digest: assignment.action_digest ?? undefined,
+      provider_response: outputResponse(result),
+      error: 'Action replay command stdout was not valid JSON.',
+    };
+  }
+  const status = replayStatus(parsed?.['status']);
+  return {
+    status,
+    provider_reference: stringField(parsed, 'provider_reference'),
+    provider_url: stringField(parsed, 'provider_url'),
+    idempotency_key:
+      stringField(parsed, 'idempotency_key') ?? assignment.idempotency_key ?? undefined,
+    payload_digest: stringField(parsed, 'payload_digest') ?? assignment.action_digest ?? undefined,
+    payload: recordField(parsed, 'payload') ?? assignment.payload ?? undefined,
+    provider_response: recordField(parsed, 'provider_response') ?? outputResponse(result),
+    error: status === 'succeeded' ? undefined : (stringField(parsed, 'error') ?? result.stderr),
+  };
+}
+
+function replayStatus(value: unknown): 'succeeded' | 'failed' | 'dead_letter' {
+  if (value === 'failed' || value === 'dead_letter') return value;
+  return 'succeeded';
+}
+
+function parseCommandJson(stdout: string): Record<string, unknown> | null | 'invalid' {
+  const trimmed = stdout.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isRecord(parsed) ? parsed : 'invalid';
+  } catch {
+    return 'invalid';
+  }
+}
+
+function stringField(record: Record<string, unknown> | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function recordField(
+  record: Record<string, unknown> | null,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = record?.[key];
+  return isRecord(value) ? value : undefined;
+}
+
+function outputResponse(result: ShellCommandResult): Record<string, unknown> {
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exit_code: result.exitCode,
+  };
+}
+
+interface ShellCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runShellCommand(command: string, stdin: string): Promise<ShellCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('sh', ['-lc', command], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
+    child.stdin.end(stdin);
+  });
 }
 
 async function runAssignmentLocally(
@@ -494,8 +690,11 @@ async function platformJson(
   pathSuffix: string,
   body?: unknown,
   assignmentClaimToken?: string | null,
+  extraHeaders?: Record<string, string>,
 ): Promise<unknown> {
-  return responseJson(await platformFetch(options, method, pathSuffix, body, assignmentClaimToken));
+  return responseJson(
+    await platformFetch(options, method, pathSuffix, body, assignmentClaimToken, extraHeaders),
+  );
 }
 
 async function platformFetch(
@@ -504,6 +703,7 @@ async function platformFetch(
   pathSuffix: string,
   body?: unknown,
   assignmentClaimToken?: string | null,
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   const response = await transportFetch(`${baseManagedUrl(options)}/${pathSuffix}`, {
     method,
@@ -511,6 +711,7 @@ async function platformFetch(
       Authorization: `Bearer ${options.credential}`,
       Accept: 'application/json',
       ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
+      ...(extraHeaders ?? {}),
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

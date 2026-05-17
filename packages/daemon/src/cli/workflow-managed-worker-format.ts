@@ -52,6 +52,9 @@ export function capabilityPayload(
       ? { models: capabilities.models }
       : {}),
     ...(capabilities.integrations.length > 0 ? { integrations: capabilities.integrations } : {}),
+    ...(capabilities.actionCommand && capabilities.integrations.length > 0
+      ? { action_replay: capabilities.integrations }
+      : {}),
     ...(capabilities.secrets.length > 0 ? { secrets: capabilities.secrets } : {}),
   };
 }

@@ -164,6 +164,244 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
 
+  it('claims provider action replay work only when an action command is configured', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--integrations',
+      'github,jira',
+      '--action-command',
+      actionReplayCommand(),
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          capabilities: {
+            tools: ['shell'],
+            integrations: ['github', 'jira'],
+            action_replay: ['github', 'jira'],
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_1' } });
+      }
+      if (url.endsWith('/action-replays/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'replay_1',
+            claim_token: 'vpaqr_replay_1',
+            workflow_run_id: 'run_platform_1',
+            workflow_action_proposal_id: 'proposal_1',
+            source_execution_receipt_id: 'receipt_dead_letter_1',
+            adapter: 'github',
+            action: 'pull_request.create',
+            idempotency_key: 'pr:PAY-1842',
+            action_digest: 'sha256:approved-pr-payload',
+            payload: {
+              failure: { reason: 'GitHub returned 502' },
+              source_workflow_run_id: 'run_platform_1',
+            },
+            provider_response: { status: 502 },
+          },
+        });
+      }
+      if (url.endsWith('/action-replays/replay_1/complete')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Action-Replay-Claim')).toBe('vpaqr_replay_1');
+        expect(body).toMatchObject({
+          status: 'succeeded',
+          provider_reference: 'pr:PAY-1842',
+          provider_url: 'https://example.test/pr:PAY-1842',
+          idempotency_key: 'pr:PAY-1842',
+          payload_digest: 'sha256:approved-pr-payload',
+          payload: {
+            source_workflow_run_id: 'run_platform_1',
+          },
+          provider_response: { ok: true, adapter: 'github' },
+        });
+        return jsonResponse({
+          data: {
+            id: 'replay_1',
+            status: 'completed',
+            adapter: 'github',
+            action: 'pull_request.create',
+          },
+        });
+      }
+      if (url.endsWith('/claim')) {
+        return new Response(null, { status: 204 });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch: vi.fn(async () => jsonResponse({ message: 'unexpected daemon request' }, 500)),
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/action-replays/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/action-replays/replay_1/complete',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    const output = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'));
+    expect(output.stats).toMatchObject({
+      claimed: 0,
+      actionReplaysClaimed: 1,
+      actionReplaysCompleted: 1,
+      completed: 1,
+      failed: 0,
+    });
+  });
+
+  it('does not claim action replay work without a configured action command', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--integrations',
+      'github',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      platformRequests.push(url);
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) return new Response(null, { status: 204 });
+      if (url.endsWith('/action-replays/claim')) {
+        throw new Error('Action replays must not be claimed without an action command.');
+      }
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch: vi.fn(async () => jsonResponse({ message: 'unexpected daemon request' }, 500)),
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    const output = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'));
+    expect(output.stats).toMatchObject({
+      claimed: 0,
+      actionReplaysClaimed: 0,
+      actionReplaysCompleted: 0,
+    });
+  });
+
+  it('completes action replay as failed when the configured action command fails', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--integrations',
+      'jira',
+      '--action-command',
+      `${shellQuote(process.execPath)} -e ${JSON.stringify("process.stderr.write('provider down'); process.exit(2)")}`,
+      '--once',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/action-replays/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'replay_failed',
+            claim_token: 'vpaqr_failed',
+            adapter: 'jira',
+            action: 'issue.transition',
+            idempotency_key: 'jira:PAY-1842',
+            action_digest: 'sha256:jira-payload',
+            payload: { failure: { reason: 'Jira timeout' } },
+          },
+        });
+      }
+      if (url.endsWith('/action-replays/replay_failed/complete')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Action-Replay-Claim')).toBe('vpaqr_failed');
+        expect(body).toMatchObject({
+          status: 'failed',
+          idempotency_key: 'jira:PAY-1842',
+          payload_digest: 'sha256:jira-payload',
+          provider_response: { stderr: 'provider down', exit_code: 2 },
+          error: 'provider down',
+        });
+        return jsonResponse({ data: { id: 'replay_failed', status: 'failed' } });
+      }
+      if (url.endsWith('/claim')) return new Response(null, { status: 204 });
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch: vi.fn(async () => jsonResponse({ message: 'unexpected daemon request' }, 500)),
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    const output = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'));
+    expect(output.stats).toMatchObject({
+      actionReplaysClaimed: 1,
+      actionReplaysCompleted: 0,
+      failed: 1,
+    });
+  });
+
   it('fails before claiming when the advertised agent is unavailable in the daemon', async () => {
     process.argv = [
       'node',
@@ -1404,4 +1642,29 @@ function tsxBin(): string {
     '.bin',
     process.platform === 'win32' ? 'tsx.cmd' : 'tsx',
   );
+}
+
+function actionReplayCommand(): string {
+  const script = [
+    "let raw = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', chunk => { raw += chunk; });",
+    "process.stdin.on('end', () => {",
+    'const input = JSON.parse(raw);',
+    'console.log(JSON.stringify({',
+    "status: 'succeeded',",
+    'provider_reference: input.idempotency_key,',
+    "provider_url: 'https://example.test/' + input.idempotency_key,",
+    'idempotency_key: input.idempotency_key,',
+    'payload_digest: input.action_digest,',
+    'payload: { source_workflow_run_id: input.payload.source_workflow_run_id },',
+    'provider_response: { ok: true, adapter: input.adapter }',
+    '}));',
+    '});',
+  ].join(' ');
+  return `${shellQuote(process.execPath)} -e ${JSON.stringify(script)}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }

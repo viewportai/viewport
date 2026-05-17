@@ -19,6 +19,7 @@ export type ManagedWorkerAccessMode = 'relay' | 'polling' | 'direct';
 
 export interface ManagedWorkerCapabilities {
   agentCommand?: string;
+  actionCommand?: string;
   agents: string[];
   models: string[];
   integrations: string[];
@@ -61,8 +62,31 @@ export interface DirectoryInfo {
   path: string;
 }
 
+export interface ManagedActionReplayAssignment {
+  id: string;
+  claim_token?: string | null;
+  resource_id?: string | null;
+  workflow_run_id?: string | null;
+  workflow_run_node_id?: string | null;
+  workflow_action_proposal_id?: string | null;
+  source_execution_receipt_id?: string | null;
+  workflow_inbox_item_id?: string | null;
+  managed_executor_id?: string | null;
+  status?: string | null;
+  adapter: string;
+  action: string;
+  idempotency_key?: string | null;
+  action_digest?: string | null;
+  source_runtime_event_id?: string | null;
+  payload?: Record<string, unknown> | null;
+  provider_response?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
 export interface WorkerStats {
   claimed: number;
+  actionReplaysClaimed: number;
+  actionReplaysCompleted: number;
   completed: number;
   blocked: number;
   failed: number;
