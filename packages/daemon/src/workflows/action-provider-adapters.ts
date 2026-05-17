@@ -1,8 +1,23 @@
-import { Buffer } from 'node:buffer';
 import { addEvent } from './runtime-helpers.js';
 import { rememberExecutedAction } from './action-execution-ledger.js';
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import { actionPolicyReason } from './action-policy.js';
+import {
+  booleanValue,
+  compactObject,
+  githubHeaders,
+  idempotencyKeyFromHeaders,
+  jiraDocument,
+  jiraHeaders,
+  normalizedBaseUrl,
+  objectBoolean,
+  objectNumber,
+  objectString,
+  parseJson,
+  safeResponseText,
+  stringValue,
+  withIdempotencyHeader,
+} from './action-provider-utils.js';
 import {
   githubReconciliationRequest,
   jiraCommentReconciliationRequest,
@@ -334,84 +349,6 @@ function declaredProviderAction(
   };
 }
 
-function withIdempotencyHeader(
-  headers: Record<string, string>,
-  idempotencyKey: string | undefined,
-): Record<string, string> {
-  if (!idempotencyKey) return headers;
-  const alreadySet = Object.keys(headers).some((key) => key.toLowerCase() === 'idempotency-key');
-  return alreadySet ? headers : { ...headers, 'Idempotency-Key': idempotencyKey };
-}
-
-function idempotencyKeyFromHeaders(headers: Record<string, string>): string | undefined {
-  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'idempotency-key');
-  return entry?.[1];
-}
-
-function githubHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-}
-
-function jiraHeaders(token: string, email?: string): Record<string, string> {
-  if (email) {
-    return { Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}` };
-  }
-  return { Authorization: `Bearer ${token}` };
-}
-
-function jiraDocument(text: string): Record<string, unknown> {
-  return {
-    type: 'doc',
-    version: 1,
-    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
-  };
-}
-
-function normalizedBaseUrl(value: string | undefined): string | undefined {
-  return value ? value.replace(/\/+$/, '') : undefined;
-}
-
-function booleanValue(value: WorkflowInputValue | undefined): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
-}
-
-function compactObject(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined));
-}
-
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function objectString(value: unknown, key: string): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const entry = (value as Record<string, unknown>)[key];
-  return typeof entry === 'string' ? entry : null;
-}
-
-function objectNumber(value: unknown, key: string): number | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const entry = (value as Record<string, unknown>)[key];
-  return typeof entry === 'number' ? entry : null;
-}
-
-function objectBoolean(value: unknown, key: string): boolean | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const entry = (value as Record<string, unknown>)[key];
-  return typeof entry === 'boolean' ? entry : null;
-}
-
-function stringValue(value: WorkflowInputValue | undefined): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
 function approvedExecutionGrant(
   run: WorkflowRunRecord,
   nodeId: string,
@@ -420,12 +357,4 @@ function approvedExecutionGrant(
   if (!requiresApproval) return {};
   const grant = run.nodes[nodeId]?.approval?.executionGrant;
   return grant ? { executionGrant: grant, execution_grant: grant } : {};
-}
-
-async function safeResponseText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return '';
-  }
 }
