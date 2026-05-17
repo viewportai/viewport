@@ -1,3 +1,10 @@
+# [0.17.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.16.0...@viewportai/daemon@0.17.0) (2026-05-17)
+
+
+### Features
+
+* reconcile provider action receipts ([#115](https://github.com/viewportai/viewport/issues/115)) ([2d0c9d9](https://github.com/viewportai/viewport/commit/2d0c9d95fa099019220f0fa5f40e201916164181))
+
 # [0.16.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.15.2...@viewportai/daemon@0.16.0) (2026-05-17)
 
 
