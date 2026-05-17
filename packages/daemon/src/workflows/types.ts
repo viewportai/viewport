@@ -39,6 +39,7 @@ export type {
   WorkflowContractBindingInput,
   WorkflowContractDigestStatus,
   WorkflowContractStatus,
+  WorkflowContextReceiptRecord,
   WorkflowDataCapturePolicy,
   WorkflowInputValue,
   WorkflowLoopIterationRecord,

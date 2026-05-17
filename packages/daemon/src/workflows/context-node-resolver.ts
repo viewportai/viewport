@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto';
 import { contextProviderAdapterFor } from '../context-providers/registry.js';
 import type { ContextProviderResult } from '../context-providers/types.js';
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
-import type { WorkflowContextNode, WorkflowRunRecord } from './types.js';
+import type {
+  WorkflowContextNode,
+  WorkflowContextReceiptRecord,
+  WorkflowRunRecord,
+} from './types.js';
 import { addEvent, renderOptionalTemplate } from './runtime-helpers.js';
 
 interface NormalizedContextRef {
@@ -66,6 +71,18 @@ export async function executeContextNode(
     skipped,
     items,
   };
+  const contextReceipts = buildContextReceipts({
+    run,
+    nodeId,
+    query,
+    refs,
+    providers,
+    items,
+  });
+  run.contextReceipts = [
+    ...(run.contextReceipts ?? []).filter((receipt) => receipt.usedBy.nodeId !== nodeId),
+    ...contextReceipts,
+  ];
 
   if (state) {
     state.output = JSON.stringify(output);
@@ -90,6 +107,73 @@ export async function executeContextNode(
     },
     nodeId,
   );
+}
+
+function buildContextReceipts(input: {
+  run: WorkflowRunRecord;
+  nodeId: string;
+  query?: string;
+  refs: NormalizedContextRef[];
+  providers: Array<{ provider: SessionContextProviderManifest; alias?: string }>;
+  items: ResolvedContextItem[];
+}): WorkflowContextReceiptRecord[] {
+  const resolvedAt = new Date().toISOString();
+  return input.items.map((item) => {
+    const provider = input.providers.find(
+      (candidate) => candidate.provider.id === item.provider_id,
+    )?.provider;
+    return {
+      schema: 'viewport.context_receipt/v1',
+      package: contextPackageName(item),
+      requested: requestedContextRef({
+        item,
+        refs: input.refs,
+        provider,
+      }),
+      resolvedVersion: resolvedContextVersion(provider, item),
+      provider: item.provider,
+      digest: contextDigest(item),
+      freshness: 'resolved_at_run',
+      usedBy: {
+        runId: input.run.id,
+        nodeId: input.nodeId,
+        providerId: item.provider_id,
+        alias: item.alias ?? null,
+      },
+      resolvedAt,
+    };
+  });
+}
+
+function contextPackageName(item: ResolvedContextItem): string {
+  return item.provider_id.trim() || item.provider;
+}
+
+function requestedContextRef(input: {
+  item: ResolvedContextItem;
+  refs: NormalizedContextRef[];
+  provider?: SessionContextProviderManifest;
+}): string {
+  const matchedRef = input.refs.find(
+    (ref) => input.provider && matchesProviderRef(input.provider, ref.ref),
+  );
+  return matchedRef?.ref ?? input.item.alias ?? input.provider?.id ?? input.item.provider_id;
+}
+
+function resolvedContextVersion(
+  provider: SessionContextProviderManifest | undefined,
+  item: ResolvedContextItem,
+): string {
+  const version = provider?.ref ?? provider?.branch ?? provider?.vault ?? item.digest ?? item.id;
+  return version.trim() || 'unversioned';
+}
+
+function contextDigest(item: ResolvedContextItem): string {
+  if (item.digest?.startsWith('sha256:')) {
+    return item.digest;
+  }
+
+  return `sha256:${createHash('sha256').update(item.body).digest('hex')}`;
 }
 
 function normalizeRefs(refs: WorkflowContextNode['refs']): NormalizedContextRef[] {
@@ -166,7 +250,6 @@ function metadataOnlyContextItem(item: ResolvedContextItem): Record<string, unkn
     privacy: item.privacy,
     title: item.title,
     digest: item.digest ?? null,
-    source: item.source ?? null,
     score: item.score ?? null,
     alias: item.alias ?? null,
   };

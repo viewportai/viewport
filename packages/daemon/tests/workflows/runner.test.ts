@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { workflowRunToSyncPayload } from '../../src/workflows/platform-sync-payload.js';
 import { waitForRunState, waitForTerminalRun } from './support/workflow-runner-support.js';
 
 let tempHome: string;
@@ -384,7 +385,31 @@ nodes:
         digest: expect.stringMatching(/^sha256:/),
       }),
     ]);
+    expect(completed?.contextReceipts).toEqual([
+      expect.objectContaining({
+        schema: 'viewport.context_receipt/v1',
+        package: 'repo_docs',
+        requested: 'repo_docs',
+        provider: 'repo-docs',
+        digest: expect.stringMatching(/^sha256:/),
+        freshness: 'resolved_at_run',
+        usedBy: expect.objectContaining({
+          runId: run.id,
+          nodeId: 'attach_context',
+          providerId: 'repo_docs',
+          alias: 'runbook',
+        }),
+        resolvedAt: expect.any(String),
+      }),
+    ]);
     expect(JSON.stringify(contextEvent?.data)).not.toContain('PAY-1842');
+    expect(JSON.stringify(contextEvent?.data)).not.toContain(projectDir);
+    expect(JSON.stringify(completed?.contextReceipts)).not.toContain('PAY-1842');
+    expect(JSON.stringify(completed?.contextReceipts)).not.toContain('checkout runbook');
+    expect(JSON.stringify(completed?.contextReceipts)).not.toContain(projectDir);
+    expect(workflowRunToSyncPayload(completed!)['context_receipts_snapshot']).toEqual(
+      completed?.contextReceipts,
+    );
   });
 
   it('fails context nodes when a required provider is unavailable', async () => {
