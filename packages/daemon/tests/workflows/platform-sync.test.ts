@@ -147,6 +147,16 @@ describe('WorkflowRunPlatformSync', () => {
             number: 4821,
             htmlUrl: 'https://github.com/acme/payments-api/pull/4821',
           },
+          provider_reconciliation: {
+            status: 'verified',
+            method: 'read_after_write',
+            checkedAt: '2026-05-17T10:01:00.000Z',
+            checkedBy: 'vpd.provider_adapter',
+            providerReference: 'https://github.com/acme/payments-api/pull/4821',
+            providerUrl: 'https://github.com/acme/payments-api/pull/4821',
+            targetDigest: 'sha256:target',
+            payloadDigest: 'sha256:payload',
+          },
         },
       },
     });
@@ -177,6 +187,11 @@ describe('WorkflowRunPlatformSync', () => {
         approval_decision_key: 'approve-open-pr',
         provider_reference: '4821',
         provider_url: 'https://github.com/acme/payments-api/pull/4821',
+        provider_reconciliation: expect.objectContaining({
+          status: 'verified',
+          method: 'read_after_write',
+          checkedBy: 'vpd.provider_adapter',
+        }),
         payload: expect.objectContaining({
           execution_grant: expect.objectContaining({
             digest: 'sha256:approved-execution-grant',

@@ -261,6 +261,9 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
       idempotency_key: stringValue(action?.['idempotencyKey']),
       payload_digest: stringValue(action?.['digest']) ?? payloadDigest(action),
       payload: sanitizeSyncPayload(action),
+      provider_reconciliation:
+        recordValue(action?.['provider_reconciliation']) ??
+        recordValue(action?.['providerReconciliation']),
       executed_at: iso(event.timestamp),
     },
   ];

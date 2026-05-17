@@ -379,6 +379,9 @@ async function runProviderActionReplay(
     }
     const action = recordValue(result.metadata['action']);
     const response = recordValue(action?.['response']);
+    const providerReconciliation =
+      recordValue(action?.['provider_reconciliation']) ??
+      recordValue(action?.['providerReconciliation']);
     return {
       status: 'succeeded',
       provider_reference: replayProviderReference(response),
@@ -394,11 +397,15 @@ async function runProviderActionReplay(
         },
       },
       provider_response: response ?? result.metadata,
+      provider_reconciliation: providerReconciliation,
     };
   } catch (error) {
     if (error instanceof WorkflowActionError) {
       const action = recordValue(error.result.metadata['action']);
       const response = recordValue(action?.['response']);
+      const providerReconciliation =
+        recordValue(action?.['provider_reconciliation']) ??
+        recordValue(action?.['providerReconciliation']);
       return {
         status: 'failed',
         idempotency_key: assignment.idempotency_key ?? stringField(action, 'idempotencyKey'),
@@ -412,6 +419,7 @@ async function runProviderActionReplay(
           },
         },
         provider_response: response ?? error.result.metadata,
+        provider_reconciliation: providerReconciliation,
         error: error.message,
       };
     }
@@ -539,6 +547,7 @@ async function runActionReplayCommand(
     payload_digest: stringField(parsed, 'payload_digest') ?? assignment.action_digest ?? undefined,
     payload: recordField(parsed, 'payload') ?? assignment.payload ?? undefined,
     provider_response: recordField(parsed, 'provider_response') ?? outputResponse(result),
+    provider_reconciliation: recordField(parsed, 'provider_reconciliation'),
     error: status === 'succeeded' ? undefined : (stringField(parsed, 'error') ?? result.stderr),
   };
 }
