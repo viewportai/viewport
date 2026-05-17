@@ -1,3 +1,10 @@
+## [0.15.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.15.0...@viewportai/daemon@0.15.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* sync canonical workflow approval decisions ([905ca1a](https://github.com/viewportai/viewport/commit/905ca1a72b7c6c197f43640bcac2078301d036d8))
+
 # [0.15.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.14.0...@viewportai/daemon@0.15.0) (2026-05-17)
 
 
