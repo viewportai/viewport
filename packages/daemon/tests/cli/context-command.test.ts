@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 describe('context CLI command', () => {
   const originalArgv = process.argv.slice();
   const originalFetch = globalThis.fetch;
+  const originalCwd = process.cwd();
+  const originalViewportHome = process.env['VIEWPORT_HOME'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let tempHome: string;
 
@@ -14,11 +16,19 @@ describe('context CLI command', () => {
     vi.resetModules();
     logSpy.mockClear();
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-context-cli-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    process.chdir(tempHome);
   });
 
   afterEach(async () => {
     process.argv = originalArgv;
     globalThis.fetch = originalFetch;
+    process.chdir(originalCwd);
+    if (originalViewportHome === undefined) {
+      delete process.env['VIEWPORT_HOME'];
+    } else {
+      process.env['VIEWPORT_HOME'] = originalViewportHome;
+    }
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 

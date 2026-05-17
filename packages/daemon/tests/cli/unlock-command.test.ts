@@ -7,6 +7,7 @@ describe('unlock CLI command', () => {
   const originalArgv = process.argv.slice();
   const originalFetch = globalThis.fetch;
   const originalViewportHome = process.env['VIEWPORT_HOME'];
+  const originalCwd = process.cwd();
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let tempHome: string;
 
@@ -15,12 +16,14 @@ describe('unlock CLI command', () => {
     logSpy.mockClear();
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-unlock-cli-'));
     process.env['VIEWPORT_HOME'] = tempHome;
+    process.chdir(tempHome);
     await writeRelayConfig();
   });
 
   afterEach(async () => {
     process.argv = originalArgv;
     globalThis.fetch = originalFetch;
+    process.chdir(originalCwd);
     if (originalViewportHome === undefined) {
       delete process.env['VIEWPORT_HOME'];
     } else {
