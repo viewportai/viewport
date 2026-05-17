@@ -107,6 +107,16 @@ export const WorkflowApprovalBodySchema = z
     approved: z.boolean(),
     decision: z.enum(['approve', 'request_changes', 'reject']).optional(),
     expectedActionDigest: z.string().trim().min(1).max(255).optional(),
+    executionGrant: z
+      .object({
+        schema: z.string().trim().min(1).max(255).optional(),
+        digest: z.string().trim().min(1).max(255),
+        proposal_key: z.string().trim().min(1).max(255).optional(),
+        approval_decision_key: z.string().trim().min(1).max(255).optional(),
+        issued_at: z.string().trim().min(1).max(255).optional(),
+      })
+      .strict()
+      .optional(),
     message: z.string().trim().min(1).max(2_000).optional(),
     actor: z
       .object({

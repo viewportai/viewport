@@ -37,6 +37,7 @@ export class WorkflowRuntimeCommandApplier {
       ...(command.expected_action_digest
         ? { expectedActionDigest: command.expected_action_digest }
         : {}),
+      ...(command.execution_grant ? { executionGrant: command.execution_grant } : {}),
       ...(command.feedback ? { feedback: command.feedback } : {}),
       ...approvalActor(command.actor),
     });

@@ -78,6 +78,38 @@ export function approvalExpectedActionDigest(
   return undefined;
 }
 
+export function approvalExecutionGrant(
+  node: NonNullable<ManagedAssignment['nodes']>[number],
+): Record<string, string> | undefined {
+  const approval = node.metadata?.['approval'];
+  if (!approval || typeof approval !== 'object') return undefined;
+  const grant =
+    (approval as { executionGrant?: unknown; execution_grant?: unknown }).executionGrant ??
+    (approval as { execution_grant?: unknown }).execution_grant;
+  if (!grant || typeof grant !== 'object') return undefined;
+  const record = grant as Record<string, unknown>;
+  const digest = stringValue(record['digest']);
+  if (!digest) return undefined;
+
+  return {
+    ...(stringValue(record['schema']) ? { schema: stringValue(record['schema']) as string } : {}),
+    digest,
+    ...(stringValue(record['proposal_key'])
+      ? { proposal_key: stringValue(record['proposal_key']) as string }
+      : {}),
+    ...(stringValue(record['approval_decision_key'])
+      ? { approval_decision_key: stringValue(record['approval_decision_key']) as string }
+      : {}),
+    ...(stringValue(record['issued_at'])
+      ? { issued_at: stringValue(record['issued_at']) as string }
+      : {}),
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
 export function progressSyncEveryMs(leaseSeconds: number): number {
   return Math.max(500, Math.min(30_000, Math.floor(leaseSeconds * 500)));
 }

@@ -97,6 +97,20 @@ describe('WorkflowRunPlatformSync', () => {
     run.nodes.inspect.status = 'completed';
     run.nodes.inspect.completedAt = 2_000;
     run.nodes.inspect.output = 'Found case-sensitive discount lookup and proposed a PR.';
+    run.nodes.inspect.approval = {
+      prompt: 'Approve GitHub PR side effect?',
+      requestedAt: 1_900,
+      resolvedAt: 1_950,
+      approved: true,
+      decision: 'approve',
+      executionGrant: {
+        schema: 'viewport.execution_grant/v1',
+        digest: 'sha256:approved-execution-grant',
+        proposal_key: 'action:inspect',
+        approval_decision_key: 'approve-open-pr',
+        issued_at: '2026-05-17T10:00:00.000Z',
+      },
+    };
     run.nodes.inspect.metadata = {
       ...run.nodes.inspect.metadata,
       action: {
@@ -125,6 +139,10 @@ describe('WorkflowRunPlatformSync', () => {
           action: 'open_pr',
           idempotencyKey: 'jira:PAY-1842:github.open_pr',
           digest: 'sha256:action-proposal-pay1842-open-pr',
+          execution_grant: {
+            digest: 'sha256:approved-execution-grant',
+            approval_decision_key: 'approve-open-pr',
+          },
           response: {
             number: 4821,
             htmlUrl: 'https://github.com/acme/payments-api/pull/4821',
@@ -156,8 +174,14 @@ describe('WorkflowRunPlatformSync', () => {
       expect.objectContaining({
         receipt_key: 'execution:event-action-executed',
         proposal_key: 'action:inspect',
+        approval_decision_key: 'approve-open-pr',
         provider_reference: '4821',
         provider_url: 'https://github.com/acme/payments-api/pull/4821',
+        payload: expect.objectContaining({
+          execution_grant: expect.objectContaining({
+            digest: 'sha256:approved-execution-grant',
+          }),
+        }),
       }),
     ]);
     expect(calls[0]?.body['audit_receipts']).toEqual([

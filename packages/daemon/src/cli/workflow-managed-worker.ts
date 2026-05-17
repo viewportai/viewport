@@ -18,6 +18,7 @@ import {
 import type { WorkflowActionNode, WorkflowInputValue } from '../workflows/types.js';
 import {
   approvalActor,
+  approvalExecutionGrant,
   approvalExpectedActionDigest,
   approvalMessage,
   capabilityPayload,
@@ -762,6 +763,7 @@ async function resumeApprovedLocalRun(
       message: approvalMessage(approved),
       actor: approvalActor(approved),
       expectedActionDigest: approvalExpectedActionDigest(approved),
+      executionGrant: approvalExecutionGrant(approved),
     },
   );
   const resumed = await pollLocalRun(
