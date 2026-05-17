@@ -1,3 +1,10 @@
+# [0.16.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.15.2...@viewportai/daemon@0.16.0) (2026-05-17)
+
+
+### Features
+
+* carry approval execution grants ([#113](https://github.com/viewportai/viewport/issues/113)) ([a5536a0](https://github.com/viewportai/viewport/commit/a5536a09003baff6e2232bbe952fcffadd1d9a9e))
+
 ## [0.15.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.15.1...@viewportai/daemon@0.15.2) (2026-05-17)
 
 
