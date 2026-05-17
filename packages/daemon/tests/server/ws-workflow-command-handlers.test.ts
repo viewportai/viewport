@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+  WorkflowRunDetailMessageSchema,
+  WorkflowRunStartedMessageSchema,
+  WorkflowRunsMessageSchema,
+} from '@viewportai/protocol/workflow-run';
 import { createWsCommandHandlers } from '../../src/server/ws-command-handlers.js';
 import type { ConnectedClient } from '../../src/server/hello-builder.js';
+import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
 function createClient(): { client: ConnectedClient; sent: Array<Record<string, unknown>> } {
   const sent: Array<Record<string, unknown>> = [];
@@ -24,6 +30,107 @@ function createHandlers(daemon: Record<string, unknown>) {
   });
 
   return { handlers, sendAck };
+}
+
+function createProtocolWorkflowRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    id: 'run-protocol-1',
+    workflowName: 'proof',
+    workflowTitle: 'Protocol proof',
+    sourceType: 'viewport_snapshot',
+    sourcePath: 'viewport://templates/proof',
+    digest: `sha256:${'a'.repeat(64)}`,
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
+    directoryId: 'dir-1',
+    directoryPath: '/tmp/viewport-proof',
+    resourceId: 'resource-1',
+    runtimeTargetId: 'target-1',
+    platformRunId: 'platform-run-1',
+    machineId: 'machine-1',
+    executionPolicy: { mode: 'current_tree' },
+    dataCapturePolicy: {
+      transcripts: 'excerpt',
+      logs: 'metadata',
+      artifacts: 'local_reference',
+    },
+    initiation: 'browser',
+    status: 'completed',
+    inputs: { focus: 'risk' },
+    preflight: { ok: true, issues: [] },
+    nodes: {
+      inspect: {
+        id: 'inspect',
+        type: 'shell',
+        title: 'Inspect repository',
+        status: 'completed',
+        startedAt: now - 1_000,
+        completedAt: now,
+        output: 'Tests passed',
+        outputs: { result: 'ok' },
+      },
+    },
+    artifacts: [
+      {
+        id: 'artifact-1',
+        runId: 'run-protocol-1',
+        nodeId: 'inspect',
+        name: 'test-log',
+        kind: 'log',
+        path: '/tmp/viewport-proof/test.log',
+        digest: `sha256:${'b'.repeat(64)}`,
+        description: 'Captured test proof',
+        sizeBytes: 128,
+        createdAt: now,
+      },
+    ],
+    contextReceipts: [
+      {
+        schema: 'viewport.context_receipt/v1',
+        package: 'payments-domain-rules',
+        requested: 'payment bug',
+        resolvedVersion: 'v1',
+        provider: 'repo-docs',
+        digest: `sha256:${'c'.repeat(64)}`,
+        freshness: 'fresh',
+        usedBy: {
+          runId: 'run-protocol-1',
+          nodeId: 'inspect',
+          providerId: 'repo-docs',
+          itemId: 'item-1',
+          alias: null,
+          title: 'Payment rules',
+        },
+        resolvedAt: new Date(now).toISOString(),
+      },
+    ],
+    events: [
+      {
+        id: 'event-1',
+        runId: 'run-protocol-1',
+        timestamp: now,
+        type: 'run-completed',
+        nodeId: 'inspect',
+        message: 'Workflow completed',
+        data: { proof: true },
+      },
+    ],
+    createdAt: now - 2_000,
+    startedAt: now - 1_000,
+    updatedAt: now,
+    completedAt: now,
+    ...overrides,
+  };
+}
+
+function findSentMessage(
+  sent: Array<Record<string, unknown>>,
+  type: string,
+): Record<string, unknown> {
+  const message = sent.find((entry) => entry.type === type);
+  expect(message).toBeDefined();
+  return message as Record<string, unknown>;
 }
 
 describe('ws workflow command handlers', () => {
@@ -104,6 +211,43 @@ describe('ws workflow command handlers', () => {
     const request = startRun.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(request).not.toHaveProperty('projectId');
     expect(request).not.toHaveProperty('projectMachineBindingId');
+  });
+
+  it('emits workflow run messages that satisfy the public protocol schema', async () => {
+    const { client, sent } = createClient();
+    const run = createProtocolWorkflowRun();
+    const startRun = vi.fn().mockResolvedValue(run);
+    const listRuns = vi.fn().mockResolvedValue([run]);
+    const getRun = vi.fn().mockResolvedValue(run);
+    const { handlers } = createHandlers({
+      workflowRunner: { startRun, listRuns, getRun },
+    });
+
+    await handlers['workflow-run'](client, {
+      type: 'workflow-run',
+      workflowYaml: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
+      directoryId: 'dir-1',
+      resourceId: 'resource-1',
+      runtimeTargetId: 'target-1',
+      platformRunId: 'platform-run-1',
+      inputs: { focus: 'risk' },
+      requestId: 'req-run-protocol',
+    });
+    WorkflowRunStartedMessageSchema.parse(findSentMessage(sent, 'workflow-run-started'));
+
+    await handlers['workflow-list-runs'](client, {
+      type: 'workflow-list-runs',
+      limit: 25,
+      requestId: 'req-list-protocol',
+    });
+    WorkflowRunsMessageSchema.parse(findSentMessage(sent, 'workflow-runs'));
+
+    await handlers['workflow-show-run'](client, {
+      type: 'workflow-show-run',
+      runId: 'run-protocol-1',
+      requestId: 'req-show-protocol',
+    });
+    WorkflowRunDetailMessageSchema.parse(findSentMessage(sent, 'workflow-run-detail'));
   });
 
   it('resolves workflow approvals and sends the updated run detail', async () => {
