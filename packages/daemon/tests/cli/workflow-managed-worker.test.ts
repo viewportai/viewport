@@ -1442,6 +1442,38 @@ describe('workflow managed worker CLI', () => {
       }),
     ]);
   });
+
+  it('formats rejected approval decisions with the protocol canonical deny value', () => {
+    const now = Date.now();
+    const payload = localRunToSyncPayload({
+      ...completedLocalRun({
+        nodes: {
+          open_pr: {
+            id: 'open_pr',
+            type: 'approval',
+            status: 'canceled',
+            output: 'Rejected by reviewer',
+            approval: {
+              approved: false,
+              decision: 'reject',
+              message: 'Needs a smaller patch.',
+              resolvedAt: now,
+            },
+            startedAt: now - 1000,
+            completedAt: now,
+          },
+        },
+      }),
+    });
+
+    expect(payload.approval_decisions).toEqual([
+      expect.objectContaining({
+        decision_key: `approval:open_pr:${now}`,
+        node_key: 'open_pr',
+        decision: 'deny',
+      }),
+    ]);
+  });
 });
 
 async function goldenWorkflowYaml(): Promise<string> {
