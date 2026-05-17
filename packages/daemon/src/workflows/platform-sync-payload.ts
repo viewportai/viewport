@@ -45,6 +45,7 @@ export function workflowRunToSyncPayload(
     approval_decisions: Object.values(run.nodes).flatMap(formatApprovalDecision),
     execution_receipts: run.events.flatMap(formatExecutionReceipt),
     audit_receipts: run.events.flatMap(formatAuditReceipt),
+    ...(run.contextReceipts ? { context_receipts_snapshot: run.contextReceipts } : {}),
   };
 }
 

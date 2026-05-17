@@ -79,7 +79,19 @@ describe('workflow managed worker CLI', () => {
             route_snapshot: { key: 'payments-bugs' },
             execution_profile_snapshot: { key: 'payments-prod' },
             runner_workspace_snapshot: { runner_pool: 'payments-vps' },
-            context_receipts_snapshot: [{ package: 'payments.domain-rules', version: '1.0.0' }],
+            context_receipts_snapshot: [
+              {
+                schema: 'viewport.context_receipt/v1',
+                package: 'payments.domain-rules',
+                requested: 'context://vault/payments',
+                resolvedVersion: '1.0.0',
+                provider: 'viewport-vault',
+                digest: 'sha256:payments-domain-rules',
+                freshness: 'resolved_at_run',
+                usedBy: { runId: 'run_platform_1' },
+                resolvedAt: '2026-05-17T10:00:00.000Z',
+              },
+            ],
             data_capture_policy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
           },
         });
@@ -134,7 +146,14 @@ describe('workflow managed worker CLI', () => {
               route: { key: 'payments-bugs' },
               executionProfile: { key: 'payments-prod' },
               runnerWorkspace: { runner_pool: 'payments-vps' },
-              contextReceipts: [{ package: 'payments.domain-rules', version: '1.0.0' }],
+              contextReceipts: [
+                expect.objectContaining({
+                  schema: 'viewport.context_receipt/v1',
+                  package: 'payments.domain-rules',
+                  resolvedVersion: '1.0.0',
+                  usedBy: { runId: 'run_platform_1' },
+                }),
+              ],
             },
           },
         });

@@ -43,6 +43,7 @@ describe('WorkflowRunPlatformSync', () => {
       status: 'running',
       started_at: '1970-01-01T00:00:01.500Z',
     });
+    expect(calls[0]?.body).not.toHaveProperty('context_receipts_snapshot');
     expect(calls[0]?.body).not.toHaveProperty('project_machine_binding_id');
     expect(calls[0]?.body['events']).toHaveLength(1);
     expect(calls[0]?.body).toMatchObject({
@@ -126,6 +127,24 @@ describe('WorkflowRunPlatformSync', () => {
         },
       },
     };
+    run.contextReceipts = [
+      {
+        schema: 'viewport.context_receipt/v1',
+        package: 'payments.domain-rules',
+        requested: 'context://vault/payments',
+        resolvedVersion: '2026.05.17',
+        provider: 'viewport-vault',
+        digest: 'sha256:context-receipt-payments-domain-rules',
+        freshness: 'resolved_at_run',
+        usedBy: {
+          runId: 'runtime-run-1',
+          nodeId: 'inspect',
+          providerId: 'payments-vault',
+          itemId: 'payments.domain-rules',
+        },
+        resolvedAt: '2026-05-17T10:00:00.000Z',
+      },
+    ];
     run.events.push({
       id: 'event-action-executed',
       runId: run.id,
@@ -204,6 +223,16 @@ describe('WorkflowRunPlatformSync', () => {
         receipt_key: 'audit:event-action-executed',
         event_type: 'action-executed',
         actor_type: 'runner',
+      }),
+    ]);
+    expect(calls[0]?.body['context_receipts_snapshot']).toEqual([
+      expect.objectContaining({
+        schema: 'viewport.context_receipt/v1',
+        package: 'payments.domain-rules',
+        usedBy: expect.objectContaining({
+          runId: 'runtime-run-1',
+          nodeId: 'inspect',
+        }),
       }),
     ]);
   });

@@ -118,6 +118,25 @@ export interface WorkflowRunArtifactRecord {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowContextReceiptRecord {
+  schema: 'viewport.context_receipt/v1';
+  package: string;
+  requested: string;
+  resolvedVersion: string;
+  provider: string;
+  digest: string;
+  freshness: string;
+  usedBy: {
+    runId: string;
+    nodeId?: string;
+    providerId?: string;
+    itemId?: string;
+    alias?: string | null;
+    title?: string;
+  };
+  resolvedAt: string;
+}
+
 export interface WorkflowActionExecutionLedgerEntry {
   nodeId: string;
   adapter: string;
@@ -171,6 +190,7 @@ export interface WorkflowRunRecord {
   preflight: WorkflowPreflightResult;
   nodes: Record<string, WorkflowNodeRunState>;
   artifacts: WorkflowRunArtifactRecord[];
+  contextReceipts?: WorkflowContextReceiptRecord[];
   /**
    * Local trusted-edge ledger of side effects that have already executed for
    * this run. The runner only keys this by explicit idempotency keys. Actions
