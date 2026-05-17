@@ -244,7 +244,9 @@ function formatApprovalDecision(node: WorkflowNodeRunState): Array<Record<string
       subject_type: action ? 'action_proposal' : 'workflow_node',
       subject_id: node.id,
       subject_digest: actionDigest,
-      decision: node.approval.decision ?? (node.approval.approved ? 'approve' : 'reject'),
+      decision: approvalDecision(
+        node.approval.decision ?? (node.approval.approved ? 'approve' : 'reject'),
+      ),
       reason: node.approval.message ?? null,
       actor_snapshot: node.approval.actor ?? null,
       payload: {
@@ -336,6 +338,11 @@ function iso(value: number | undefined): string | null {
 
 function proposalKey(nodeId: string): string {
   return `action:${nodeId}`;
+}
+
+function approvalDecision(decision: string): 'approve' | 'deny' | 'request_changes' {
+  if (decision === 'approve' || decision === 'request_changes') return decision;
+  return 'deny';
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
