@@ -1,3 +1,10 @@
+# [0.19.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.18.0...@viewportai/daemon@0.19.0) (2026-05-18)
+
+
+### Features
+
+* attach review artifact subjects to packets ([5f04b12](https://github.com/viewportai/viewport/commit/5f04b12574454a84d33fac2961d9f96e01857227))
+
 # [0.18.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.17.0...@viewportai/daemon@0.18.0) (2026-05-17)
 
 
