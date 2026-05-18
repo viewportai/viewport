@@ -1,3 +1,10 @@
+## [0.20.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.20.0...@viewportai/daemon@0.20.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* consume protocol 1.3.2 in daemon ([#119](https://github.com/viewportai/viewport/issues/119)) ([30fc4eb](https://github.com/viewportai/viewport/commit/30fc4eb9a034d7a9cbf184cfb49cb9e08dcf567e))
+
 # [0.20.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.19.0...@viewportai/daemon@0.20.0) (2026-05-18)
 
 
