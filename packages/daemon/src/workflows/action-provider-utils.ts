@@ -79,6 +79,36 @@ export function stringValue(value: WorkflowInputValue | undefined): string | und
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
+export function credentialRefValue(
+  input: Record<string, WorkflowInputValue>,
+  fallback: string,
+): string {
+  return stringValue(input['credential_ref']) ?? stringValue(input['credentialRef']) ?? fallback;
+}
+
+function explicitCredentialRefValue(input: Record<string, WorkflowInputValue>): string | undefined {
+  return stringValue(input['credential_ref']) ?? stringValue(input['credentialRef']);
+}
+
+export function envNameForCredentialRef(ref: string): string {
+  return `VIEWPORT_CREDENTIAL_${ref
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()}`;
+}
+
+export function providerCredentialValue(
+  input: Record<string, WorkflowInputValue>,
+  _options: { defaultRef: string; defaultEnv: string },
+): string | undefined {
+  const explicitRef = explicitCredentialRefValue(input);
+  if (!explicitRef) return undefined;
+
+  const refEnvValue = process.env[envNameForCredentialRef(explicitRef)];
+  if (refEnvValue) return refEnvValue;
+  return undefined;
+}
+
 export async function safeResponseText(response: Response): Promise<string> {
   try {
     return await response.text();

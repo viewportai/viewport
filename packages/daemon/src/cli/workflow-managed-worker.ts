@@ -15,6 +15,7 @@ import {
   executeProviderAction,
   WorkflowActionError,
 } from '../workflows/action-provider-adapters.js';
+import { sanitizeActionInput } from '../workflows/action-digest.js';
 import type { WorkflowActionNode, WorkflowInputValue } from '../workflows/types.js';
 import {
   approvalActor,
@@ -392,7 +393,7 @@ async function runProviderActionReplay(
         action: {
           adapter: assignment.adapter,
           action: assignment.action,
-          input: actionInput,
+          input: sanitizeActionInput(actionInput),
           response: response ?? null,
         },
       },
@@ -414,7 +415,7 @@ async function runProviderActionReplay(
           action: {
             adapter: assignment.adapter,
             action: assignment.action,
-            input: actionInput,
+            input: sanitizeActionInput(actionInput),
             response: response ?? null,
           },
         },
