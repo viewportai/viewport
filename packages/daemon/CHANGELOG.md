@@ -1,3 +1,15 @@
+# [0.20.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.19.0...@viewportai/daemon@0.20.0) (2026-05-18)
+
+
+### Bug Fixes
+
+* redact context sync payloads ([2654a13](https://github.com/viewportai/viewport/commit/2654a131b5902e748e6fa2541cb3aaae8f13407b))
+
+
+### Features
+
+* resolve context package config refs ([ec62649](https://github.com/viewportai/viewport/commit/ec626499aa77dbc10606f3521e60ef2fd6bf0edb))
+
 # [0.19.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.18.0...@viewportai/daemon@0.19.0) (2026-05-18)
 
 
