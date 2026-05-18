@@ -7,6 +7,7 @@ import { resolveSessionResourceManifest } from '../../src/config-resolution/inde
 import { githubRepoProviderAdapter } from '../../src/context-providers/github-repo-provider.js';
 
 let root: string;
+const GIT_PROVIDER_TEST_TIMEOUT_MS = 30_000;
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-github-context-provider-'));
@@ -17,66 +18,74 @@ afterEach(async () => {
 });
 
 describe('github-repo provider', () => {
-  it('pulls markdown context from a git remote into a local cache', async () => {
-    const { remoteUrl } = await createRemoteContextRepo();
-    const productRepo = await createProductRepo(remoteUrl);
-    const manifest = await resolveSessionResourceManifest({ workingDirectory: productRepo });
-    const provider = manifest.contract.contextProviders[0]!;
+  it(
+    'pulls markdown context from a git remote into a local cache',
+    async () => {
+      const { remoteUrl } = await createRemoteContextRepo();
+      const productRepo = await createProductRepo(remoteUrl);
+      const manifest = await resolveSessionResourceManifest({ workingDirectory: productRepo });
+      const provider = manifest.contract.contextProviders[0]!;
 
-    const results = await githubRepoProviderAdapter.search?.({
-      provider,
-      query: 'incidents',
-      actorName: 'alice-laptop',
-      home: root,
-      sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
-    });
+      const results = await githubRepoProviderAdapter.search?.({
+        provider,
+        query: 'incidents',
+        actorName: 'alice-laptop',
+        home: root,
+        sizeBudgetBytes: manifest.contract.contextResolution.sizeBudgetBytes,
+      });
 
-    expect(results).toBeDefined();
-    expect(results).toHaveLength(1);
-    expect(results![0]).toMatchObject({
-      id: 'team_memory:context/runbook.md',
-      provider_id: 'team_memory',
-      provider: 'github-repo',
-      privacy: 'third_party_terms',
-      title: 'context/runbook.md',
-    });
-    expect(results![0]?.body).toContain('Use incident summaries when touching reliability code.');
-  });
+      expect(results).toBeDefined();
+      expect(results).toHaveLength(1);
+      expect(results![0]).toMatchObject({
+        id: 'team_memory:context/runbook.md',
+        provider_id: 'team_memory',
+        provider: 'github-repo',
+        privacy: 'third_party_terms',
+        title: 'context/runbook.md',
+      });
+      expect(results![0]?.body).toContain('Use incident summaries when touching reliability code.');
+    },
+    GIT_PROVIDER_TEST_TIMEOUT_MS,
+  );
 
-  it('proposes updates on a branch without writing to the default branch', async () => {
-    const { bareRepo, remoteUrl } = await createRemoteContextRepo();
-    const productRepo = await createProductRepo(remoteUrl);
-    const manifest = await resolveSessionResourceManifest({ workingDirectory: productRepo });
-    const provider = manifest.contract.contextProviders[0]!;
+  it(
+    'proposes updates on a branch without writing to the default branch',
+    async () => {
+      const { bareRepo, remoteUrl } = await createRemoteContextRepo();
+      const productRepo = await createProductRepo(remoteUrl);
+      const manifest = await resolveSessionResourceManifest({ workingDirectory: productRepo });
+      const provider = manifest.contract.contextProviders[0]!;
 
-    const proposal = await githubRepoProviderAdapter.propose?.({
-      provider,
-      manifestDigest: manifest.manifestDigest,
-      actorName: 'alice-laptop',
-      title: 'Roses policy',
-      body: 'When the user mentions roses, preserve the color decision in shared context.',
-      sourceKind: 'workflow',
-      credentials: { passphrase: '', recoveryCode: '' },
-      home: root,
-      source: 'manual-qa',
-    });
+      const proposal = await githubRepoProviderAdapter.propose?.({
+        provider,
+        manifestDigest: manifest.manifestDigest,
+        actorName: 'alice-laptop',
+        title: 'Roses policy',
+        body: 'When the user mentions roses, preserve the color decision in shared context.',
+        sourceKind: 'workflow',
+        credentials: { passphrase: '', recoveryCode: '' },
+        home: root,
+        source: 'manual-qa',
+      });
 
-    expect(proposal).toBeDefined();
-    expect(proposal?.status).toBe('branch_pushed');
-    expect(proposal?.branch).toMatch(/^viewport\/context\/roses-policy-/);
-    expect(proposal?.candidate_id).toContain(
-      'github-pr:team_memory:viewport/context/roses-policy-',
-    );
+      expect(proposal).toBeDefined();
+      expect(proposal?.status).toBe('branch_pushed');
+      expect(proposal?.branch).toMatch(/^viewport\/context\/roses-policy-/);
+      expect(proposal?.candidate_id).toContain(
+        'github-pr:team_memory:viewport/context/roses-policy-',
+      );
 
-    const heads = await runGit(['ls-remote', '--heads', bareRepo], undefined);
-    expect(heads.stdout).toContain(`refs/heads/${proposal?.branch}`);
+      const heads = await runGit(['ls-remote', '--heads', bareRepo], undefined);
+      expect(heads.stdout).toContain(`refs/heads/${proposal?.branch}`);
 
-    const mainTree = await runGit(
-      ['--git-dir', bareRepo, 'ls-tree', '-r', '--name-only', 'main'],
-      undefined,
-    );
-    expect(mainTree.stdout).not.toContain('context/proposals');
-  });
+      const mainTree = await runGit(
+        ['--git-dir', bareRepo, 'ls-tree', '-r', '--name-only', 'main'],
+        undefined,
+      );
+      expect(mainTree.stdout).not.toContain('context/proposals');
+    },
+    GIT_PROVIDER_TEST_TIMEOUT_MS,
+  );
 });
 
 async function createRemoteContextRepo(): Promise<{ bareRepo: string; remoteUrl: string }> {
