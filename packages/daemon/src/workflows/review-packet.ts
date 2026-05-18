@@ -11,6 +11,12 @@ export function buildReviewPacket(run: WorkflowRunRecord): Record<string, unknow
 
   return {
     source_key: 'daemon-workflow-readiness',
+    artifact_kind: 'run_summary',
+    subject: {
+      type: 'workflow_run',
+      id: run.id,
+      label: run.workflowTitle ?? run.workflowName,
+    },
     title: `${run.workflowTitle ?? run.workflowName} readiness packet`,
     status: reviewPacketStatus(run),
     decision: reviewDecision(run, failed, blocked),
