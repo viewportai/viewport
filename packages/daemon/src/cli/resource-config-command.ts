@@ -261,6 +261,7 @@ async function configDoctor(): Promise<void> {
   }
   printProviders(manifest.contract.contextProviders);
   printWorkflowRefs(manifest.contract.workflows);
+  printResources('Context packages', manifest.resources.contextPackages);
   printResources('Contexts', manifest.resources.contexts);
   printResources('Workflows', manifest.resources.workflows);
   printResources('Plans', manifest.resources.plans);
@@ -275,6 +276,7 @@ function getPathFlag(): string {
 function printManifest(title: string, manifest: ResolvedManifest): void {
   const resourceCount =
     manifest.resources.contexts.length +
+    manifest.resources.contextPackages.length +
     manifest.resources.workflows.length +
     manifest.resources.plans.length +
     manifest.resources.agentProfiles.length;
@@ -292,6 +294,7 @@ function printManifest(title: string, manifest: ResolvedManifest): void {
   }
   printProviders(manifest.contract.contextProviders);
   printWorkflowRefs(manifest.contract.workflows);
+  printResources('Context packages', manifest.resources.contextPackages);
   printResources('Contexts', manifest.resources.contexts);
   printResources('Workflows', manifest.resources.workflows);
   printResources('Plans', manifest.resources.plans);

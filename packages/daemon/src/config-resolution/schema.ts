@@ -157,6 +157,7 @@ export const ViewportConfigSchema = z
     resources: z
       .object({
         contexts: z.array(ResourceRefSchema).max(100).optional(),
+        contextPackages: z.array(ResourceRefSchema).max(100).optional(),
         workflows: z.array(ResourceRefSchema).max(100).optional(),
         plans: z.array(ResourceRefSchema).max(100).optional(),
         agentProfiles: z.array(ResourceRefSchema).max(100).optional(),

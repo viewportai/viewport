@@ -3,7 +3,12 @@ export const VIEWPORT_LEGACY_CONFIG_FILE = '.viewport/config.json';
 export const VIEWPORT_CONFIG_FILES = [VIEWPORT_CONFIG_FILE, VIEWPORT_LEGACY_CONFIG_FILE] as const;
 export const SESSION_RESOURCE_MANIFEST_SCHEMA = 'viewport.session_resource_manifest/v1';
 
-export type ViewportResourceKind = 'contexts' | 'workflows' | 'plans' | 'agentProfiles';
+export type ViewportResourceKind =
+  | 'contexts'
+  | 'contextPackages'
+  | 'workflows'
+  | 'plans'
+  | 'agentProfiles';
 
 export interface ViewportResourceRef {
   id: string;
@@ -124,6 +129,14 @@ export interface SessionWorkflowManifest extends ViewportWorkflowRef {
   resolution: 'requested_unverified';
 }
 
+export interface SessionContextPackageManifest extends ViewportResourceRef {
+  resource?: string;
+  version?: string;
+  channel?: string;
+  digest?: string;
+  resolution: 'requested_unverified';
+}
+
 export interface SessionResourceConflict {
   field: string;
   values: Array<{
@@ -153,6 +166,7 @@ export interface SessionResourceManifest {
     contextProviders: SessionContextProviderManifest[];
     contextResolution: ViewportContextResolution;
     workflows: SessionWorkflowManifest[];
+    contextPackages: SessionContextPackageManifest[];
     riskyPathRules: ViewportRiskyPathRule[];
   };
   conflicts: SessionResourceConflict[];

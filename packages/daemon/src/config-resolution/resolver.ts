@@ -3,6 +3,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { manifestRiskyPathRules, normalizeRiskyPathRules } from './approval-rules.js';
+import { manifestContextPackages } from './context-package-manifest.js';
 import { discoverViewportConfigPaths, discoverViewportConfigPathsSync } from './discovery.js';
 import { defaultCapabilities, defaultPrivacy } from './provider-defaults.js';
 import { ViewportConfigSchema, type ViewportConfigInput } from './schema.js';
@@ -27,7 +28,13 @@ import {
   type ViewportWorkflowRef,
 } from './types.js';
 
-const RESOURCE_KINDS: ViewportResourceKind[] = ['contexts', 'workflows', 'plans', 'agentProfiles'];
+const RESOURCE_KINDS: ViewportResourceKind[] = [
+  'contexts',
+  'contextPackages',
+  'workflows',
+  'plans',
+  'agentProfiles',
+];
 const CONFLICT_FIELDS: Array<keyof ViewportConfigDefaults> = [
   'inboxRoute',
   'visibility',
@@ -169,6 +176,9 @@ export function buildSessionResourceManifest(input: {
       contextProviders: manifestContextProviders(input.configs),
       contextResolution: mergeContextResolution(input.configs),
       workflows: manifestWorkflows(input.configs),
+      contextPackages: manifestContextPackages(
+        input.configs.map((config) => config.resources.contextPackages),
+      ),
       riskyPathRules: manifestRiskyPathRules(input.configs),
     },
     conflicts: detectConflicts(input.configs),
@@ -376,6 +386,7 @@ function detectConflicts(configs: ParsedViewportConfig[]): SessionResourceConfli
 function emptyManifestResources(): Record<ViewportResourceKind, SessionResourceManifestResource[]> {
   return {
     contexts: [],
+    contextPackages: [],
     workflows: [],
     plans: [],
     agentProfiles: [],
