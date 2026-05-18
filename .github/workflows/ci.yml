@@ -18,7 +18,6 @@ jobs:
       daemon: ${{ steps.filter.outputs.daemon }}
       relay: ${{ steps.filter.outputs.relay }}
       integration: ${{ steps.filter.outputs.integration }}
-      protocol: ${{ steps.filter.outputs.protocol }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -27,7 +26,6 @@ jobs:
           filters: |
             daemon:
               - 'packages/daemon/**'
-              - 'packages/protocol/**'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
@@ -40,43 +38,11 @@ jobs:
               - 'integration/**'
               - 'packages/daemon/**'
               - 'services/relay/**'
-              - 'packages/protocol/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - '.github/workflows/ci.yml'
-            protocol:
-              - 'packages/protocol/**'
               - 'packages/daemon/src/workflows/parser.ts'
               - 'packages/daemon/src/config-resolution/schema.ts'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
-
-  protocol:
-    name: Protocol
-    needs: changes
-    if: needs.changes.outputs.protocol == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/protocol
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-        working-directory: .
-      - run: npm run typecheck -w @viewportai/protocol
-        working-directory: .
-      - run: npm run test -w @viewportai/protocol
-        working-directory: .
-      - run: npm run validate:samples -w @viewportai/protocol
-        working-directory: .
-      - run: npm run build -w @viewportai/protocol
-        working-directory: .
 
   daemon:
     name: Daemon
