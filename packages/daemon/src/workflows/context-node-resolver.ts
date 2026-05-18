@@ -157,15 +157,24 @@ function requestedContextRef(input: {
   const matchedRef = input.refs.find(
     (ref) => input.provider && matchesProviderRef(input.provider, ref.ref),
   );
-  return matchedRef?.ref ?? input.item.alias ?? input.provider?.id ?? input.item.provider_id;
+  return matchedRef?.ref ?? providerReceiptRef(input.provider) ?? input.item.provider_id;
 }
 
 function resolvedContextVersion(
   provider: SessionContextProviderManifest | undefined,
   item: ResolvedContextItem,
 ): string {
-  const version = provider?.ref ?? provider?.branch ?? provider?.vault ?? item.digest ?? item.id;
-  return version.trim() || 'unversioned';
+  const version = [provider?.ref, provider?.branch, provider?.vault, item.digest].find(
+    (candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '',
+  );
+  return version ?? 'unversioned';
+}
+
+function providerReceiptRef(
+  provider: SessionContextProviderManifest | undefined,
+): string | undefined {
+  if (!provider) return undefined;
+  return provider.id || provider.vault || provider.ref || provider.repo || provider.provider;
 }
 
 function contextDigest(item: ResolvedContextItem): string {

@@ -531,6 +531,109 @@ describe('WorkflowRunPlatformSync', () => {
     });
   });
 
+  it('redacts context node bodies from platform sync while preserving receipts', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.nodes = {
+      attach_context: {
+        id: 'attach_context',
+        type: 'context',
+        title: 'Attach context',
+        status: 'completed',
+        output:
+          '{"query":"PAY-1842 private payment bug","items":[{"title":"docs/private-runbook.md","body":"secret payment runbook"}]}',
+        outputs: {
+          query: 'PAY-1842 private payment bug',
+          itemCount: 1,
+          items: [
+            {
+              id: '/repo/docs/private-runbook.md',
+              provider_id: 'payments-vault',
+              provider: 'viewport-vault',
+              title: 'docs/private-runbook.md',
+              body: 'secret payment runbook',
+            },
+          ],
+        },
+      },
+    };
+    run.contextReceipts = [
+      {
+        schema: 'viewport.context_receipt/v1',
+        package: 'payments-vault',
+        requested: 'context://vault/payments',
+        resolvedVersion: '2026.05.17',
+        provider: 'viewport-vault',
+        digest: 'sha256:context',
+        freshness: 'resolved_at_run',
+        usedBy: {
+          runId: run.id,
+          nodeId: 'attach_context',
+          providerId: 'payments-vault',
+          alias: null,
+        },
+        resolvedAt: '2026-05-17T10:00:00.000Z',
+      },
+    ];
+    run.events = [
+      {
+        id: 'event-context-output',
+        runId: run.id,
+        timestamp: 1_000,
+        type: 'node-output',
+        nodeId: 'attach_context',
+        message: 'Context node attach_context resolved 1 item',
+        data: {
+          query: 'PAY-1842 private payment bug',
+          providerCount: 1,
+          itemCount: 1,
+          items: [
+            {
+              id: '/repo/docs/private-runbook.md',
+              provider_id: 'payments-vault',
+              provider: 'viewport-vault',
+              title: 'docs/private-runbook.md',
+              body: 'secret payment runbook',
+            },
+          ],
+        },
+      },
+    ];
+
+    await sync.sync(run);
+
+    const payload = calls[0]!;
+    expect(JSON.stringify(payload)).not.toContain('PAY-1842');
+    expect(JSON.stringify(payload)).not.toContain('secret payment runbook');
+    expect(JSON.stringify(payload)).not.toContain('docs/private-runbook.md');
+    expect(JSON.stringify(payload)).not.toContain('/repo/docs/private-runbook.md');
+    expect(payload['output_snapshot']).toMatchObject({
+      attach_context: 'Context node output redacted by workflow data capture policy.',
+    });
+    expect((payload['nodes'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      node_key: 'attach_context',
+      output: 'Context node output redacted by workflow data capture policy.',
+      output_snapshot: {
+        redacted: true,
+        itemCount: 1,
+      },
+    });
+    expect((payload['events'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      message: 'Context node output metadata redacted by workflow data capture policy.',
+      payload: {
+        redacted: true,
+        providerCount: 1,
+        itemCount: 1,
+      },
+    });
+    expect(payload['evidence_packets']).toEqual([]);
+    expect(payload['context_receipts_snapshot']).toEqual(run.contextReceipts);
+  });
+
   it('retries queued sync with the latest run snapshot after a transient failure', async () => {
     const calls: Array<Record<string, unknown>> = [];
     let callCount = 0;

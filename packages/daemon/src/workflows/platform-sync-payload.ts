@@ -25,21 +25,20 @@ export function workflowRunToSyncPayload(
     runtime_run_id: run.id,
     status: run.status,
     data_capture_policy: policy,
-    output_snapshot: {
-      inputs: run.inputs,
-      nodes: Object.fromEntries(
-        Object.entries(run.nodes).map(([key, node]) => [
-          key,
-          { status: node.status, output: node.output, outputs: node.outputs ?? null },
-        ]),
-      ),
-    },
+    output_snapshot: formatRunOutputSnapshot(run, enforcePolicy),
     error_summary: run.error ?? null,
     started_at: iso(run.startedAt),
     completed_at: iso(run.completedAt),
     nodes: Object.values(run.nodes).map((node) => formatNode(node, policy, enforcePolicy)),
     artifacts: run.artifacts.map((artifact) => formatArtifact(artifact, policy, enforcePolicy)),
-    events: events.map((event) => formatEvent(event, policy, enforcePolicy)),
+    events: events.map((event) =>
+      formatEvent(
+        event,
+        policy,
+        enforcePolicy,
+        event.nodeId ? run.nodes[event.nodeId]?.type : undefined,
+      ),
+    ),
     evidence_packets: Object.values(run.nodes).flatMap(formatEvidencePacket),
     action_proposals: Object.values(run.nodes).flatMap(formatActionProposal),
     approval_decisions: Object.values(run.nodes).flatMap(formatApprovalDecision),
@@ -64,28 +63,39 @@ function formatNode(
   policy: ReturnType<typeof dataCapturePolicy>,
   enforcePolicy: boolean,
 ): Record<string, unknown> {
+  const contextNode = enforcePolicy && node.type === 'context';
+
   return {
     node_key: node.id,
     title: node.title ?? node.id,
     type: node.type,
     status: node.status,
     session_id: node.sessionId ?? null,
-    worktree_path: node.worktreePath ?? null,
-    output: node.output ?? null,
-    output_snapshot: node.outputs ?? null,
+    worktree_path: enforcePolicy ? null : (node.worktreePath ?? null),
+    output: contextNode
+      ? 'Context node output redacted by workflow data capture policy.'
+      : (node.output ?? null),
+    output_snapshot: contextNode ? redactedContextOutputSnapshot(node) : (node.outputs ?? null),
     transcript_excerpt:
       enforcePolicy && policy.transcripts === 'none' ? null : (node.transcriptExcerpt ?? null),
     error: node.error ?? null,
     started_at: iso(node.startedAt),
     completed_at: iso(node.completedAt),
-    metadata: {
-      ...(node.metadata ?? {}),
-      approval: node.approval ?? null,
-      inlineAgents: node.inlineAgents ?? null,
-      nativeSessionId: node.nativeSessionId ?? null,
-      exitCode: node.exitCode ?? null,
-      skipReason: node.skipReason ?? null,
-    },
+    metadata: formatNodeMetadata(node, contextNode),
+  };
+}
+
+function formatNodeMetadata(
+  node: WorkflowNodeRunState,
+  redactedContextNode: boolean,
+): Record<string, unknown> {
+  return {
+    ...(redactedContextNode ? { context: { redacted: true } } : (node.metadata ?? {})),
+    approval: node.approval ?? null,
+    inlineAgents: node.inlineAgents ?? null,
+    nativeSessionId: node.nativeSessionId ?? null,
+    exitCode: node.exitCode ?? null,
+    skipReason: node.skipReason ?? null,
   };
 }
 
@@ -114,18 +124,27 @@ function formatEvent(
   event: WorkflowRunEvent,
   policy: ReturnType<typeof dataCapturePolicy>,
   enforcePolicy: boolean,
+  nodeType?: string,
 ): Record<string, unknown> {
   const redactedLog = enforcePolicy && event.type === 'node-log' && policy.logs === 'metadata';
+  const redactedContextOutput =
+    enforcePolicy && nodeType === 'context' && event.type === 'node-output';
 
   return {
     runtime_event_id: event.id,
     node_key: event.nodeId ?? null,
     type: event.type,
     severity: eventSeverity(event),
-    message: redactedLog
-      ? 'Node log content redacted by workflow data capture policy.'
-      : event.message,
-    payload: redactedLog ? redactedLogPayload(event) : (event.data ?? null),
+    message: redactedContextOutput
+      ? 'Context node output metadata redacted by workflow data capture policy.'
+      : redactedLog
+        ? 'Node log content redacted by workflow data capture policy.'
+        : event.message,
+    payload: redactedContextOutput
+      ? redactedContextEventPayload(event)
+      : redactedLog
+        ? redactedLogPayload(event)
+        : (event.data ?? null),
     occurred_at: iso(event.timestamp),
   };
 }
@@ -162,6 +181,7 @@ function formatActionProposal(node: WorkflowNodeRunState): Array<Record<string, 
 }
 
 function formatEvidencePacket(node: WorkflowNodeRunState): Array<Record<string, unknown>> {
+  if (node.type === 'context') return [];
   if (node.status !== 'completed') return [];
   const output = typeof node.output === 'string' ? node.output.trim() : '';
   if (!output) return [];
@@ -188,6 +208,48 @@ function formatEvidencePacket(node: WorkflowNodeRunState): Array<Record<string, 
       occurred_at: iso(node.completedAt ?? node.startedAt),
     },
   ];
+}
+
+function formatRunOutputSnapshot(
+  run: WorkflowRunRecord,
+  enforcePolicy: boolean,
+): Record<string, unknown> {
+  return {
+    inputs: run.inputs,
+    nodes: Object.fromEntries(
+      Object.entries(run.nodes).map(([key, node]) => [
+        key,
+        {
+          status: node.status,
+          output:
+            enforcePolicy && node.type === 'context'
+              ? 'Context node output redacted by workflow data capture policy.'
+              : node.output,
+          outputs:
+            enforcePolicy && node.type === 'context'
+              ? redactedContextOutputSnapshot(node)
+              : (node.outputs ?? null),
+        },
+      ]),
+    ),
+  };
+}
+
+function redactedContextOutputSnapshot(node: WorkflowNodeRunState): Record<string, unknown> {
+  const itemCount = numberValue(node.outputs?.['itemCount']);
+  return {
+    redacted: true,
+    itemCount: itemCount ?? null,
+  };
+}
+
+function redactedContextEventPayload(event: WorkflowRunEvent): Record<string, unknown> {
+  const payload = recordValue(event.data);
+  return {
+    redacted: true,
+    providerCount: numberValue(payload?.['providerCount']) ?? null,
+    itemCount: numberValue(payload?.['itemCount']) ?? null,
+  };
 }
 
 function formatApprovalDecision(node: WorkflowNodeRunState): Array<Record<string, unknown>> {
@@ -339,6 +401,10 @@ function arrayValue(value: unknown): unknown[] | null {
 function stringValue(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function readString(value: unknown): string | null {

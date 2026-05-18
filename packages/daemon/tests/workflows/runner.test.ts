@@ -407,9 +407,37 @@ nodes:
     expect(JSON.stringify(completed?.contextReceipts)).not.toContain('PAY-1842');
     expect(JSON.stringify(completed?.contextReceipts)).not.toContain('checkout runbook');
     expect(JSON.stringify(completed?.contextReceipts)).not.toContain(projectDir);
-    expect(workflowRunToSyncPayload(completed!)['context_receipts_snapshot']).toEqual(
-      completed?.contextReceipts,
-    );
+    const syncPayload = workflowRunToSyncPayload(completed!, {
+      enforceDataCapturePolicy: true,
+    });
+    expect(syncPayload['context_receipts_snapshot']).toEqual(completed?.contextReceipts);
+    expect(JSON.stringify(syncPayload)).not.toContain('PAY-1842');
+    expect(JSON.stringify(syncPayload)).not.toContain('checkout runbook');
+    expect(JSON.stringify(syncPayload)).not.toContain(projectDir);
+    expect(syncPayload['evidence_packets']).toEqual([]);
+    expect(syncPayload).toMatchObject({
+      output_snapshot: {
+        nodes: {
+          attach_context: {
+            output: 'Context node output redacted by workflow data capture policy.',
+            outputs: {
+              redacted: true,
+              itemCount: 1,
+            },
+          },
+        },
+      },
+      nodes: [
+        expect.objectContaining({
+          node_key: 'attach_context',
+          output: 'Context node output redacted by workflow data capture policy.',
+          output_snapshot: {
+            redacted: true,
+            itemCount: 1,
+          },
+        }),
+      ],
+    });
   });
 
   it('fails context nodes when a required provider is unavailable', async () => {

@@ -255,6 +255,11 @@ function collectOutputs(run: WorkflowRunRecord): Record<string, string> {
   return Object.fromEntries(
     Object.values(run.nodes)
       .filter((node) => typeof node.output === 'string' && node.output.length > 0)
-      .map((node) => [node.id, node.output as string]),
+      .map((node) => [
+        node.id,
+        node.type === 'context'
+          ? 'Context node output redacted by workflow data capture policy.'
+          : (node.output as string),
+      ]),
   );
 }
