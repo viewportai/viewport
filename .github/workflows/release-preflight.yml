@@ -76,7 +76,7 @@ jobs:
           NODE
 
       - name: Verify release secret is configured
-        if: steps.changes.outputs.should_run == 'true'
+        if: steps.changes.outputs.should_run == 'true' && github.event_name != 'pull_request'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -85,8 +85,12 @@ jobs:
             exit 1
           fi
 
+      - name: Skip npm authentication on pull requests
+        if: steps.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
+        run: echo "Skipping npm auth on pull requests; release publish auth is verified on dispatch/release workflows."
+
       - name: Verify npm authentication
-        if: steps.changes.outputs.should_run == 'true'
+        if: steps.changes.outputs.should_run == 'true' && github.event_name != 'pull_request'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm whoami --registry https://registry.npmjs.org/

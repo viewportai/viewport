@@ -7,6 +7,8 @@ export interface ManagedWorkerOptions {
   credential: string;
   accessMode: ManagedWorkerAccessMode;
   runnerProfile?: string;
+  runnerPosture?: Record<string, unknown>;
+  runnerPool?: string;
   workdir?: string;
   leaseSeconds: number;
   sleepSeconds: number;
@@ -18,6 +20,7 @@ export interface ManagedWorkerOptions {
 export type ManagedWorkerAccessMode = 'relay' | 'polling' | 'direct';
 
 export interface ManagedWorkerCapabilities {
+  runnerPool?: string;
   agentCommand?: string;
   actionCommand?: string;
   providerActions: boolean;

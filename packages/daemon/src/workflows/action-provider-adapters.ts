@@ -14,6 +14,7 @@ import {
   objectNumber,
   objectString,
   parseJson,
+  providerCredentialValue,
   safeResponseText,
   stringValue,
   withIdempotencyHeader,
@@ -71,7 +72,10 @@ async function executeGitHubAction(
 ): Promise<ActionResult> {
   const owner = stringValue(actionInput['owner']);
   const repo = stringValue(actionInput['repo']);
-  const token = stringValue(actionInput['token']) ?? process.env['GITHUB_TOKEN'];
+  const token = providerCredentialValue(actionInput, {
+    defaultRef: 'github/token',
+    defaultEnv: 'GITHUB_TOKEN',
+  });
   if (!owner || !repo || !token) {
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
@@ -127,7 +131,10 @@ async function executeJiraAction(
       stringValue(actionInput['baseUrl']) ??
       process.env['JIRA_BASE_URL'],
   );
-  const token = stringValue(actionInput['token']) ?? process.env['JIRA_API_TOKEN'];
+  const token = providerCredentialValue(actionInput, {
+    defaultRef: 'jira/token',
+    defaultEnv: 'JIRA_API_TOKEN',
+  });
   const email = stringValue(actionInput['email']) ?? process.env['JIRA_EMAIL'];
   const issueKey =
     stringValue(actionInput['issue_key']) ??
@@ -182,7 +189,10 @@ async function executeSlackAction(
   actionInput: Record<string, WorkflowInputValue>,
   options: { idempotencyKey?: string },
 ): Promise<ActionResult> {
-  const token = stringValue(actionInput['token']) ?? process.env['SLACK_BOT_TOKEN'];
+  const token = providerCredentialValue(actionInput, {
+    defaultRef: 'slack/bot-token',
+    defaultEnv: 'SLACK_BOT_TOKEN',
+  });
   const channel = stringValue(actionInput['channel']);
   const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
   if (!token || !channel || !text) {
