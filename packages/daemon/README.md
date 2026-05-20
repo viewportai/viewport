@@ -168,6 +168,40 @@ development from accidentally streaming to production after `vpd profile use
 prod`, and it also prevents changing a shell default from silently rerouting a
 running daemon.
 
+Managed workflow runners can also be operated from the daemon CLI:
+
+```bash
+vpd workflow worker --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool> --doctor --json
+vpd workflow worker --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool>
+```
+
+When the Viewport app creates or rotates a runner credential it also returns a
+registration profile. Save that JSON profile locally and start the worker with:
+
+```bash
+vpd workflow worker --registration-profile="$HOME/.viewport/managed-executors/<runner>.json" --doctor --json
+vpd workflow worker --registration-profile="$HOME/.viewport/managed-executors/<runner>.json"
+```
+
+`--doctor` checks the local daemon agent inventory and proves the platform
+runner credential with heartbeat-only traffic. It does not claim workflow work.
+The runner remains organization scoped; teams are preserved on workflow runs,
+review packets, and exported artifacts.
+
+Team Resource export bundles can be synced into a Git checkout without giving
+the API permission to clone or push remote repositories:
+
+```bash
+vpd team-resource sync --bundle /path/to/export-bundle.json --repo /path/to/team-resource-repo --json
+vpd team-resource sync --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --resource <team-resource-id> --repo /path/to/team-resource-repo --push --json
+```
+
+The command verifies each file hash, rejects paths outside `.viewport/`, writes
+the bundle, and creates a Git commit. With server credentials it fetches the
+bundle and reports the resulting commit back to Viewport. Pass `--push` to push
+`HEAD` to `origin` for the selected branch. Use `--no-commit` to only
+materialize the files for inspection.
+
 ## Quality gates
 
 ```bash

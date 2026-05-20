@@ -8,9 +8,10 @@ export { workflowRunToSyncPayload as localRunToSyncPayload } from '../workflows/
 
 export function capabilityPayload(
   capabilities: ManagedWorkerCapabilities,
-): Record<string, string[]> {
+): Record<string, string[] | string> {
   return {
     tools: ['shell'],
+    ...(capabilities.runnerPool ? { runner_pool: capabilities.runnerPool } : {}),
     ...(capabilities.agentCommand && capabilities.agents.length > 0
       ? { agents: capabilities.agents }
       : {}),

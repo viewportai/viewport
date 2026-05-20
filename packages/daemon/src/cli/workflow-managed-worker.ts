@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
@@ -43,6 +45,23 @@ export async function workflowWorker(): Promise<void> {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }
   await validateDaemonAgentCapabilities(options);
+  if (hasFlag('doctor')) {
+    await heartbeat(options, 'online', 'idle');
+    await safeHeartbeat(options, 'offline', 'offline');
+    if (isJsonMode()) {
+      printJson({
+        command: 'workflow worker doctor',
+        ok: true,
+        accessMode: options.accessMode,
+        runnerProfile: options.runnerProfile ?? null,
+        runnerPool: options.runnerPool ?? null,
+        capabilities: options.capabilities,
+      });
+      return;
+    }
+    console.log('Workflow worker doctor passed.');
+    return;
+  }
   if (hasFlag('preflight')) {
     if (isJsonMode()) {
       printJson({
@@ -206,21 +225,36 @@ async function validateDaemonAgentCapabilities(options: ManagedWorkerOptions): P
 }
 
 function resolveWorkerOptions(): ManagedWorkerOptions {
+  const registrationProfile = readRegistrationProfile();
   const server =
-    getFlag('server') ?? process.env['VIEWPORT_SERVER_URL'] ?? process.env['VPD_SERVER_URL'];
+    getFlag('server') ??
+    process.env['VIEWPORT_SERVER_URL'] ??
+    process.env['VPD_SERVER_URL'] ??
+    registrationProfile?.serverUrl;
   const workspaceId =
-    getFlag('workspace') ?? getFlag('resource') ?? process.env['VIEWPORT_WORKSPACE_ID'];
-  const executorId = getFlag('executor') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ID'];
+    getFlag('workspace') ??
+    getFlag('resource') ??
+    process.env['VIEWPORT_WORKSPACE_ID'] ??
+    registrationProfile?.workspaceId;
+  const executorId =
+    getFlag('executor') ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_ID'] ??
+    registrationProfile?.executorId;
   const credential =
     getFlag('credential') ??
     process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
-    process.env['VPD_MANAGED_EXECUTOR_TOKEN'];
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ??
+    registrationProfile?.credential;
 
   if (!server || !workspaceId || !executorId || !credential) {
     throw new Error(
-      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--once]',
+      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--doctor|--preflight|--once]',
     );
   }
+  const profileCapabilities = registrationProfile?.capabilities ?? {};
+  const profileRunnerPool =
+    stringValue(profileCapabilities['runner_pool']) ??
+    stringValue(profileCapabilities['runnerPool']);
 
   return {
     server: server.replace(/\/+$/, ''),
@@ -228,26 +262,111 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     executorId,
     credential,
     accessMode: managedWorkerAccessMode(
-      getFlag('access-mode') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ACCESS_MODE'],
+      getFlag('access-mode') ??
+        process.env['VIEWPORT_MANAGED_EXECUTOR_ACCESS_MODE'] ??
+        registrationProfile?.accessMode,
     ),
     runnerProfile:
-      getFlag('runner-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE'] ?? undefined,
+      getFlag('runner-profile') ??
+      process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE'] ??
+      registrationProfile?.runnerProfile ??
+      undefined,
+    runnerPosture: registrationProfile?.runnerPosture,
+    runnerPool:
+      getFlag('runner-pool') ??
+      process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
+      process.env['VIEWPORT_MANAGED_EXECUTOR_RUNNER_POOL'] ??
+      profileRunnerPool ??
+      undefined,
     workdir: getFlag('workdir') ? path.resolve(getFlag('workdir')!) : undefined,
     leaseSeconds: positiveIntFlagValue(getFlag('lease')) ?? 300,
     sleepSeconds: positiveIntFlagValue(getFlag('sleep')) ?? 5,
     maxRuns: positiveIntFlagValue(getFlag('max-runs')),
     once: hasFlag('once'),
     capabilities: {
+      runnerPool:
+        getFlag('runner-pool') ??
+        process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
+        process.env['VIEWPORT_MANAGED_EXECUTOR_RUNNER_POOL'] ??
+        profileRunnerPool ??
+        undefined,
       agentCommand: getFlag('agent-command') ?? process.env['VIEWPORT_MANAGED_AGENT_COMMAND'],
       actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
       providerActions:
         hasFlag('provider-actions') || process.env['VIEWPORT_MANAGED_PROVIDER_ACTIONS'] === '1',
-      agents: listFlagValue(getFlag('agents')),
-      models: listFlagValue(getFlag('models')),
-      integrations: listFlagValue(getFlag('integrations')),
-      secrets: listFlagValue(getFlag('secrets')),
+      agents: listFlagOrProfile('agents', profileCapabilities['agents']),
+      models: listFlagOrProfile('models', profileCapabilities['models']),
+      integrations: listFlagOrProfile('integrations', profileCapabilities['integrations']),
+      secrets: listFlagOrProfile('secrets', profileCapabilities['secrets']),
     },
   };
+}
+
+interface RegistrationProfile {
+  serverUrl?: string;
+  workspaceId?: string;
+  executorId?: string;
+  credential?: string;
+  accessMode?: string;
+  runnerProfile?: string;
+  runnerPosture?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+}
+
+function readRegistrationProfile(): RegistrationProfile | null {
+  const profilePath =
+    getFlag('registration-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE_FILE'];
+  if (!profilePath) return null;
+
+  const resolved = resolveProfilePath(profilePath);
+  const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Managed executor registration profile is not a JSON object: ${resolved}`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const schema = stringValue(record['schema']);
+  if (schema && schema !== 'viewport.managed_executor_registration/v1') {
+    throw new Error(`Unsupported managed executor registration profile schema: ${schema}`);
+  }
+
+  return {
+    serverUrl: stringValue(record['server_url']) ?? stringValue(record['serverUrl']),
+    workspaceId: stringValue(record['workspace_id']) ?? stringValue(record['workspaceId']),
+    executorId:
+      stringValue(record['managed_executor_id']) ??
+      stringValue(record['executor_id']) ??
+      stringValue(record['executorId']),
+    credential: stringValue(record['credential']),
+    accessMode: stringValue(record['access_mode']) ?? stringValue(record['accessMode']),
+    runnerProfile: stringValue(record['runner_profile']) ?? stringValue(record['runnerProfile']),
+    runnerPosture: recordValue(record['runner_posture']) ?? recordValue(record['runnerPosture']),
+    capabilities:
+      record['capabilities'] &&
+      typeof record['capabilities'] === 'object' &&
+      !Array.isArray(record['capabilities'])
+        ? (record['capabilities'] as Record<string, unknown>)
+        : undefined,
+  };
+}
+
+function resolveProfilePath(profilePath: string): string {
+  if (profilePath === '~') return os.homedir();
+  if (profilePath.startsWith('~/')) return path.join(os.homedir(), profilePath.slice(2));
+  return path.resolve(profilePath);
+}
+
+function listFlagOrProfile(flag: string, profileValue: unknown): string[] {
+  const fromFlag = listFlagValue(getFlag(flag));
+  return fromFlag.length > 0 ? fromFlag : stringList(profileValue);
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 async function heartbeat(
@@ -261,9 +380,16 @@ async function heartbeat(
     access_mode: options.accessMode,
     runner_profile: options.runnerProfile ?? null,
     runner_posture: {
-      transport: { mode: options.accessMode },
-      execution: { kind: 'customer-managed' },
-      version: process.env['npm_package_version'] ?? null,
+      ...(options.runnerPosture ?? {}),
+      transport: {
+        ...recordValue(options.runnerPosture?.['transport']),
+        mode: options.accessMode,
+      },
+      execution: recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' },
+      version:
+        stringValue(options.runnerPosture?.['version']) ??
+        process.env['npm_package_version'] ??
+        null,
     },
     capabilities: capabilityPayload(options.capabilities),
   });

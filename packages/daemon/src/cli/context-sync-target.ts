@@ -7,6 +7,7 @@ export interface ContextSyncTarget {
   workspaceId: string;
   serverUrl: string;
   credential: string;
+  teamId?: string;
   tlsVerify?: 'auto' | '0' | '1';
   caCertPath?: string;
   tlsPins?: string[];
@@ -33,6 +34,7 @@ export async function resolveContextSyncTarget(commandName: string): Promise<Con
   const explicitWorkspaceId = getFlag('workspace');
   const explicitServerUrl = getFlag('server-url');
   const explicitCredential = getFlag('credential');
+  const explicitTeamId = getFlag('team');
   const decisionSigningKeys =
     parseDecisionSigningKeys(
       getFlag('context-decision-key') ??
@@ -52,6 +54,7 @@ export async function resolveContextSyncTarget(commandName: string): Promise<Con
       workspaceId: explicitWorkspaceId,
       serverUrl: explicitServerUrl,
       credential: explicitCredential,
+      teamId: explicitTeamId,
       tlsVerify: daemon.server?.tlsVerify ?? relay.tlsVerify,
       caCertPath: daemon.server?.caCertPath ?? relay.caCertPath,
       tlsPins: daemon.server?.tlsPins ?? relay.tlsPins,
@@ -65,6 +68,7 @@ export async function resolveContextSyncTarget(commandName: string): Promise<Con
       explicitWorkspaceId ?? resolveLocalOrgBindingSync(process.cwd())?.organizationId,
     explicitServerUrl,
     explicitCredential,
+    explicitTeamId,
     decisionSigningKeys,
   });
 
@@ -123,6 +127,7 @@ export function resolveConfiguredContextSyncTarget(
     requestedWorkspaceId?: string;
     explicitServerUrl?: string;
     explicitCredential?: string;
+    explicitTeamId?: string;
     decisionSigningKeys?: Record<string, string>;
   },
 ): ContextSyncTarget | null {
@@ -132,6 +137,7 @@ export function resolveConfiguredContextSyncTarget(
   return {
     ...target,
     contextResourceId: options.contextResourceId,
+    teamId: options.explicitTeamId,
     decisionSigningKeys: options.decisionSigningKeys,
   };
 }

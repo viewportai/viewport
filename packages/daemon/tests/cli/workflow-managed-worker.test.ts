@@ -701,6 +701,195 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"preflight": true');
   });
 
+  it('doctors platform credentials and runner pool without claiming work', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--runner-profile',
+      'payments-vps',
+      '--runner-pool',
+      'payments-prod',
+      '--agents',
+      'codex',
+      '--agent-command',
+      'cat',
+      '--doctor',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          access_mode: 'relay',
+          runner_profile: 'payments-vps',
+          capabilities: {
+            runner_pool: 'payments-prod',
+            tools: ['shell'],
+            agents: ['codex'],
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_1' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(platformRequests.map((request) => request.body)).toEqual([
+      expect.objectContaining({ status: 'online', health_status: 'idle' }),
+      expect.objectContaining({ status: 'offline', health_status: 'offline' }),
+    ]);
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'))).toMatchObject({
+      command: 'workflow worker doctor',
+      ok: true,
+      runnerPool: 'payments-prod',
+      capabilities: { runnerPool: 'payments-prod' },
+    });
+  });
+
+  it('loads managed executor registration profiles for doctor checks', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-'));
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential: 'vpexec_profile_secret',
+        access_mode: 'polling',
+        runner_profile: 'profile-runner',
+        runner_posture: {
+          transport: {
+            mode: 'polling',
+            endpoint: 'https://runner.example.com/workflow',
+          },
+          execution: {
+            kind: 'customer-managed',
+            isolation: 'customer-boundary',
+          },
+          version: 'viewport.runner_posture/v1',
+        },
+        capabilities: {
+          runner_pool: 'profile-pool',
+          agents: ['codex'],
+          models: ['gpt-5.5'],
+          integrations: ['github'],
+          secrets: ['github/token'],
+        },
+      }),
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--agent-command',
+      'cat',
+      '--doctor',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          access_mode: 'polling',
+          runner_profile: 'profile-runner',
+          runner_posture: {
+            transport: {
+              mode: 'polling',
+              endpoint: 'https://runner.example.com/workflow',
+            },
+            execution: {
+              kind: 'customer-managed',
+              isolation: 'customer-boundary',
+            },
+            version: 'viewport.runner_posture/v1',
+          },
+          capabilities: {
+            runner_pool: 'profile-pool',
+            tools: ['shell'],
+            agents: ['codex'],
+            models: ['gpt-5.5'],
+            integrations: ['github'],
+            secrets: ['github/token'],
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+    ]);
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'))).toMatchObject({
+      command: 'workflow worker doctor',
+      ok: true,
+      accessMode: 'polling',
+      runnerProfile: 'profile-runner',
+      runnerPool: 'profile-pool',
+    });
+  });
+
   it('waits for platform approval, approves the local gate, and syncs the resumed run', async () => {
     process.argv = [
       'node',

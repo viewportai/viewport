@@ -35,6 +35,7 @@ export async function pushContextEvents(options: {
   workspaceId?: string;
   serverUrl: string;
   credential: string;
+  teamId?: string;
   tlsVerify?: TlsVerifyMode;
   caCertPath?: string;
   tlsPins?: string[];
@@ -66,6 +67,7 @@ export async function pushContextEvents(options: {
     {
       credential: options.credential,
       ...(options.workspaceId ? { target_workspace_id: options.workspaceId } : {}),
+      ...(options.teamId ? { team_id: options.teamId } : {}),
       events,
       ...(publicIdentities.length > 0 ? { public_identities: publicIdentities } : {}),
       ...(candidateDecisionApplications.length > 0
@@ -91,6 +93,7 @@ export async function pullContextEvents(options: {
   workspaceId?: string;
   serverUrl: string;
   credential: string;
+  teamId?: string;
   tlsVerify?: TlsVerifyMode;
   caCertPath?: string;
   tlsPins?: string[];
@@ -129,6 +132,7 @@ export async function pullContextEvents(options: {
       credential: options.credential,
       repo_id: metadata.repoId,
       context_resource_id: options.contextResourceId,
+      ...(options.teamId ? { team_id: options.teamId } : {}),
       ...(metadata.lastServerPullReceivedAt
         ? { after_received_at: metadata.lastServerPullReceivedAt }
         : {}),
