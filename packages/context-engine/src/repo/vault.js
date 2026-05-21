@@ -486,8 +486,24 @@ class ContextVault {
     return Buffer.from(encoded, 'base64');
   }
 
-  appendSharedEvent({ repoId, actorName, type, payload, contextResourceId = null }) {
-    return events.appendSharedEvent(this, { repoId, actorName, type, payload, contextResourceId });
+  appendSharedEvent({
+    repoId,
+    actorName,
+    type,
+    payload,
+    contextResourceId = null,
+    sourceUri = null,
+    sourceKind = null,
+  }) {
+    return events.appendSharedEvent(this, {
+      repoId,
+      actorName,
+      type,
+      payload,
+      contextResourceId,
+      sourceUri,
+      sourceKind,
+    });
   }
 
   appendPrivateEvent({ repoId, actorName, type, payload, contextResourceId = null }) {

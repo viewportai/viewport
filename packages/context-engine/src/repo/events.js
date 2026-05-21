@@ -6,7 +6,15 @@ const { signEnvelope } = require('../crypto/signatures');
 const { listJsonFiles, readJson, writeJson } = require('./files');
 const { repoPaths } = require('./paths');
 
-function appendSharedEvent(vault, { repoId, actorName, type, payload, contextResourceId = null }) {
+function appendSharedEvent(vault, {
+  repoId,
+  actorName,
+  type,
+  payload,
+  contextResourceId = null,
+  sourceUri = null,
+  sourceKind = null,
+}) {
   const metadata = vault.getRepoMetadata(repoId);
   const repoKey = vault.getRepoKey(repoId, metadata.currentKeyEpoch);
   const encrypted = encryptJson(payload, repoKey);
@@ -19,6 +27,8 @@ function appendSharedEvent(vault, { repoId, actorName, type, payload, contextRes
     encrypted,
     payloadDigest: digest(canonicalize(payload)),
     contextResourceId,
+    sourceUri,
+    sourceKind,
   });
 }
 
@@ -49,6 +59,8 @@ function appendUnsignedEvent(
     grant = null,
     payloadDigest = null,
     contextResourceId = null,
+    sourceUri = null,
+    sourceKind = null,
   },
 ) {
   const event = {
@@ -61,6 +73,8 @@ function appendUnsignedEvent(
     createdAt: new Date().toISOString(),
     parentIds: latestEventIds(vault.home, repoId).slice(-2),
     ...(contextResourceId ? { contextResourceId } : {}),
+    ...(sourceUri ? { sourceUri } : {}),
+    ...(sourceKind ? { sourceKind } : {}),
     encrypted,
     grant,
     payloadDigest,

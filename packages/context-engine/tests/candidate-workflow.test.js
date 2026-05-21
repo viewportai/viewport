@@ -18,6 +18,21 @@ test('candidate workflow supports assignment batch rejection tombstone and edit-
     source: 'workflow://blocks-run/pr-review',
     sourceKind: 'workflow',
   });
+  const candidateEventFile = fs
+    .readdirSync(path.join(aliceVault.home, 'repos', repoId, 'events'))
+    .find((file) => {
+      const record = JSON.parse(
+        fs.readFileSync(path.join(aliceVault.home, 'repos', repoId, 'events', file), 'utf8'),
+      );
+      return record.type === 'entry.proposed';
+    });
+  assert.ok(candidateEventFile);
+  const candidateEvent = JSON.parse(
+    fs.readFileSync(path.join(aliceVault.home, 'repos', repoId, 'events', candidateEventFile), 'utf8'),
+  );
+  assert.equal(candidateEvent.sourceUri, 'workflow://blocks-run/pr-review');
+  assert.equal(candidateEvent.sourceKind, 'workflow');
+  assert.equal(JSON.stringify(candidateEvent).includes('Raw tool output says'), false);
   aliceVault.proposeEntry({
     repoId,
     actorName: 'alice',
