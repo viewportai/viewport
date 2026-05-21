@@ -87,8 +87,13 @@ export function getArgs(): string[] {
 
 export function getFlag(name: string): string | undefined {
   const idx = args.indexOf(`--${name}`);
-  if (idx === -1 || idx + 1 >= args.length) return undefined;
-  return args[idx + 1];
+  if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+
+  const prefix = `--${name}=`;
+  const inline = args.find((entry) => entry.startsWith(prefix));
+  if (!inline) return undefined;
+
+  return inline.slice(prefix.length);
 }
 
 export function getDaemonPort(): number {
@@ -96,5 +101,5 @@ export function getDaemonPort(): number {
 }
 
 export function hasFlag(name: string): boolean {
-  return args.includes(`--${name}`);
+  return args.includes(`--${name}`) || args.some((entry) => entry.startsWith(`--${name}=`));
 }
