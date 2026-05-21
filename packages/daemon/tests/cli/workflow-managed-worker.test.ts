@@ -1079,7 +1079,14 @@ describe('workflow managed worker CLI', () => {
                     approved: true,
                     decision: 'approve',
                     message: 'Ship it',
-                    actor: { name: 'Mehr', source: 'viewport-web' },
+                    actor: {
+                      id: '1',
+                      kind: 'user',
+                      name: 'Mehr',
+                      email: 'mehrshad.sahebsara@gmail.com',
+                      source: 'viewport-web',
+                      displayName: 'Mehr Sahebsara',
+                    },
                     executionGrant: {
                       schema: 'viewport.execution_grant/v1',
                       digest: 'sha256:approved-grant',
@@ -1126,7 +1133,6 @@ describe('workflow managed worker CLI', () => {
         expect(body).toMatchObject({
           approved: true,
           message: 'Ship it',
-          actor: { name: 'Mehr', source: 'viewport-web' },
           expectedActionDigest: 'sha256:reviewed-action',
           executionGrant: {
             schema: 'viewport.execution_grant/v1',
@@ -1135,6 +1141,12 @@ describe('workflow managed worker CLI', () => {
             approval_decision_key: 'approve-open-pr',
             issued_at: '2026-05-17T10:00:00.000Z',
           },
+        });
+        expect(body.actor).toEqual({
+          id: '1',
+          name: 'Mehr',
+          email: 'mehrshad.sahebsara@gmail.com',
+          source: 'viewport-web',
         });
         localApproved = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_2' }) });

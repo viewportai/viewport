@@ -1,10 +1,7 @@
 import type { WorkflowRuntimeCommand } from './platform-runtime-command.js';
 import type { WorkflowRunStore } from './store.js';
-import type {
-  WorkflowApprovalActor,
-  WorkflowApprovalDecision,
-  WorkflowRunRecord,
-} from './types.js';
+import { workflowApprovalActorPayload } from './approval-actor.js';
+import type { WorkflowApprovalDecision, WorkflowRunRecord } from './types.js';
 
 export type WorkflowApprovalDecider = (
   runId: string,
@@ -39,24 +36,8 @@ export class WorkflowRuntimeCommandApplier {
         : {}),
       ...(command.execution_grant ? { executionGrant: command.execution_grant } : {}),
       ...(command.feedback ? { feedback: command.feedback } : {}),
-      ...approvalActor(command.actor),
+      ...workflowApprovalActorPayload(command.actor),
     });
     return true;
   }
-}
-
-function approvalActor(
-  actor: Record<string, unknown> | null | undefined,
-): { actor: WorkflowApprovalActor } | Record<string, never> {
-  if (!actor) return {};
-
-  const allowed: WorkflowApprovalActor = {};
-  for (const key of ['id', 'name', 'email', 'source'] as const) {
-    const value = actor[key];
-    if (['string', 'number', 'boolean'].includes(typeof value)) {
-      allowed[key] = String(value);
-    }
-  }
-
-  return Object.keys(allowed).length > 0 ? { actor: allowed } : {};
 }

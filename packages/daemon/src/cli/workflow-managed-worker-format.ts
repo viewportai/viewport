@@ -2,7 +2,8 @@ import type {
   ManagedAssignment,
   ManagedWorkerCapabilities,
 } from './workflow-managed-worker-types.js';
-import type { WorkflowRunRecord } from '../workflows/types.js';
+import { sanitizeWorkflowApprovalActor } from '../workflows/approval-actor.js';
+import type { WorkflowApprovalActor, WorkflowRunRecord } from '../workflows/types.js';
 
 export { workflowRunToSyncPayload as localRunToSyncPayload } from '../workflows/platform-sync-payload.js';
 
@@ -50,13 +51,11 @@ export function approvalMessage(node: NonNullable<ManagedAssignment['nodes']>[nu
 
 export function approvalActor(
   node: NonNullable<ManagedAssignment['nodes']>[number],
-): Record<string, string> {
+): WorkflowApprovalActor {
   const approval = node.metadata?.['approval'];
   const actor =
     approval && typeof approval === 'object' ? (approval as { actor?: unknown }).actor : null;
-  return actor && typeof actor === 'object'
-    ? (actor as Record<string, string>)
-    : { name: 'Viewport', source: 'managed-executor' };
+  return sanitizeWorkflowApprovalActor(actor) ?? { name: 'Viewport', source: 'managed-executor' };
 }
 
 export function approvalExpectedActionDigest(
