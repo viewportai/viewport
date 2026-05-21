@@ -14,6 +14,11 @@ export interface WorkflowNodeExecutorContext {
   daemon: Daemon;
   sessionLinks: WorkflowSessionLinkStore;
   shellAbortRegistry: WorkflowShellAbortRegistry;
+  /**
+   * Run-scoped secret material fetched through the Viewport lease path. This
+   * map is transient process memory only and is never persisted with the run.
+   */
+  runtimeSecretEnv?: Record<string, string>;
   saveAndEmit: (run: WorkflowRunRecord) => Promise<void>;
 }
 

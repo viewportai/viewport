@@ -183,6 +183,157 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
 
+  it('materializes selected repo and API credentials into transient daemon env only', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_credential_material',
+            assignment_claim_token: 'vpclaim_credential_material',
+            yaml_snapshot: `
+schema: viewport.workflow/v1
+name: proof
+nodes:
+  tests:
+    type: shell
+    command: printf ok
+`,
+            source_ref: 'viewport://workflow/proof',
+            directory_path: '/repo',
+            execution_profile_snapshot: {
+              key: 'payments-prod',
+              credentials: {
+                repo_checkout: [{ handle: 'repo/github/payments-api' }],
+                mcp_api: [{ handle: 'agent/anthropic/claude-code' }],
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_credential_material/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_credential_material',
+        );
+        if (body.handle === 'agent/anthropic/claude-code') {
+          return jsonResponse({
+            data: {
+              handle: 'agent/anthropic/claude-code',
+              kind: 'mcp_api_secret',
+              storage_posture: 'runner_local',
+              provider: 'anthropic',
+              material_available: false,
+              runner_local_required: true,
+            },
+          });
+        }
+        expect(body).toMatchObject({
+          credential: 'vpexec_secret',
+          handle: 'repo/github/payments-api',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_repo_1',
+            handle: 'repo/github/payments-api',
+            kind: 'repo_checkout_secret',
+            storage_posture: 'viewport_managed',
+            provider: 'github',
+            scopes: ['repo:viewportai/vp-example-repo'],
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_run_scoped_checkout',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_credential_material/sync')) {
+        return jsonResponse({
+          data: { id: 'run_platform_credential_material', status: 'completed' },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') return jsonResponse({ agents: [] });
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([]);
+      }
+      if (urlPath === '/api/directories' && init?.method === 'POST') {
+        return jsonResponse({ id: 'dir_1' });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
+        });
+        expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_checkout');
+        expect(body.inputs.viewport.credentials).toEqual([
+          expect.objectContaining({
+            handle: 'agent/anthropic/claude-code',
+            envName: 'VIEWPORT_CREDENTIAL_AGENT_ANTHROPIC_CLAUDE_CODE',
+            materialAvailable: false,
+            runnerLocalRequired: true,
+          }),
+          expect.objectContaining({
+            handle: 'repo/github/payments-api',
+            envName: 'VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API',
+            materialAvailable: true,
+            runnerLocalRequired: false,
+            scopes: ['repo:viewportai/vp-example-repo'],
+          }),
+        ]);
+        return jsonResponse({ run: { id: 'local_run_credential_material' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_credential_material') {
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_credential_material' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+  });
+
   it('claims provider action replay work only when an action command is configured', async () => {
     process.argv = [
       'node',

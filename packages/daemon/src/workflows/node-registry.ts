@@ -8,6 +8,7 @@ import {
   resolveNodeCwd,
   runShellNode,
 } from './runtime-helpers.js';
+import { envNameForCredentialRef } from './action-provider-utils.js';
 import { executeSubflowNode } from './subflow-executor.js';
 import { buildExpressionContext, evaluateConditionExpression } from './expression.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
@@ -90,6 +91,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     try {
       result = await runShellNode(await renderTemplate(node.command, run), {
         cwd: artifactCwd,
+        env: await resolveNodeEnv(context, run, node),
         timeoutSeconds: node.timeoutSeconds,
         signal: abort.signal,
         onOutput: ({ source, chunk, output }) => {
@@ -348,4 +350,32 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
 // Seed the mutable registry with built-ins. Plugin entries register at boot.
 for (const [type, executor] of Object.entries(BUILTIN_NODE_EXECUTORS)) {
   NODE_EXECUTORS.set(type, executor);
+}
+
+async function resolveNodeEnv(
+  context: WorkflowNodeExecutorContext,
+  run: WorkflowRunRecord,
+  node: WorkflowNode,
+): Promise<Record<string, string> | undefined> {
+  if (!node.env || Object.keys(node.env).length === 0) return undefined;
+
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(node.env)) {
+    if (value.value !== undefined) {
+      env[name] = await renderTemplate(value.value, run);
+      continue;
+    }
+    if (!value.secret) continue;
+
+    const envName = envNameForCredentialRef(value.secret);
+    const material = context.runtimeSecretEnv?.[envName] ?? process.env[envName];
+    if (!material) {
+      throw new Error(
+        `Secret binding ${value.secret} was not materialized for env ${name}. Select it in the workflow/profile and keep runner-local material in ${envName} when using BYO secrets.`,
+      );
+    }
+    env[name] = material;
+  }
+
+  return env;
 }

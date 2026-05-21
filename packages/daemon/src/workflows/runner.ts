@@ -192,9 +192,13 @@ export class WorkflowRunner {
       );
     }
     await this.store.save(run);
-    void this.scheduler.run(run.id, parsed).catch((error) => {
-      void this.failRun(run.id, error instanceof Error ? error.message : String(error));
-    });
+    void this.scheduler
+      .run(run.id, parsed, {
+        runtimeSecretEnv: sanitizeRuntimeSecretEnv(request.runtimeSecretEnv),
+      })
+      .catch((error) => {
+        void this.failRun(run.id, error instanceof Error ? error.message : String(error));
+      });
     return run;
   }
 
@@ -410,4 +414,15 @@ export class WorkflowRunner {
     }
     return scheduled;
   }
+}
+
+function sanitizeRuntimeSecretEnv(
+  value: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!value) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, secret]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && secret.length > 0,
+    ),
+  );
 }

@@ -17,6 +17,7 @@ import {
   executeProviderAction,
   WorkflowActionError,
 } from '../workflows/action-provider-adapters.js';
+import { envNameForCredentialRef } from '../workflows/action-provider-utils.js';
 import { sanitizeActionInput } from '../workflows/action-digest.js';
 import type { WorkflowActionNode, WorkflowInputValue } from '../workflows/types.js';
 import {
@@ -788,11 +789,13 @@ async function runAssignmentLocally(
   const directory = await ensureDirectory(
     options.workdir ?? assignment.directory_path ?? process.cwd(),
   );
+  const material = await materializeRunCredentials(options, assignment);
   const started = await daemonJson('POST', '/api/workflows/runs', {
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignmentInputs(assignment),
+    inputs: assignmentInputs(assignment, material.metadata),
+    runtimeSecretEnv: material.runtimeSecretEnv,
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
@@ -809,7 +812,10 @@ async function runAssignmentLocally(
   );
 }
 
-function assignmentInputs(assignment: ManagedAssignment): Record<string, unknown> {
+function assignmentInputs(
+  assignment: ManagedAssignment,
+  credentialMetadata: CredentialMaterialMetadata[] = [],
+): Record<string, unknown> {
   const inputs = { ...(assignment.input_snapshot ?? {}) } as Record<string, unknown>;
   inputs['viewport'] = {
     ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
@@ -820,9 +826,123 @@ function assignmentInputs(assignment: ManagedAssignment): Record<string, unknown
     workflow: assignment.workflow_snapshot ?? null,
     runnerWorkspace: assignment.runner_workspace_snapshot ?? null,
     contextReceipts: assignment.context_receipts_snapshot ?? null,
+    credentials: credentialMetadata,
   };
 
   return inputs;
+}
+
+interface CredentialMaterialResult {
+  runtimeSecretEnv: Record<string, string>;
+  metadata: CredentialMaterialMetadata[];
+}
+
+interface CredentialMaterialMetadata {
+  handle: string;
+  envName: string;
+  kind?: string | null;
+  storagePosture?: string | null;
+  materialAvailable: boolean;
+  runnerLocalRequired: boolean;
+  provider?: string | null;
+  credentialId?: string | number | null;
+  scopes?: unknown;
+}
+
+async function materializeRunCredentials(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+): Promise<CredentialMaterialResult> {
+  const handles = collectCredentialHandles(assignment);
+  if (handles.length === 0) return { runtimeSecretEnv: {}, metadata: [] };
+
+  const runtimeSecretEnv: Record<string, string> = {};
+  const metadata: CredentialMaterialMetadata[] = [];
+  for (const handle of handles) {
+    const response = await materializeCredential(options, assignment, handle);
+    const envName = envNameForCredentialRef(handle);
+    const secret = stringField(response, 'secret');
+    if (secret) {
+      runtimeSecretEnv[envName] = secret;
+    }
+    metadata.push({
+      handle,
+      envName,
+      kind: stringField(response, 'kind') ?? null,
+      storagePosture: stringField(response, 'storage_posture') ?? null,
+      materialAvailable: response['material_available'] === true,
+      runnerLocalRequired: response['runner_local_required'] === true,
+      provider: stringField(response, 'provider') ?? null,
+      credentialId:
+        stringField(response, 'credential_id') ?? numberField(response, 'credential_id') ?? null,
+      scopes: response['scopes'],
+    });
+  }
+
+  return { runtimeSecretEnv, metadata };
+}
+
+async function materializeCredential(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+  handle: string,
+): Promise<Record<string, unknown>> {
+  if (!assignment.assignment_claim_token) {
+    throw new Error(`Managed workflow assignment ${assignment.id} is missing claim_token.`);
+  }
+  const body = await platformJson(
+    options,
+    'POST',
+    `workflow-runs/${encodeURIComponent(assignment.id)}/credential-material`,
+    { credential: options.credential, handle },
+    assignment.assignment_claim_token,
+  );
+  const data = dataFrom(body);
+  if (!isRecord(data)) {
+    throw new Error(`Credential material response for ${handle} was not an object.`);
+  }
+  return data;
+}
+
+function collectCredentialHandles(assignment: ManagedAssignment): string[] {
+  const snapshots = [assignment.execution_profile_snapshot, assignment.workflow_snapshot].filter(
+    isRecord,
+  );
+  const handles = new Set<string>();
+  for (const snapshot of snapshots) {
+    for (const handle of [
+      ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'include'])),
+      ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'repo_checkout'])),
+      ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'mcp_api'])),
+      ...credentialRefsFrom(snapshot['credential_refs']),
+      ...credentialRefsFrom(pathValue(snapshot, ['requires', 'secrets'])),
+    ]) {
+      handles.add(handle);
+    }
+  }
+  return [...handles].sort();
+}
+
+function credentialRefsFrom(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    if (typeof entry === 'string' && entry.trim() !== '') return [entry];
+    if (!isRecord(entry)) return [];
+    for (const key of ['handle', 'ref', 'credential_ref']) {
+      const value = stringField(entry, key);
+      if (value) return [value];
+    }
+    return [];
+  });
+}
+
+function pathValue(value: Record<string, unknown>, pathParts: string[]): unknown {
+  let current: unknown = value;
+  for (const part of pathParts) {
+    if (!isRecord(current)) return undefined;
+    current = current[part];
+  }
+  return current;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

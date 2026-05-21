@@ -55,6 +55,16 @@ const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
   ]),
 );
 
+const RuntimeSecretEnvSchema = z.record(
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  z.string().min(1).max(128_000),
+);
+
 export const WorkflowRunBodySchema = z
   .object({
     workflowPath: z.string().trim().min(1).optional(),
@@ -75,6 +85,7 @@ export const WorkflowRunBodySchema = z
       .optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
+    runtimeSecretEnv: RuntimeSecretEnvSchema.optional(),
     resourceId: z.string().trim().min(1).optional(),
     runtimeTargetId: z.string().trim().min(1).optional(),
     platformRunId: z.string().trim().min(1).optional(),

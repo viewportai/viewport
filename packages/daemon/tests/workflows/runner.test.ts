@@ -85,6 +85,76 @@ nodes:
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
+  it('injects run-scoped shell env secrets without persisting them as inputs', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-secret-env-proof
+nodes:
+  proof:
+    type: shell
+    env:
+      CHECKOUT_TOKEN:
+        secret: repo/github/payments-api
+    command: test "$CHECKOUT_TOKEN" = "ghs_run_scoped_checkout" && printf "ok"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      runtimeSecretEnv: {
+        VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.output).toBe('ok');
+    expect(JSON.stringify(completed?.inputs)).not.toContain('ghs_run_scoped_checkout');
+    expect(JSON.stringify(workflowRunToSyncPayload(completed!))).not.toContain(
+      'ghs_run_scoped_checkout',
+    );
+  });
+
+  it('fails closed when a workflow asks for unmaterialized shell env secrets', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-missing-secret-proof
+nodes:
+  proof:
+    type: shell
+    env:
+      CHECKOUT_TOKEN:
+        secret: repo/github/payments-api
+    command: printf "should-not-run"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.proof?.error).toContain('Secret binding repo/github/payments-api');
+    expect(failed?.nodes.proof?.output).not.toBe('should-not-run');
+  });
+
   it('cancels a running shell workflow and preserves canceled state', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

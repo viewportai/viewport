@@ -223,6 +223,12 @@ export interface WorkflowRunRequest {
   workflowContract?: WorkflowContractBindingInput;
   directoryId: string;
   inputs?: Record<string, WorkflowInputValue>;
+  /**
+   * Transient, run-scoped secret material keyed by environment variable name.
+   * This is intentionally request-only: it must never be copied to
+   * WorkflowRunRecord, synced to the control plane, or written to run inputs.
+   */
+  runtimeSecretEnv?: Record<string, string>;
   resourceId?: string;
   runtimeTargetId?: string;
   platformRunId?: string;
