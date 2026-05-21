@@ -32,6 +32,7 @@ describe('grouped CLI command help', () => {
     ['session'],
     ['hook'],
     ['daemon', 'service'],
+    ['workflow', 'worker', '--help'],
   ];
 
   for (const command of commands) {

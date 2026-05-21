@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { getFlag, hasFlag } from './args.js';
+import { getArgs, getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
@@ -40,6 +40,11 @@ import type {
 } from './workflow-managed-worker-types.js';
 
 export async function workflowWorker(): Promise<void> {
+  if (hasFlag('help') || getArgs().includes('-h')) {
+    console.log(workflowWorkerUsage());
+    return;
+  }
+
   const options = resolveWorkerOptions();
   if (!(await isDaemonRunning())) {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
@@ -247,9 +252,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     registrationProfile?.credential;
 
   if (!server || !workspaceId || !executorId || !credential) {
-    throw new Error(
-      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--doctor|--preflight|--once]',
-    );
+    throw new Error(workflowWorkerUsage());
   }
   const profileCapabilities = registrationProfile?.capabilities ?? {};
   const profileRunnerPool =
@@ -300,6 +303,10 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       secrets: listFlagOrProfile('secrets', profileCapabilities['secrets']),
     },
   };
+}
+
+function workflowWorkerUsage(): string {
+  return 'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--doctor|--preflight|--once]';
 }
 
 interface RegistrationProfile {
