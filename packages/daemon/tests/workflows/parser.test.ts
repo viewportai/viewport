@@ -49,6 +49,32 @@ describe('workflow parser', () => {
     expect(WORKFLOW_SCHEMA_VERSION).toBe('viewport.workflow/v1');
   });
 
+  it('accepts stable action proposal keys for brokered provider actions', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: linear-brokered-comment
+nodes:
+  post_comment:
+    type: action
+    adapter: linear
+    action: comment_issue
+    proposalKey: linear.comment_issue
+    requiresApproval: true
+    idempotencyKey: linear:{{ inputs.issue_id }}:comment
+    with:
+      issue_id: "{{ inputs.issue_id }}"
+      body: "Viewport proof comment"
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.nodes.post_comment?.type).toBe('action');
+    if (parsed.definition.nodes.post_comment?.type !== 'action') return;
+    expect(parsed.definition.nodes.post_comment.proposalKey).toBe('linear.comment_issue');
+    expect(workflowNodeOrder(parsed.definition)).toEqual(['post_comment']);
+  });
+
   it('accepts json workflow inputs with structured defaults', () => {
     const parsed = parseWorkflow(
       `

@@ -219,6 +219,7 @@ const ActionNodeSchema = NodeBaseSchema.extend({
   adapter: identifierSchema,
   action: identifierSchema,
   with: z.record(identifierSchema, InputValueSchema).optional(),
+  proposalKey: z.string().trim().min(1).optional(),
   idempotencyKey: z.string().trim().min(1).optional(),
   requiresApproval: z.boolean().optional(),
 }).strict();

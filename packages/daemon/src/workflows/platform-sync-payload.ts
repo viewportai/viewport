@@ -167,10 +167,11 @@ function formatActionProposal(node: WorkflowNodeRunState): Array<Record<string, 
   const adapter = stringValue(action['adapter']);
   const actionName = stringValue(action['action']);
   if (!adapter || !actionName) return [];
+  const key = proposalKey(node.id, action['proposalKey']);
 
   return [
     {
-      proposal_key: proposalKey(node.id),
+      proposal_key: key,
       node_key: node.id,
       adapter,
       action: actionName,
@@ -268,11 +269,12 @@ function formatApprovalDecision(node: WorkflowNodeRunState): Array<Record<string
   if (!node.approval?.resolvedAt) return [];
   const action = recordValue(node.metadata?.['action']);
   const actionDigest = stringValue(action?.['digest']);
+  const key = action ? proposalKey(node.id, action['proposalKey']) : null;
 
   return [
     {
       decision_key: `approval:${node.id}:${node.approval.resolvedAt}`,
-      proposal_key: action ? proposalKey(node.id) : null,
+      proposal_key: key,
       node_key: node.id,
       actor_user_id: null,
       subject_type: action ? 'action_proposal' : 'workflow_node',
@@ -314,7 +316,7 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
   return [
     {
       receipt_key: `execution:${event.id}`,
-      proposal_key: event.nodeId ? proposalKey(event.nodeId) : null,
+      proposal_key: event.nodeId ? proposalKey(event.nodeId, action?.['proposalKey']) : null,
       approval_decision_key: stringValue(executionGrant?.['approval_decision_key']),
       adapter,
       action: actionName,

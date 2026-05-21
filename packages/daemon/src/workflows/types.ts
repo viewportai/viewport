@@ -272,6 +272,7 @@ export interface WorkflowActionNode extends WorkflowNodeBase {
   adapter: string;
   action: string;
   with?: Record<string, WorkflowInputValue>;
+  proposalKey?: string;
   idempotencyKey?: string;
   requiresApproval?: boolean;
 }

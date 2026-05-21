@@ -6,7 +6,8 @@ export function iso(value: number | undefined): string | null {
   return value ? new Date(value).toISOString() : null;
 }
 
-export function proposalKey(nodeId: string): string {
+export function proposalKey(nodeId: string, declared?: unknown): string {
+  if (typeof declared === 'string' && declared.trim() !== '') return declared;
   return `action:${nodeId}`;
 }
 

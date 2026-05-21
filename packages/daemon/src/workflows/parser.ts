@@ -212,6 +212,7 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return [
       node.adapter,
       node.action,
+      node.proposalKey,
       node.idempotencyKey,
       ...Object.values(node.with ?? {}).map((value) => (typeof value === 'string' ? value : '')),
     ].filter((value): value is string => typeof value === 'string' && value.length > 0);

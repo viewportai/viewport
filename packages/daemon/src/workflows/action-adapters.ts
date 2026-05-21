@@ -64,6 +64,7 @@ async function executeWebhookAction(
     action: {
       adapter: node.adapter,
       action: node.action,
+      proposalKey: node.proposalKey ?? null,
       idempotencyKey: idempotencyKey ?? null,
       requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
@@ -155,6 +156,7 @@ function declaredAction(
       action: {
         adapter: node.adapter,
         action: node.action,
+        proposalKey: node.proposalKey ?? null,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         policyReason: actionPolicyReason(node),

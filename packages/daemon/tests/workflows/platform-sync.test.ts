@@ -107,7 +107,7 @@ describe('WorkflowRunPlatformSync', () => {
       executionGrant: {
         schema: 'viewport.execution_grant/v1',
         digest: 'sha256:approved-execution-grant',
-        proposal_key: 'action:inspect',
+        proposal_key: 'github.open_pr',
         approval_decision_key: 'approve-open-pr',
         issued_at: '2026-05-17T10:00:00.000Z',
       },
@@ -117,6 +117,7 @@ describe('WorkflowRunPlatformSync', () => {
       action: {
         adapter: 'github',
         action: 'open_pr',
+        proposalKey: 'github.open_pr',
         status: 'awaiting_approval',
         idempotencyKey: 'jira:PAY-1842:github.open_pr',
         digest: 'sha256:action-proposal-pay1842-open-pr',
@@ -156,6 +157,7 @@ describe('WorkflowRunPlatformSync', () => {
         action: {
           adapter: 'github',
           action: 'open_pr',
+          proposalKey: 'github.open_pr',
           idempotencyKey: 'jira:PAY-1842:github.open_pr',
           digest: 'sha256:action-proposal-pay1842-open-pr',
           execution_grant: {
@@ -193,7 +195,7 @@ describe('WorkflowRunPlatformSync', () => {
     ]);
     expect(calls[0]?.body['action_proposals']).toEqual([
       expect.objectContaining({
-        proposal_key: 'action:inspect',
+        proposal_key: 'github.open_pr',
         adapter: 'github',
         action: 'open_pr',
         proposal_digest: 'sha256:action-proposal-pay1842-open-pr',
@@ -202,7 +204,7 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls[0]?.body['execution_receipts']).toEqual([
       expect.objectContaining({
         receipt_key: 'execution:event-action-executed',
-        proposal_key: 'action:inspect',
+        proposal_key: 'github.open_pr',
         approval_decision_key: 'approve-open-pr',
         provider_reference: '4821',
         provider_url: 'https://github.com/acme/payments-api/pull/4821',

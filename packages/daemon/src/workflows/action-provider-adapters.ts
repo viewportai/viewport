@@ -263,6 +263,7 @@ async function executeJsonApiAction(
     action: {
       adapter: node.adapter,
       action: node.action,
+      proposalKey: node.proposalKey ?? null,
       idempotencyKey: idempotencyKeyFromHeaders(request.headers) ?? null,
       requiresApproval: node.requiresApproval === true,
       policyReason: actionPolicyReason(node),
@@ -345,6 +346,7 @@ function declaredProviderAction(
       action: {
         adapter: node.adapter,
         action: node.action,
+        proposalKey: node.proposalKey ?? null,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         policyReason: actionPolicyReason(node),
