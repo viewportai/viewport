@@ -12,12 +12,8 @@ export function capabilityPayload(
   return {
     tools: ['shell'],
     ...(capabilities.runnerPool ? { runner_pool: capabilities.runnerPool } : {}),
-    ...(capabilities.agentCommand && capabilities.agents.length > 0
-      ? { agents: capabilities.agents }
-      : {}),
-    ...(capabilities.agentCommand && capabilities.models.length > 0
-      ? { models: capabilities.models }
-      : {}),
+    ...(capabilities.agents.length > 0 ? { agents: capabilities.agents } : {}),
+    ...(capabilities.models.length > 0 ? { models: capabilities.models } : {}),
     ...(capabilities.integrations.length > 0 ? { integrations: capabilities.integrations } : {}),
     ...((capabilities.actionCommand || capabilities.providerActions) &&
     capabilities.integrations.length > 0

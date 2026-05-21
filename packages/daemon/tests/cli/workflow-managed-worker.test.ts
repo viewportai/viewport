@@ -890,6 +890,137 @@ describe('workflow managed worker CLI', () => {
     });
   });
 
+  it('advertises profile agent capabilities and claims matching work without manual flags', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-claim-'));
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential: 'vpexec_profile_secret',
+        access_mode: 'polling',
+        runner_profile: 'profile-runner',
+        capabilities: {
+          runner_pool: 'payments-profile',
+          agents: ['codex'],
+          models: ['gpt-5.5'],
+          integrations: ['linear'],
+          secrets: ['linear/vie-commenter'],
+        },
+      }),
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--workdir',
+      '/repo',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          access_mode: 'polling',
+          runner_profile: 'profile-runner',
+          capabilities: {
+            runner_pool: 'payments-profile',
+            tools: ['shell'],
+            agents: ['codex'],
+            models: ['gpt-5.5'],
+            integrations: ['linear'],
+            secrets: ['linear/vie-commenter'],
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_profile_claim',
+            assignment_claim_token: 'vpclaim_profile_claim',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: profile-claim\nnodes: {}\n',
+            source_ref: 'viewport://workflow/profile-claim',
+            directory_path: '/repo',
+            input_snapshot: { issue: 'VIE-30' },
+            runner_workspace_snapshot: { runner_pool: 'payments-profile' },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_profile_claim/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_profile_claim',
+        );
+        expect(body).toMatchObject({
+          runtime_run_id: 'local_run_1',
+          status: 'completed',
+        });
+        return jsonResponse({ data: { id: 'run_profile_claim', status: 'completed' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([]);
+      }
+      if (urlPath === '/api/directories' && init?.method === 'POST') {
+        return jsonResponse({ id: 'dir_1' });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({
+          resourceId: 'workspace_profile',
+          platformRunId: 'run_profile_claim',
+          inputs: {
+            issue: 'VIE-30',
+            viewport: {
+              runnerWorkspace: { runner_pool: 'payments-profile' },
+            },
+          },
+        });
+        return jsonResponse({ run: { id: 'local_run_1' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_1') {
+        return jsonResponse({ run: completedLocalRun() });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/workflow-runs/run_profile_claim/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+    ]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
+  });
+
   it('waits for platform approval, approves the local gate, and syncs the resumed run', async () => {
     process.argv = [
       'node',
