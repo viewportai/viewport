@@ -1108,6 +1108,7 @@ describe('workflow managed worker CLI', () => {
         expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
           'vpclaim_run_platform_2',
         );
+        expect(body.approval_decisions).toEqual([]);
         platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_2', status: body.status } });
       }

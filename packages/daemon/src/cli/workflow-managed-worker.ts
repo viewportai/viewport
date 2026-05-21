@@ -957,7 +957,7 @@ async function syncLocalRun(
     options,
     'PATCH',
     `workflow-runs/${encodeURIComponent(platformRunId)}/sync`,
-    localRunToSyncPayload(run),
+    localRunToSyncPayload(run, { includeApprovalDecisions: false }),
     assignmentClaimToken,
   );
   return dataFrom(body) as ManagedAssignment;

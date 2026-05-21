@@ -23,6 +23,7 @@ import type {
 export interface WorkflowRunSyncPayloadOptions {
   events?: WorkflowRunEvent[];
   enforceDataCapturePolicy?: boolean;
+  includeApprovalDecisions?: boolean;
 }
 
 export function workflowRunToSyncPayload(
@@ -53,7 +54,10 @@ export function workflowRunToSyncPayload(
     ),
     evidence_packets: Object.values(run.nodes).flatMap(formatEvidencePacket),
     action_proposals: Object.values(run.nodes).flatMap(formatActionProposal),
-    approval_decisions: Object.values(run.nodes).flatMap(formatApprovalDecision),
+    approval_decisions:
+      options.includeApprovalDecisions === false
+        ? []
+        : Object.values(run.nodes).flatMap(formatApprovalDecision),
     execution_receipts: run.events.flatMap(formatExecutionReceipt),
     audit_receipts: run.events.flatMap(formatAuditReceipt),
     ...(run.contextReceipts ? { context_receipts_snapshot: run.contextReceipts } : {}),
