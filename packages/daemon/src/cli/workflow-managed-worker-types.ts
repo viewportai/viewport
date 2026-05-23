@@ -24,6 +24,7 @@ export interface ManagedWorkerCapabilities {
   agentCommand?: string;
   actionCommand?: string;
   providerActions: boolean;
+  tools: string[];
   agents: string[];
   models: string[];
   integrations: string[];

@@ -342,4 +342,29 @@ describe('watchProjects', () => {
     expect(secondRead).toHaveLength(1);
     expect(tailer.sessionId).toBe('codex-after-truncate');
   });
+
+  it('tails large existing session files without reading from offset zero', async () => {
+    const filePath = path.join(tmpDir, 'large-session.jsonl');
+    const handle = await fs.open(filePath, 'w');
+    try {
+      const offset = 3 * 1024 * 1024 * 1024;
+      await handle.truncate(offset);
+      await handle.write('\n', offset);
+      await handle.write(
+        `${JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'codex-large-session' },
+        })}\n`,
+        offset + 1,
+      );
+    } finally {
+      await handle.close();
+    }
+
+    const tailer = createSessionTailer(filePath);
+    const firstRead = await tailer.readNew();
+
+    expect(firstRead).toHaveLength(1);
+    expect(tailer.sessionId).toBe('codex-large-session');
+  });
 });

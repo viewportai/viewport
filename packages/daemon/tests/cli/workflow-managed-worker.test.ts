@@ -6,7 +6,10 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
-import { localRunToSyncPayload } from '../../src/cli/workflow-managed-worker-format.js';
+import {
+  capabilityPayload,
+  localRunToSyncPayload,
+} from '../../src/cli/workflow-managed-worker-format.js';
 
 const exec = promisify(execFile);
 
@@ -24,6 +27,23 @@ describe('workflow managed worker CLI', () => {
     process.argv = originalArgv;
     global.fetch = originalFetch;
     vi.doUnmock('../../src/cli/daemon-client.js');
+  });
+
+  it('advertises profile-declared tools instead of a hardcoded shell placeholder', () => {
+    expect(
+      capabilityPayload({
+        providerActions: false,
+        tools: ['git', 'node'],
+        agents: ['claude', 'codex'],
+        models: ['default', 'gpt-5.4'],
+        integrations: [],
+        secrets: [],
+      }),
+    ).toMatchObject({
+      tools: ['shell', 'git', 'node'],
+      agents: ['claude', 'codex'],
+      models: ['default', 'gpt-5.4'],
+    });
   });
 
   it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {

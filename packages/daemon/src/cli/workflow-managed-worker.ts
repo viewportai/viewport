@@ -298,6 +298,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
       providerActions:
         hasFlag('provider-actions') || process.env['VIEWPORT_MANAGED_PROVIDER_ACTIONS'] === '1',
+      tools: listFlagOrProfile('tools', profileCapabilities['tools']),
       agents: listFlagOrProfile('agents', profileCapabilities['agents']),
       models: listFlagOrProfile('models', profileCapabilities['models']),
       integrations: listFlagOrProfile('integrations', profileCapabilities['integrations']),

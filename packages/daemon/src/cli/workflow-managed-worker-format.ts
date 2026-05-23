@@ -10,8 +10,10 @@ export { workflowRunToSyncPayload as localRunToSyncPayload } from '../workflows/
 export function capabilityPayload(
   capabilities: ManagedWorkerCapabilities,
 ): Record<string, string[] | string> {
+  const tools = [...new Set(['shell', ...capabilities.tools])];
+
   return {
-    tools: ['shell'],
+    tools,
     ...(capabilities.runnerPool ? { runner_pool: capabilities.runnerPool } : {}),
     ...(capabilities.agents.length > 0 ? { agents: capabilities.agents } : {}),
     ...(capabilities.models.length > 0 ? { models: capabilities.models } : {}),

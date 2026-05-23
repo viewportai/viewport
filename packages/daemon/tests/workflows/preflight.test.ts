@@ -300,4 +300,28 @@ nodes:
       }),
     ]);
   });
+
+  it('treats shell as the native shell-node capability instead of an external binary', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: native-shell-tool-proof
+requires:
+  tools:
+    - shell
+nodes:
+  proof:
+    type: shell
+    command: echo ok
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
 });

@@ -158,6 +158,10 @@ function addModelIssue(
 }
 
 async function hasShellTool(tool: string): Promise<boolean> {
+  if (tool === 'shell') {
+    return true;
+  }
+
   try {
     await execFileAsync('sh', ['-lc', `command -v ${shellQuote(tool)}`], {
       timeout: TOOL_PREFLIGHT_TIMEOUT_MS,
