@@ -296,6 +296,8 @@ function hasSessionDefaultsShape(value: unknown): boolean {
   return Boolean(
     value['agent'] ||
     value['model'] ||
+    value['sandboxMode'] ||
+    value['approvalPolicy'] ||
     value['gitTracker'] ||
     value['permissions'] ||
     value['costCapUsd'] ||

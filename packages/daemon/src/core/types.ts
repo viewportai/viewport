@@ -321,6 +321,10 @@ export type PermissionDecision =
 export interface SessionConfig {
   agent: string;
   model?: string;
+  /** Provider sandbox posture for agents that support it, such as Codex. */
+  sandboxMode?: string;
+  /** Provider approval posture for agents that support it, such as Codex. */
+  approvalPolicy?: string;
   /** Explicit resource context selected by the launcher/operator. */
   resourceId?: string;
   gitTracker: GitTrackerConfig;
