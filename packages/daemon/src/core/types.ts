@@ -321,6 +321,7 @@ export type PermissionDecision =
 export interface SessionConfig {
   agent: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   /** Provider sandbox posture for agents that support it, such as Codex. */
   sandboxMode?: string;
   /** Provider approval posture for agents that support it, such as Codex. */

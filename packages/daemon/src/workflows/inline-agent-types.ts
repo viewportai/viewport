@@ -3,6 +3,7 @@ export interface WorkflowInlineAgentDefinition {
   prompt: string;
   agent?: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 export interface WorkflowInlineAgentRunState {
@@ -10,6 +11,7 @@ export interface WorkflowInlineAgentRunState {
   title?: string;
   agent?: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
   startedAt?: number;
   completedAt?: number;

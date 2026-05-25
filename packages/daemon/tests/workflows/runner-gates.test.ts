@@ -261,4 +261,129 @@ nodes:
     expect(completed?.nodes.after?.output).toContain('Keep controller behavior stable');
     expect(completed?.events.map((event) => event.type)).toContain('plan-proposed');
   });
+
+  it('keeps plan approvals blocked when reviewers request changes', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: plan-revision-loop-proof
+nodes:
+  propose:
+    type: plan
+    title: "Support implementation plan"
+    summary: "Draft the support fix before implementation."
+    recipients:
+      - role: pm
+        label: PMs
+    revision:
+      onRequestChanges: revise_with_agent
+      agent: claude
+      model: opus
+      prompt: "Revise the plan with the PM comments."
+    body: |
+      ## Plan
+      1. Change the retry path.
+  after:
+    type: shell
+    needs: [propose]
+    command: printf "{{ nodes.propose.output }}"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) =>
+        candidate.status === 'blocked' && candidate.nodes.propose?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'propose', {
+      approved: false,
+      decision: 'request_changes',
+      message: 'Narrow the plan to idempotency evidence first.',
+    });
+
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.error).toBeUndefined();
+    expect(blocked?.nodes.propose?.status).toBe('blocked');
+    expect(blocked?.nodes.after?.status).toBe('queued');
+    expect(blocked?.nodes.propose?.approval).toMatchObject({
+      approved: false,
+      decision: 'request_changes',
+      message: 'Narrow the plan to idempotency evidence first.',
+    });
+    expect(blocked?.nodes.propose?.metadata?.plan).toMatchObject({
+      recipients: [{ role: 'pm', label: 'PMs' }],
+      revision: {
+        onRequestChanges: 'revise_with_agent',
+        agent: 'claude',
+        model: 'opus',
+      },
+    });
+    expect(blocked?.events.map((event) => event.type)).toContain('plan-changes-requested');
+  });
+
+  it('prepares context update proposals without persisting raw patch text', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: context-update-proof
+nodes:
+  update_docs:
+    type: context_update
+    targetRef: context://git/support-runbook
+    title: "Add duplicate delivery learning"
+    summary: "Capture the support workflow lesson after the run."
+    idempotencyKey: "{{ run.id }}:support-runbook"
+    patch:
+      mode: append
+      text: "PRIVATE_EDGE_PATCH: check duplicate delivery before changing retry backoff."
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const serialized = JSON.stringify({
+      node: completed?.nodes.update_docs,
+      events: completed?.events,
+    });
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.update_docs?.metadata?.context_update).toMatchObject({
+      target_ref: 'context://git/support-runbook',
+      title: 'Add duplicate delivery learning',
+      status: 'prepared',
+      plaintext_patch_persisted: false,
+    });
+    expect(
+      String(
+        (completed?.nodes.update_docs?.metadata?.context_update as Record<string, unknown>)
+          ?.patch_digest,
+      ),
+    ).toMatch(/^sha256:/);
+    expect(completed?.events.map((event) => event.type)).toContain('context-update-proposed');
+    expect(serialized).not.toContain('PRIVATE_EDGE_PATCH');
+  });
 });

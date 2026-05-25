@@ -5,6 +5,7 @@ import {
   renderTemplateString,
   WorkflowExpressionError,
 } from './expression.js';
+import { cleanChildProcessEnv } from '../security/child-env.js';
 import type {
   ParsedWorkflow,
   WorkflowInputValue,
@@ -143,7 +144,7 @@ export async function runShellNode(
   options: {
     cwd: string;
     timeoutSeconds?: number;
-    /** Extra environment variables merged with process.env for this child. */
+    /** Extra environment variables merged into a scrubbed child environment. */
     env?: Record<string, string>;
     signal?: AbortSignal;
     onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
@@ -152,7 +153,7 @@ export async function runShellNode(
   return await new Promise<ShellNodeResult>((resolve, reject) => {
     const child = spawn('sh', ['-lc', command], {
       cwd: options.cwd,
-      env: options.env ? { ...process.env, ...options.env } : process.env,
+      env: cleanChildProcessEnv(options.env),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });

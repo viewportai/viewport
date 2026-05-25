@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { constants, createHash, generateKeyPairSync, privateDecrypt } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,6 +39,7 @@ import type {
   ManagedActionReplayAssignment,
   ManagedWorkerAccessMode,
   ManagedWorkerOptions,
+  ManagedWorkerRunnerKeyPair,
   WorkerStats,
 } from './workflow-managed-worker-types.js';
 
@@ -261,6 +263,8 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
   const profileRunnerPool =
     stringValue(profileCapabilities['runner_pool']) ??
     stringValue(profileCapabilities['runnerPool']);
+  const runnerKeyPair = loadOrCreateRunnerKeyPair(workspaceId, executorId);
+  const detected = detectLocalCapabilities();
 
   return {
     server: server.replace(/\/+$/, ''),
@@ -278,6 +282,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       registrationProfile?.runnerProfile ??
       undefined,
     runnerPosture: registrationProfile?.runnerPosture,
+    runnerKeyPair,
     runnerPool:
       getFlag('runner-pool') ??
       process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
@@ -300,10 +305,12 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
       providerActions:
         hasFlag('provider-actions') || process.env['VIEWPORT_MANAGED_PROVIDER_ACTIONS'] === '1',
-      tools: listFlagOrProfile('tools', profileCapabilities['tools']),
+      tools: [...new Set([...detected.tools, ...listFlagOrProfile('tools', profileCapabilities['tools'])])],
       agents: listFlagOrProfile('agents', profileCapabilities['agents']),
       models: listFlagOrProfile('models', profileCapabilities['models']),
-      integrations: listFlagOrProfile('integrations', profileCapabilities['integrations']),
+      integrations: [
+        ...new Set([...detected.integrations, ...listFlagOrProfile('integrations', profileCapabilities['integrations'])]),
+      ],
       secrets: listFlagOrProfile('secrets', profileCapabilities['secrets']),
     },
   };
@@ -366,6 +373,90 @@ function resolveProfilePath(profilePath: string): string {
   return path.resolve(profilePath);
 }
 
+function loadOrCreateRunnerKeyPair(
+  workspaceId: string,
+  executorId: string,
+): ManagedWorkerRunnerKeyPair {
+  const keyDir = path.join(os.homedir(), '.viewport', 'runner-keys');
+  fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
+  const safeName = `${safeFilename(workspaceId)}-${safeFilename(executorId)}.json`;
+  const keyPath = path.join(keyDir, safeName);
+  if (fs.existsSync(keyPath)) {
+    const parsed = JSON.parse(fs.readFileSync(keyPath, 'utf8')) as unknown;
+    if (isRunnerKeyPair(parsed, keyPath)) return parsed;
+  }
+
+  const pair = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  const keyPair: ManagedWorkerRunnerKeyPair = {
+    schema: 'viewport.runner_keypair/v1',
+    algorithm: 'RSA-OAEP-256',
+    publicKeyPem: pair.publicKey,
+    privateKeyPem: pair.privateKey,
+    fingerprint: publicKeyFingerprint(pair.publicKey),
+    path: keyPath,
+  };
+  fs.writeFileSync(keyPath, JSON.stringify(keyPair, null, 2), { mode: 0o600 });
+  return keyPair;
+}
+
+function isRunnerKeyPair(value: unknown, keyPath: string): value is ManagedWorkerRunnerKeyPair {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    record['schema'] !== 'viewport.runner_keypair/v1' ||
+    record['algorithm'] !== 'RSA-OAEP-256' ||
+    typeof record['publicKeyPem'] !== 'string' ||
+    typeof record['privateKeyPem'] !== 'string' ||
+    typeof record['fingerprint'] !== 'string'
+  ) {
+    return false;
+  }
+  if (typeof record['path'] !== 'string') {
+    record['path'] = keyPath;
+  }
+
+  return true;
+}
+
+function publicKeyFingerprint(publicKeyPem: string): string {
+  const body = publicKeyPem
+    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+    .replace(/-----END PUBLIC KEY-----/g, '')
+    .replace(/\s+/g, '');
+  const der = Buffer.from(body, 'base64');
+  return `sha256:${createHash('sha256').update(der).digest('hex')}`;
+}
+
+function safeFilename(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'runner';
+}
+
+function detectLocalCapabilities(): { tools: string[]; integrations: string[] } {
+  const tools = ['git', 'node', 'pnpm', 'docker', 'gh'].filter(commandExists);
+  const integrations = [
+    ...(commandExists('gh') ? ['github'] : []),
+    ...(process.env['NOTION_TOKEN'] ? ['notion'] : []),
+    ...(process.env['CONFLUENCE_API_TOKEN'] && process.env['CONFLUENCE_BASE_URL']
+      ? ['confluence']
+      : []),
+  ];
+  return { tools, integrations };
+}
+
+function commandExists(command: string): boolean {
+  return spawnSync('sh', ['-lc', `command -v ${shellQuote(command)} >/dev/null 2>&1`], {
+    stdio: 'ignore',
+  }).status === 0;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function listFlagOrProfile(flag: string, profileValue: unknown): string[] {
   const fromFlag = listFlagValue(getFlag(flag));
   return fromFlag.length > 0 ? fromFlag : stringList(profileValue);
@@ -397,6 +488,49 @@ async function heartbeat(
         mode: options.accessMode,
       },
       execution: recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' },
+      secrets: {
+        ...recordValue(options.runnerPosture?.['secrets']),
+        modes: [
+          ...new Set([
+            'runner_local',
+            'runner_encrypted',
+            'run_scoped_grant',
+            ...stringList(recordValue(options.runnerPosture?.['secrets'])?.['modes']),
+          ]),
+        ],
+        public_key: {
+          schema: 'viewport.runner_public_key/v1',
+          algorithm: options.runnerKeyPair.algorithm,
+          public_key_pem: options.runnerKeyPair.publicKeyPem,
+          fingerprint: options.runnerKeyPair.fingerprint,
+        },
+      },
+      model_credentials: {
+        ...recordValue(options.runnerPosture?.['model_credentials']),
+        anthropic: process.env['ANTHROPIC_API_KEY'] ? 'available' : 'missing',
+        openai: process.env['OPENAI_API_KEY'] ? 'available' : 'missing',
+      },
+      repo_credentials: {
+        ...recordValue(options.runnerPosture?.['repo_credentials']),
+        runner_local:
+          process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || commandExists('gh')
+            ? 'available'
+            : 'missing',
+        run_scoped_grant: 'available',
+      },
+      context_worker: {
+        ...recordValue(options.runnerPosture?.['context_worker']),
+        enabled: true,
+        supports: [
+          ...new Set([
+            'git',
+            ...(process.env['NOTION_TOKEN'] ? ['notion'] : []),
+            ...(process.env['CONFLUENCE_API_TOKEN'] && process.env['CONFLUENCE_BASE_URL']
+              ? ['confluence']
+              : []),
+          ]),
+        ],
+      },
       version:
         stringValue(options.runnerPosture?.['version']) ??
         process.env['npm_package_version'] ??
@@ -803,6 +937,14 @@ async function runAssignmentLocally(
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
     resourceManifest: assignment.resource_manifest ?? undefined,
+    workflowAuthorityContract:
+      assignment.workflow_authority_contract ??
+      recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(recordChildValue(assignment.input_snapshot, 'viewport'), 'workflowAuthorityContract') ??
+      undefined,
     initiation: 'cli',
     dataCapturePolicy: assignment.data_capture_policy ?? undefined,
   });
@@ -814,6 +956,13 @@ async function runAssignmentLocally(
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
+}
+
+function recordChildValue(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entry = (value as Record<string, unknown>)[key];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
+  return entry as Record<string, unknown>;
 }
 
 function assignmentInputs(
@@ -869,6 +1018,10 @@ async function materializeRunCredentials(
     if (secret) {
       runtimeSecretEnv[envName] = secret;
     }
+    const wrappedSecret = recordField(response, 'wrapped_secret');
+    if (wrappedSecret) {
+      runtimeSecretEnv[envName] = decryptRunnerWrappedSecret(options.runnerKeyPair, wrappedSecret);
+    }
     metadata.push({
       handle,
       envName,
@@ -898,7 +1051,11 @@ async function materializeCredential(
     options,
     'POST',
     `workflow-runs/${encodeURIComponent(assignment.id)}/credential-material`,
-    { credential: options.credential, handle },
+    {
+      credential: options.credential,
+      handle,
+      ...repositoryForCredentialMaterialization(assignment, handle),
+    },
     assignment.assignment_claim_token,
   );
   const data = dataFrom(body);
@@ -906,6 +1063,80 @@ async function materializeCredential(
     throw new Error(`Credential material response for ${handle} was not an object.`);
   }
   return data;
+}
+
+function repositoryForCredentialMaterialization(
+  assignment: ManagedAssignment,
+  handle: string,
+): { repository: string } | Record<string, never> {
+  const checkoutEntries = [
+    ...credentialEntriesFrom(pathValue(asRecord(assignment.execution_profile_snapshot), ['credentials', 'repo_checkout'])),
+    ...credentialEntriesFrom(pathValue(asRecord(assignment.workflow_snapshot), ['credentials', 'repo_checkout'])),
+  ];
+  const explicit = checkoutEntries.find((entry) => {
+    if (!isRecord(entry)) return entry === handle;
+    const entryHandle = stringField(entry, 'handle') ?? stringField(entry, 'ref') ?? stringField(entry, 'credential_ref');
+    return entryHandle === handle;
+  });
+  const explicitRepo = explicit
+    && isRecord(explicit)
+    ? stringField(explicit, 'repository') ?? stringField(explicit, 'repo')
+    : null;
+  if (explicitRepo) return { repository: explicitRepo };
+
+  const allowed = allowedRepositoriesFromAssignment(assignment);
+  return allowed.length === 1 && allowed[0] ? { repository: allowed[0] } : {};
+}
+
+function allowedRepositoriesFromAssignment(assignment: ManagedAssignment): string[] {
+  const candidates = [
+    pathValue(assignment.workflow_authority_contract ?? {}, ['repos', 'allowed']),
+    pathValue(recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
+    pathValue(recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
+    pathValue(recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
+    pathValue(recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
+  ];
+
+  return [
+    ...new Set(
+      candidates
+        .flatMap((value) => (Array.isArray(value) ? value : []))
+        .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+        .map((value) => value.trim()),
+    ),
+  ];
+}
+
+function decryptRunnerWrappedSecret(
+  keyPair: ManagedWorkerRunnerKeyPair,
+  wrapped: Record<string, unknown>,
+): string {
+  const schema = stringField(wrapped, 'schema');
+  const algorithm = stringField(wrapped, 'algorithm');
+  const fingerprint = stringField(wrapped, 'runner_public_key_fingerprint');
+  const ciphertext = stringField(wrapped, 'ciphertext');
+  if (
+    schema !== 'viewport.runner_wrapped_secret/v1' ||
+    algorithm !== 'RSA-OAEP-256' ||
+    !fingerprint ||
+    !ciphertext
+  ) {
+    throw new Error('Runner-encrypted credential material is malformed.');
+  }
+  if (fingerprint !== keyPair.fingerprint) {
+    throw new Error(
+      `Runner-encrypted credential was wrapped for ${fingerprint}, but this runner key is ${keyPair.fingerprint}. Rotate or re-wrap the credential for this runner pool.`,
+    );
+  }
+
+  return privateDecrypt(
+    {
+      key: keyPair.privateKeyPem,
+      oaepHash: 'sha256',
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+    },
+    Buffer.from(ciphertext, 'base64'),
+  ).toString('utf8');
 }
 
 function collectCredentialHandles(assignment: ManagedAssignment): string[] {
@@ -919,7 +1150,6 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'repo_checkout'])),
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'mcp_api'])),
       ...credentialRefsFrom(snapshot['credential_refs']),
-      ...credentialRefsFrom(pathValue(snapshot, ['requires', 'secrets'])),
     ]) {
       handles.add(handle);
     }
@@ -928,8 +1158,7 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
 }
 
 function credentialRefsFrom(entries: unknown): string[] {
-  if (!Array.isArray(entries)) return [];
-  return entries.flatMap((entry) => {
+  return credentialEntriesFrom(entries).flatMap((entry) => {
     if (typeof entry === 'string' && entry.trim() !== '') return [entry];
     if (!isRecord(entry)) return [];
     for (const key of ['handle', 'ref', 'credential_ref']) {
@@ -938,6 +1167,14 @@ function credentialRefsFrom(entries: unknown): string[] {
     }
     return [];
   });
+}
+
+function credentialEntriesFrom(entries: unknown): unknown[] {
+  return Array.isArray(entries) ? entries : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
 function pathValue(value: Record<string, unknown>, pathParts: string[]): unknown {

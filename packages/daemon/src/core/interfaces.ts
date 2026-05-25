@@ -41,6 +41,8 @@ export interface SessionOptions {
   deferInitialPrompt?: boolean;
   /** Model override (e.g. 'claude-sonnet-4-6'). */
   model?: string;
+  /** Agent-specific reasoning/effort hint translated by adapters that support it. */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   /** Permission handler — called before each tool execution. */
   canUseTool?: PermissionHandler;
   /** Resolved config for this session. */

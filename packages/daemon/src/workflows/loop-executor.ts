@@ -203,6 +203,7 @@ async function runPromptIteration(
       prompt: await renderTemplate(body.prompt, run, extras),
       ...(body.agent ? { agent: body.agent } : {}),
       ...(body.model ? { model: body.model } : {}),
+      ...(body.effort ? { effort: body.effort } : {}),
     });
     if (record.status === 'canceled') return record;
     record.status = 'completed';

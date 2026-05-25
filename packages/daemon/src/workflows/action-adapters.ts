@@ -3,6 +3,7 @@ import { executeProviderAction, type ActionResult } from './action-provider-adap
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import { rememberExecutedAction, suppressDuplicateAction } from './action-execution-ledger.js';
 import { actionPolicyReason } from './action-policy.js';
+import { workflowActionAuthorityDenial } from './workflow-authority-contract.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -17,6 +18,23 @@ export async function executeActionAdapter(
 ): Promise<ActionResult> {
   const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
   const actionInput = await renderActionInput(run, node.with ?? {});
+  const denial = workflowActionAuthorityDenial(run, nodeId, node, actionInput);
+  if (denial) {
+    const metadata = {
+      workflow_authority_denial: denial,
+      action: {
+        adapter: node.adapter,
+        action: node.action,
+        proposalKey: node.proposalKey ?? null,
+        idempotencyKey: idempotencyKey ?? null,
+        requiresApproval: node.requiresApproval === true,
+        status: 'blocked_by_workflow_authority',
+        input: sanitizeActionInput(actionInput),
+      },
+    };
+    addEvent(run, 'action-blocked', denial.detail, metadata, nodeId);
+    throw new Error(denial.detail);
+  }
   const duplicate = suppressDuplicateAction(run, nodeId, node, idempotencyKey, actionInput);
   if (duplicate) return duplicate;
 

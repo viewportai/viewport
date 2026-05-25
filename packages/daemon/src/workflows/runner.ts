@@ -136,6 +136,7 @@ export class WorkflowRunner {
       resourceId,
       resourceManifest,
       workflowContract: buildWorkflowContractBinding(request.workflowContract, parsed.digest),
+      workflowAuthorityContract: request.workflowAuthorityContract,
       runtimeTargetId,
       platformRunId: request.platformRunId,
       rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,
@@ -267,6 +268,35 @@ export class WorkflowRunner {
       ...(decision.feedback ? { feedback: decision.feedback } : {}),
       ...(decision.executionGrant ? { executionGrant: decision.executionGrant } : {}),
     };
+
+    if (!decision.approved && state.type === 'plan' && state.approval.decision === 'request_changes') {
+      state.status = 'blocked';
+      state.error = undefined;
+      run.status = 'blocked';
+      run.error = undefined;
+      run.updatedAt = resolvedAt;
+      addEvent(
+        run,
+        'approval-resolved',
+        `Changes requested for node ${nodeId}`,
+        { ...decision },
+        nodeId,
+      );
+      addEvent(
+        run,
+        'plan-changes-requested',
+        `Plan changes requested for node ${nodeId}; waiting for a revised plan`,
+        {
+          decision: 'request_changes',
+          message: decision.message ?? null,
+          actor: decision.actor ?? null,
+          feedback: decision.feedback ?? null,
+        },
+        nodeId,
+      );
+      await this.saveAndEmit(run);
+      return run;
+    }
 
     if (!decision.approved) {
       // Run the approval node's onReject command if declared. Failures here

@@ -9,6 +9,7 @@ export interface ManagedWorkerOptions {
   accessMode: ManagedWorkerAccessMode;
   runnerProfile?: string;
   runnerPosture?: Record<string, unknown>;
+  runnerKeyPair: ManagedWorkerRunnerKeyPair;
   runnerPool?: string;
   workdir?: string;
   leaseSeconds: number;
@@ -16,6 +17,15 @@ export interface ManagedWorkerOptions {
   maxRuns?: number;
   once: boolean;
   capabilities: ManagedWorkerCapabilities;
+}
+
+export interface ManagedWorkerRunnerKeyPair {
+  schema: 'viewport.runner_keypair/v1';
+  algorithm: 'RSA-OAEP-256';
+  publicKeyPem: string;
+  privateKeyPem: string;
+  fingerprint: string;
+  path: string;
 }
 
 export type ManagedWorkerAccessMode = 'relay' | 'polling' | 'direct';
@@ -41,6 +51,7 @@ export interface ManagedAssignment {
   workflow_snapshot?: Record<string, unknown> | null;
   runner_workspace_snapshot?: Record<string, unknown> | null;
   resource_manifest?: SessionResourceManifest | null;
+  workflow_authority_contract?: Record<string, unknown> | null;
   context_receipts_snapshot?: unknown[] | Record<string, unknown> | null;
   yaml_snapshot?: string | null;
   source_ref?: string | null;

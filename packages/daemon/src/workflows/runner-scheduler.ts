@@ -5,6 +5,7 @@ import {
   WorkflowExpressionError,
 } from './expression.js';
 import { executeWorkflowNode } from './node-executor.js';
+import { WorkflowPlatformContextClient } from './platform-context-client.js';
 import { preflightWorkflow } from './preflight.js';
 import { addEvent } from './runtime-helpers.js';
 import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
@@ -25,13 +26,17 @@ import type { ParsedWorkflow, WorkflowRunRecord } from './types.js';
  * decisions; the executor only mutates per-node state.
  */
 export class WorkflowLayerScheduler {
+  private readonly platformContextClient: WorkflowPlatformContextClient;
+
   constructor(
     private readonly daemon: Daemon,
     private readonly sessionLinks: WorkflowSessionLinkStore,
     private readonly shellAbortRegistry: WorkflowShellAbortRegistry,
     private readonly activeRunIds: Set<string>,
     private readonly ops: RunnerOps,
-  ) {}
+  ) {
+    this.platformContextClient = new WorkflowPlatformContextClient(this.daemon.configManager);
+  }
 
   async run(
     runId: string,
@@ -112,6 +117,7 @@ export class WorkflowLayerScheduler {
                 sessionLinks: this.sessionLinks,
                 shellAbortRegistry: this.shellAbortRegistry,
                 runtimeSecretEnv: options.runtimeSecretEnv ?? {},
+                platformContextClient: this.platformContextClient,
                 saveAndEmit: (nextRun) => this.ops.saveAndEmit(nextRun),
               },
               freshRun,

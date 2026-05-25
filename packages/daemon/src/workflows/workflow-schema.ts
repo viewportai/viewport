@@ -64,6 +64,7 @@ const InlineAgentDefinitionSchema = z
     prompt: z.string().trim().min(1),
     agent: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
+    effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
   })
   .strict();
 
@@ -100,6 +101,27 @@ const GateDefinitionSchema = z.discriminatedUnion('type', [
 
 const TriggerRuleSchema = z.enum(['all_success', 'all_done', 'one_success']);
 
+const ApprovalRecipientSchema = z
+  .object({
+    role: z.string().trim().min(1).optional(),
+    tag: z.string().trim().min(1).optional(),
+    user: z.string().trim().min(1).optional(),
+    label: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .refine((recipient) => Boolean(recipient.role || recipient.tag || recipient.user), {
+    message: 'Approval recipient must specify role, tag, or user.',
+  });
+
+const PlanRevisionSchema = z
+  .object({
+    onRequestChanges: z.enum(['revise_with_agent', 'wait_for_new_plan']).optional(),
+    prompt: z.string().trim().min(1).optional(),
+    agent: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 const NodeBaseSchema = z.object({
   title: z.string().trim().min(1).optional(),
   needs: z.array(z.string().trim().min(1)).optional(),
@@ -120,6 +142,7 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   agent: z.string().trim().min(1).optional(),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
+  effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
   hooks: HookRulesSchema.optional(),
   agents: z.record(identifierSchema, InlineAgentDefinitionSchema).optional(),
   inlineAgentFailurePolicy: z.enum(['fail', 'continue']).optional(),
@@ -131,6 +154,7 @@ const AgentNodeSchema = NodeBaseSchema.extend({
   agent: z.string().trim().min(1),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
+  effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
   session: z
     .object({
       resume: z.boolean().optional(),
@@ -154,6 +178,30 @@ const ShellNodeSchema = NodeBaseSchema.extend({
   cwd: z.string().trim().min(1).optional(),
 }).strict();
 
+const CheckoutNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('checkout'),
+  repository: z.string().trim().min(1),
+  remote: z.string().trim().min(1).optional(),
+  ref: z.string().trim().min(1).optional(),
+  branch: z.string().trim().min(1).optional(),
+  path: z.string().trim().min(1).optional(),
+  credentialMode: z.enum(['runner_local', 'run_scoped_grant']).optional(),
+  credentialRef: z.string().trim().min(1).optional(),
+}).strict();
+
+const GitPublishNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('git_publish'),
+  repository: z.string().trim().min(1),
+  cwd: z.string().trim().min(1),
+  branch: z.string().trim().min(1),
+  message: z.string().trim().min(1),
+  paths: z.array(z.string().trim().min(1)).optional(),
+  allowEmpty: z.boolean().optional(),
+  push: z.boolean().optional(),
+  credentialMode: z.enum(['runner_local', 'run_scoped_grant']).optional(),
+  credentialRef: z.string().trim().min(1).optional(),
+}).strict();
+
 const ApprovalOnRejectSchema = z.union([
   z
     .object({
@@ -167,6 +215,7 @@ const ApprovalOnRejectSchema = z.union([
       prompt: z.string().trim().min(1),
       agent: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
+      effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     })
     .strict(),
 ]);
@@ -174,6 +223,7 @@ const ApprovalOnRejectSchema = z.union([
 const ApprovalNodeSchema = NodeBaseSchema.extend({
   type: z.literal('approval'),
   prompt: z.string().trim().min(1),
+  recipients: z.array(ApprovalRecipientSchema).optional(),
   captureResponse: z.boolean().optional(),
   onReject: ApprovalOnRejectSchema.optional(),
 }).strict();
@@ -186,6 +236,24 @@ const PlanNodeSchema = NodeBaseSchema.extend({
   source: z.string().trim().min(1).optional(),
   sourceRef: z.string().trim().min(1).optional(),
   waitForApproval: z.boolean().optional(),
+  recipients: z.array(ApprovalRecipientSchema).optional(),
+  revision: PlanRevisionSchema.optional(),
+}).strict();
+
+const ContextUpdateNodeSchema = NodeBaseSchema.extend({
+  type: z.literal('context_update'),
+  targetRef: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  summary: z.string().trim().min(1).optional(),
+  patch: z
+    .object({
+      mode: z.enum(['append', 'replace', 'patch']).optional(),
+      text: z.string().trim().min(1).optional(),
+      digest: z.string().trim().min(1).optional(),
+    })
+    .strict()
+    .optional(),
+  idempotencyKey: z.string().trim().min(1).optional(),
 }).strict();
 
 const GateNodeSchema = NodeBaseSchema.extend({
@@ -241,6 +309,7 @@ const LoopBodySchema = z.discriminatedUnion('type', [
       prompt: z.string().trim().min(1),
       agent: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
+      effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     })
     .strict(),
 ]);
@@ -294,8 +363,11 @@ const WorkflowNodeSchema = z.discriminatedUnion('type', [
   AgentNodeSchema,
   PromptNodeSchema,
   ShellNodeSchema,
+  CheckoutNodeSchema,
+  GitPublishNodeSchema,
   ApprovalNodeSchema,
   PlanNodeSchema,
+  ContextUpdateNodeSchema,
   GateNodeSchema,
   ContextNodeSchema,
   ConditionNodeSchema,

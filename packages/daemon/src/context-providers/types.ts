@@ -49,9 +49,31 @@ export type ContextProviderProposeResult = {
   source?: string;
 };
 
+export type ContextProviderApplyApprovedUpdateInput = {
+  provider: SessionContextProviderManifest;
+  proposalId: string;
+  patch: {
+    mode?: string;
+    text?: string;
+    beforeDigest?: string;
+    patchDigest?: string;
+  };
+  actorName: string;
+};
+
+export type ContextProviderApplyApprovedUpdateResult = {
+  status: 'succeeded' | 'failed';
+  provider_reference?: string;
+  provider_url?: string;
+  payload: Record<string, unknown>;
+};
+
 export interface ContextProviderAdapter {
   kind: SessionContextProviderManifest['provider'];
   search?: (input: ContextProviderSearchInput) => Promise<ContextProviderResult[]>;
   get?: (input: ContextProviderGetInput) => Promise<ContextProviderResult | undefined>;
   propose?: (input: ContextProviderProposeInput) => Promise<ContextProviderProposeResult>;
+  applyApprovedUpdate?: (
+    input: ContextProviderApplyApprovedUpdateInput,
+  ) => Promise<ContextProviderApplyApprovedUpdateResult>;
 }

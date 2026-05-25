@@ -32,6 +32,8 @@ export type ViewportContextProviderKind =
   | 'repo-docs'
   | 'viewport-vault'
   | 'github-repo'
+  | 'notion'
+  | 'confluence'
   | 'notebooklm'
   | 'glean'
   | 'custom-cli'

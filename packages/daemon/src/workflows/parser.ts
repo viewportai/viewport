@@ -146,7 +146,10 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 
         if (reference.kind === 'output') {
           const upstream = definition.nodes[reference.nodeId];
-          if (!upstream?.outputs?.[declaredReferenceName(reference.name, upstream.outputs)]) {
+          if (
+            !upstream?.outputs?.[declaredReferenceName(reference.name, upstream.outputs)] &&
+            !isBuiltinOutputReference(upstream, reference.name)
+          ) {
             throw new Error(
               `Workflow node ${nodeId} references undeclared output ${reference.nodeId}.${reference.name}`,
             );
@@ -177,6 +180,16 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
   }
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
+  if (node.type === 'checkout') {
+    return [node.repository, node.remote, node.ref, node.branch, node.path, node.credentialRef].filter(
+      (value): value is string => typeof value === 'string',
+    );
+  }
+  if (node.type === 'git_publish') {
+    return [node.repository, node.cwd, node.branch, node.message, node.credentialRef, ...(node.paths ?? [])].filter(
+      (value): value is string => typeof value === 'string',
+    );
+  }
   if (node.type === 'approval') {
     const templates = [node.prompt];
     if (node.onReject) {
@@ -198,6 +211,16 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return [
       node.query,
       ...(node.refs ?? []).map(workflowContextRef),
+    ].filter((value): value is string => typeof value === 'string');
+  }
+  if (node.type === 'context_update') {
+    return [
+      node.targetRef,
+      node.title,
+      node.summary,
+      node.patch?.text,
+      node.patch?.digest,
+      node.idempotencyKey,
     ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'condition') {
@@ -242,6 +265,20 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return templates;
   }
   return [];
+}
+
+function isBuiltinOutputReference(
+  node: WorkflowDefinition['nodes'][string] | undefined,
+  name: string,
+): boolean {
+  if (!node) return false;
+  if (node.type === 'checkout') {
+    return ['repository', 'path', 'ref', 'branch', 'commit'].includes(name);
+  }
+  if (node.type === 'git_publish') {
+    return ['repository', 'branch', 'commit', 'pushed', 'changed'].includes(name);
+  }
+  return false;
 }
 
 type WorkflowTemplateReference =

@@ -42,7 +42,17 @@ describe('workflow managed worker CLI', () => {
       }),
     ).toMatchObject({
       tools: ['shell', 'git', 'node'],
-      agents: ['claude', 'codex'],
+      agents: {
+        claude: expect.objectContaining({
+          available: true,
+          models: [],
+        }),
+        codex: expect.objectContaining({
+          available: true,
+          models: ['gpt-5.4'],
+          default_model: 'gpt-5.4',
+        }),
+      },
       models: ['default', 'gpt-5.4'],
     });
   });
@@ -104,7 +114,15 @@ describe('workflow managed worker CLI', () => {
 
       if (url.endsWith('/heartbeat')) {
         expect(body).toMatchObject({
-          capabilities: { tools: ['shell'], agents: ['codex'], models: ['gpt-5.5'] },
+          capabilities: {
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({
+                models: expect.arrayContaining(['gpt-5.5']),
+              }),
+            },
+            models: expect.arrayContaining(['gpt-5.5']),
+          },
           access_mode: 'relay',
           runner_posture: { transport: { mode: 'relay' } },
         });
@@ -123,6 +141,17 @@ describe('workflow managed worker CLI', () => {
             route_snapshot: { key: 'payments-bugs' },
             execution_profile_snapshot: { key: 'payments-prod' },
             runner_workspace_snapshot: { runner_pool: 'payments-vps' },
+            workflow_authority_contract: {
+              schema_version: 'viewport.workflow_execution_authority/v1',
+              digest: 'sha256:authority',
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+                runner_pool_owns_repo_scope: false,
+              },
+              side_effects: {
+                allowed: [{ provider: 'github', actions: ['create_pr'] }],
+              },
+            },
             resource_manifest: {
               schema: 'viewport.session_resource_manifest/v1',
               manifestDigest: 'sha256:platform-manifest',
@@ -215,6 +244,17 @@ describe('workflow managed worker CLI', () => {
           directoryId: 'dir_1',
           resourceId: 'workspace_1',
           platformRunId: 'run_platform_1',
+          workflowAuthorityContract: {
+            schema_version: 'viewport.workflow_execution_authority/v1',
+            digest: 'sha256:authority',
+            repos: {
+              allowed: ['viewportai/vp-example-repo'],
+              runner_pool_owns_repo_scope: false,
+            },
+            side_effects: {
+              allowed: [{ provider: 'github', actions: ['create_pr'] }],
+            },
+          },
           dataCapturePolicy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
           resourceManifest: expect.objectContaining({
             schema: 'viewport.session_resource_manifest/v1',
@@ -323,6 +363,16 @@ nodes:
                 mcp_api: [{ handle: 'agent/anthropic/claude-code' }],
               },
             },
+            workflow_authority_contract: {
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+              },
+            },
+            workflow_snapshot: {
+              requires: {
+                secrets: ['slack/notifier', 'github/pr-writer'],
+              },
+            },
           },
         });
       }
@@ -345,6 +395,7 @@ nodes:
         expect(body).toMatchObject({
           credential: 'vpexec_secret',
           handle: 'repo/github/payments-api',
+          repository: 'viewportai/vp-example-repo',
         });
         return jsonResponse({
           data: {
@@ -456,9 +507,9 @@ nodes:
       if (url.endsWith('/heartbeat')) {
         expect(body).toMatchObject({
           capabilities: {
-            tools: ['shell'],
-            integrations: ['github', 'jira'],
-            action_replay: ['github', 'jira'],
+            tools: expect.arrayContaining(['shell']),
+            integrations: expect.arrayContaining(['github', 'jira']),
+            action_replay: expect.arrayContaining(['github', 'jira']),
           },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
@@ -605,9 +656,9 @@ nodes:
         if (url.endsWith('/heartbeat')) {
           expect(body).toMatchObject({
             capabilities: {
-              tools: ['shell'],
-              integrations: ['github'],
-              action_replay: ['github'],
+              tools: expect.arrayContaining(['shell']),
+              integrations: expect.arrayContaining(['github']),
+              action_replay: expect.arrayContaining(['github']),
             },
           });
           return jsonResponse({ data: { id: 'executor_1' } });
@@ -981,8 +1032,10 @@ nodes:
           runner_profile: 'payments-vps',
           capabilities: {
             runner_pool: 'payments-prod',
-            tools: ['shell'],
-            agents: ['codex'],
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({ available: true }),
+            },
           },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
@@ -1091,11 +1144,15 @@ nodes:
           },
           capabilities: {
             runner_pool: 'profile-pool',
-            tools: ['shell'],
-            agents: ['codex'],
-            models: ['gpt-5.5'],
-            integrations: ['github'],
-            secrets: ['github/token'],
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({
+                models: expect.arrayContaining(['gpt-5.5']),
+              }),
+            },
+            models: expect.arrayContaining(['gpt-5.5']),
+            integrations: expect.arrayContaining(['github']),
+            secrets: expect.arrayContaining(['github/token']),
           },
         });
         return jsonResponse({ data: { id: 'executor_profile' } });
@@ -1173,7 +1230,9 @@ nodes:
           runner_profile: 'profile-runner',
           capabilities: {
             runner_pool: 'profile-pool',
-            agents: ['codex'],
+            agents: {
+              codex: expect.objectContaining({ available: true }),
+            },
           },
         });
         return jsonResponse({ data: { id: 'executor_profile' } });
@@ -1257,11 +1316,15 @@ nodes:
           runner_profile: 'profile-runner',
           capabilities: {
             runner_pool: 'payments-profile',
-            tools: ['shell'],
-            agents: ['codex'],
-            models: ['gpt-5.5'],
-            integrations: ['linear'],
-            secrets: ['linear/vie-commenter'],
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({
+                models: expect.arrayContaining(['gpt-5.5']),
+              }),
+            },
+            models: expect.arrayContaining(['gpt-5.5']),
+            integrations: expect.arrayContaining(['linear']),
+            secrets: expect.arrayContaining(['linear/vie-commenter']),
           },
         });
         return jsonResponse({ data: { id: 'executor_profile' } });

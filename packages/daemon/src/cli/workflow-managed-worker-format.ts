@@ -9,13 +9,14 @@ export { workflowRunToSyncPayload as localRunToSyncPayload } from '../workflows/
 
 export function capabilityPayload(
   capabilities: ManagedWorkerCapabilities,
-): Record<string, string[] | string> {
+): Record<string, unknown> {
   const tools = [...new Set(['shell', ...capabilities.tools])];
+  const agents = agentCapabilityPayload(capabilities.agents, capabilities.models, tools);
 
   return {
     tools,
     ...(capabilities.runnerPool ? { runner_pool: capabilities.runnerPool } : {}),
-    ...(capabilities.agents.length > 0 ? { agents: capabilities.agents } : {}),
+    ...(Object.keys(agents).length > 0 ? { agents } : {}),
     ...(capabilities.models.length > 0 ? { models: capabilities.models } : {}),
     ...(capabilities.integrations.length > 0 ? { integrations: capabilities.integrations } : {}),
     ...((capabilities.actionCommand || capabilities.providerActions) &&
@@ -24,6 +25,68 @@ export function capabilityPayload(
       : {}),
     ...(capabilities.secrets.length > 0 ? { secrets: capabilities.secrets } : {}),
   };
+}
+
+function agentCapabilityPayload(
+  agents: string[],
+  models: string[],
+  tools: string[],
+): Record<string, Record<string, unknown>> {
+  const uniqueAgents = [...new Set(agents.filter((agent) => agent.trim() !== ''))];
+  const uniqueModels = [...new Set(models.filter((model) => model.trim() !== ''))];
+
+  return Object.fromEntries(
+    uniqueAgents.map((agent) => {
+      const scopedModels = uniqueModels.filter((model) => modelLooksOwnedByAgent(agent, model));
+      const assignedModels =
+        scopedModels.length > 0 || uniqueAgents.length > 1 ? scopedModels : uniqueModels;
+
+      return [
+        agent,
+        {
+          available: true,
+          models: assignedModels,
+          ...(assignedModels[0] ? { default_model: assignedModels[0] } : {}),
+          tools: toolsForAgent(agent, tools),
+          supports_plan_mode: agent === 'claude',
+        },
+      ];
+    }),
+  );
+}
+
+function modelLooksOwnedByAgent(agent: string, model: string): boolean {
+  const normalizedAgent = agent.toLowerCase();
+  const normalizedModel = model.toLowerCase();
+  if (normalizedAgent.includes('claude')) {
+    return (
+      normalizedModel.includes('claude') ||
+      normalizedModel.includes('opus') ||
+      normalizedModel.includes('sonnet') ||
+      normalizedModel.includes('haiku')
+    );
+  }
+  if (normalizedAgent.includes('codex') || normalizedAgent.includes('openai')) {
+    return normalizedModel.includes('gpt') || normalizedModel.includes('codex') || normalizedModel.includes('o3');
+  }
+  if (normalizedAgent.includes('gemini')) {
+    return normalizedModel.includes('gemini');
+  }
+
+  return false;
+}
+
+function toolsForAgent(agent: string, tools: string[]): string[] {
+  const baseTools = new Set(tools);
+  if (agent === 'codex') {
+    baseTools.add('apply_patch');
+    baseTools.add('git');
+  }
+  if (agent === 'claude') {
+    baseTools.add('shell');
+  }
+
+  return [...baseTools];
 }
 
 export function dataFrom(body: unknown): unknown {

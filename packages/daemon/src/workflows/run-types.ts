@@ -178,6 +178,7 @@ export interface WorkflowRunRecord {
   resourceId?: string;
   resourceManifest?: SessionResourceManifest;
   workflowContract?: WorkflowContractBinding;
+  workflowAuthorityContract?: Record<string, unknown>;
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
@@ -221,6 +222,7 @@ export interface WorkflowRunRequest {
   workflowYaml?: string;
   workflowSourceRef?: string;
   workflowContract?: WorkflowContractBindingInput;
+  workflowAuthorityContract?: Record<string, unknown>;
   directoryId: string;
   inputs?: Record<string, WorkflowInputValue>;
   /**

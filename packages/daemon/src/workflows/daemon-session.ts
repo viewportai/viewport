@@ -33,6 +33,7 @@ export interface WorkflowDaemonSessionRequest {
   prompt: string;
   agent?: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   hooks?: WorkflowHookRules;
   timeoutSeconds?: number;
   outputFallback?: () => Promise<string>;
@@ -65,6 +66,7 @@ export async function runWorkflowDaemonSession(
     const sessionId = await context.daemon.launchSession(run.directoryId, request.prompt, {
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),
+      ...(request.effort ? { effort: request.effort } : {}),
       contextInjection: 'disabled',
     });
     activeSessionId = sessionId;

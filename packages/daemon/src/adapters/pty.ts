@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { AgentAdapter, Session, SessionOptions } from '../core/interfaces.js';
 import type { SessionState } from '../core/types.js';
 import { metrics } from '../core/metrics.js';
+import { cleanChildProcessEnv } from '../security/child-env.js';
 
 // ---------------------------------------------------------------------------
 // PTY Session — wraps a child process as a Session
@@ -42,7 +43,7 @@ export class PtySession extends EventEmitter implements Session {
     this.process = spawn(command, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env },
+      env: cleanChildProcessEnv(env),
       shell: false,
     });
 

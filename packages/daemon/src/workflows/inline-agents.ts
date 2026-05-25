@@ -26,6 +26,7 @@ export async function runInlineAgents(
         ...(agent.title ? { title: agent.title } : {}),
         ...((agent.agent ?? node.agent) ? { agent: agent.agent ?? node.agent } : {}),
         ...((agent.model ?? node.model) ? { model: agent.model ?? node.model } : {}),
+        ...((agent.effort ?? node.effort) ? { effort: agent.effort ?? node.effort } : {}),
       },
     ]),
   );
@@ -46,6 +47,7 @@ export async function runInlineAgents(
           agentId,
           ...(agentState.agent ? { agent: agentState.agent } : {}),
           ...(agentState.model ? { model: agentState.model } : {}),
+          ...(agentState.effort ? { effort: agentState.effort } : {}),
         },
         nodeId,
       );
@@ -60,6 +62,7 @@ export async function runInlineAgents(
           prompt: await renderTemplate(agent.prompt, run),
           ...(agentState.agent ? { agent: agentState.agent } : {}),
           ...(agentState.model ? { model: agentState.model } : {}),
+          ...(agentState.effort ? { effort: agentState.effort } : {}),
         });
         agentState.status = 'completed';
         agentState.completedAt = Date.now();

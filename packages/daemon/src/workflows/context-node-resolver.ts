@@ -3,6 +3,10 @@ import { contextProviderAdapterFor } from '../context-providers/registry.js';
 import type { ContextProviderResult } from '../context-providers/types.js';
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
 import type {
+  PlatformContextSourcePolicy,
+  WorkflowPlatformContextClient,
+} from './platform-context-client.js';
+import type {
   WorkflowContext,
   WorkflowContextNode,
   WorkflowContextReceiptRecord,
@@ -10,6 +14,7 @@ import type {
   WorkflowRunRecord,
 } from './types.js';
 import { addEvent, renderOptionalTemplate } from './runtime-helpers.js';
+import { contextAuthorityDenial } from './workflow-authority-contract.js';
 
 interface NormalizedContextRef {
   ref: string;
@@ -68,6 +73,13 @@ export async function executeContextNode(
   const refs = normalizeRefs(node.refs ?? []);
   const query = await renderOptionalTemplate(node.query, run);
   const providers = selectProviders(run.resourceManifest?.contract.contextProviders ?? [], refs);
+  const denied = providers
+    .map(({ provider }) => contextAuthorityDenial(run, nodeId, provider))
+    .find((entry) => entry !== null);
+  if (denied) {
+    addEvent(run, 'context-blocked', denied.detail, { workflow_authority_denial: denied }, nodeId);
+    throw new Error(denied.detail);
+  }
   const missingRequired = missingRequiredRefs(refs, providers);
   if (missingRequired.length > 0) {
     throw new Error(
@@ -155,6 +167,7 @@ export async function resolvePromptNodeContext(input: {
   workflowContext?: WorkflowContext;
   nodeContext?: WorkflowNodeContextEnvelope;
   prompt: string;
+  platformContextClient?: WorkflowPlatformContextClient;
 }): Promise<NodeContextSelection> {
   const effective = effectivePromptContext(input.workflowContext ?? [], input.nodeContext);
   if (effective.refs.length === 0) {
@@ -162,10 +175,33 @@ export async function resolvePromptNodeContext(input: {
   }
 
   const query = await renderOptionalTemplate(effective.query ?? input.prompt, input.run);
-  const providers = selectProviders(
-    input.run.resourceManifest?.contract.contextProviders ?? [],
-    effective.refs,
-  );
+  const platformResolution = await input.platformContextClient?.resolveNodePolicy({
+    run: input.run,
+    nodeId: input.nodeId,
+    query: query ?? '',
+    maxSnippets: effective.maxItems,
+  });
+  const platformPolicies = platformResolution?.source_policies ?? [];
+  const providers =
+    platformPolicies.length > 0
+      ? selectProvidersForPolicies(
+          input.run.resourceManifest?.contract.contextProviders ?? [],
+          platformPolicies,
+        )
+      : selectProviders(input.run.resourceManifest?.contract.contextProviders ?? [], effective.refs);
+  const denied = providers
+    .map(({ provider }) => contextAuthorityDenial(input.run, input.nodeId, provider))
+    .find((entry) => entry !== null);
+  if (denied) {
+    addEvent(
+      input.run,
+      'node-context-blocked',
+      denied.detail,
+      { workflow_authority_denial: denied },
+      input.nodeId,
+    );
+    throw new Error(denied.detail);
+  }
   const missingRequired = missingRequiredRefs(effective.refs, providers);
   if (missingRequired.length > 0) {
     throw new Error(
@@ -209,6 +245,21 @@ export async function resolvePromptNodeContext(input: {
     ...(input.run.contextReceipts ?? []).filter((receipt) => receipt.usedBy.nodeId !== input.nodeId),
     ...contextReceipts,
   ];
+
+  if (input.platformContextClient && platformPolicies.length > 0) {
+    for (const policy of platformPolicies) {
+      const policyItems = selectedItems.filter((item) =>
+        providerMatchesPlatformPolicy(itemProviderForItem(item, providers), policy),
+      );
+      await input.platformContextClient.reportCustomerManagedReceipt({
+        run: input.run,
+        nodeId: input.nodeId,
+        policy,
+        query: query ?? '',
+        items: policyItems,
+      });
+    }
+  }
 
   const basis: NodeContextSelection['basis'] = {
     schema: 'viewport.node_context_basis/v1',
@@ -505,6 +556,63 @@ function selectProviders(
     selected.push({ provider, alias: ref.as });
   }
   return selected;
+}
+
+function selectProvidersForPolicies(
+  providers: SessionContextProviderManifest[],
+  policies: PlatformContextSourcePolicy[],
+): Array<{ provider: SessionContextProviderManifest; alias?: string }> {
+  const selected: Array<{ provider: SessionContextProviderManifest; alias?: string }> = [];
+  const seen = new Set<string>();
+  for (const policy of policies) {
+    const provider = providers.find((candidate) => providerMatchesPlatformPolicy(candidate, policy));
+    if (!provider || seen.has(provider.id)) continue;
+    seen.add(provider.id);
+    selected.push({ provider, alias: policy.context_source_name });
+  }
+  return selected;
+}
+
+function itemProviderForItem(
+  item: ResolvedContextItem,
+  providers: Array<{ provider: SessionContextProviderManifest }>,
+): SessionContextProviderManifest | undefined {
+  return providers.find(({ provider }) => provider.id === item.provider_id)?.provider;
+}
+
+function providerMatchesPlatformPolicy(
+  provider: SessionContextProviderManifest | undefined,
+  policy: PlatformContextSourcePolicy,
+): boolean {
+  if (!provider) return false;
+  const candidates = [
+    policy.context_source_id,
+    policy.external_ref,
+    policy.source_url ?? undefined,
+    `context://${policy.context_source_id}`,
+    `source:${policy.context_source_id}`,
+    `provider://${policy.context_source_id}`,
+  ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate !== '');
+  if (candidates.some((candidate) => matchesProviderRef(provider, candidate))) return true;
+
+  const gitRef = parseGitSourceRef(policy.external_ref);
+  if (gitRef && provider.provider === 'github-repo') {
+    const repo = provider.repo?.replace(/\.git$/, '');
+    const remote = provider.remote?.replace(/\.git$/, '');
+    return repo === gitRef.repo || remote?.includes(gitRef.repo) === true;
+  }
+
+  if (policy.provider_type === 'git' && provider.provider === 'repo-docs') {
+    return provider.paths?.some((path) => gitRef?.path.startsWith(path.replace(/\*\*\/\*\.md$/, ''))) ?? false;
+  }
+
+  return false;
+}
+
+function parseGitSourceRef(ref: string): { repo: string; path: string } | null {
+  const match = /^git:\/\/([^/]+\/[^/]+)\/(.+)$/.exec(ref.trim());
+  if (!match) return null;
+  return { repo: match[1] ?? '', path: match[2] ?? '' };
 }
 
 function missingRequiredRefs(

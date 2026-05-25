@@ -9,6 +9,7 @@ import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
 import { resolvePromptNodeContext } from './context-node-resolver.js';
 import { parseWorkflow } from './parser.js';
+import type { WorkflowPlatformContextClient } from './platform-context-client.js';
 import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
@@ -21,6 +22,7 @@ export interface WorkflowNodeExecutorContext {
    * map is transient process memory only and is never persisted with the run.
    */
   runtimeSecretEnv?: Record<string, string>;
+  platformContextClient?: WorkflowPlatformContextClient;
   saveAndEmit: (run: WorkflowRunRecord) => Promise<void>;
 }
 
@@ -50,15 +52,7 @@ export async function executeWorkflowNode(
       nodeId,
       nodeType: node.type,
       status: 'acknowledged',
-      enforcement: {
-        context: 'enforced',
-        data_capture: 'enforced',
-        credentials: 'materialization_guarded',
-        side_effects: 'approval_guarded',
-        repos: 'modeled',
-        tools: 'modeled',
-        budgets: 'modeled',
-      },
+      enforcement: nodeContractEnforcement(run),
     },
     nodeId,
   );
@@ -185,16 +179,22 @@ function preExecuteNodeContractAcknowledgement(
     node_id: nodeId,
     node_type: node.type,
     acknowledged_at: new Date(acknowledgedAt).toISOString(),
-    enforcement: {
-      context: 'enforced',
-      data_capture: 'enforced',
-      credentials: 'materialization_guarded',
-      side_effects: 'approval_guarded',
-      repos: 'modeled',
-      tools: 'modeled',
-      budgets: 'modeled',
-    },
-    modeled: ['repos', 'tools', 'budgets'],
+    enforcement: nodeContractEnforcement(run),
+    modeled: run.workflowAuthorityContract ? ['tools', 'budgets'] : ['repos', 'tools', 'budgets'],
+  };
+}
+
+function nodeContractEnforcement(run: WorkflowRunRecord): Record<string, string> {
+  const authorityEnforced = run.workflowAuthorityContract ? 'contract_guarded' : 'modeled';
+
+  return {
+    context: run.workflowAuthorityContract ? 'contract_guarded' : 'enforced',
+    data_capture: 'enforced',
+    credentials: 'materialization_guarded',
+    side_effects: run.workflowAuthorityContract ? 'contract_guarded' : 'approval_guarded',
+    repos: authorityEnforced,
+    tools: 'modeled',
+    budgets: 'modeled',
   };
 }
 
@@ -337,6 +337,7 @@ async function executePromptNode(
     workflowContext: parsed.definition.context,
     nodeContext: node.context,
     prompt: renderedPrompt,
+    platformContextClient: context.platformContextClient,
   });
   if (selectedContext.basis.mode !== 'none') {
     state.outputs = {
@@ -366,6 +367,7 @@ async function executePromptNode(
       : renderedPrompt,
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
+    ...(node.effort ? { effort: node.effort } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
     ...(node.timeoutSeconds ? { timeoutSeconds: node.timeoutSeconds } : {}),
     outputFallback: () => readPromptNodeOutput(run, state),

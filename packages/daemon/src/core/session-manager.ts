@@ -113,6 +113,7 @@ export class SessionManager {
       initialPrompt: prompt,
       deferInitialPrompt: true,
       model: config.model,
+      effort: config.effort,
       canUseTool,
       config,
     });

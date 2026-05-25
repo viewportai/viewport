@@ -878,6 +878,26 @@ nodes:
     ).toThrow(/Set exactly one/);
   });
 
+  it('parses prompt effort as first-class runtime config', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: prompt-effort
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    model: opus
+    effort: high
+    prompt: Draft the plan.
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.nodes.plan?.type).toBe('prompt');
+    expect(parsed.definition.nodes.plan?.effort).toBe('high');
+  });
+
   it('parses workflows from disk with resolved source paths', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-parser-'));
     try {
