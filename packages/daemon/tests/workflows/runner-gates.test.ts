@@ -249,13 +249,16 @@ nodes:
     await daemon.workflowRunner.decideApproval(run.id, 'propose', {
       approved: true,
       message: 'Approved by reviewer',
+      feedback: {
+        plan_body: '## Revised Plan\n1. Add BillingService.\n2. Keep controller behavior stable.',
+      },
     });
     await waitForCompletedRun(daemon, run.id);
     const completed = await daemon.workflowRunner.getRun(run.id);
 
     expect(completed?.status).toBe('completed');
-    expect(completed?.nodes.propose?.output).toContain('Add BillingService');
-    expect(completed?.nodes.after?.output).toContain('Add BillingService');
+    expect(completed?.nodes.propose?.output).toContain('Keep controller behavior stable');
+    expect(completed?.nodes.after?.output).toContain('Keep controller behavior stable');
     expect(completed?.events.map((event) => event.type)).toContain('plan-proposed');
   });
 });

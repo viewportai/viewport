@@ -797,4 +797,38 @@ describe('HTTP Server', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it('POST /api/workflows/runs/:id/approvals/:nodeId accepts approval feedback', async () => {
+    const decideApproval = vi.spyOn(daemon.workflowRunner, 'decideApproval').mockResolvedValue({
+      id: 'run-approval-feedback',
+      status: 'running',
+      workflowName: 'proof',
+      nodes: {},
+      events: [],
+    } as never);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/workflows/runs/run-approval-feedback/approvals/create_plan',
+      payload: {
+        approved: true,
+        message: 'Approved revised plan.',
+        feedback: {
+          plan_body: '## Revised Plan\nShip the approved implementation path.',
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(decideApproval).toHaveBeenCalledWith(
+      'run-approval-feedback',
+      'create_plan',
+      expect.objectContaining({
+        approved: true,
+        feedback: {
+          plan_body: '## Revised Plan\nShip the approved implementation path.',
+        },
+      }),
+    );
+  });
 });

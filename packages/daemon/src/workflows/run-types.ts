@@ -233,6 +233,7 @@ export interface WorkflowRunRequest {
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
+  resourceManifest?: SessionResourceManifest;
   executionPolicy?: WorkflowExecutionPolicy;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
   initiation: WorkflowRunRecord['initiation'];

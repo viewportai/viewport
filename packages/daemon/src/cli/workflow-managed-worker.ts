@@ -23,6 +23,7 @@ import type { WorkflowActionNode, WorkflowInputValue } from '../workflows/types.
 import {
   approvalActor,
   approvalExecutionGrant,
+  approvalFeedback,
   approvalExpectedActionDigest,
   approvalMessage,
   capabilityPayload,
@@ -126,6 +127,7 @@ export async function workflowWorker(): Promise<void> {
           options,
           assignment.id,
           assignment.assignment_claim_token,
+          localRun.id,
         );
         if (approved) {
           const resumed = await resumeApprovedLocalRun(
@@ -800,6 +802,7 @@ async function runAssignmentLocally(
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
+    resourceManifest: assignment.resource_manifest ?? undefined,
     initiation: 'cli',
     dataCapturePolicy: assignment.data_capture_policy ?? undefined,
   });
@@ -974,7 +977,12 @@ async function waitForApprovalAndResume(
   while (true) {
     await heartbeat(options, 'online', 'busy');
     const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-    const approved = assignment.nodes?.find(isApprovedManagedGateNode);
+    const approved = await approvedNodeForAssignment(
+      options,
+      platformRunId,
+      assignmentClaimToken,
+      localRunId,
+    );
     if (approved) {
       return resumeApprovedLocalRun(
         options,
@@ -1005,9 +1013,19 @@ async function approvedNodeForAssignment(
   options: ManagedWorkerOptions,
   platformRunId: string,
   assignmentClaimToken?: string | null,
+  localRunId?: string | null,
 ): Promise<NonNullable<ManagedAssignment['nodes']>[number] | null> {
   const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-  return assignment.nodes?.find(isApprovedManagedGateNode) ?? null;
+  const approvedNodes = assignment.nodes?.filter(isApprovedManagedGateNode) ?? [];
+  if (approvedNodes.length <= 1 || !localRunId) return approvedNodes[0] ?? null;
+
+  const localRun = await readExistingLocalRun(localRunId);
+  const blockedNodeIds = new Set(
+    Object.values(localRun?.nodes ?? {})
+      .filter((node) => node.status === 'blocked')
+      .map((node) => node.id),
+  );
+  return approvedNodes.find((node) => blockedNodeIds.has(node.node_key)) ?? approvedNodes[0] ?? null;
 }
 
 async function resumeApprovedLocalRun(
@@ -1017,19 +1035,31 @@ async function resumeApprovedLocalRun(
   approved: NonNullable<ManagedAssignment['nodes']>[number],
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
-  await daemonJson(
-    'POST',
-    `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
-      approved.node_key,
-    )}`,
-    {
-      approved: true,
-      message: approvalMessage(approved),
-      actor: approvalActor(approved),
-      expectedActionDigest: approvalExpectedActionDigest(approved),
-      executionGrant: approvalExecutionGrant(approved),
-    },
-  );
+  try {
+    await daemonJson(
+      'POST',
+      `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
+        approved.node_key,
+      )}`,
+      {
+        approved: true,
+        message: approvalMessage(approved),
+        actor: approvalActor(approved),
+        expectedActionDigest: approvalExpectedActionDigest(approved),
+        executionGrant: approvalExecutionGrant(approved),
+        feedback: approvalFeedback(approved),
+      },
+    );
+  } catch (error) {
+    if (!isAlreadyResolvedApprovalError(error)) throw error;
+
+    const current = await readExistingLocalRun(localRunId);
+    if (!current) throw error;
+    await syncLocalRun(options, platformRunId, current, assignmentClaimToken);
+
+    return current;
+  }
+
   const resumed = await pollLocalRun(
     localRunId,
     async (run) => {
@@ -1039,6 +1069,12 @@ async function resumeApprovedLocalRun(
   );
   await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
   return resumed;
+}
+
+function isAlreadyResolvedApprovalError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message.includes('Workflow node is not awaiting approval');
 }
 
 function isApprovedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {

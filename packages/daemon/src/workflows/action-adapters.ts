@@ -24,6 +24,9 @@ export async function executeActionAdapter(
     return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey, actionInput);
   }
 
+  const brokered = brokeredApprovedAction(run, nodeId, node);
+  if (brokered) return brokered;
+
   if (node.adapter === 'webhook' || node.adapter === 'http') {
     return executeWebhookAction(run, nodeId, node, idempotencyKey, actionInput);
   }
@@ -34,6 +37,28 @@ export async function executeActionAdapter(
   if (providerAction) return providerAction;
 
   return declaredAction(run, nodeId, node, 'declared', idempotencyKey, actionInput);
+}
+
+function brokeredApprovedAction(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+): ActionResult | null {
+  if (node.requiresApproval !== true) return null;
+  const state = run.nodes[nodeId];
+  if (state?.approval?.approved !== true || !state.approval.executionGrant) return null;
+  const existing = state.metadata?.['action'];
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return null;
+
+  return {
+    output: `${node.adapter}.${node.action}`,
+    metadata: {
+      action: {
+        ...(existing as Record<string, unknown>),
+        ...approvedExecutionGrant(run, nodeId, true),
+      },
+    },
+  };
 }
 
 async function executeWebhookAction(

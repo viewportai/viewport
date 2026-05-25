@@ -25,7 +25,8 @@ export class WorkflowRuntimeCommandApplier {
     if (!run || run.status !== 'blocked') return false;
 
     const node = run.nodes[command.workflow_node_id];
-    if (!node || node.status !== 'blocked') return false;
+    if (!node) return false;
+    if (node.status !== 'blocked') return true;
 
     await this.decideApproval(run.id, command.workflow_node_id, {
       approved: command.approved,

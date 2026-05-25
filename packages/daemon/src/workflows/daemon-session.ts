@@ -65,6 +65,7 @@ export async function runWorkflowDaemonSession(
     const sessionId = await context.daemon.launchSession(run.directoryId, request.prompt, {
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),
+      contextInjection: 'disabled',
     });
     activeSessionId = sessionId;
     const nativeSessionId = context.daemon.getSessionNativeId(sessionId);

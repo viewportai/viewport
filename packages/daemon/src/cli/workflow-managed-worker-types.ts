@@ -1,3 +1,4 @@
+import type { SessionResourceManifest } from '../config-resolution/index.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
 
 export interface ManagedWorkerOptions {
@@ -39,6 +40,7 @@ export interface ManagedAssignment {
   execution_profile_snapshot?: Record<string, unknown> | null;
   workflow_snapshot?: Record<string, unknown> | null;
   runner_workspace_snapshot?: Record<string, unknown> | null;
+  resource_manifest?: SessionResourceManifest | null;
   context_receipts_snapshot?: unknown[] | Record<string, unknown> | null;
   yaml_snapshot?: string | null;
   source_ref?: string | null;

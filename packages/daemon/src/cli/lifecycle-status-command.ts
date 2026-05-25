@@ -35,6 +35,14 @@ interface RelayBindingStatusView {
   lastErrorMessage?: string;
 }
 
+interface DaemonReachabilityView {
+  status: 'running' | 'unresponsive' | 'stale_state' | 'stopped';
+  endpoint: string;
+  staleState: boolean;
+  message: string;
+  recoveryCommand: string;
+}
+
 function endpointHealthUrl(endpoint: DaemonEndpoint): string {
   if (endpoint.type === 'socket') {
     return `unix://${endpoint.socketPath}:/health`;
@@ -47,6 +55,52 @@ function endpointListenLabel(endpoint: DaemonEndpoint): string {
     return `unix://${endpoint.socketPath}`;
   }
   return `${endpoint.host}:${endpoint.port}`;
+}
+
+function daemonReachabilityView(
+  statusValue: 'running' | 'stopped' | 'unresponsive',
+  endpoint: DaemonEndpoint,
+  state: Awaited<ReturnType<typeof readDaemonRuntimeState>>,
+  runningByState: boolean,
+): DaemonReachabilityView {
+  const endpointLabel = endpointHealthUrl(endpoint);
+  if (statusValue === 'running') {
+    return {
+      status: 'running',
+      endpoint: endpointLabel,
+      staleState: false,
+      message: `Viewport daemon is reachable at ${endpointLabel}.`,
+      recoveryCommand: 'none',
+    };
+  }
+
+  if (state && !runningByState) {
+    return {
+      status: 'stale_state',
+      endpoint: endpointLabel,
+      staleState: true,
+      message: `Viewport daemon is not reachable at ${endpointLabel}; saved runtime state points at a dead process.`,
+      recoveryCommand: 'vpd start --foreground',
+    };
+  }
+
+  if (statusValue === 'unresponsive') {
+    return {
+      status: 'unresponsive',
+      endpoint: endpointLabel,
+      staleState: false,
+      message: `Viewport daemon process exists but health checks are not responding at ${endpointLabel}.`,
+      recoveryCommand: 'vpd restart',
+    };
+  }
+
+  return {
+    status: 'stopped',
+    endpoint: endpointLabel,
+    staleState: false,
+    message: `Viewport daemon is not running at ${endpointLabel}.`,
+    recoveryCommand: 'vpd start --foreground',
+  };
 }
 
 export async function status(): Promise<void> {
@@ -63,6 +117,7 @@ export async function status(): Promise<void> {
     : runningByState
       ? 'unresponsive'
       : 'stopped';
+  const daemonReachability = daemonReachabilityView(statusValue, endpoint, state, runningByState);
 
   const owner =
     state?.ownerUid !== undefined
@@ -191,6 +246,7 @@ export async function status(): Promise<void> {
     latestCliVersion,
     updateStatus,
     health,
+    daemonReachability,
     relayState: health?.relay?.state ?? null,
     relayReconnectAttempt: health?.relay?.reconnectAttempt ?? null,
     relayLastErrorCode: health?.relay?.lastErrorCode ?? null,
@@ -222,6 +278,10 @@ export async function status(): Promise<void> {
   }
 
   console.log(`Status:      ${payload.status}`);
+  if (payload.daemonReachability.status !== 'running') {
+    console.log(`Daemon hint: ${payload.daemonReachability.message}`);
+    console.log(`Recovery:    ${payload.daemonReachability.recoveryCommand}`);
+  }
   console.log(
     `Runtime:     ${formatRuntimeKindLabel(payload.runtimeKind)} (${payload.daemonHomeScope})`,
   );

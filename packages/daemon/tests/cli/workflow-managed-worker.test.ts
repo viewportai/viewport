@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 import {
+  approvalFeedback,
   capabilityPayload,
   localRunToSyncPayload,
 } from '../../src/cli/workflow-managed-worker-format.js';
@@ -43,6 +44,29 @@ describe('workflow managed worker CLI', () => {
       tools: ['shell', 'git', 'node'],
       agents: ['claude', 'codex'],
       models: ['default', 'gpt-5.4'],
+    });
+  });
+
+  it('extracts approved plan feedback for local resume commands', () => {
+    expect(
+      approvalFeedback({
+        node_key: 'create_plan',
+        type: 'plan',
+        status: 'completed',
+        metadata: {
+          approval: {
+            feedback: {
+              plan_id: 'plan_1',
+              plan_body: 'Revised approved plan.',
+              plan_body_sha256: 'sha256:plan',
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      plan_id: 'plan_1',
+      plan_body: 'Revised approved plan.',
+      plan_body_sha256: 'sha256:plan',
     });
   });
 
@@ -99,6 +123,40 @@ describe('workflow managed worker CLI', () => {
             route_snapshot: { key: 'payments-bugs' },
             execution_profile_snapshot: { key: 'payments-prod' },
             runner_workspace_snapshot: { runner_pool: 'payments-vps' },
+            resource_manifest: {
+              schema: 'viewport.session_resource_manifest/v1',
+              manifestDigest: 'sha256:platform-manifest',
+              workingDirectory: 'viewport://execution-profiles/payments-prod',
+              configSources: [],
+              resources: {
+                contexts: [],
+                contextPackages: [],
+                workflows: [],
+                plans: [],
+                agentProfiles: [],
+              },
+              contract: {
+                contextProviders: [
+                  {
+                    id: 'platform_docs',
+                    provider: 'github-repo',
+                    required: true,
+                    privacy: 'third_party_terms',
+                    capabilities: ['search'],
+                    sourceConfigPath: 'viewport://context-sources/platform_docs',
+                    repo: 'viewportai/vp-example-docs',
+                    ref: 'main',
+                    resolution: 'requested_unverified',
+                  },
+                ],
+                contextResolution: { order: ['platform_docs'], strategy: 'provider_order' },
+                workflows: [],
+                contextPackages: [],
+                riskyPathRules: [],
+              },
+              conflicts: [],
+              warnings: [],
+            },
             context_receipts_snapshot: [
               {
                 schema: 'viewport.context_receipt/v1',
@@ -158,6 +216,19 @@ describe('workflow managed worker CLI', () => {
           resourceId: 'workspace_1',
           platformRunId: 'run_platform_1',
           dataCapturePolicy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
+          resourceManifest: expect.objectContaining({
+            schema: 'viewport.session_resource_manifest/v1',
+            manifestDigest: 'sha256:platform-manifest',
+            contract: expect.objectContaining({
+              contextProviders: [
+                expect.objectContaining({
+                  id: 'platform_docs',
+                  provider: 'github-repo',
+                  repo: 'viewportai/vp-example-docs',
+                }),
+              ],
+            }),
+          }),
           inputs: {
             issue: 'PAY-1842',
             viewport: {
@@ -1472,6 +1543,19 @@ nodes:
             status: 'running',
             nodes: [
               {
+                node_key: 'notify_plan_ready',
+                type: 'action',
+                status: 'completed',
+                output: 'slack.post_message',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    message: 'Already approved earlier',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                  },
+                },
+              },
+              {
                 node_key: 'approve',
                 type: 'approval',
                 status: 'completed',
@@ -1692,6 +1776,142 @@ nodes:
     await workflow();
 
     expect(platformSyncStatuses).toEqual(['completed']);
+    expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
+  });
+
+  it('syncs stale already-resolved approvals instead of failing the worker loop', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_plan',
+            assignment_claim_token: 'vpclaim_stale_plan',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: stale-plan\nnodes: {}\n',
+            directory_path: '/repo',
+            runtime_run_id: 'local_run_stale_plan',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'create_plan',
+                type: 'plan',
+                status: 'completed',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    message: 'Approved while worker was down',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                    feedback: { plan_body: 'Approved revised plan.' },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_plan') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_stale_plan',
+        );
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_plan',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'create_plan',
+                type: 'plan',
+                status: 'completed',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    message: 'Approved while worker was down',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                    feedback: { plan_body: 'Approved revised plan.' },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_plan/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_stale_plan',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ data: { id: 'run_platform_stale_plan', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const staleBlockedOtherGateRun: WorkflowRunRecord = {
+      ...blockedLocalRun('local_run_stale_plan'),
+      nodes: {
+        propose_pr: {
+          id: 'propose_pr',
+          type: 'action',
+          status: 'blocked',
+          approval: {
+            prompt: 'Approve github.open_pr side effect?',
+            requestedAt: Date.now(),
+          },
+        },
+      },
+    };
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/workflows/runs/local_run_stale_plan' && init?.method === 'GET') {
+        return jsonResponse({ run: staleBlockedOtherGateRun });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/create_plan') {
+        return jsonResponse({ error: 'Workflow node is not awaiting approval: create_plan' }, 400);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        throw new Error('Stale approved assignments must not start over.');
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['blocked']);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_stale_plan/approvals/create_plan',
+      expect.anything(),
+    );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 

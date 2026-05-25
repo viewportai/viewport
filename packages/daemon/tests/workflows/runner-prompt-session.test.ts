@@ -217,7 +217,7 @@ nodes:
     );
   });
 
-  it('injects repo-configured Context Vault entries into workflow prompt sessions', async () => {
+  it('keeps repo-configured Context Vault entries out of workflow prompt sessions unless selected by node context', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();
     daemon.registerAdapter(adapter);
@@ -289,11 +289,8 @@ nodes:
       'Review workflow context for the current directory.',
     );
     const sentPrompt = String(session.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
-    expect(sentPrompt).toContain('<viewport_context>');
-    expect(sentPrompt).toContain('## ctx-workflow-launch');
-    expect(sentPrompt).toContain('### Workflow launch context');
-    expect(sentPrompt).toContain('Workflow prompt nodes must receive resource manifest context.');
-    expect(sentPrompt).toContain('<user_request>');
+    expect(sentPrompt).not.toContain('<viewport_context>');
+    expect(sentPrompt).not.toContain('Workflow prompt nodes must receive resource manifest context.');
     expect(sentPrompt).toContain('Review workflow context for the current directory.');
 
     session.emitAgentMessage('context used');
@@ -350,6 +347,10 @@ nodes:
       `
 schema: viewport.workflow/v1
 name: prompt-repo-docs-proof
+context:
+  - source: repo_docs
+    as: billing-runbook
+    max_items: 1
 requires:
   agents:
     - claude
@@ -372,8 +373,8 @@ nodes:
     const session = await waitForSessionWithPrompt(adapter, 'Review billing changes.');
     const sentPrompt = String(session.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
     expect(sentPrompt).toContain('<viewport_context>');
-    expect(sentPrompt).toContain('## repo_docs (repo-docs)');
-    expect(sentPrompt).toContain('### docs/review.md');
+    expect(sentPrompt).toContain('## [context-1] billing-runbook (repo-docs)');
+    expect(sentPrompt).toContain('Title: docs/review.md');
     expect(sentPrompt).toContain('Run the local reviewer before touching billing code.');
 
     session.emitAgentMessage('repo docs used');
@@ -391,6 +392,364 @@ nodes:
         }),
       ]),
     );
+    expect(completed?.contextReceipts).toEqual([
+      expect.objectContaining({
+        provider: 'repo-docs',
+        requested: 'repo_docs',
+        usedBy: expect.objectContaining({
+          nodeId: 'review',
+          providerId: 'repo_docs',
+          alias: 'billing-runbook',
+        }),
+      }),
+    ]);
+    expect(completed?.nodes.review?.outputs?.context_basis).toMatchObject({
+      schema: 'viewport.node_context_basis/v1',
+      nodeId: 'review',
+      mode: 'workflow_default',
+      selectedItems: [
+        expect.objectContaining({
+          provider_id: 'repo_docs',
+          alias: 'billing-runbook',
+          title: 'docs/review.md',
+        }),
+      ],
+    });
+    expect(completed?.nodes.review?.outputs?.context_briefing).toMatchObject({
+      schema: 'viewport.context_briefing/v1',
+      nodeId: 'review',
+      selectedSources: [
+        expect.objectContaining({
+          ref: 'repo_docs',
+        }),
+      ],
+      topEntries: [
+        expect.objectContaining({
+          provider_id: 'repo_docs',
+          title: 'docs/review.md',
+        }),
+      ],
+      retrievalCaps: expect.objectContaining({
+        maxItems: null,
+      }),
+    });
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-context-selected',
+        nodeId: 'review',
+      }),
+    );
+  });
+
+  it('injects selected viewport-vault context when local edge credentials are configured', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+
+    await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: support-team-memory',
+        '      provider: viewport-vault',
+        '      vault: support-team-memory',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const credentials = {
+      passphrase: 'local-proof-passphrase',
+      recoveryCode: 'local-proof-recovery',
+    };
+    await initContextResource({
+      contextResourceId: 'support-team-memory',
+      userName: 'payments-team',
+      deviceName: 'Mac.lan',
+      credentials,
+    });
+    await addContextEntry({
+      contextResourceId: 'support-team-memory',
+      actorName: 'Mac.lan',
+      title: 'Support team memory',
+      body: 'Support workflow memory should be injected only when the node asks for it.',
+      credentials,
+    });
+
+    const previousPassphrase = process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_PASSPHRASE;
+    const previousRecovery = process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_RECOVERY_CODE;
+    process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_PASSPHRASE = credentials.passphrase;
+    process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_RECOVERY_CODE = credentials.recoveryCode;
+
+    try {
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: prompt-vault-context-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    context:
+      include:
+        - source: provider://support-team-memory
+          as: planning-memory
+          required: true
+    prompt: Review support memory.
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      const session = await waitForSessionWithPrompt(adapter, 'Review support memory.');
+      const sentPrompt = String(session.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+      expect(sentPrompt).toContain('<viewport_context>');
+      expect(sentPrompt).toContain('planning-memory (viewport-vault)');
+      expect(sentPrompt).toContain(
+        'Support workflow memory should be injected only when the node asks for it.',
+      );
+
+      session.emitAgentMessage('vault context used');
+      session.simulateIdle();
+      await waitForTerminalRun(daemon, run.id);
+
+      const completed = await daemon.workflowRunner.getRun(run.id);
+      expect(completed?.status).toBe('completed');
+      expect(completed?.contextReceipts).toEqual([
+        expect.objectContaining({
+          provider: 'viewport-vault',
+          usedBy: expect.objectContaining({
+            nodeId: 'review',
+            providerId: 'support-team-memory',
+            alias: 'planning-memory',
+          }),
+        }),
+      ]);
+    } finally {
+      if (previousPassphrase === undefined) {
+        delete process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_PASSPHRASE;
+      } else {
+        process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_PASSPHRASE = previousPassphrase;
+      }
+      if (previousRecovery === undefined) {
+        delete process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_RECOVERY_CODE;
+      } else {
+        process.env.VIEWPORT_CONTEXT_SUPPORT_TEAM_MEMORY_RECOVERY_CODE = previousRecovery;
+      }
+    }
+  });
+
+  it('isolates selected context per prompt node and records node-scoped basis evidence', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+
+    await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+    await fs.mkdir(path.join(projectDir, 'docs', 'plan'), { recursive: true });
+    await fs.mkdir(path.join(projectDir, 'docs', 'implement'), { recursive: true });
+    await fs.mkdir(path.join(projectDir, 'artifacts'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, 'docs', 'plan', 'planning.md'),
+      'PLAN_ONLY_CONTEXT: prioritize risk review before implementation.',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(projectDir, 'docs', 'implement', 'implementation.md'),
+      'IMPLEMENT_ONLY_CONTEXT: update src/proof.ts and run focused tests.',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(projectDir, 'artifacts', 'plan-basis.md'),
+      'Plan artifact placeholder for context basis proof.',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(projectDir, '.viewport', 'config.yaml'),
+      [
+        'version: 1',
+        'context:',
+        '  providers:',
+        '    - id: plan_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/plan/**/*.md',
+        '    - id: implement_docs',
+        '      provider: repo-docs',
+        '      paths:',
+        '        - docs/implement/**/*.md',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: per-node-context-proof
+context:
+  - source: plan_docs
+  - source: implement_docs
+requires:
+  agents:
+    - claude
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    artifacts:
+      plan_basis:
+        path: artifacts/plan-basis.md
+        type: report
+    context:
+      include:
+        - source: plan_docs
+          as: planning-basis
+          max_items: 1
+      max_items: 1
+      write_targets:
+        - kind: team_memory
+          ref: context-candidates/payments-default
+    prompt: Draft a plan for the support ticket.
+  implement:
+    type: prompt
+    agent: claude
+    needs:
+      - plan
+    context:
+      include:
+        - source: implement_docs
+          as: implementation-basis
+          max_items: 1
+      max_items: 1
+    prompt: Implement the approved plan using {{ nodes.plan.output }}.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    const planSession = await waitForSessionWithPrompt(adapter, 'Draft a plan for the support ticket.');
+    const planPrompt = String(planSession.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(planPrompt).toContain('PLAN_ONLY_CONTEXT');
+    expect(planPrompt).not.toContain('IMPLEMENT_ONLY_CONTEXT');
+    expect(planPrompt).toContain('planning-basis');
+    planSession.emitAgentMessage('approved plan output');
+    planSession.simulateIdle();
+
+    const implementSession = await waitForSessionWithPrompt(adapter, 'Implement the approved plan');
+    const implementPrompt = String(implementSession.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(implementPrompt).toContain('IMPLEMENT_ONLY_CONTEXT');
+    expect(implementPrompt).not.toContain('PLAN_ONLY_CONTEXT');
+    expect(implementPrompt).toContain('implementation-basis');
+    expect(implementPrompt).toContain('approved plan output');
+    implementSession.emitAgentMessage('implementation complete');
+    implementSession.simulateIdle();
+
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.contextReceipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          requested: 'plan_docs',
+          usedBy: expect.objectContaining({
+            nodeId: 'plan',
+            providerId: 'plan_docs',
+            alias: 'planning-basis',
+          }),
+        }),
+        expect.objectContaining({
+          requested: 'implement_docs',
+          usedBy: expect.objectContaining({
+            nodeId: 'implement',
+            providerId: 'implement_docs',
+            alias: 'implementation-basis',
+          }),
+        }),
+      ]),
+    );
+    expect(completed?.nodes.plan?.outputs?.context_basis).toMatchObject({
+      mode: 'node_envelope',
+      writeTargets: [
+        expect.objectContaining({
+          kind: 'team_memory',
+          ref: 'context-candidates/payments-default',
+        }),
+      ],
+      selectedItems: [
+        expect.objectContaining({
+          provider_id: 'plan_docs',
+          alias: 'planning-basis',
+        }),
+      ],
+    });
+    expect(completed?.nodes.plan?.outputs?.context_briefing).toMatchObject({
+      schema: 'viewport.context_briefing/v1',
+      nodeId: 'plan',
+      topEntries: [
+        expect.objectContaining({
+          provider_id: 'plan_docs',
+          label: 'planning-basis',
+        }),
+      ],
+      writeTargets: [
+        expect.objectContaining({
+          kind: 'team_memory',
+          ref: 'context-candidates/payments-default',
+        }),
+      ],
+    });
+    expect(completed?.nodes.implement?.outputs?.context_basis).toMatchObject({
+      mode: 'node_envelope',
+      selectedItems: [
+        expect.objectContaining({
+          provider_id: 'implement_docs',
+          alias: 'implementation-basis',
+        }),
+      ],
+    });
+    expect(completed?.artifacts).toContainEqual(
+      expect.objectContaining({
+        nodeId: 'plan',
+        name: 'plan_basis',
+        metadata: expect.objectContaining({
+          context_briefing: expect.objectContaining({
+            schema: 'viewport.context_briefing/v1',
+            nodeId: 'plan',
+          }),
+          context_basis: expect.objectContaining({
+            nodeId: 'plan',
+            selectedItems: [
+              expect.objectContaining({
+                provider_id: 'plan_docs',
+                alias: 'planning-basis',
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+    expect(completed?.events.filter((event) => event.type === 'node-context-selected')).toHaveLength(2);
   });
 
   it('fails and kills a prompt node when its timeout expires', async () => {

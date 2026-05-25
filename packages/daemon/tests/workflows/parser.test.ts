@@ -49,6 +49,52 @@ describe('workflow parser', () => {
     expect(WORKFLOW_SCHEMA_VERSION).toBe('viewport.workflow/v1');
   });
 
+  it('accepts Slack source-accepted and inbox notification config objects', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: slack-notification-proof
+notifications:
+  sourceAccepted:
+    enabled: true
+    provider: slack
+    credential_ref: slack/support
+    delivery: source_thread
+    template: "Viewport accepted {{ run.url }}"
+    onFailure: continue
+  inbox:
+    slack:
+      enabled: true
+      credential_ref: slack/support
+      delivery:
+        - source_thread
+        - channel
+      events:
+        - inbox.approval_needed
+        - inbox.plan_review_requested
+      channel: C0123456789
+      template: "{{ item.title }} needs review: {{ item.url }}"
+nodes:
+  proof:
+    type: shell
+    command: echo ok
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.notifications?.sourceAccepted).toMatchObject({
+      enabled: true,
+      provider: 'slack',
+      credential_ref: 'slack/support',
+    });
+    expect(parsed.definition.notifications?.inbox).toMatchObject({
+      slack: {
+        delivery: ['source_thread', 'channel'],
+        channel: 'C0123456789',
+      },
+    });
+  });
+
   it('accepts stable action proposal keys for brokered provider actions', () => {
     const parsed = parseWorkflow(
       `

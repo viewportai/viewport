@@ -439,10 +439,13 @@ export class SessionManager {
   private async sendInitialPrompt(sessionId: string, text: string): Promise<void> {
     const active = this.getActiveSession(sessionId);
     const directory = this.directoryManager.get(active.directoryId);
-    const prompt = await buildSessionPromptWithContext({
-      workingDirectory: directory?.path ?? active.worktreePath,
-      prompt: text,
-    });
+    const prompt =
+      active.config.contextInjection === 'disabled'
+        ? text
+        : await buildSessionPromptWithContext({
+            workingDirectory: directory?.path ?? active.worktreePath,
+            prompt: text,
+          });
     await this.sendPrompt(sessionId, prompt);
   }
 

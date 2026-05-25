@@ -29,6 +29,7 @@ export function workflowNodeMetadata(
     needs: node.needs ?? [],
     outputs: node.outputs ?? {},
     artifacts: node.artifacts ?? {},
+    context: node.context ?? null,
     retry: node.retry ?? null,
     policy: node.policy ?? null,
     timeoutSeconds: node.timeoutSeconds ?? null,

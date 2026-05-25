@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
 import { WORKFLOW_SCHEMA_VERSION, WorkflowDefinitionSchema } from './workflow-schema.js';
-import type { ParsedWorkflow, WorkflowDefinition } from './types.js';
+import type { ParsedWorkflow, WorkflowContextReference, WorkflowDefinition } from './types.js';
 
 export { WORKFLOW_SCHEMA_VERSION };
 
@@ -197,7 +197,7 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
   if (node.type === 'context') {
     return [
       node.query,
-      ...(node.refs ?? []).map((entry) => (typeof entry === 'string' ? entry : entry.ref)),
+      ...(node.refs ?? []).map(workflowContextRef),
     ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'condition') {
@@ -297,6 +297,10 @@ function declaredReferenceName(
   if (!declared) return referenceName;
   if (Object.hasOwn(declared, referenceName)) return referenceName;
   return referenceName.split('.')[0] ?? referenceName;
+}
+
+function workflowContextRef(entry: string | WorkflowContextReference): string {
+  return typeof entry === 'string' ? entry : entry.ref ?? entry.source ?? entry.package ?? entry.artifact ?? '';
 }
 
 function transitiveDependencies(definition: WorkflowDefinition, nodeId: string): Set<string> {

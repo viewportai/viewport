@@ -15,6 +15,7 @@ import { extractBearerToken } from './auth.js';
 import type { SecurityProfile } from './security.js';
 import { isHostAllowed, isLoopbackHost, isOriginAllowed, isPathWithin } from './security.js';
 import type { DaemonRelayBridgeStatus } from '../relay/daemon-relay-bridge.js';
+import type { SessionResourceManifest } from '../config-resolution/index.js';
 import type { WorkflowInputValue } from '../workflows/types.js';
 import { registerHealthRoutes } from './http-health-routes.js';
 import { registerContextRoutes } from './http-context-routes.js';
@@ -274,6 +275,7 @@ export function registerHttpRoutes(
         runtimeTargetId: parsedBody.data.runtimeTargetId,
         platformRunId: parsedBody.data.platformRunId,
         rerunOfWorkflowRunId: parsedBody.data.rerunOfWorkflowRunId,
+        resourceManifest: parsedBody.data.resourceManifest as SessionResourceManifest | undefined,
         executionPolicy: parsedBody.data.executionPolicy,
         dataCapturePolicy: parsedBody.data.dataCapturePolicy,
         initiation: parsedBody.data.initiation ?? 'browser',

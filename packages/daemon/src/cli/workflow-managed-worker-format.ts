@@ -104,6 +104,17 @@ export function approvalExecutionGrant(
   };
 }
 
+export function approvalFeedback(
+  node: NonNullable<ManagedAssignment['nodes']>[number],
+): Record<string, unknown> | undefined {
+  const approval = node.metadata?.['approval'];
+  if (!approval || typeof approval !== 'object') return undefined;
+  const feedback = (approval as { feedback?: unknown }).feedback;
+  if (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)) return undefined;
+
+  return feedback as Record<string, unknown>;
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }

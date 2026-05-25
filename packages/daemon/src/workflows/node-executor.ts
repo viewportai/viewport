@@ -7,6 +7,8 @@ import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
+import { resolvePromptNodeContext } from './context-node-resolver.js';
+import { parseWorkflow } from './parser.js';
 import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
@@ -32,9 +34,34 @@ export async function executeWorkflowNode(
   if (!state) return 'completed';
   if (state.status === 'completed' || state.status === 'skipped') return 'completed';
 
+  const startedAt = Date.now();
   state.status = 'running';
-  state.startedAt = Date.now();
+  state.startedAt = startedAt;
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    node_contract_ack: preExecuteNodeContractAcknowledgement(run, nodeId, node, startedAt),
+  };
   run.updatedAt = state.startedAt;
+  addEvent(
+    run,
+    'node-contract-acknowledged',
+    `Node ${nodeId} authority contract acknowledged before execution`,
+    {
+      nodeId,
+      nodeType: node.type,
+      status: 'acknowledged',
+      enforcement: {
+        context: 'enforced',
+        data_capture: 'enforced',
+        credentials: 'materialization_guarded',
+        side_effects: 'approval_guarded',
+        repos: 'modeled',
+        tools: 'modeled',
+        budgets: 'modeled',
+      },
+    },
+    nodeId,
+  );
   addEvent(run, 'node-started', `Node ${nodeId} started`, undefined, nodeId);
   await context.saveAndEmit(run);
 
@@ -144,6 +171,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function preExecuteNodeContractAcknowledgement(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowNode,
+  acknowledgedAt: number,
+): Record<string, unknown> {
+  return {
+    schema: 'viewport.node_contract_acknowledgement/v1',
+    status: 'acknowledged',
+    source: 'daemon_pre_execute',
+    runner: run.machineId ?? 'local-daemon',
+    node_id: nodeId,
+    node_type: node.type,
+    acknowledged_at: new Date(acknowledgedAt).toISOString(),
+    enforcement: {
+      context: 'enforced',
+      data_capture: 'enforced',
+      credentials: 'materialization_guarded',
+      side_effects: 'approval_guarded',
+      repos: 'modeled',
+      tools: 'modeled',
+      budgets: 'modeled',
+    },
+    modeled: ['repos', 'tools', 'budgets'],
+  };
+}
+
 async function executeGateNode(
   context: WorkflowNodeExecutorContext,
   run: WorkflowRunRecord,
@@ -228,7 +282,16 @@ async function collectAndRecordArtifacts(
 ): Promise<void> {
   if (!node.artifacts || Object.keys(node.artifacts).length === 0) return;
   const result = await collectNodeArtifacts(run, nodeId, node, cwd);
+  const contextBasis = run.nodes[nodeId]?.metadata?.['context_basis'];
+  const contextBriefing = run.nodes[nodeId]?.metadata?.['context_briefing'];
   for (const artifact of result.artifacts) {
+    if (contextBasis) {
+      artifact.metadata = {
+        ...(artifact.metadata ?? {}),
+        context_basis: contextBasis,
+        ...(contextBriefing ? { context_briefing: contextBriefing } : {}),
+      };
+    }
     run.artifacts ??= [];
     run.artifacts = run.artifacts.filter(
       (existing) => existing.nodeId !== artifact.nodeId || existing.name !== artifact.name,
@@ -266,12 +329,41 @@ async function executePromptNode(
   const state = run.nodes[nodeId];
   if (!state) return;
   const inlineAgents = await runInlineAgents(context, run, nodeId, node);
+  const renderedPrompt = appendInlineAgentResults(await renderTemplate(node.prompt, run), inlineAgents);
+  const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+  const selectedContext = await resolvePromptNodeContext({
+    run,
+    nodeId,
+    workflowContext: parsed.definition.context,
+    nodeContext: node.context,
+    prompt: renderedPrompt,
+  });
+  if (selectedContext.basis.mode !== 'none') {
+    state.outputs = {
+      ...(state.outputs ?? {}),
+      context_basis: selectedContext.basis,
+      context_briefing: selectedContext.briefing,
+    };
+    state.metadata = {
+      ...(state.metadata ?? {}),
+      context_basis: selectedContext.basis,
+      context_briefing: selectedContext.briefing,
+    };
+  }
 
   await runWorkflowDaemonSession(context, {
     run,
     nodeId,
     target: state,
-    prompt: appendInlineAgentResults(await renderTemplate(node.prompt, run), inlineAgents),
+    prompt: selectedContext.promptBlock
+      ? [
+          selectedContext.promptBlock,
+          '',
+          '<user_request>',
+          renderedPrompt,
+          '</user_request>',
+        ].join('\n')
+      : renderedPrompt,
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),

@@ -12,7 +12,7 @@
  */
 
 import { getFlag, hasFlag } from './args.js';
-import { daemonFetch } from './daemon-client.js';
+import { daemonEndpointLabel, daemonFetch, resolveDaemonEndpoint } from './daemon-client.js';
 import {
   getHookAdapterCapabilities,
   listHookAdapterCapabilities,
@@ -35,25 +35,43 @@ export function showHookHelp(): void {
 
 export async function hookNotify(forcedEvent?: string): Promise<void> {
   const event = forcedEvent ?? getFlag('event');
-  if (!event) {
-    process.stderr.write('Usage: vpd hook notify --event <EventName>\n');
-    process.exit(1);
-  }
   const input = await readStdin();
+  const exitCode = await runHookNotify(input, {
+    event,
+    writeStdout: (message) => process.stdout.write(message),
+    writeStderr: (message) => process.stderr.write(message),
+  });
+  process.exit(exitCode);
+}
+
+interface HookNotifyOptions {
+  event?: string;
+  writeStdout?: (message: string) => void;
+  writeStderr?: (message: string) => void;
+}
+
+export async function runHookNotify(input: string, options: HookNotifyOptions = {}): Promise<number> {
+  const event = options.event;
+  const writeStdout = options.writeStdout ?? ((message: string) => process.stdout.write(message));
+  const writeStderr = options.writeStderr ?? ((message: string) => process.stderr.write(message));
+
+  if (!event) {
+    writeStderr('Usage: vpd hook notify --event <EventName>\n');
+    return 1;
+  }
 
   if (!input) {
     // No stdin — construct minimal input from args
-    process.stderr.write('vpd hook: no input on stdin\n');
-    process.exit(1);
+    writeStderr('vpd hook: no input on stdin\n');
+    return 1;
   }
 
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(input) as Record<string, unknown>;
   } catch {
-    process.stderr.write('vpd hook: invalid JSON on stdin\n');
-    process.exit(1);
-    return; // unreachable but helps TS
+    writeStderr('vpd hook: invalid JSON on stdin\n');
+    return 1;
   }
 
   // Ensure hook_event_name is set
@@ -62,10 +80,11 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
   }
 
   try {
+    const endpoint = await resolveDaemonEndpoint();
     // Show waiting message for blocking hooks
     if (event === 'PermissionRequest') {
       const toolName = (body.tool_name as string) ?? 'unknown tool';
-      process.stderr.write(
+      writeStderr(
         `\x1b[33m⏳ Permission request sent to Viewport (${toolName})\x1b[0m\n` +
           `   Waiting for remote response... Press Ctrl+C to handle locally.\n`,
       );
@@ -77,9 +96,15 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
       body: JSON.stringify(body),
       timeoutMs: HOOK_TIMEOUT_MS,
     });
-    if (!res || !res.ok) {
-      process.exit(1);
-      return;
+    if (!res) {
+      writeStderr(
+        `Viewport daemon not reachable at ${daemonEndpointLabel(endpoint)}. Start it with \`vpd start --foreground\` or run \`vpd status\` for recovery details.\n`,
+      );
+      return 1;
+    }
+    if (!res.ok) {
+      writeStderr(`Viewport daemon rejected hook event ${event} with HTTP ${res.status}.\n`);
+      return 1;
     }
 
     const result = (await res.json()) as {
@@ -91,15 +116,14 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
 
     if (result.passthrough) {
       // Daemon says: not supervised or timed out — let agent handle locally
-      process.exit(1);
-      return;
+      return 1;
     }
 
     // Return the decision (PermissionRequest) or acknowledgment
     if (result.decision) {
-      process.stdout.write(JSON.stringify(formatHookDecision(event, result.decision)) + '\n');
+      writeStdout(JSON.stringify(formatHookDecision(event, result.decision)) + '\n');
     } else if (result.hookSpecificOutput) {
-      process.stdout.write(
+      writeStdout(
         JSON.stringify({
           hookSpecificOutput: result.hookSpecificOutput,
           suppressOutput: result.suppressOutput ?? true,
@@ -107,10 +131,13 @@ export async function hookNotify(forcedEvent?: string): Promise<void> {
       );
     }
 
-    process.exit(0);
-  } catch {
+    return 0;
+  } catch (err) {
     // Exit 1 so the agent falls through to its local UI
-    process.exit(1);
+    writeStderr(
+      `Viewport hook notify failed: ${err instanceof Error ? err.message : String(err)}.\n`,
+    );
+    return 1;
   }
 }
 

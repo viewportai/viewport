@@ -117,9 +117,11 @@ export class WorkflowRunner {
     const now = Date.now();
     const resourceId = request.resourceId;
     const runtimeTargetId = request.runtimeTargetId;
-    const resourceManifest = resolveSessionResourceManifestSync({
-      workingDirectory: directory.path,
-    });
+    const resourceManifest =
+      request.resourceManifest ??
+      resolveSessionResourceManifestSync({
+        workingDirectory: directory.path,
+      });
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
       workflowName: parsed.definition.name,
@@ -341,6 +343,12 @@ export class WorkflowRunner {
     // expected to be a free-text payload by design.
     const isOptInApproval =
       approvalNode?.type === 'approval' && approvalNode.captureResponse !== true;
+    const commandPlanBody =
+      state.type === 'plan' &&
+      decision.feedback &&
+      typeof decision.feedback['plan_body'] === 'string'
+        ? decision.feedback['plan_body']
+        : null;
     const planBody =
       state.type === 'plan' &&
       state.metadata &&
@@ -350,7 +358,8 @@ export class WorkflowRunner {
       typeof (state.metadata['plan'] as { body?: unknown }).body === 'string'
         ? (state.metadata['plan'] as { body: string }).body
         : null;
-    state.output = planBody ?? (isOptInApproval ? 'Approved' : (decision.message ?? 'Approved'));
+    state.output =
+      commandPlanBody ?? planBody ?? (isOptInApproval ? 'Approved' : (decision.message ?? 'Approved'));
     run.status = 'running';
     run.updatedAt = resolvedAt;
     addEvent(

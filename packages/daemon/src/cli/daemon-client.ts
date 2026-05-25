@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { configDir } from '../core/config.js';
-import { getFlag, getDaemonPort } from './args.js';
+import { getFlag, getDaemonPort, hasFlag } from './args.js';
 import { readDaemonRuntimeState } from './daemon-lifecycle.js';
 import { parseListenTarget } from './listen-target.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
@@ -115,6 +115,18 @@ function resolveEndpointFromFlags(): DaemonEndpoint {
   };
 }
 
+function hasExplicitDaemonEndpointFlag(): boolean {
+  return hasFlag('listen') || hasFlag('host') || hasFlag('port');
+}
+
+export function daemonEndpointLabel(endpoint: DaemonEndpoint): string {
+  if (endpoint.type === 'socket') {
+    return `unix://${endpoint.socketPath}`;
+  }
+
+  return endpoint.baseUrl;
+}
+
 function resolveDaemonTransportOptions(endpoint: DaemonEndpoint): {
   tlsVerify?: 'auto' | '0' | '1';
   caCertPath?: string;
@@ -140,6 +152,10 @@ function resolveDaemonTransportOptions(endpoint: DaemonEndpoint): {
 }
 
 export async function resolveDaemonEndpoint(): Promise<DaemonEndpoint> {
+  if (hasExplicitDaemonEndpointFlag()) {
+    return resolveEndpointFromFlags();
+  }
+
   const state = await readDaemonRuntimeState();
   if (state) {
     const tlsInfo = resolveTlsPreferenceFromStateOrEnv(state);

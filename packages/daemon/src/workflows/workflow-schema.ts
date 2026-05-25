@@ -7,6 +7,7 @@ import {
   identifierSchema,
   InputDefinitionSchema,
   InputValueSchema,
+  NodeContextEnvelopeSchema,
   NodePolicySchema,
   OutputDefinitionSchema,
   RequiresSchema,
@@ -110,6 +111,7 @@ const NodeBaseSchema = z.object({
   outputs: z.record(identifierSchema, OutputDefinitionSchema).optional(),
   artifacts: z.record(identifierSchema, ArtifactDefinitionSchema).optional(),
   env: z.record(identifierSchema, EnvValueSchema).optional(),
+  context: NodeContextEnvelopeSchema.optional(),
 });
 
 const PromptNodeSchema = NodeBaseSchema.extend({

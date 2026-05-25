@@ -170,6 +170,7 @@ export interface WorkflowNodeBase {
   outputs?: Record<string, WorkflowOutputDefinition>;
   artifacts?: Record<string, WorkflowArtifactDefinition>;
   env?: Record<string, WorkflowEnvValue>;
+  context?: WorkflowNodeContextEnvelope;
 }
 
 export interface WorkflowPromptNode extends WorkflowNodeBase {
@@ -249,6 +250,28 @@ export interface WorkflowContextNode extends WorkflowNodeBase {
   refs?: WorkflowContext;
   query?: string;
   refresh?: 'manual' | 'before_run' | 'on_demand';
+}
+
+export type WorkflowContextWriteTarget =
+  | string
+  | {
+      ref?: string;
+      kind?: 'team_memory' | 'org_rule' | 'repo_pr' | 'context_vault' | 'vector_store' | 'external';
+      path?: string;
+      collection?: string;
+      provider?: string;
+    };
+
+export interface WorkflowNodeContextEnvelope {
+  include?: WorkflowContext;
+  exclude?: WorkflowContext;
+  max_items?: number;
+  maxItems?: number;
+  query?: string;
+  write_targets?: WorkflowContextWriteTarget[];
+  writeTargets?: WorkflowContextWriteTarget[];
+  allow_expansion?: boolean;
+  allowExpansion?: boolean;
 }
 
 export interface WorkflowConditionNode extends WorkflowNodeBase {

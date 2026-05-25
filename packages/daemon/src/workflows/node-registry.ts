@@ -14,6 +14,7 @@ import { buildExpressionContext, evaluateConditionExpression } from './expressio
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
+import { readPromptNodeOutput } from './prompt-output.js';
 
 /**
  * Outcome of a per-type executor handler. The orchestrator in
@@ -126,7 +127,9 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   prompt: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'prompt') return { result: 'completed' };
     await helpers.executePromptNode(context, run, nodeId, node);
-    return { result: 'completed' };
+    const artifactCwd = run.nodes[nodeId]?.worktreePath;
+
+    return artifactCwd ? { result: 'completed', artifactCwd } : { result: 'completed' };
   },
 
   agent: async (context, run, nodeId, node, helpers) => {
@@ -145,7 +148,9 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         nodeId,
       );
     }
-    return { result: 'completed' };
+    const artifactCwd = run.nodes[nodeId]?.worktreePath;
+
+    return artifactCwd ? { result: 'completed', artifactCwd } : { result: 'completed' };
   },
 
   approval: async (context, run, nodeId, node, helpers) => {
@@ -300,6 +305,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   plan: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'plan') return { result: 'completed' };
     const state = run.nodes[nodeId];
+    await backfillPromptDependencyOutputs(run, node.needs);
     const title = await renderTemplate(node.title ?? nodeId, run);
     const body = await renderTemplate(node.body, run);
     const summary = await renderOptionalTemplate(node.summary, run);
@@ -346,6 +352,18 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'blocked' };
   },
 };
+
+async function backfillPromptDependencyOutputs(
+  run: WorkflowRunRecord,
+  needs: string[] | undefined,
+): Promise<void> {
+  for (const dependencyId of needs ?? []) {
+    const dependency = run.nodes[dependencyId];
+    if (!dependency || dependency.type !== 'prompt' || dependency.output) continue;
+    const output = await readPromptNodeOutput(run, dependency);
+    if (output) dependency.output = output;
+  }
+}
 
 // Seed the mutable registry with built-ins. Plugin entries register at boot.
 for (const [type, executor] of Object.entries(BUILTIN_NODE_EXECUTORS)) {
