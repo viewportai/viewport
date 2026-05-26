@@ -1,3 +1,11 @@
+# [0.21.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.20.1...@viewportai/daemon@0.21.0) (2026-05-26)
+
+
+### Features
+
+* add team resource sync for managed workers ([#120](https://github.com/viewportai/viewport/issues/120)) ([2542216](https://github.com/viewportai/viewport/commit/2542216d96e128308b90347d987d171d7959b411))
+* harden workflow runner preparation primitives ([#121](https://github.com/viewportai/viewport/issues/121)) ([ae66abc](https://github.com/viewportai/viewport/commit/ae66abc5f82baaa345761749eca1e8ad87e2e763))
+
 ## [0.20.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.20.0...@viewportai/daemon@0.20.1) (2026-05-18)
 
 
