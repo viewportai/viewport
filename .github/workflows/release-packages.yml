@@ -2,7 +2,7 @@ name: Release Packages
 
 on:
   workflow_run:
-    workflows: ['OSS CI']
+    workflows: ["OSS CI"]
     types: [completed]
   workflow_dispatch:
 
@@ -31,16 +31,34 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Detect daemon release changes
+        id: daemon_changes
+        shell: bash
+        run: |
+          latest_tag="$(git tag --list '@viewportai/daemon@*' --sort=-version:refname | head -1)"
+          if [[ -z "$latest_tag" ]]; then
+            echo "No daemon release tag found."
+            exit 1
+          fi
+
+          changed_files="$(git diff --name-only "$latest_tag"..HEAD)"
+          echo "$changed_files"
+          if echo "$changed_files" | grep -E '^(packages/daemon/|packages/context-engine/|package.json$|package-lock.json$)' >/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.daemon_changes.outputs.changed == 'true'
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
           registry-url: https://registry.npmjs.org
 
-      - run: npm ci
-
       - name: Validate daemon publish metadata
+        if: steps.daemon_changes.outputs.changed == 'true'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
@@ -68,43 +86,35 @@ jobs:
           NODE
 
       - name: Verify release secret is configured
+        if: steps.daemon_changes.outputs.changed == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NPM_TOKEN" ]; then
-            echo "NPM_TOKEN is not configured."
+            echo "::error title=Missing NPM_TOKEN::NPM_TOKEN is not configured for this repository. Add an npm automation token with publish access to @viewportai/daemon, then rerun Release Packages."
             exit 1
           fi
 
       - name: Verify npm authentication
+        if: steps.daemon_changes.outputs.changed == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm whoami --registry https://registry.npmjs.org/
+        run: |
+          if ! npm whoami --registry https://registry.npmjs.org/; then
+            echo "::error title=Invalid NPM_TOKEN::npm rejected the repository NPM_TOKEN. Rotate the secret to an npm automation token with publish access to @viewportai/daemon, then rerun Release Packages."
+            exit 1
+          fi
 
       - name: Verify daemon baseline tag
+        if: steps.daemon_changes.outputs.changed == 'true'
         run: |
           if ! git rev-parse -q --verify 'refs/tags/@viewportai/daemon@0.2.0' >/dev/null; then
             echo "Missing daemon baseline tag @viewportai/daemon@0.2.0."
             exit 1
           fi
 
-      - name: Detect daemon release changes
-        id: daemon_changes
-        shell: bash
-        run: |
-          latest_tag="$(git tag --list '@viewportai/daemon@*' --sort=-version:refname | head -1)"
-          if [[ -z "$latest_tag" ]]; then
-            echo "No daemon release tag found."
-            exit 1
-          fi
-
-          changed_files="$(git diff --name-only "$latest_tag"..HEAD)"
-          echo "$changed_files"
-          if echo "$changed_files" | grep -E '^(packages/daemon/|packages/context-engine/|package.json$|package-lock.json$)' >/dev/null; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
+      - run: npm ci
+        if: steps.daemon_changes.outputs.changed == 'true'
 
       - name: Semantic release daemon
         if: steps.daemon_changes.outputs.changed == 'true'
