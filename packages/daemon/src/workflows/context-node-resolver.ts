@@ -193,7 +193,10 @@ export async function resolvePromptNodeContext(input: {
           input.run.resourceManifest?.contract.contextProviders ?? [],
           platformPolicies,
         )
-      : selectProviders(input.run.resourceManifest?.contract.contextProviders ?? [], effective.refs);
+      : selectProviders(
+          input.run.resourceManifest?.contract.contextProviders ?? [],
+          effective.refs,
+        );
   const denied = providers
     .map(({ provider }) => contextAuthorityDenial(input.run, input.nodeId, provider))
     .find((entry) => entry !== null);
@@ -247,7 +250,9 @@ export async function resolvePromptNodeContext(input: {
     items: selectedItems,
   });
   input.run.contextReceipts = [
-    ...(input.run.contextReceipts ?? []).filter((receipt) => receipt.usedBy.nodeId !== input.nodeId),
+    ...(input.run.contextReceipts ?? []).filter(
+      (receipt) => receipt.usedBy.nodeId !== input.nodeId,
+    ),
     ...contextReceipts,
   ];
 
@@ -490,15 +495,17 @@ async function effectivePromptContext(
   query?: string;
   writeTargets: unknown[];
 }> {
-  const workflowSources = Array.isArray(workflowContext) ? workflowContext : (workflowContext.sources ?? []);
+  const workflowSources = Array.isArray(workflowContext)
+    ? workflowContext
+    : (workflowContext.sources ?? []);
   const defaultRefs = await renderContextRefs(normalizeRefs(workflowSources), run);
   const hasNodeEnvelope = Boolean(nodeContext);
   const include = nodeContext?.include
     ? await renderContextRefs(normalizeRefs(nodeContext.include), run)
     : defaultRefs;
-  const excludedRefs = (await renderContextRefs(normalizeRefs(nodeContext?.exclude ?? []), run)).map(
-    (ref) => ref.ref,
-  );
+  const excludedRefs = (
+    await renderContextRefs(normalizeRefs(nodeContext?.exclude ?? []), run)
+  ).map((ref) => ref.ref);
   const excluded = new Set(excludedRefs);
   const refs = include.filter((ref) => !excluded.has(ref.ref));
 
@@ -591,23 +598,25 @@ function formatPromptContextBlock(
 }
 
 function normalizeRefs(refs: WorkflowContextNode['refs']): NormalizedContextRef[] {
-  return (refs ?? []).map((ref): NormalizedContextRef => {
-    if (typeof ref === 'string') {
-      return { ref, required: false };
-    }
-    const concreteRef = ref.ref ?? ref.source ?? ref.package ?? ref.artifact;
-    if (!concreteRef) {
-      return { ref: '', required: ref.required === true };
-    }
-    return {
-      ref: concreteRef,
-      as: ref.as,
-      required: ref.required === true,
-      description: ref.description,
-      refresh: ref.refresh,
-      maxItems: positiveInteger(ref.max_items ?? ref.maxItems) ?? undefined,
-    };
-  }).filter((ref) => ref.ref.trim() !== '');
+  return (refs ?? [])
+    .map((ref): NormalizedContextRef => {
+      if (typeof ref === 'string') {
+        return { ref, required: false };
+      }
+      const concreteRef = ref.ref ?? ref.source ?? ref.package ?? ref.artifact;
+      if (!concreteRef) {
+        return { ref: '', required: ref.required === true };
+      }
+      return {
+        ref: concreteRef,
+        as: ref.as,
+        required: ref.required === true,
+        description: ref.description,
+        refresh: ref.refresh,
+        maxItems: positiveInteger(ref.max_items ?? ref.maxItems) ?? undefined,
+      };
+    })
+    .filter((ref) => ref.ref.trim() !== '');
 }
 
 function selectProviders(
@@ -636,7 +645,9 @@ function selectProvidersForPolicies(
   const selected: Array<{ provider: SessionContextProviderManifest; alias?: string }> = [];
   const seen = new Set<string>();
   for (const policy of policies) {
-    const provider = providers.find((candidate) => providerMatchesPlatformPolicy(candidate, policy));
+    const provider = providers.find((candidate) =>
+      providerMatchesPlatformPolicy(candidate, policy),
+    );
     if (!provider || seen.has(provider.id)) continue;
     seen.add(provider.id);
     selected.push({ provider, alias: policy.context_source_name });
@@ -674,7 +685,10 @@ function providerMatchesPlatformPolicy(
   }
 
   if (policy.provider_type === 'git' && provider.provider === 'repo-docs') {
-    return provider.paths?.some((path) => gitRef?.path.startsWith(path.replace(/\*\*\/\*\.md$/, ''))) ?? false;
+    return (
+      provider.paths?.some((path) => gitRef?.path.startsWith(path.replace(/\*\*\/\*\.md$/, ''))) ??
+      false
+    );
   }
 
   return false;
@@ -745,7 +759,10 @@ function contextProviderCredentials(
 }
 
 function envKey(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_');
 }
 
 function metadataOnlyContextItem(item: ResolvedContextItem): Record<string, unknown> {

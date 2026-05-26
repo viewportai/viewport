@@ -103,7 +103,13 @@ export async function gitPublishAuthorityDenial(
     };
   }
 
-  const contextTargetDenial = await contextUpdateTargetPublishDenial(run, nodeId, repository, input.cwd, node.paths);
+  const contextTargetDenial = await contextUpdateTargetPublishDenial(
+    run,
+    nodeId,
+    repository,
+    input.cwd,
+    node.paths,
+  );
   if (contextTargetDenial) return contextTargetDenial;
 
   return null;
@@ -131,7 +137,15 @@ export async function executeGitPublishNode(
 
   const changed = (await git(['status', '--porcelain'], input.cwd)).trim().length > 0;
   if (changed || node.allowEmpty === true) {
-    await git(['commit', ...(node.allowEmpty === true && !changed ? ['--allow-empty'] : []), '-m', input.message], input.cwd);
+    await git(
+      [
+        'commit',
+        ...(node.allowEmpty === true && !changed ? ['--allow-empty'] : []),
+        '-m',
+        input.message,
+      ],
+      input.cwd,
+    );
   }
   const commit = (await git(['rev-parse', 'HEAD'], input.cwd)).trim();
   const shouldPush = node.push !== false;
@@ -153,7 +167,10 @@ export async function executeGitPublishNode(
 async function gitCredentialEnv(root: string, secret: string): Promise<NodeJS.ProcessEnv> {
   const directory = path.join(root, '.viewport', 'credential-helpers');
   await fs.mkdir(directory, { recursive: true });
-  const helperPath = path.join(directory, `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`);
+  const helperPath = path.join(
+    directory,
+    `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`,
+  );
   const script = [
     '#!/bin/sh',
     'case "$1" in',
@@ -176,7 +193,9 @@ async function gitCredentialEnv(root: string, secret: string): Promise<NodeJS.Pr
 
 function repositoryFromRemote(remote: string | undefined): string | null {
   if (!remote) return null;
-  const github = remote.match(/(?:git@github\.com:|https:\/\/github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?/i);
+  const github = remote.match(
+    /(?:git@github\.com:|https:\/\/github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?/i,
+  );
   return github ? normalizeRepository(github[1]) : null;
 }
 
@@ -208,7 +227,9 @@ async function contextUpdateTargetPublishDenial(
       const ref = typeof target['ref'] === 'string' ? target['ref'] : null;
       return ref ? parseGitContextUpdateTargetRef(ref) : null;
     })
-    .filter((target): target is NonNullable<ReturnType<typeof parseGitContextUpdateTargetRef>> => Boolean(target));
+    .filter((target): target is NonNullable<ReturnType<typeof parseGitContextUpdateTargetRef>> =>
+      Boolean(target),
+    );
 
   if (targets.length === 0) return null;
 
@@ -251,9 +272,11 @@ async function gitChangedPaths(cwd: string): Promise<string[]> {
     .map((line) => {
       const pathPart = line.length > 3 ? line.slice(3) : line;
       const renameSeparator = ' -> ';
-      return normalizeGitPath(pathPart.includes(renameSeparator)
-        ? pathPart.slice(pathPart.indexOf(renameSeparator) + renameSeparator.length)
-        : pathPart);
+      return normalizeGitPath(
+        pathPart.includes(renameSeparator)
+          ? pathPart.slice(pathPart.indexOf(renameSeparator) + renameSeparator.length)
+          : pathPart,
+      );
     })
     .filter((value): value is string => Boolean(value));
 }
@@ -265,7 +288,9 @@ function filterPublishablePaths(paths: string[], publishPaths: string[] | undefi
   if (scopes.length === 0) return paths;
 
   return paths.filter((changedPath) =>
-    scopes.some((scope) => changedPath === scope || changedPath.startsWith(`${scope.replace(/\/+$/, '')}/`)),
+    scopes.some(
+      (scope) => changedPath === scope || changedPath.startsWith(`${scope.replace(/\/+$/, '')}/`),
+    ),
   );
 }
 

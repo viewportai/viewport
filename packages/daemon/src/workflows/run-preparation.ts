@@ -235,8 +235,7 @@ export async function buildRunPreparation(
       update_targets: updateTargets,
       side_effects: sideEffects,
       credentials,
-      note:
-        'Run preparation makes authorized repos, context sources, update targets, credentials, and side effects available. It does not inject prepared context into every node; node policy still decides actual access.',
+      note: 'Run preparation makes authorized repos, context sources, update targets, credentials, and side effects available. It does not inject prepared context into every node; node policy still decides actual access.',
     },
     receipts,
   };

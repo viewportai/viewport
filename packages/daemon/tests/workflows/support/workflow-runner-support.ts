@@ -65,11 +65,7 @@ export class MockAdapter implements AgentAdapter {
     return this.lastSession;
   }
 
-  async resumeSession(
-    _sessionId: string,
-    cwd: string,
-    options?: SessionOptions,
-  ): Promise<Session> {
+  async resumeSession(_sessionId: string, cwd: string, options?: SessionOptions): Promise<Session> {
     this.lastSession = new MockSession();
     this.lastOptions = options;
     this.sessions.push(this.lastSession);

@@ -126,7 +126,12 @@ export async function executeCheckoutNode(
   };
 }
 
-function checkoutDestination(root: string, runId: string, repository: string, configuredPath?: string): string {
+function checkoutDestination(
+  root: string,
+  runId: string,
+  repository: string,
+  configuredPath?: string,
+): string {
   const safeRepo = repository.replace(/[^a-z0-9_.-]+/gi, '__');
   const safeRun = runId.replace(/[^a-z0-9_.-]+/gi, '__');
   const candidate = configuredPath
@@ -141,7 +146,9 @@ function checkoutDestination(root: string, runId: string, repository: string, co
 
 function repositoryFromRemote(remote: string | undefined): string | null {
   if (!remote) return null;
-  const github = remote.match(/(?:git@github\.com:|https:\/\/github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?/i);
+  const github = remote.match(
+    /(?:git@github\.com:|https:\/\/github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?/i,
+  );
   return github ? normalizeRepository(github[1]) : null;
 }
 
@@ -170,7 +177,10 @@ function isPathWithin(candidate: string, root: string): boolean {
 async function checkoutCredentialEnv(root: string, secret: string): Promise<NodeJS.ProcessEnv> {
   const directory = path.join(root, '.viewport', 'credential-helpers');
   await fs.mkdir(directory, { recursive: true });
-  const helperPath = path.join(directory, `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`);
+  const helperPath = path.join(
+    directory,
+    `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`,
+  );
   const script = [
     '#!/bin/sh',
     'case "$1" in',
@@ -187,7 +197,9 @@ async function checkoutCredentialEnv(root: string, secret: string): Promise<Node
   });
 }
 
-function nonInteractiveGitEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
+function nonInteractiveGitEnv(
+  overrides: Record<string, string | undefined> = {},
+): NodeJS.ProcessEnv {
   return cleanChildProcessEnv({
     GIT_TERMINAL_PROMPT: '0',
     GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new',

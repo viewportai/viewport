@@ -337,7 +337,10 @@ async function executePromptNode(
   const state = run.nodes[nodeId];
   if (!state) return;
   const inlineAgents = await runInlineAgents(context, run, nodeId, node);
-  const renderedPrompt = appendInlineAgentResults(await renderTemplate(node.prompt, run), inlineAgents);
+  const renderedPrompt = appendInlineAgentResults(
+    await renderTemplate(node.prompt, run),
+    inlineAgents,
+  );
   const renderedCwd = await renderOptionalTemplate(node.cwd, run);
   const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
   const selectedContext = await resolvePromptNodeContext({
@@ -367,13 +370,9 @@ async function executePromptNode(
     target: state,
     ...(renderedCwd ? { cwd: resolveNodeCwd(run.directoryPath, renderedCwd) } : {}),
     prompt: selectedContext.promptBlock
-      ? [
-          selectedContext.promptBlock,
-          '',
-          '<user_request>',
-          renderedPrompt,
-          '</user_request>',
-        ].join('\n')
+      ? [selectedContext.promptBlock, '', '<user_request>', renderedPrompt, '</user_request>'].join(
+          '\n',
+        )
       : renderedPrompt,
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),

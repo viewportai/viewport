@@ -1688,20 +1688,19 @@ nodes:
                 type: 'plan',
                 status: requestChangesApplied ? 'completed' : 'blocked',
                 metadata: {
-                  approval:
-                    requestChangesApplied
-                      ? {
-                          approved: true,
-                          decision: 'approve',
-                          message: 'Approved revised plan.',
-                          actor: { name: 'PM Reviewer', source: 'viewport-web' },
-                        }
-                      : {
-                          approved: false,
-                          decision: 'changes_requested',
-                          message: 'Tighten scope before implementation.',
-                          actor: { name: 'PM Reviewer', source: 'viewport-web' },
-                        },
+                  approval: requestChangesApplied
+                    ? {
+                        approved: true,
+                        decision: 'approve',
+                        message: 'Approved revised plan.',
+                        actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                      }
+                    : {
+                        approved: false,
+                        decision: 'changes_requested',
+                        message: 'Tighten scope before implementation.',
+                        actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                      },
                 },
               },
             ],
@@ -1843,9 +1842,7 @@ nodes:
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_two_gates') && init?.method === 'GET') {
-        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
-          'vpclaim_two_gates',
-        );
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_two_gates');
         return jsonResponse({
           data: {
             id: 'run_platform_two_gates',
@@ -1855,9 +1852,7 @@ nodes:
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_two_gates/sync')) {
-        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
-          'vpclaim_two_gates',
-        );
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_two_gates');
         platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_two_gates', status: body.status } });
       }
@@ -1992,9 +1987,8 @@ nodes:
           data: {
             id: 'run_platform_stale_gate',
             status: 'running',
-            nodes: assignmentPolls >= 2
-              ? [staleReviewPlan, approvedEngineeringPlan]
-              : [staleReviewPlan],
+            nodes:
+              assignmentPolls >= 2 ? [staleReviewPlan, approvedEngineeringPlan] : [staleReviewPlan],
           },
         });
       }
@@ -2110,7 +2104,8 @@ nodes:
           data: {
             id: 'run_platform_stale_then_current_gate',
             assignment_claim_token: 'vpclaim_stale_then_current_gate',
-            yaml_snapshot: 'schema: viewport.workflow/v1\nname: stale-then-current-gate\nnodes: {}\n',
+            yaml_snapshot:
+              'schema: viewport.workflow/v1\nname: stale-then-current-gate\nnodes: {}\n',
             directory_path: '/repo',
           },
         });
@@ -2125,9 +2120,7 @@ nodes:
             id: 'run_platform_stale_then_current_gate',
             status: 'running',
             nodes:
-              assignmentPolls >= 3
-                ? [staleReviewPlan, approvedEngineeringPlan]
-                : [staleReviewPlan],
+              assignmentPolls >= 3 ? [staleReviewPlan, approvedEngineeringPlan] : [staleReviewPlan],
           },
         });
       }
@@ -2155,8 +2148,7 @@ nodes:
         });
       }
       if (
-        urlPath ===
-        '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_plan'
+        urlPath === '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_plan'
       ) {
         throw new Error('Worker must not replay a stale approval for a different blocked node.');
       }
@@ -2167,7 +2159,9 @@ nodes:
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
         secondApprovedLocally = true;
-        return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_then_current_gate' }) });
+        return jsonResponse({
+          run: completedLocalRun({ id: 'local_run_stale_then_current_gate' }),
+        });
       }
       return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
     });

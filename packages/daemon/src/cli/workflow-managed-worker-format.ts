@@ -81,7 +81,11 @@ function modelLooksOwnedByAgent(agent: string, model: string): boolean {
     );
   }
   if (normalizedAgent.includes('codex') || normalizedAgent.includes('openai')) {
-    return normalizedModel.includes('gpt') || normalizedModel.includes('codex') || normalizedModel.includes('o3');
+    return (
+      normalizedModel.includes('gpt') ||
+      normalizedModel.includes('codex') ||
+      normalizedModel.includes('o3')
+    );
   }
   if (normalizedAgent.includes('gemini')) {
     return normalizedModel.includes('gemini');

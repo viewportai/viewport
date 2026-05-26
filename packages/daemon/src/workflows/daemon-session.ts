@@ -67,21 +67,22 @@ export async function runWorkflowDaemonSession(
   context.daemon.on('session:message', messageHandler);
   try {
     const sessionCwd =
-      request.cwd ??
-      path.join(run.directoryPath, '.viewport', 'node-sessions', run.id, nodeId);
+      request.cwd ?? path.join(run.directoryPath, '.viewport', 'node-sessions', run.id, nodeId);
     await fs.mkdir(sessionCwd, { recursive: true });
-    const directoryId = (await context.daemon.directoryManager.register(sessionCwd, {
-      gitTracker: {
-        enabled: false,
-        commitOn: [],
-        ignore: [],
-        autoSquashOnComplete: false,
-        branchPrefix: 'viewport/session-',
-        commitAuthor: 'Viewport Agent <noreply@example.test>',
-        maxCommitsPerSession: 500,
-        worktreeRoot: '.viewport/worktrees',
-      },
-    })).id;
+    const directoryId = (
+      await context.daemon.directoryManager.register(sessionCwd, {
+        gitTracker: {
+          enabled: false,
+          commitOn: [],
+          ignore: [],
+          autoSquashOnComplete: false,
+          branchPrefix: 'viewport/session-',
+          commitAuthor: 'Viewport Agent <noreply@example.test>',
+          maxCommitsPerSession: 500,
+          worktreeRoot: '.viewport/worktrees',
+        },
+      })
+    ).id;
     const sessionId = await context.daemon.launchSession(directoryId, request.prompt, {
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),

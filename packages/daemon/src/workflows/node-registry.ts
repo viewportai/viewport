@@ -97,7 +97,13 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     };
     const denial = checkoutAuthorityDenial(run, nodeId, renderedNode);
     if (denial) {
-      addEvent(run, 'checkout-blocked', denial.detail, { workflow_authority_denial: denial }, nodeId);
+      addEvent(
+        run,
+        'checkout-blocked',
+        denial.detail,
+        { workflow_authority_denial: denial },
+        nodeId,
+      );
       throw new Error(denial.detail);
     }
 
@@ -160,8 +166,12 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     const renderedNode = {
       ...node,
       repository: await renderTemplate(node.repository, run),
-      ...(node.credentialRef ? { credentialRef: await renderTemplate(node.credentialRef, run) } : {}),
-      ...(node.paths ? { paths: await Promise.all(node.paths.map((entry) => renderTemplate(entry, run))) } : {}),
+      ...(node.credentialRef
+        ? { credentialRef: await renderTemplate(node.credentialRef, run) }
+        : {}),
+      ...(node.paths
+        ? { paths: await Promise.all(node.paths.map((entry) => renderTemplate(entry, run))) }
+        : {}),
     };
     const input = {
       cwd: resolveNodeCwd(run.directoryPath, await renderOptionalTemplate(node.cwd, run)),
@@ -170,7 +180,13 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     };
     const denial = await gitPublishAuthorityDenial(run, nodeId, renderedNode, input);
     if (denial) {
-      addEvent(run, 'git-publish-blocked', denial.detail, { workflow_authority_denial: denial }, nodeId);
+      addEvent(
+        run,
+        'git-publish-blocked',
+        denial.detail,
+        { workflow_authority_denial: denial },
+        nodeId,
+      );
       throw new Error(denial.detail);
     }
 
@@ -655,10 +671,21 @@ async function renderContextUpdatePatch(
           const beforeDigest = file.before_digest
             ? await renderTemplate(file.before_digest, run)
             : undefined;
-          const afterDigest = file.after_digest ? await renderTemplate(file.after_digest, run) : undefined;
+          const afterDigest = file.after_digest
+            ? await renderTemplate(file.after_digest, run)
+            : undefined;
           const patchDigest = file.patch_digest
             ? await renderTemplate(file.patch_digest, run)
-            : digest(JSON.stringify({ path, operation, artifactRef, beforeDigest, afterDigest, textDigest }));
+            : digest(
+                JSON.stringify({
+                  path,
+                  operation,
+                  artifactRef,
+                  beforeDigest,
+                  afterDigest,
+                  textDigest,
+                }),
+              );
           return {
             path,
             ...(operation ? { operation } : {}),

@@ -364,7 +364,8 @@ nodes:
     const blocked = await waitForRunState(
       daemon,
       run.id,
-      (candidate) => candidate.status === 'blocked' && candidate.nodes.open_pr?.status === 'blocked',
+      (candidate) =>
+        candidate.status === 'blocked' && candidate.nodes.open_pr?.status === 'blocked',
     );
 
     const action = blocked.nodes.open_pr?.metadata?.action as { digest?: string };

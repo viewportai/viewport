@@ -32,21 +32,28 @@ async function fetchNotionPage(input: ContextProviderSearchInput): Promise<{
 }> {
   const token = scopedEnv(input.provider.id, 'TOKEN') ?? process.env.NOTION_TOKEN;
   if (!token) {
-    throw new Error(`notion provider ${input.provider.id} requires NOTION_TOKEN or VIEWPORT_CONTEXT_${envKey(input.provider.id)}_TOKEN on the runner`);
+    throw new Error(
+      `notion provider ${input.provider.id} requires NOTION_TOKEN or VIEWPORT_CONTEXT_${envKey(input.provider.id)}_TOKEN on the runner`,
+    );
   }
 
   const pageId = notionPageId(input.provider.ref ?? input.provider.notebook ?? input.provider.id);
-  const response = await fetch(`https://api.notion.com/v1/blocks/${encodeURIComponent(pageId)}/children?page_size=100`, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      'notion-version': NOTION_VERSION,
+  const response = await fetch(
+    `https://api.notion.com/v1/blocks/${encodeURIComponent(pageId)}/children?page_size=100`,
+    {
+      headers: {
+        authorization: `Bearer ${token}`,
+        'notion-version': NOTION_VERSION,
+      },
     },
-  });
+  );
   if (!response.ok) {
-    throw new Error(`notion provider ${input.provider.id} failed to read page ${pageId}: HTTP ${response.status}`);
+    throw new Error(
+      `notion provider ${input.provider.id} failed to read page ${pageId}: HTTP ${response.status}`,
+    );
   }
 
-  const body = await response.json() as { results?: unknown[] };
+  const body = (await response.json()) as { results?: unknown[] };
   const text = (body.results ?? []).flatMap(blockText).join('\n').trim();
   return {
     pageId,
@@ -115,12 +122,13 @@ function scopedEnv(providerId: string, suffix: string): string | undefined {
 }
 
 function envKey(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_');
 }
 
-async function applyNotionUpdate(
-  input: ContextProviderApplyApprovedUpdateInput,
-): Promise<{
+async function applyNotionUpdate(input: ContextProviderApplyApprovedUpdateInput): Promise<{
   status: 'succeeded';
   provider_reference: string;
   provider_url: string;
@@ -128,39 +136,48 @@ async function applyNotionUpdate(
 }> {
   const token = scopedEnv(input.provider.id, 'TOKEN') ?? process.env.NOTION_TOKEN;
   if (!token) {
-    throw new Error(`notion provider ${input.provider.id} requires NOTION_TOKEN or VIEWPORT_CONTEXT_${envKey(input.provider.id)}_TOKEN on the runner`);
+    throw new Error(
+      `notion provider ${input.provider.id} requires NOTION_TOKEN or VIEWPORT_CONTEXT_${envKey(input.provider.id)}_TOKEN on the runner`,
+    );
   }
   if (input.patch.mode !== 'append' || !input.patch.text?.trim()) {
-    throw new Error(`notion provider ${input.provider.id} supports approved append text updates in v1`);
+    throw new Error(
+      `notion provider ${input.provider.id} supports approved append text updates in v1`,
+    );
   }
 
   const pageId = notionPageId(input.provider.ref ?? input.provider.notebook ?? input.provider.id);
-  const response = await fetch(`https://api.notion.com/v1/blocks/${encodeURIComponent(pageId)}/children`, {
-    method: 'PATCH',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      'notion-version': NOTION_VERSION,
-    },
-    body: JSON.stringify({
-      children: [
-        {
-          object: 'block',
-          type: 'paragraph',
-          paragraph: {
-            rich_text: [
-              {
-                type: 'text',
-                text: { content: input.patch.text },
-              },
-            ],
+  const response = await fetch(
+    `https://api.notion.com/v1/blocks/${encodeURIComponent(pageId)}/children`,
+    {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'notion-version': NOTION_VERSION,
+      },
+      body: JSON.stringify({
+        children: [
+          {
+            object: 'block',
+            type: 'paragraph',
+            paragraph: {
+              rich_text: [
+                {
+                  type: 'text',
+                  text: { content: input.patch.text },
+                },
+              ],
+            },
           },
-        },
-      ],
-    }),
-  });
+        ],
+      }),
+    },
+  );
   if (!response.ok) {
-    throw new Error(`notion provider ${input.provider.id} failed to apply approved update to page ${pageId}: HTTP ${response.status}`);
+    throw new Error(
+      `notion provider ${input.provider.id} failed to apply approved update to page ${pageId}: HTTP ${response.status}`,
+    );
   }
 
   const digest = `sha256:${crypto.createHash('sha256').update(input.patch.text).digest('hex')}`;

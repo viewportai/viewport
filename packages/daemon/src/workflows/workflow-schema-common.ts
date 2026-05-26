@@ -148,4 +148,7 @@ export const WorkflowContextDefaultsSchema = z
     },
   );
 
-export const WorkflowContextDefinitionSchema = z.union([ContextSchema, WorkflowContextDefaultsSchema]);
+export const WorkflowContextDefinitionSchema = z.union([
+  ContextSchema,
+  WorkflowContextDefaultsSchema,
+]);

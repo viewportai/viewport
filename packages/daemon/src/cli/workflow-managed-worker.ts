@@ -146,15 +146,14 @@ export async function workflowWorker(): Promise<void> {
             (!alreadyResolvedApprovalRuns.has(resumed) || !blockedIds.has(approved.node_key)) &&
             (!blockedIds.has(approved.node_key) ||
               managedApprovalDecision(approved) === 'request_changes');
-          const finalRun =
-            shouldKeepWaiting
-              ? await waitForApprovalAndResume(
-                  options,
-                  assignment.id,
-                  localRun.id,
-                  assignment.assignment_claim_token,
-                )
-              : resumed;
+          const finalRun = shouldKeepWaiting
+            ? await waitForApprovalAndResume(
+                options,
+                assignment.id,
+                localRun.id,
+                assignment.assignment_claim_token,
+              )
+            : resumed;
           stats.completed += finalRun.status === 'completed' ? 1 : 0;
           stats.failed += finalRun.status === 'failed' || finalRun.status === 'canceled' ? 1 : 0;
 
@@ -362,11 +361,19 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
       providerActions:
         hasFlag('provider-actions') || process.env['VIEWPORT_MANAGED_PROVIDER_ACTIONS'] === '1',
-      tools: [...new Set([...detected.tools, ...listFlagOrProfile('tools', profileCapabilities['tools'])])],
+      tools: [
+        ...new Set([
+          ...detected.tools,
+          ...listFlagOrProfile('tools', profileCapabilities['tools']),
+        ]),
+      ],
       agents: listFlagOrProfile('agents', profileCapabilities['agents']),
       models: listFlagOrProfile('models', profileCapabilities['models']),
       integrations: [
-        ...new Set([...detected.integrations, ...listFlagOrProfile('integrations', profileCapabilities['integrations'])]),
+        ...new Set([
+          ...detected.integrations,
+          ...listFlagOrProfile('integrations', profileCapabilities['integrations']),
+        ]),
       ],
       secrets: listFlagOrProfile('secrets', profileCapabilities['secrets']),
     },
@@ -505,9 +512,11 @@ function detectLocalCapabilities(): { tools: string[]; integrations: string[] } 
 }
 
 function commandExists(command: string): boolean {
-  return spawnSync('sh', ['-lc', `command -v ${shellQuote(command)} >/dev/null 2>&1`], {
-    stdio: 'ignore',
-  }).status === 0;
+  return (
+    spawnSync('sh', ['-lc', `command -v ${shellQuote(command)} >/dev/null 2>&1`], {
+      stdio: 'ignore',
+    }).status === 0
+  );
 }
 
 function shellQuote(value: string): string {
@@ -1000,7 +1009,10 @@ async function runAssignmentLocally(
       recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ??
       recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ??
       recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(recordChildValue(assignment.input_snapshot, 'viewport'), 'workflowAuthorityContract') ??
+      recordChildValue(
+        recordChildValue(assignment.input_snapshot, 'viewport'),
+        'workflowAuthorityContract',
+      ) ??
       undefined,
     initiation: 'cli',
     dataCapturePolicy: assignment.data_capture_policy ?? undefined,
@@ -1127,18 +1139,25 @@ function repositoryForCredentialMaterialization(
   handle: string,
 ): { repository: string } | Record<string, never> {
   const checkoutEntries = [
-    ...credentialEntriesFrom(pathValue(asRecord(assignment.execution_profile_snapshot), ['credentials', 'repo_checkout'])),
-    ...credentialEntriesFrom(pathValue(asRecord(assignment.workflow_snapshot), ['credentials', 'repo_checkout'])),
+    ...credentialEntriesFrom(
+      pathValue(asRecord(assignment.execution_profile_snapshot), ['credentials', 'repo_checkout']),
+    ),
+    ...credentialEntriesFrom(
+      pathValue(asRecord(assignment.workflow_snapshot), ['credentials', 'repo_checkout']),
+    ),
   ];
   const explicit = checkoutEntries.find((entry) => {
     if (!isRecord(entry)) return entry === handle;
-    const entryHandle = stringField(entry, 'handle') ?? stringField(entry, 'ref') ?? stringField(entry, 'credential_ref');
+    const entryHandle =
+      stringField(entry, 'handle') ??
+      stringField(entry, 'ref') ??
+      stringField(entry, 'credential_ref');
     return entryHandle === handle;
   });
-  const explicitRepo = explicit
-    && isRecord(explicit)
-    ? stringField(explicit, 'repository') ?? stringField(explicit, 'repo')
-    : null;
+  const explicitRepo =
+    explicit && isRecord(explicit)
+      ? (stringField(explicit, 'repository') ?? stringField(explicit, 'repo'))
+      : null;
   if (explicitRepo) return { repository: explicitRepo };
 
   const allowed = allowedRepositoriesFromAssignment(assignment);
@@ -1148,10 +1167,22 @@ function repositoryForCredentialMaterialization(
 function allowedRepositoriesFromAssignment(assignment: ManagedAssignment): string[] {
   const candidates = [
     pathValue(assignment.workflow_authority_contract ?? {}, ['repos', 'allowed']),
-    pathValue(recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
-    pathValue(recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
-    pathValue(recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
-    pathValue(recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ?? {}, ['repos', 'allowed']),
+    pathValue(recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ?? {}, [
+      'repos',
+      'allowed',
+    ]),
+    pathValue(
+      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ?? {},
+      ['repos', 'allowed'],
+    ),
+    pathValue(recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ?? {}, [
+      'repos',
+      'allowed',
+    ]),
+    pathValue(
+      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ?? {},
+      ['repos', 'allowed'],
+    ),
   ];
 
   return [
@@ -1277,7 +1308,7 @@ async function waitForApprovalAndResume(
       assignmentClaimToken,
       localRunId,
     );
-      if (approved) {
+    if (approved) {
       const resumed = await resumeApprovedLocalRun(
         options,
         platformRunId,
@@ -1294,14 +1325,21 @@ async function waitForApprovalAndResume(
           assignmentClaimToken,
           localRunId,
         );
-        if (nextApproved && nextApproved.node_key !== approved.node_key && blockedIds.has(nextApproved.node_key)) {
+        if (
+          nextApproved &&
+          nextApproved.node_key !== approved.node_key &&
+          blockedIds.has(nextApproved.node_key)
+        ) {
           await delay(options.sleepSeconds * 1000);
           continue;
         }
         await delay(options.sleepSeconds * 1000);
         return resumed;
       }
-      if (blockedIds.has(approved.node_key) && managedApprovalDecision(approved) !== 'request_changes') {
+      if (
+        blockedIds.has(approved.node_key) &&
+        managedApprovalDecision(approved) !== 'request_changes'
+      ) {
         return resumed;
       }
     }
@@ -1440,7 +1478,8 @@ function managedApprovalDecision(
     const approved = (approval as { approved?: unknown }).approved;
     const decision = (approval as { decision?: unknown }).decision;
     if (approved === false) {
-      if (decision === 'request_changes' || decision === 'changes_requested') return 'request_changes';
+      if (decision === 'request_changes' || decision === 'changes_requested')
+        return 'request_changes';
       return 'reject';
     }
   }

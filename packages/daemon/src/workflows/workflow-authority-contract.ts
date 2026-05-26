@@ -1,12 +1,6 @@
 import path from 'node:path';
-import type {
-  SessionContextProviderManifest,
-} from '../config-resolution/index.js';
-import type {
-  WorkflowActionNode,
-  WorkflowInputValue,
-  WorkflowRunRecord,
-} from './types.js';
+import type { SessionContextProviderManifest } from '../config-resolution/index.js';
+import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowAuthorityDenial {
   schema: 'viewport.workflow_authority_denial/v1';
@@ -39,9 +33,7 @@ interface AllowedSideEffect {
   actions: string[];
 }
 
-export function workflowAuthorityContract(
-  run: WorkflowRunRecord,
-): Record<string, unknown> | null {
+export function workflowAuthorityContract(run: WorkflowRunRecord): Record<string, unknown> | null {
   return run.workflowAuthorityContract && typeof run.workflowAuthorityContract === 'object'
     ? run.workflowAuthorityContract
     : null;
@@ -54,7 +46,9 @@ export function workflowAuthorityContractDigest(run: WorkflowRunRecord): string 
 
 export function allowedRepositories(run: WorkflowRunRecord): string[] {
   const contract = workflowAuthorityContract(run);
-  return stringArray(readPath(contract, ['repos', 'allowed'])).map(normalizeRepository).filter(Boolean);
+  return stringArray(readPath(contract, ['repos', 'allowed']))
+    .map(normalizeRepository)
+    .filter(Boolean);
 }
 
 export function workflowActionAuthorityDenial(
@@ -239,7 +233,10 @@ function allowedSideEffects(contract: Record<string, unknown>): AllowedSideEffec
     .filter((entry): entry is AllowedSideEffect => entry !== null);
 }
 
-function allowedContextRefs(contract: Record<string, unknown>, mode: 'read' | 'update_target'): string[] {
+function allowedContextRefs(
+  contract: Record<string, unknown>,
+  mode: 'read' | 'update_target',
+): string[] {
   const candidates =
     mode === 'read'
       ? arrayValue(readPath(contract, ['context_sources', 'read']))
@@ -371,7 +368,10 @@ function normalizeRepository(value: string | undefined): string {
 }
 
 function normalizeContextRef(value: string): string {
-  return value.trim().replace(/\.git$/i, '').toLowerCase();
+  return value
+    .trim()
+    .replace(/\.git$/i, '')
+    .toLowerCase();
 }
 
 function normalizeToken(value: string): string {

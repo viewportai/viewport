@@ -310,7 +310,9 @@ nodes:
     const failed = await daemon.workflowRunner.getRun(run.id);
 
     expect(failed?.status).toBe('failed');
-    expect(failed?.nodes.implement?.error).toContain('missing required file(s): src/proof.ts, src/proof.test.ts');
+    expect(failed?.nodes.implement?.error).toContain(
+      'missing required file(s): src/proof.ts, src/proof.test.ts',
+    );
     expect(failed?.events).toContainEqual(
       expect.objectContaining({
         type: 'node-failed',
@@ -452,7 +454,9 @@ nodes:
     const failed = await daemon.workflowRunner.getRun(run.id);
 
     expect(failed?.status).toBe('failed');
-    expect(failed?.nodes.repo?.error).toContain('Run-scoped checkout grant repo/github/payments-api was not materialized');
+    expect(failed?.nodes.repo?.error).toContain(
+      'Run-scoped checkout grant repo/github/payments-api was not materialized',
+    );
     expect(JSON.stringify(failed)).not.toContain('ghs_run_scoped_checkout');
   });
 
@@ -553,7 +557,9 @@ nodes:
     const failed = await daemon.workflowRunner.getRun(run.id);
 
     expect(failed?.status).toBe('failed');
-    expect(failed?.nodes.publish?.error).toContain('belongs to context update target acme/payments-docs/docs/context/');
+    expect(failed?.nodes.publish?.error).toContain(
+      'belongs to context update target acme/payments-docs/docs/context/',
+    );
     expect(failed?.events).toContainEqual(
       expect.objectContaining({
         type: 'git-publish-blocked',

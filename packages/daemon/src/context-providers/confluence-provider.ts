@@ -28,11 +28,15 @@ async function fetchConfluencePage(input: ContextProviderSearchInput): Promise<{
   body: string;
   url: string;
 }> {
-  const baseUrl = trimTrailingSlash(scopedEnv(input.provider.id, 'BASE_URL') ?? process.env.CONFLUENCE_BASE_URL);
+  const baseUrl = trimTrailingSlash(
+    scopedEnv(input.provider.id, 'BASE_URL') ?? process.env.CONFLUENCE_BASE_URL,
+  );
   const email = scopedEnv(input.provider.id, 'EMAIL') ?? process.env.CONFLUENCE_EMAIL;
   const token = scopedEnv(input.provider.id, 'API_TOKEN') ?? process.env.CONFLUENCE_API_TOKEN;
   if (!baseUrl || !email || !token) {
-    throw new Error(`confluence provider ${input.provider.id} requires CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, and CONFLUENCE_API_TOKEN or scoped VIEWPORT_CONTEXT_${envKey(input.provider.id)}_* env vars on the runner`);
+    throw new Error(
+      `confluence provider ${input.provider.id} requires CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, and CONFLUENCE_API_TOKEN or scoped VIEWPORT_CONTEXT_${envKey(input.provider.id)}_* env vars on the runner`,
+    );
   }
 
   const pageId = confluencePageId(input.provider.ref ?? input.provider.id);
@@ -44,10 +48,12 @@ async function fetchConfluencePage(input: ContextProviderSearchInput): Promise<{
     },
   });
   if (!response.ok) {
-    throw new Error(`confluence provider ${input.provider.id} failed to read page ${pageId}: HTTP ${response.status}`);
+    throw new Error(
+      `confluence provider ${input.provider.id} failed to read page ${pageId}: HTTP ${response.status}`,
+    );
   }
 
-  const body = await response.json() as {
+  const body = (await response.json()) as {
     id?: string;
     title?: string;
     body?: { storage?: { value?: string } };
@@ -115,29 +121,36 @@ function scopedEnv(providerId: string, suffix: string): string | undefined {
 }
 
 function envKey(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_');
 }
 
 function trimTrailingSlash(value: string | undefined): string | undefined {
   return value?.replace(/\/+$/, '');
 }
 
-async function applyConfluenceUpdate(
-  input: ContextProviderApplyApprovedUpdateInput,
-): Promise<{
+async function applyConfluenceUpdate(input: ContextProviderApplyApprovedUpdateInput): Promise<{
   status: 'succeeded';
   provider_reference: string;
   provider_url: string;
   payload: Record<string, unknown>;
 }> {
-  const baseUrl = trimTrailingSlash(scopedEnv(input.provider.id, 'BASE_URL') ?? process.env.CONFLUENCE_BASE_URL);
+  const baseUrl = trimTrailingSlash(
+    scopedEnv(input.provider.id, 'BASE_URL') ?? process.env.CONFLUENCE_BASE_URL,
+  );
   const email = scopedEnv(input.provider.id, 'EMAIL') ?? process.env.CONFLUENCE_EMAIL;
   const token = scopedEnv(input.provider.id, 'API_TOKEN') ?? process.env.CONFLUENCE_API_TOKEN;
   if (!baseUrl || !email || !token) {
-    throw new Error(`confluence provider ${input.provider.id} requires CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, and CONFLUENCE_API_TOKEN or scoped VIEWPORT_CONTEXT_${envKey(input.provider.id)}_* env vars on the runner`);
+    throw new Error(
+      `confluence provider ${input.provider.id} requires CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, and CONFLUENCE_API_TOKEN or scoped VIEWPORT_CONTEXT_${envKey(input.provider.id)}_* env vars on the runner`,
+    );
   }
   if (input.patch.mode !== 'append' || !input.patch.text?.trim()) {
-    throw new Error(`confluence provider ${input.provider.id} supports approved append text updates in v1`);
+    throw new Error(
+      `confluence provider ${input.provider.id} supports approved append text updates in v1`,
+    );
   }
 
   const pageId = confluencePageId(input.provider.ref ?? input.provider.id);
@@ -150,9 +163,11 @@ async function applyConfluenceUpdate(
     },
   });
   if (!readResponse.ok) {
-    throw new Error(`confluence provider ${input.provider.id} failed to read page ${pageId}: HTTP ${readResponse.status}`);
+    throw new Error(
+      `confluence provider ${input.provider.id} failed to read page ${pageId}: HTTP ${readResponse.status}`,
+    );
   }
-  const current = await readResponse.json() as {
+  const current = (await readResponse.json()) as {
     id?: string;
     title?: string;
     body?: { storage?: { value?: string } };
@@ -163,35 +178,42 @@ async function applyConfluenceUpdate(
   const version = typeof current.version?.number === 'number' ? current.version.number : 1;
   const before = current.body?.storage?.value ?? '';
   const appended = `${before}\n<p>${escapeHtml(input.patch.text)}</p>`;
-  const updateResponse = await fetch(`${baseUrl}/wiki/rest/api/content/${encodeURIComponent(pageId)}`, {
-    method: 'PUT',
-    headers: {
-      authorization: auth,
-      accept: 'application/json',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      id: pageId,
-      type: 'page',
-      title,
-      version: { number: version + 1 },
-      body: {
-        storage: {
-          value: appended,
-          representation: 'storage',
-        },
+  const updateResponse = await fetch(
+    `${baseUrl}/wiki/rest/api/content/${encodeURIComponent(pageId)}`,
+    {
+      method: 'PUT',
+      headers: {
+        authorization: auth,
+        accept: 'application/json',
+        'content-type': 'application/json',
       },
-    }),
-  });
+      body: JSON.stringify({
+        id: pageId,
+        type: 'page',
+        title,
+        version: { number: version + 1 },
+        body: {
+          storage: {
+            value: appended,
+            representation: 'storage',
+          },
+        },
+      }),
+    },
+  );
   if (!updateResponse.ok) {
-    throw new Error(`confluence provider ${input.provider.id} failed to apply approved update to page ${pageId}: HTTP ${updateResponse.status}`);
+    throw new Error(
+      `confluence provider ${input.provider.id} failed to apply approved update to page ${pageId}: HTTP ${updateResponse.status}`,
+    );
   }
 
   const digest = `sha256:${crypto.createHash('sha256').update(input.patch.text).digest('hex')}`;
   return {
     status: 'succeeded',
     provider_reference: `confluence://page/${pageId}`,
-    provider_url: current._links?.webui ? `${baseUrl}${current._links.webui}` : `${baseUrl}/wiki/pages/${pageId}`,
+    provider_url: current._links?.webui
+      ? `${baseUrl}${current._links.webui}`
+      : `${baseUrl}/wiki/pages/${pageId}`,
     payload: {
       operation: 'append_storage',
       external_id: pageId,
@@ -207,8 +229,5 @@ async function applyConfluenceUpdate(
 }
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

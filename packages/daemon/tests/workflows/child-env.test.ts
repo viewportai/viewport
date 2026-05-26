@@ -37,4 +37,3 @@ function restore(key: string, value: string | undefined): void {
   }
   process.env[key] = value;
 }
-

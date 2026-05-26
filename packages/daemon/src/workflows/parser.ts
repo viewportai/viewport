@@ -186,14 +186,24 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
   if (node.type === 'checkout') {
-    return [node.repository, node.remote, node.ref, node.branch, node.path, node.credentialRef].filter(
-      (value): value is string => typeof value === 'string',
-    );
+    return [
+      node.repository,
+      node.remote,
+      node.ref,
+      node.branch,
+      node.path,
+      node.credentialRef,
+    ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'git_publish') {
-    return [node.repository, node.cwd, node.branch, node.message, node.credentialRef, ...(node.paths ?? [])].filter(
-      (value): value is string => typeof value === 'string',
-    );
+    return [
+      node.repository,
+      node.cwd,
+      node.branch,
+      node.message,
+      node.credentialRef,
+      ...(node.paths ?? []),
+    ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'approval') {
     const templates = [node.prompt];
@@ -213,10 +223,9 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return [node.gate.waitUntil];
   }
   if (node.type === 'context') {
-    return [
-      node.query,
-      ...(node.refs ?? []).map(workflowContextRef),
-    ].filter((value): value is string => typeof value === 'string');
+    return [node.query, ...(node.refs ?? []).map(workflowContextRef)].filter(
+      (value): value is string => typeof value === 'string',
+    );
   }
   if (node.type === 'context_update') {
     return [
@@ -342,7 +351,9 @@ function declaredReferenceName(
 }
 
 function workflowContextRef(entry: string | WorkflowContextReference): string {
-  return typeof entry === 'string' ? entry : entry.ref ?? entry.source ?? entry.package ?? entry.artifact ?? '';
+  return typeof entry === 'string'
+    ? entry
+    : (entry.ref ?? entry.source ?? entry.package ?? entry.artifact ?? '');
 }
 
 function transitiveDependencies(definition: WorkflowDefinition, nodeId: string): Set<string> {

@@ -490,7 +490,9 @@ nodes:
     });
     expect(completed?.events.map((event) => event.type)).toContain('run-preparation-completed');
     expect(completed?.events.map((event) => event.type)).toContain('context-source-prepared');
-    expect(completed?.events.map((event) => event.type)).toContain('context-update-target-prepared');
+    expect(completed?.events.map((event) => event.type)).toContain(
+      'context-update-target-prepared',
+    );
     expect(completed?.events.map((event) => event.type)).not.toContain('node-context-selected');
     expect(JSON.stringify(completed?.runPreparation)).not.toContain('PRIVATE_EDGE_PATCH');
   });

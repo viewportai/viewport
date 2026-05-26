@@ -138,7 +138,9 @@ nodes:
     });
     expect(ackEvent).toBeTruthy();
     expect(startEvent).toBeTruthy();
-    expect(completed!.events.indexOf(ackEvent!)).toBeLessThan(completed!.events.indexOf(startEvent!));
+    expect(completed!.events.indexOf(ackEvent!)).toBeLessThan(
+      completed!.events.indexOf(startEvent!),
+    );
     expect(syncedNode?.metadata?.['node_contract_ack']).toMatchObject({
       status: 'acknowledged',
       source: 'daemon_pre_execute',

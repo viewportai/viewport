@@ -4,7 +4,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolvePromptNodeContext } from '../../src/workflows/context-node-resolver.js';
-import { contextProviderAdapterFor, supportedContextProviderKinds } from '../../src/context-providers/registry.js';
+import {
+  contextProviderAdapterFor,
+  supportedContextProviderKinds,
+} from '../../src/context-providers/registry.js';
 import type { WorkflowPlatformContextClient } from '../../src/workflows/platform-context-client.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 import type { SessionContextProviderManifest } from '../../src/config-resolution/index.js';
@@ -117,7 +120,9 @@ describe('platform-governed customer-managed context', () => {
   });
 
   it('renders workflow input templates before selecting node context providers', async () => {
-    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-platform-context-template-'));
+    const projectDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'viewport-platform-context-template-'),
+    );
     try {
       await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
       await fs.mkdir(path.join(projectDir, 'docs', 'runbooks'), { recursive: true });
@@ -196,37 +201,45 @@ describe('platform-governed customer-managed context', () => {
       provider('confluence', 'confluence://space/PAY/page/12345'),
     );
 
-    await expect(notion?.search?.({
-      provider: provider('notion', 'notion://page/test-page'),
-      query: 'retry',
-      actorName: 'edge-runner',
-    })).rejects.toThrow(/requires NOTION_TOKEN/);
-    await expect(confluence?.search?.({
-      provider: provider('confluence', 'confluence://space/PAY/page/12345'),
-      query: 'retry',
-      actorName: 'edge-runner',
-    })).rejects.toThrow(/requires CONFLUENCE_BASE_URL/);
+    await expect(
+      notion?.search?.({
+        provider: provider('notion', 'notion://page/test-page'),
+        query: 'retry',
+        actorName: 'edge-runner',
+      }),
+    ).rejects.toThrow(/requires NOTION_TOKEN/);
+    await expect(
+      confluence?.search?.({
+        provider: provider('confluence', 'confluence://space/PAY/page/12345'),
+        query: 'retry',
+        actorName: 'edge-runner',
+      }),
+    ).rejects.toThrow(/requires CONFLUENCE_BASE_URL/);
 
-    await expect(notion?.applyApprovedUpdate?.({
-      provider: provider('notion', 'notion://page/test-page'),
-      proposalId: 'ctxprop_1',
-      actorName: 'edge-runner',
-      patch: {
-        mode: 'append',
-        text: 'Approved update',
-        patchDigest: digest('Approved update'),
-      },
-    })).rejects.toThrow(/requires NOTION_TOKEN/);
-    await expect(confluence?.applyApprovedUpdate?.({
-      provider: provider('confluence', 'confluence://space/PAY/page/12345'),
-      proposalId: 'ctxprop_2',
-      actorName: 'edge-runner',
-      patch: {
-        mode: 'append',
-        text: 'Approved update',
-        patchDigest: digest('Approved update'),
-      },
-    })).rejects.toThrow(/requires CONFLUENCE_BASE_URL/);
+    await expect(
+      notion?.applyApprovedUpdate?.({
+        provider: provider('notion', 'notion://page/test-page'),
+        proposalId: 'ctxprop_1',
+        actorName: 'edge-runner',
+        patch: {
+          mode: 'append',
+          text: 'Approved update',
+          patchDigest: digest('Approved update'),
+        },
+      }),
+    ).rejects.toThrow(/requires NOTION_TOKEN/);
+    await expect(
+      confluence?.applyApprovedUpdate?.({
+        provider: provider('confluence', 'confluence://space/PAY/page/12345'),
+        proposalId: 'ctxprop_2',
+        actorName: 'edge-runner',
+        patch: {
+          mode: 'append',
+          text: 'Approved update',
+          patchDigest: digest('Approved update'),
+        },
+      }),
+    ).rejects.toThrow(/requires CONFLUENCE_BASE_URL/);
   });
 
   it('blocks local context resolution outside the workflow authority contract', async () => {

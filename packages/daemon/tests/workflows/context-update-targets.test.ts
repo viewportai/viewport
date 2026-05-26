@@ -14,7 +14,9 @@ describe('Git context update target refs', () => {
       path: null,
       scope: 'repo',
     });
-    expect(parseGitContextUpdateTargetRef('git://viewportai/vp-example-docs/docs/context/')).toEqual({
+    expect(
+      parseGitContextUpdateTargetRef('git://viewportai/vp-example-docs/docs/context/'),
+    ).toEqual({
       provider: 'git',
       owner: 'viewportai',
       repo: 'vp-example-docs',
@@ -45,9 +47,15 @@ describe('Git context update target refs', () => {
     );
     const repo = parseGitContextUpdateTargetRef('git://viewportai/vp-example-docs');
 
-    expect(directory && gitContextTargetAllowsPath(directory, 'docs/context/support.md')).toBe(true);
-    expect(directory && gitContextTargetAllowsPath(directory, 'docs/runbooks/support.md')).toBe(false);
-    expect(file && gitContextTargetAllowsPath(file, 'docs/context/payment-risk-rules.md')).toBe(true);
+    expect(directory && gitContextTargetAllowsPath(directory, 'docs/context/support.md')).toBe(
+      true,
+    );
+    expect(directory && gitContextTargetAllowsPath(directory, 'docs/runbooks/support.md')).toBe(
+      false,
+    );
+    expect(file && gitContextTargetAllowsPath(file, 'docs/context/payment-risk-rules.md')).toBe(
+      true,
+    );
     expect(file && gitContextTargetAllowsPath(file, 'docs/context/other.md')).toBe(false);
     expect(repo && gitContextTargetAllowsPath(repo, 'any/path.md')).toBe(true);
     expect(repo && gitContextTargetAllowsPath(repo, '../escape.md')).toBe(false);

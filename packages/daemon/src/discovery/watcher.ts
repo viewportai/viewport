@@ -352,7 +352,10 @@ export function createSessionTailer(filePath: string): SessionTailer {
 
 function readFileRange(filePath: string, start: number, endExclusive: number): Promise<string> {
   if (endExclusive <= start) return Promise.resolve('');
-  if (start <= MAX_SAFE_FILEHANDLE_READ_POSITION && endExclusive <= MAX_SAFE_FILEHANDLE_READ_POSITION) {
+  if (
+    start <= MAX_SAFE_FILEHANDLE_READ_POSITION &&
+    endExclusive <= MAX_SAFE_FILEHANDLE_READ_POSITION
+  ) {
     return readFileRangeWithHandle(filePath, start, endExclusive);
   }
 

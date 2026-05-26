@@ -50,7 +50,10 @@ interface HookNotifyOptions {
   writeStderr?: (message: string) => void;
 }
 
-export async function runHookNotify(input: string, options: HookNotifyOptions = {}): Promise<number> {
+export async function runHookNotify(
+  input: string,
+  options: HookNotifyOptions = {},
+): Promise<number> {
   const event = options.event;
   const writeStdout = options.writeStdout ?? ((message: string) => process.stdout.write(message));
   const writeStderr = options.writeStderr ?? ((message: string) => process.stderr.write(message));

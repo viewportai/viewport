@@ -285,10 +285,12 @@ export class WorkflowPlatformContextClient {
 function isPlatformContextSourcePolicy(value: unknown): value is PlatformContextSourcePolicy {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
-  return row['schema'] === 'viewport.context_source_policy/v1'
-    && typeof row['policy_receipt_id'] === 'string'
-    && typeof row['context_source_id'] === 'string'
-    && typeof row['external_ref'] === 'string';
+  return (
+    row['schema'] === 'viewport.context_source_policy/v1' &&
+    typeof row['policy_receipt_id'] === 'string' &&
+    typeof row['context_source_id'] === 'string' &&
+    typeof row['external_ref'] === 'string'
+  );
 }
 
 async function readResponseJson(res: Response): Promise<unknown> {

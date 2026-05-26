@@ -19,7 +19,14 @@ export function parseGitContextUpdateTargetRef(ref: string): GitContextUpdateTar
 
   const rawPath = parts.slice(2).join('/').replace(/\/+/g, '/');
   if (!rawPath) {
-    return { provider: 'git', owner, repo, repository: `${owner}/${repo}`, path: null, scope: 'repo' };
+    return {
+      provider: 'git',
+      owner,
+      repo,
+      repository: `${owner}/${repo}`,
+      path: null,
+      scope: 'repo',
+    };
   }
 
   const directory = ref.endsWith('/');
@@ -34,7 +41,10 @@ export function parseGitContextUpdateTargetRef(ref: string): GitContextUpdateTar
   };
 }
 
-export function gitContextTargetAllowsPath(target: GitContextUpdateTargetRef, path: string): boolean {
+export function gitContextTargetAllowsPath(
+  target: GitContextUpdateTargetRef,
+  path: string,
+): boolean {
   const normalized = normalizeRelativeGitPath(path);
   if (!normalized) return false;
 
@@ -45,11 +55,7 @@ export function gitContextTargetAllowsPath(target: GitContextUpdateTargetRef, pa
 }
 
 function normalizeRelativeGitPath(path: string): string | null {
-  const segments = path
-    .replace(/\\/g, '/')
-    .replace(/^\/+/, '')
-    .split('/')
-    .filter(Boolean);
+  const segments = path.replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter(Boolean);
   if (segments.length === 0) return null;
   if (segments.some((segment) => segment === '.' || segment === '..')) return null;
   return segments.join('/');

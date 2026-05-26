@@ -191,9 +191,7 @@ nodes:
     });
 
     await waitForNodeSession(daemon, run.id, 'draft_plan');
-    const cwd = adapter.lastSession
-      ? adapter.cwdBySession.get(adapter.lastSession)
-      : undefined;
+    const cwd = adapter.lastSession ? adapter.cwdBySession.get(adapter.lastSession) : undefined;
 
     expect(cwd).toBeTruthy();
     expect(cwd).not.toBe(projectDir);
@@ -341,7 +339,9 @@ nodes:
     );
     const sentPrompt = String(session.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
     expect(sentPrompt).not.toContain('<viewport_context>');
-    expect(sentPrompt).not.toContain('Workflow prompt nodes must receive resource manifest context.');
+    expect(sentPrompt).not.toContain(
+      'Workflow prompt nodes must receive resource manifest context.',
+    );
     expect(sentPrompt).toContain('Review workflow context for the current directory.');
 
     session.emitAgentMessage('context used');
@@ -699,7 +699,10 @@ nodes:
       initiation: 'cli',
     });
 
-    const planSession = await waitForSessionWithPrompt(adapter, 'Draft a plan for the support ticket.');
+    const planSession = await waitForSessionWithPrompt(
+      adapter,
+      'Draft a plan for the support ticket.',
+    );
     const planPrompt = String(planSession.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
     expect(planPrompt).toContain('PLAN_ONLY_CONTEXT');
     expect(planPrompt).not.toContain('IMPLEMENT_ONLY_CONTEXT');
@@ -801,7 +804,9 @@ nodes:
         }),
       }),
     );
-    expect(completed?.events.filter((event) => event.type === 'node-context-selected')).toHaveLength(2);
+    expect(
+      completed?.events.filter((event) => event.type === 'node-context-selected'),
+    ).toHaveLength(2);
   });
 
   it('fails and kills a prompt node when its timeout expires', async () => {

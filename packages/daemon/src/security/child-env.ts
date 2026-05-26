@@ -46,4 +46,3 @@ export function scrubSecretEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
   return scrubbed;
 }
-

@@ -338,9 +338,15 @@ export class WorkflowRunner {
       },
       nodeId,
     );
-    addEvent(run, 'approval-requested', `Approval requested for revised plan ${nodeId}`, {
-      prompt: state.approval.prompt,
-    }, nodeId);
+    addEvent(
+      run,
+      'approval-requested',
+      `Approval requested for revised plan ${nodeId}`,
+      {
+        prompt: state.approval.prompt,
+      },
+      nodeId,
+    );
   }
 
   async decideApproval(
@@ -390,7 +396,11 @@ export class WorkflowRunner {
       ...(decision.executionGrant ? { executionGrant: decision.executionGrant } : {}),
     };
 
-    if (!decision.approved && state.type === 'plan' && state.approval.decision === 'request_changes') {
+    if (
+      !decision.approved &&
+      state.type === 'plan' &&
+      state.approval.decision === 'request_changes'
+    ) {
       state.status = 'blocked';
       state.error = undefined;
       run.status = 'blocked';
@@ -511,7 +521,9 @@ export class WorkflowRunner {
         ? (state.metadata['plan'] as { body: string }).body
         : null;
     state.output =
-      commandPlanBody ?? planBody ?? (isOptInApproval ? 'Approved' : (decision.message ?? 'Approved'));
+      commandPlanBody ??
+      planBody ??
+      (isOptInApproval ? 'Approved' : (decision.message ?? 'Approved'));
     run.status = 'running';
     run.updatedAt = resolvedAt;
     addEvent(
