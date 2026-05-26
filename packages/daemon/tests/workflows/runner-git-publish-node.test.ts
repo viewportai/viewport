@@ -360,6 +360,10 @@ async function createBareRemote(remote: string, seed: string): Promise<void> {
   await runGit(['init', '--bare', remote], path.dirname(remote));
   await runGit(['remote', 'add', 'origin', remote], seed);
   await runGit(['push', 'origin', 'HEAD:main'], seed);
+  await runGit(
+    ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main'],
+    path.dirname(remote),
+  );
 }
 
 async function runGit(args: string[], cwd: string): Promise<string> {
