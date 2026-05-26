@@ -264,8 +264,14 @@ nodes:
     const failed = await daemon.workflowRunner.getRun(run.id);
 
     expect(failed?.status).toBe('failed');
-    expect(failed?.nodes.publish?.error).toContain(
-      'Run-scoped git publish grant repo/github/payments-api was not materialized',
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-failed',
+        nodeId: 'publish',
+        message: expect.stringContaining(
+          'Run-scoped git publish grant repo/github/payments-api was not materialized',
+        ),
+      }),
     );
     expect(JSON.stringify(failed)).not.toContain('ghs_run_scoped_push');
   });
@@ -317,12 +323,13 @@ nodes:
 
     await waitForTerminalRun(daemon, run.id);
     const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+
     const pushedCommit = await runGit(
       ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'],
       root,
     );
 
-    expect(completed?.status).toBe('completed');
     expect(completed?.nodes.publish?.metadata?.git_publish).toMatchObject({
       schema: 'viewport.git_publish_receipt/v1',
       repository: 'acme/payments',

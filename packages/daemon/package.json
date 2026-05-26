@@ -47,7 +47,7 @@
     "test:e2e": "vitest run tests/e2e",
     "test:e2e:fullstack": "VIEWPORT_RUN_NET_E2E=1 vitest run tests/e2e/cli-fullstack-workflow.test.ts",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --pool=forks",
     "check:file-size": "node ./scripts/check-file-sizes.mjs",
     "check:protocol-matrix": "node ./scripts/check-protocol-matrix.mjs",
     "lint": "eslint src/ tests/ --no-error-on-unmatched-pattern",
