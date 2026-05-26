@@ -81,12 +81,74 @@ export const RequiresSchema = z
 
 export const ContextReferenceSchema = z
   .object({
-    ref: z.string().trim().min(1),
+    ref: z.string().trim().min(1).optional(),
+    source: z.string().trim().min(1).optional(),
+    package: z.string().trim().min(1).optional(),
+    artifact: z.string().trim().min(1).optional(),
     as: identifierSchema.optional(),
     required: z.boolean().optional(),
     description: z.string().optional(),
     refresh: z.enum(['manual', 'before_run', 'on_demand']).optional(),
+    max_items: z.number().int().positive().max(100).optional(),
+    maxItems: z.number().int().positive().max(100).optional(),
+  })
+  .strict()
+  .refine((entry) => Boolean(entry.ref ?? entry.source ?? entry.package ?? entry.artifact), {
+    message: 'Set one of ref, source, package, or artifact.',
+  });
+
+export const ContextSchema = z.array(z.union([z.string().trim().min(1), ContextReferenceSchema]));
+
+export const ContextWriteTargetSchema = z.union([
+  z.string().trim().min(1),
+  z
+    .object({
+      ref: z.string().trim().min(1).optional(),
+      kind: z
+        .enum(['team_memory', 'org_rule', 'repo_pr', 'context_vault', 'vector_store', 'external'])
+        .optional(),
+      path: z.string().trim().min(1).optional(),
+      collection: z.string().trim().min(1).optional(),
+      provider: z.string().trim().min(1).optional(),
+      name: z.string().trim().min(1).optional(),
+      approval: z.enum(['required', 'optional', 'not_required']).optional(),
+    })
+    .strict()
+    .refine((entry) => Boolean(entry.ref ?? entry.kind ?? entry.path ?? entry.collection), {
+      message: 'Set ref, kind, path, or collection for context write target.',
+    }),
+]);
+
+export const NodeContextEnvelopeSchema = z
+  .object({
+    include: ContextSchema.optional(),
+    exclude: ContextSchema.optional(),
+    max_items: z.number().int().positive().max(100).optional(),
+    maxItems: z.number().int().positive().max(100).optional(),
+    query: z.string().trim().min(1).optional(),
+    write_targets: z.array(ContextWriteTargetSchema).optional(),
+    writeTargets: z.array(ContextWriteTargetSchema).optional(),
+    allow_expansion: z.boolean().optional(),
+    allowExpansion: z.boolean().optional(),
   })
   .strict();
 
-export const ContextSchema = z.array(z.union([z.string().trim().min(1), ContextReferenceSchema]));
+export const WorkflowContextDefaultsSchema = z
+  .object({
+    sources: ContextSchema.optional(),
+    update_targets: z.array(ContextWriteTargetSchema).optional(),
+    updateTargets: z.array(ContextWriteTargetSchema).optional(),
+  })
+  .strict()
+  .refine(
+    (entry) =>
+      Boolean(entry.sources?.length || entry.update_targets?.length || entry.updateTargets?.length),
+    {
+      message: 'Set sources or update_targets for workflow context defaults.',
+    },
+  );
+
+export const WorkflowContextDefinitionSchema = z.union([
+  ContextSchema,
+  WorkflowContextDefaultsSchema,
+]);

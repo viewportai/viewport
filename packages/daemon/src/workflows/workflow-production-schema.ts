@@ -93,13 +93,62 @@ export const WorkflowPolicyDefinitionSchema = z
   })
   .strict();
 
+const LegacyInboxNotificationSchema = z.array(
+  z.enum(['approval_requested', 'run_failed', 'runner_offline', 'action_failed']),
+);
+
+const SlackInboxNotificationSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    credential_ref: z.string().trim().min(1).optional(),
+    credential: z.string().trim().min(1).optional(),
+    delivery: z
+      .union([
+        z.enum(['source_thread', 'dm_assignee', 'dm_requester', 'channel']),
+        z.array(z.enum(['source_thread', 'dm_assignee', 'dm_requester', 'channel'])),
+      ])
+      .optional(),
+    events: z.array(z.string().trim().min(1)).optional(),
+    channel: z.string().trim().min(1).optional(),
+    template: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+const InboxNotificationSchema = z.union([
+  LegacyInboxNotificationSchema,
+  z
+    .object({
+      slack: SlackInboxNotificationSchema.optional(),
+    })
+    .strict(),
+]);
+
+const SourceAcceptedNotificationSchema = z.union([
+  z.boolean(),
+  z
+    .object({
+      enabled: z.boolean().optional(),
+      provider: z.string().trim().min(1).optional(),
+      credential_ref: z.string().trim().min(1).optional(),
+      credential: z.string().trim().min(1).optional(),
+      delivery: z.enum(['source_thread', 'channel', 'dm_requester']).optional(),
+      mode: z.enum(['source_thread', 'channel', 'dm_requester']).optional(),
+      channel: z.string().trim().min(1).optional(),
+      thread_ts: z.string().trim().min(1).optional(),
+      user_id: z.string().trim().min(1).optional(),
+      template: z.string().trim().min(1).optional(),
+      onFailure: z.enum(['continue', 'fail_run']).optional(),
+      failurePolicy: z.enum(['continue', 'fail_run']).optional(),
+    })
+    .strict(),
+]);
+
 export const WorkflowNotificationDefinitionSchema = z
   .object({
-    inbox: z
-      .array(z.enum(['approval_requested', 'run_failed', 'runner_offline', 'action_failed']))
-      .optional(),
+    inbox: InboxNotificationSchema.optional(),
     email: z.array(z.enum(['approval_requested', 'run_failed', 'run_completed'])).optional(),
     webhook: z.array(z.string().trim().min(1)).optional(),
+    sourceAccepted: SourceAcceptedNotificationSchema.optional(),
   })
   .strict();
 

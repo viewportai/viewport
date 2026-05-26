@@ -22,6 +22,8 @@ const ProviderKindSchema = z.enum([
   'repo-docs',
   'viewport-vault',
   'github-repo',
+  'notion',
+  'confluence',
   'notebooklm',
   'glean',
   'custom-cli',

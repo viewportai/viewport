@@ -6,6 +6,7 @@ import type {
   WorkflowExecutionPolicy,
   WorkflowNodeType,
 } from './types.js';
+import type { WorkflowRunPreparation } from './run-preparation.js';
 
 export type WorkflowRunStatus =
   | 'queued'
@@ -178,6 +179,8 @@ export interface WorkflowRunRecord {
   resourceId?: string;
   resourceManifest?: SessionResourceManifest;
   workflowContract?: WorkflowContractBinding;
+  workflowAuthorityContract?: Record<string, unknown>;
+  runPreparation?: WorkflowRunPreparation;
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
@@ -221,12 +224,20 @@ export interface WorkflowRunRequest {
   workflowYaml?: string;
   workflowSourceRef?: string;
   workflowContract?: WorkflowContractBindingInput;
+  workflowAuthorityContract?: Record<string, unknown>;
   directoryId: string;
   inputs?: Record<string, WorkflowInputValue>;
+  /**
+   * Transient, run-scoped secret material keyed by environment variable name.
+   * This is intentionally request-only: it must never be copied to
+   * WorkflowRunRecord, synced to the control plane, or written to run inputs.
+   */
+  runtimeSecretEnv?: Record<string, string>;
   resourceId?: string;
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;
+  resourceManifest?: SessionResourceManifest;
   executionPolicy?: WorkflowExecutionPolicy;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
   initiation: WorkflowRunRecord['initiation'];

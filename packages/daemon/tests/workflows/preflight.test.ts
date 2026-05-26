@@ -300,4 +300,58 @@ nodes:
       }),
     ]);
   });
+
+  it('treats shell as the native shell-node capability instead of an external binary', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: native-shell-tool-proof
+requires:
+  tools:
+    - shell
+nodes:
+  proof:
+    type: shell
+    command: echo ok
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('does not require the worker root to be a git worktree when structured checkout prepares the repo', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: structured-checkout-preflight-proof
+requires:
+  tools:
+    - git
+nodes:
+  checkout_repo:
+    type: checkout
+    repository: viewportai/vp-example-repo
+  inspect:
+    type: shell
+    needs: [checkout_repo]
+    cwd: "{{ nodes.checkout_repo.outputs.path }}"
+    command: git status --short
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => [],
+      directoryPath: '/tmp/not-a-git-repo',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
 });

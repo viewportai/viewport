@@ -2,22 +2,27 @@ import type {
   ManagedAssignment,
   ManagedWorkerCapabilities,
 } from './workflow-managed-worker-types.js';
-import type { WorkflowRunRecord } from '../workflows/types.js';
+import { sanitizeWorkflowApprovalActor } from '../workflows/approval-actor.js';
+import type { WorkflowApprovalActor, WorkflowRunRecord } from '../workflows/types.js';
 
 export { workflowRunToSyncPayload as localRunToSyncPayload } from '../workflows/platform-sync-payload.js';
 
 export function capabilityPayload(
   capabilities: ManagedWorkerCapabilities,
-): Record<string, string[] | string> {
+): Record<string, unknown> {
+  const tools = [...new Set(['shell', ...capabilities.tools])];
+  const agents = agentCapabilityPayload(
+    capabilities.agents,
+    capabilities.models,
+    tools,
+    capabilities.agentModels,
+  );
+
   return {
-    tools: ['shell'],
+    tools,
     ...(capabilities.runnerPool ? { runner_pool: capabilities.runnerPool } : {}),
-    ...(capabilities.agentCommand && capabilities.agents.length > 0
-      ? { agents: capabilities.agents }
-      : {}),
-    ...(capabilities.agentCommand && capabilities.models.length > 0
-      ? { models: capabilities.models }
-      : {}),
+    ...(Object.keys(agents).length > 0 ? { agents } : {}),
+    ...(capabilities.models.length > 0 ? { models: capabilities.models } : {}),
     ...(capabilities.integrations.length > 0 ? { integrations: capabilities.integrations } : {}),
     ...((capabilities.actionCommand || capabilities.providerActions) &&
     capabilities.integrations.length > 0
@@ -25,6 +30,81 @@ export function capabilityPayload(
       : {}),
     ...(capabilities.secrets.length > 0 ? { secrets: capabilities.secrets } : {}),
   };
+}
+
+function agentCapabilityPayload(
+  agents: string[],
+  models: string[],
+  tools: string[],
+  agentModels: Record<string, string[]> | undefined,
+): Record<string, Record<string, unknown>> {
+  const uniqueAgents = [...new Set(agents.filter((agent) => agent.trim() !== ''))];
+  const uniqueModels = [...new Set(models.filter((model) => model.trim() !== ''))];
+
+  return Object.fromEntries(
+    uniqueAgents.map((agent) => {
+      const explicitModels = uniqueStrings(agentModels?.[agent] ?? []);
+      const scopedModels =
+        explicitModels.length > 0
+          ? explicitModels
+          : uniqueModels.filter((model) => modelLooksOwnedByAgent(agent, model));
+      const assignedModels =
+        scopedModels.length > 0 || uniqueAgents.length > 1 ? scopedModels : uniqueModels;
+
+      return [
+        agent,
+        {
+          available: true,
+          models: assignedModels,
+          ...(assignedModels[0] ? { default_model: assignedModels[0] } : {}),
+          tools: toolsForAgent(agent, tools),
+          supports_plan_mode: agent === 'claude',
+        },
+      ];
+    }),
+  );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim() !== ''))];
+}
+
+function modelLooksOwnedByAgent(agent: string, model: string): boolean {
+  const normalizedAgent = agent.toLowerCase();
+  const normalizedModel = model.toLowerCase();
+  if (normalizedAgent.includes('claude')) {
+    return (
+      normalizedModel.includes('claude') ||
+      normalizedModel.includes('opus') ||
+      normalizedModel.includes('sonnet') ||
+      normalizedModel.includes('haiku')
+    );
+  }
+  if (normalizedAgent.includes('codex') || normalizedAgent.includes('openai')) {
+    return (
+      normalizedModel.includes('gpt') ||
+      normalizedModel.includes('codex') ||
+      normalizedModel.includes('o3')
+    );
+  }
+  if (normalizedAgent.includes('gemini')) {
+    return normalizedModel.includes('gemini');
+  }
+
+  return false;
+}
+
+function toolsForAgent(agent: string, tools: string[]): string[] {
+  const baseTools = new Set(tools);
+  if (agent === 'codex') {
+    baseTools.add('apply_patch');
+    baseTools.add('git');
+  }
+  if (agent === 'claude') {
+    baseTools.add('shell');
+  }
+
+  return [...baseTools];
 }
 
 export function dataFrom(body: unknown): unknown {
@@ -54,13 +134,11 @@ export function approvalMessage(node: NonNullable<ManagedAssignment['nodes']>[nu
 
 export function approvalActor(
   node: NonNullable<ManagedAssignment['nodes']>[number],
-): Record<string, string> {
+): WorkflowApprovalActor {
   const approval = node.metadata?.['approval'];
   const actor =
     approval && typeof approval === 'object' ? (approval as { actor?: unknown }).actor : null;
-  return actor && typeof actor === 'object'
-    ? (actor as Record<string, string>)
-    : { name: 'Viewport', source: 'managed-executor' };
+  return sanitizeWorkflowApprovalActor(actor) ?? { name: 'Viewport', source: 'managed-executor' };
 }
 
 export function approvalExpectedActionDigest(
@@ -105,6 +183,17 @@ export function approvalExecutionGrant(
       ? { issued_at: stringValue(record['issued_at']) as string }
       : {}),
   };
+}
+
+export function approvalFeedback(
+  node: NonNullable<ManagedAssignment['nodes']>[number],
+): Record<string, unknown> | undefined {
+  const approval = node.metadata?.['approval'];
+  if (!approval || typeof approval !== 'object') return undefined;
+  const feedback = (approval as { feedback?: unknown }).feedback;
+  if (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)) return undefined;
+
+  return feedback as Record<string, unknown>;
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -58,7 +58,10 @@ export type WorkflowNodeType =
   | 'agent'
   | 'prompt'
   | 'shell'
+  | 'checkout'
+  | 'git_publish'
   | 'approval'
+  | 'context_update'
   | 'context'
   | 'condition'
   | 'artifact'
@@ -170,14 +173,22 @@ export interface WorkflowNodeBase {
   outputs?: Record<string, WorkflowOutputDefinition>;
   artifacts?: Record<string, WorkflowArtifactDefinition>;
   env?: Record<string, WorkflowEnvValue>;
+  context?: WorkflowNodeContextEnvelope;
 }
 
 export interface WorkflowPromptNode extends WorkflowNodeBase {
   type: 'prompt';
   prompt: string;
+  cwd?: string;
+  /**
+   * Files that must exist after the prompt node completes. Paths are resolved
+   * relative to the node cwd/run directory and must stay inside that directory.
+   */
+  requiredFiles?: string[];
   agent?: string;
   provider?: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   hooks?: WorkflowHookRules;
   agents?: Record<string, WorkflowInlineAgentDefinition>;
   inlineAgentFailurePolicy?: 'fail' | 'continue';
@@ -189,6 +200,7 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
   agent: string;
   provider?: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   session?: {
     resume?: boolean;
     title?: string;
@@ -206,9 +218,41 @@ export interface WorkflowShellNode extends WorkflowNodeBase {
   cwd?: string;
 }
 
+export interface WorkflowCheckoutNode extends WorkflowNodeBase {
+  type: 'checkout';
+  repository: string;
+  remote?: string;
+  ref?: string;
+  branch?: string;
+  path?: string;
+  credentialMode?: 'runner_local' | 'run_scoped_grant';
+  credentialRef?: string;
+}
+
+export interface WorkflowGitPublishNode extends WorkflowNodeBase {
+  type: 'git_publish';
+  repository: string;
+  cwd: string;
+  branch: string;
+  message: string;
+  paths?: string[];
+  allowEmpty?: boolean;
+  push?: boolean;
+  credentialMode?: 'runner_local' | 'run_scoped_grant';
+  credentialRef?: string;
+}
+
+export interface WorkflowApprovalRecipient {
+  role?: string;
+  tag?: string;
+  user?: string;
+  label?: string;
+}
+
 export interface WorkflowApprovalNode extends WorkflowNodeBase {
   type: 'approval';
   prompt: string;
+  recipients?: WorkflowApprovalRecipient[];
   /** When true, the approver's message becomes the node's output. */
   captureResponse?: boolean;
   /**
@@ -226,6 +270,7 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
         prompt: string;
         agent?: string;
         model?: string;
+        effort?: 'low' | 'medium' | 'high' | 'xhigh';
       };
 }
 
@@ -237,6 +282,35 @@ export interface WorkflowPlanNode extends WorkflowNodeBase {
   source?: string;
   sourceRef?: string;
   waitForApproval?: boolean;
+  recipients?: WorkflowApprovalRecipient[];
+  revision?: {
+    onRequestChanges?: 'revise_with_agent' | 'wait_for_new_plan';
+    prompt?: string;
+    agent?: string;
+    model?: string;
+  };
+}
+
+export interface WorkflowContextUpdateNode extends WorkflowNodeBase {
+  type: 'context_update';
+  targetRef: string;
+  title: string;
+  summary?: string;
+  patch?: {
+    mode?: 'append' | 'replace' | 'patch';
+    text?: string;
+    digest?: string;
+    operation?: string;
+    files?: Array<{
+      path: string;
+      operation?: string;
+      patch_digest?: string;
+      artifact_ref?: string;
+      before_digest?: string;
+      after_digest?: string;
+    }>;
+  };
+  idempotencyKey?: string;
 }
 
 export interface WorkflowGateNode extends WorkflowNodeBase {
@@ -249,6 +323,36 @@ export interface WorkflowContextNode extends WorkflowNodeBase {
   refs?: WorkflowContext;
   query?: string;
   refresh?: 'manual' | 'before_run' | 'on_demand';
+}
+
+export type WorkflowContextWriteTarget =
+  | string
+  | {
+      ref?: string;
+      kind?: 'team_memory' | 'org_rule' | 'repo_pr' | 'context_vault' | 'vector_store' | 'external';
+      path?: string;
+      collection?: string;
+      provider?: string;
+      name?: string;
+      approval?: 'required' | 'optional' | 'not_required';
+    };
+
+export interface WorkflowNodeContextEnvelope {
+  include?: WorkflowContext;
+  exclude?: WorkflowContext;
+  max_items?: number;
+  maxItems?: number;
+  query?: string;
+  write_targets?: WorkflowContextWriteTarget[];
+  writeTargets?: WorkflowContextWriteTarget[];
+  allow_expansion?: boolean;
+  allowExpansion?: boolean;
+}
+
+export interface WorkflowContextDefaults {
+  sources?: WorkflowContext;
+  update_targets?: WorkflowContextWriteTarget[];
+  updateTargets?: WorkflowContextWriteTarget[];
 }
 
 export interface WorkflowConditionNode extends WorkflowNodeBase {
@@ -272,6 +376,7 @@ export interface WorkflowActionNode extends WorkflowNodeBase {
   adapter: string;
   action: string;
   with?: Record<string, WorkflowInputValue>;
+  proposalKey?: string;
   idempotencyKey?: string;
   requiresApproval?: boolean;
 }
@@ -288,6 +393,7 @@ export type WorkflowLoopBody =
       prompt: string;
       agent?: string;
       model?: string;
+      effort?: 'low' | 'medium' | 'high' | 'xhigh';
     };
 
 export interface WorkflowLoopNode extends WorkflowNodeBase {
@@ -320,8 +426,11 @@ export type WorkflowNode =
   | WorkflowAgentNode
   | WorkflowPromptNode
   | WorkflowShellNode
+  | WorkflowCheckoutNode
+  | WorkflowGitPublishNode
   | WorkflowApprovalNode
   | WorkflowPlanNode
+  | WorkflowContextUpdateNode
   | WorkflowGateNode
   | WorkflowContextNode
   | WorkflowConditionNode
@@ -337,7 +446,7 @@ export interface WorkflowDefinition {
   description?: string;
   inputs?: Record<string, WorkflowInputDefinition>;
   triggers?: WorkflowTriggerDefinition[];
-  context?: WorkflowContext;
+  context?: WorkflowContext | WorkflowContextDefaults;
   requires?: WorkflowRequires;
   executor?: WorkflowExecutorRequirement;
   runner?: WorkflowRunnerRequirementV2;

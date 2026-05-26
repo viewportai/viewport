@@ -94,6 +94,34 @@ describe('CodexAdapter', () => {
     });
   });
 
+  it('passes configured sandbox and approval posture to Codex threads', async () => {
+    const startThread = vi.fn().mockReturnValue({
+      id: 'codex-writable-thread',
+      run: vi.fn().mockResolvedValue({ finalResponse: 'done' }),
+    });
+    const createClient = vi.fn().mockResolvedValue({
+      startThread,
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    await adapter.startSession('/tmp/project', {
+      config: {
+        agent: 'codex',
+        sandboxMode: 'workspace-write',
+        approvalPolicy: 'never',
+      } as never,
+    });
+
+    expect(startThread).toHaveBeenCalledWith({
+      workingDirectory: '/tmp/project',
+      model: DEFAULT_CODEX_MODEL,
+      skipGitRepoCheck: true,
+      sandboxMode: 'workspace-write',
+      approvalPolicy: 'never',
+    });
+  });
+
   it('resumeSession defaults prompt to Continue and uses resumeThread when available', async () => {
     const run = vi.fn().mockResolvedValue('continuing');
     const resumeThread = vi.fn().mockReturnValue({ id: 'codex-resume-1', run });

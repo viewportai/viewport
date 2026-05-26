@@ -1,5 +1,6 @@
 export function resolveGlobalFlag(args: string[]): 'help' | 'version' | null {
-  if (args.includes('--help') || args.includes('-h')) return 'help';
-  if (args.includes('--version') || args.includes('-v')) return 'version';
+  const first = args[0];
+  if (first === '--help' || first === '-h') return 'help';
+  if (first === '--version' || first === '-v') return 'version';
   return null;
 }

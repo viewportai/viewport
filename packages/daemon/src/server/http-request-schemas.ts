@@ -55,6 +55,23 @@ const WorkflowInputValueSchema: z.ZodType<WorkflowInputValue> = z.lazy(() =>
   ]),
 );
 
+const RuntimeSecretEnvSchema = z.record(
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  z.string().min(1).max(128_000),
+);
+
+const WorkflowResourceManifestBodySchema = z
+  .object({
+    schema: z.literal('viewport.session_resource_manifest/v1'),
+    manifestDigest: z.string().trim().min(1).max(255),
+  })
+  .passthrough();
+
 export const WorkflowRunBodySchema = z
   .object({
     workflowPath: z.string().trim().min(1).optional(),
@@ -75,10 +92,12 @@ export const WorkflowRunBodySchema = z
       .optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
+    runtimeSecretEnv: RuntimeSecretEnvSchema.optional(),
     resourceId: z.string().trim().min(1).optional(),
     runtimeTargetId: z.string().trim().min(1).optional(),
     platformRunId: z.string().trim().min(1).optional(),
     rerunOfWorkflowRunId: z.string().trim().min(1).optional(),
+    resourceManifest: WorkflowResourceManifestBodySchema.optional(),
     executionPolicy: z
       .object({
         mode: z.enum(['current_tree', 'isolated_worktree', 'named_branch']),
@@ -118,6 +137,7 @@ export const WorkflowApprovalBodySchema = z
       .strict()
       .optional(),
     message: z.string().trim().min(1).max(2_000).optional(),
+    feedback: z.record(z.string(), z.unknown()).optional(),
     actor: z
       .object({
         id: z.string().trim().min(1).max(255).optional(),

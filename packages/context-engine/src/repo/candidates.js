@@ -41,6 +41,8 @@ function proposeEntry(vault, options) {
     type: 'entry.proposed',
     payload,
     contextResourceId: options.contextResourceId ?? null,
+    sourceUri: payload.source,
+    sourceKind: payload.sourceKind,
   });
 }
 

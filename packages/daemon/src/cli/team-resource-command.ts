@@ -72,9 +72,8 @@ async function syncTeamResource(): Promise<void> {
   const files = normalizeBundleFiles(bundle);
 
   await assertGitRepository(repo);
-  await writeBundleFiles(repo, files);
+  const sync = await syncBundleFiles(repo, files);
 
-  const writtenPaths = files.map((file) => file.path);
   let commit: Record<string, unknown> = {
     created: false,
     status: 'skipped',
@@ -83,7 +82,7 @@ async function syncTeamResource(): Promise<void> {
   if (!hasFlag('no-commit')) {
     commit = await commitBundleFiles(
       repo,
-      writtenPaths,
+      sync.roots,
       getFlag('commit-message') ?? 'Viewport Team Resource sync',
     );
   }
@@ -105,11 +104,13 @@ async function syncTeamResource(): Promise<void> {
     ok: true,
     repo,
     bundle_digest: bundle.bundle_digest ?? digestFiles(files),
+    manifest_authoritative: true,
     files: files.map((file) => ({
       path: file.path,
       bytes: Buffer.byteLength(file.content),
       sha256: file.sha256,
     })),
+    deleted_files: sync.deletedPaths,
     commit,
     push,
     api_report: apiReport,
@@ -304,6 +305,60 @@ async function assertGitRepository(repo: string): Promise<void> {
   }
 }
 
+async function syncBundleFiles(
+  repo: string,
+  files: TeamResourceBundleFile[],
+): Promise<{ writtenPaths: string[]; deletedPaths: string[]; roots: string[] }> {
+  const roots = bundleRoots(files);
+  const deletedPaths = await pruneStaleBundleFiles(repo, files);
+  await writeBundleFiles(repo, files);
+
+  return {
+    writtenPaths: files.map((file) => file.path),
+    deletedPaths,
+    roots,
+  };
+}
+
+async function pruneStaleBundleFiles(
+  repo: string,
+  files: TeamResourceBundleFile[],
+): Promise<string[]> {
+  const keep = new Set(files.map((file) => file.path));
+  const roots = bundleRoots(files);
+  const deleted: string[] = [];
+
+  for (const root of roots) {
+    const absoluteRoot = path.resolve(repo, root);
+    if (!absoluteRoot.startsWith(repo + path.sep)) {
+      throw new Error(`Unsafe Team Resource bundle root: ${root}`);
+    }
+    const stat = await fs.stat(absoluteRoot).catch(() => null);
+    if (!stat?.isDirectory()) continue;
+
+    const existing = await listFiles(absoluteRoot, repo);
+    for (const relativePath of existing) {
+      if (keep.has(relativePath)) continue;
+
+      await fs.rm(path.resolve(repo, relativePath), { force: true });
+      deleted.push(relativePath);
+    }
+    await pruneEmptyDirectories(absoluteRoot, absoluteRoot);
+  }
+
+  return deleted.sort();
+}
+
+function bundleRoots(files: TeamResourceBundleFile[]): string[] {
+  return [
+    ...new Set(
+      files
+        .map((file) => file.path.split('/')[0])
+        .filter((root): root is string => typeof root === 'string' && root !== ''),
+    ),
+  ];
+}
+
 async function writeBundleFiles(repo: string, files: TeamResourceBundleFile[]): Promise<void> {
   for (const file of files) {
     const absolute = path.resolve(repo, file.path);
@@ -313,6 +368,42 @@ async function writeBundleFiles(repo: string, files: TeamResourceBundleFile[]): 
     await fs.mkdir(path.dirname(absolute), { recursive: true });
     await fs.writeFile(absolute, file.content, 'utf8');
   }
+}
+
+async function listFiles(root: string, repo: string): Promise<string[]> {
+  const output: string[] = [];
+  const entries = await fs.readdir(root, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const absolute = path.join(root, entry.name);
+    const relativePath = path.relative(repo, absolute).replace(/\\/g, '/');
+    if (entry.isDirectory()) {
+      output.push(...(await listFiles(absolute, repo)));
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      output.push(relativePath);
+    }
+  }
+
+  return output;
+}
+
+async function pruneEmptyDirectories(directory: string, root: string): Promise<boolean> {
+  const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      await pruneEmptyDirectories(path.join(directory, entry.name), root);
+    }
+  }
+
+  const remaining = await fs.readdir(directory).catch(() => []);
+  if (remaining.length === 0 && directory !== root) {
+    await fs.rmdir(directory);
+
+    return true;
+  }
+
+  return false;
 }
 
 async function commitBundleFiles(

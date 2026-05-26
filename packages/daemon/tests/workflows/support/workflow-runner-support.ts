@@ -53,21 +53,23 @@ export class MockSession extends EventEmitter implements Session {
 export class MockAdapter implements AgentAdapter {
   readonly agentId = 'claude';
   lastSession: MockSession | null = null;
+  lastOptions: SessionOptions | undefined;
   readonly sessions: MockSession[] = [];
+  readonly cwdBySession = new Map<MockSession, string>();
 
-  async startSession(_cwd: string, _options?: SessionOptions): Promise<Session> {
+  async startSession(cwd: string, options?: SessionOptions): Promise<Session> {
     this.lastSession = new MockSession();
+    this.lastOptions = options;
     this.sessions.push(this.lastSession);
+    this.cwdBySession.set(this.lastSession, cwd);
     return this.lastSession;
   }
 
-  async resumeSession(
-    _sessionId: string,
-    _cwd: string,
-    _options?: SessionOptions,
-  ): Promise<Session> {
+  async resumeSession(_sessionId: string, cwd: string, options?: SessionOptions): Promise<Session> {
     this.lastSession = new MockSession();
+    this.lastOptions = options;
     this.sessions.push(this.lastSession);
+    this.cwdBySession.set(this.lastSession, cwd);
     return this.lastSession;
   }
 }

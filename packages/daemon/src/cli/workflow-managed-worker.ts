@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { constants, createHash, generateKeyPairSync, privateDecrypt } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { getFlag, hasFlag } from './args.js';
+import { getArgs, getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
@@ -17,11 +18,13 @@ import {
   executeProviderAction,
   WorkflowActionError,
 } from '../workflows/action-provider-adapters.js';
+import { envNameForCredentialRef } from '../workflows/action-provider-utils.js';
 import { sanitizeActionInput } from '../workflows/action-digest.js';
 import type { WorkflowActionNode, WorkflowInputValue } from '../workflows/types.js';
 import {
   approvalActor,
   approvalExecutionGrant,
+  approvalFeedback,
   approvalExpectedActionDigest,
   approvalMessage,
   capabilityPayload,
@@ -36,15 +39,22 @@ import type {
   ManagedActionReplayAssignment,
   ManagedWorkerAccessMode,
   ManagedWorkerOptions,
+  ManagedWorkerRunnerKeyPair,
   WorkerStats,
 } from './workflow-managed-worker-types.js';
 
 export async function workflowWorker(): Promise<void> {
+  if (hasFlag('help') || getArgs().includes('-h')) {
+    console.log(workflowWorkerUsage());
+    return;
+  }
+
   const options = resolveWorkerOptions();
   if (!(await isDaemonRunning())) {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }
   await validateDaemonAgentCapabilities(options);
+  await syncDaemonModelCapabilities(options);
   if (hasFlag('doctor')) {
     await heartbeat(options, 'online', 'idle');
     await safeHeartbeat(options, 'offline', 'offline');
@@ -120,6 +130,7 @@ export async function workflowWorker(): Promise<void> {
           options,
           assignment.id,
           assignment.assignment_claim_token,
+          localRun.id,
         );
         if (approved) {
           const resumed = await resumeApprovedLocalRun(
@@ -129,8 +140,22 @@ export async function workflowWorker(): Promise<void> {
             approved,
             assignment.assignment_claim_token,
           );
-          stats.completed += resumed.status === 'completed' ? 1 : 0;
-          stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
+          const blockedIds = blockedNodeIds(resumed);
+          const shouldKeepWaiting =
+            resumed.status === 'blocked' &&
+            (!alreadyResolvedApprovalRuns.has(resumed) || !blockedIds.has(approved.node_key)) &&
+            (!blockedIds.has(approved.node_key) ||
+              managedApprovalDecision(approved) === 'request_changes');
+          const finalRun = shouldKeepWaiting
+            ? await waitForApprovalAndResume(
+                options,
+                assignment.id,
+                localRun.id,
+                assignment.assignment_claim_token,
+              )
+            : resumed;
+          stats.completed += finalRun.status === 'completed' ? 1 : 0;
+          stats.failed += finalRun.status === 'failed' || finalRun.status === 'canceled' ? 1 : 0;
 
           if (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns) {
             break;
@@ -224,6 +249,47 @@ async function validateDaemonAgentCapabilities(options: ManagedWorkerOptions): P
   );
 }
 
+async function syncDaemonModelCapabilities(options: ManagedWorkerOptions): Promise<void> {
+  const response = await daemonFetch('/api/models', {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  if (!response?.ok) {
+    return;
+  }
+
+  const body = (await response.json()) as {
+    models?: Array<{
+      agentId?: unknown;
+      agent_id?: unknown;
+      value?: unknown;
+      id?: unknown;
+    }>;
+  };
+  const catalog = daemonModelCatalog(body.models ?? []);
+  const allModels = [...new Set(Object.values(catalog).flat())];
+  if (allModels.length === 0) {
+    return;
+  }
+
+  options.capabilities.models = allModels;
+  options.capabilities.agentModels = catalog;
+}
+
+function daemonModelCatalog(
+  models: Array<{ agentId?: unknown; agent_id?: unknown; value?: unknown; id?: unknown }>,
+): Record<string, string[]> {
+  const catalog: Record<string, string[]> = {};
+  for (const model of models) {
+    const agentId = stringValue(model.agentId) ?? stringValue(model.agent_id);
+    const value = stringValue(model.value) ?? stringValue(model.id);
+    if (!agentId || !value) continue;
+    catalog[agentId] = [...new Set([...(catalog[agentId] ?? []), value])];
+  }
+
+  return catalog;
+}
+
 function resolveWorkerOptions(): ManagedWorkerOptions {
   const registrationProfile = readRegistrationProfile();
   const server =
@@ -247,14 +313,14 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     registrationProfile?.credential;
 
   if (!server || !workspaceId || !executorId || !credential) {
-    throw new Error(
-      'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--doctor|--preflight|--once]',
-    );
+    throw new Error(workflowWorkerUsage());
   }
   const profileCapabilities = registrationProfile?.capabilities ?? {};
   const profileRunnerPool =
     stringValue(profileCapabilities['runner_pool']) ??
     stringValue(profileCapabilities['runnerPool']);
+  const runnerKeyPair = loadOrCreateRunnerKeyPair(workspaceId, executorId);
+  const detected = detectLocalCapabilities();
 
   return {
     server: server.replace(/\/+$/, ''),
@@ -272,6 +338,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       registrationProfile?.runnerProfile ??
       undefined,
     runnerPosture: registrationProfile?.runnerPosture,
+    runnerKeyPair,
     runnerPool:
       getFlag('runner-pool') ??
       process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
@@ -294,12 +361,27 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       actionCommand: getFlag('action-command') ?? process.env['VIEWPORT_MANAGED_ACTION_COMMAND'],
       providerActions:
         hasFlag('provider-actions') || process.env['VIEWPORT_MANAGED_PROVIDER_ACTIONS'] === '1',
+      tools: [
+        ...new Set([
+          ...detected.tools,
+          ...listFlagOrProfile('tools', profileCapabilities['tools']),
+        ]),
+      ],
       agents: listFlagOrProfile('agents', profileCapabilities['agents']),
       models: listFlagOrProfile('models', profileCapabilities['models']),
-      integrations: listFlagOrProfile('integrations', profileCapabilities['integrations']),
+      integrations: [
+        ...new Set([
+          ...detected.integrations,
+          ...listFlagOrProfile('integrations', profileCapabilities['integrations']),
+        ]),
+      ],
       secrets: listFlagOrProfile('secrets', profileCapabilities['secrets']),
     },
   };
+}
+
+function workflowWorkerUsage(): string {
+  return 'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--doctor|--preflight|--once]';
 }
 
 interface RegistrationProfile {
@@ -355,6 +437,92 @@ function resolveProfilePath(profilePath: string): string {
   return path.resolve(profilePath);
 }
 
+function loadOrCreateRunnerKeyPair(
+  workspaceId: string,
+  executorId: string,
+): ManagedWorkerRunnerKeyPair {
+  const keyDir = path.join(os.homedir(), '.viewport', 'runner-keys');
+  fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
+  const safeName = `${safeFilename(workspaceId)}-${safeFilename(executorId)}.json`;
+  const keyPath = path.join(keyDir, safeName);
+  if (fs.existsSync(keyPath)) {
+    const parsed = JSON.parse(fs.readFileSync(keyPath, 'utf8')) as unknown;
+    if (isRunnerKeyPair(parsed, keyPath)) return parsed;
+  }
+
+  const pair = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  const keyPair: ManagedWorkerRunnerKeyPair = {
+    schema: 'viewport.runner_keypair/v1',
+    algorithm: 'RSA-OAEP-256',
+    publicKeyPem: pair.publicKey,
+    privateKeyPem: pair.privateKey,
+    fingerprint: publicKeyFingerprint(pair.publicKey),
+    path: keyPath,
+  };
+  fs.writeFileSync(keyPath, JSON.stringify(keyPair, null, 2), { mode: 0o600 });
+  return keyPair;
+}
+
+function isRunnerKeyPair(value: unknown, keyPath: string): value is ManagedWorkerRunnerKeyPair {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    record['schema'] !== 'viewport.runner_keypair/v1' ||
+    record['algorithm'] !== 'RSA-OAEP-256' ||
+    typeof record['publicKeyPem'] !== 'string' ||
+    typeof record['privateKeyPem'] !== 'string' ||
+    typeof record['fingerprint'] !== 'string'
+  ) {
+    return false;
+  }
+  if (typeof record['path'] !== 'string') {
+    record['path'] = keyPath;
+  }
+
+  return true;
+}
+
+function publicKeyFingerprint(publicKeyPem: string): string {
+  const body = publicKeyPem
+    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+    .replace(/-----END PUBLIC KEY-----/g, '')
+    .replace(/\s+/g, '');
+  const der = Buffer.from(body, 'base64');
+  return `sha256:${createHash('sha256').update(der).digest('hex')}`;
+}
+
+function safeFilename(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'runner';
+}
+
+function detectLocalCapabilities(): { tools: string[]; integrations: string[] } {
+  const tools = ['git', 'node', 'pnpm', 'docker', 'gh'].filter(commandExists);
+  const integrations = [
+    ...(commandExists('gh') ? ['github'] : []),
+    ...(process.env['NOTION_TOKEN'] ? ['notion'] : []),
+    ...(process.env['CONFLUENCE_API_TOKEN'] && process.env['CONFLUENCE_BASE_URL']
+      ? ['confluence']
+      : []),
+  ];
+  return { tools, integrations };
+}
+
+function commandExists(command: string): boolean {
+  return (
+    spawnSync('sh', ['-lc', `command -v ${shellQuote(command)} >/dev/null 2>&1`], {
+      stdio: 'ignore',
+    }).status === 0
+  );
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function listFlagOrProfile(flag: string, profileValue: unknown): string[] {
   const fromFlag = listFlagValue(getFlag(flag));
   return fromFlag.length > 0 ? fromFlag : stringList(profileValue);
@@ -386,6 +554,49 @@ async function heartbeat(
         mode: options.accessMode,
       },
       execution: recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' },
+      secrets: {
+        ...recordValue(options.runnerPosture?.['secrets']),
+        modes: [
+          ...new Set([
+            'runner_local',
+            'runner_encrypted',
+            'run_scoped_grant',
+            ...stringList(recordValue(options.runnerPosture?.['secrets'])?.['modes']),
+          ]),
+        ],
+        public_key: {
+          schema: 'viewport.runner_public_key/v1',
+          algorithm: options.runnerKeyPair.algorithm,
+          public_key_pem: options.runnerKeyPair.publicKeyPem,
+          fingerprint: options.runnerKeyPair.fingerprint,
+        },
+      },
+      model_credentials: {
+        ...recordValue(options.runnerPosture?.['model_credentials']),
+        anthropic: process.env['ANTHROPIC_API_KEY'] ? 'available' : 'missing',
+        openai: process.env['OPENAI_API_KEY'] ? 'available' : 'missing',
+      },
+      repo_credentials: {
+        ...recordValue(options.runnerPosture?.['repo_credentials']),
+        runner_local:
+          process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || commandExists('gh')
+            ? 'available'
+            : 'missing',
+        run_scoped_grant: 'available',
+      },
+      context_worker: {
+        ...recordValue(options.runnerPosture?.['context_worker']),
+        enabled: true,
+        supports: [
+          ...new Set([
+            'git',
+            ...(process.env['NOTION_TOKEN'] ? ['notion'] : []),
+            ...(process.env['CONFLUENCE_API_TOKEN'] && process.env['CONFLUENCE_BASE_URL']
+              ? ['confluence']
+              : []),
+          ]),
+        ],
+      },
       version:
         stringValue(options.runnerPosture?.['version']) ??
         process.env['npm_package_version'] ??
@@ -781,14 +992,28 @@ async function runAssignmentLocally(
   const directory = await ensureDirectory(
     options.workdir ?? assignment.directory_path ?? process.cwd(),
   );
+  const material = await materializeRunCredentials(options, assignment);
   const started = await daemonJson('POST', '/api/workflows/runs', {
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignmentInputs(assignment),
+    inputs: assignmentInputs(assignment, material.metadata),
+    runtimeSecretEnv: material.runtimeSecretEnv,
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
+    resourceManifest: assignment.resource_manifest ?? undefined,
+    workflowAuthorityContract:
+      assignment.workflow_authority_contract ??
+      recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ??
+      recordChildValue(
+        recordChildValue(assignment.input_snapshot, 'viewport'),
+        'workflowAuthorityContract',
+      ) ??
+      undefined,
     initiation: 'cli',
     dataCapturePolicy: assignment.data_capture_policy ?? undefined,
   });
@@ -802,7 +1027,17 @@ async function runAssignmentLocally(
   );
 }
 
-function assignmentInputs(assignment: ManagedAssignment): Record<string, unknown> {
+function recordChildValue(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entry = (value as Record<string, unknown>)[key];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
+  return entry as Record<string, unknown>;
+}
+
+function assignmentInputs(
+  assignment: ManagedAssignment,
+  credentialMetadata: CredentialMaterialMetadata[] = [],
+): Record<string, unknown> {
   const inputs = { ...(assignment.input_snapshot ?? {}) } as Record<string, unknown>;
   inputs['viewport'] = {
     ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
@@ -813,9 +1048,230 @@ function assignmentInputs(assignment: ManagedAssignment): Record<string, unknown
     workflow: assignment.workflow_snapshot ?? null,
     runnerWorkspace: assignment.runner_workspace_snapshot ?? null,
     contextReceipts: assignment.context_receipts_snapshot ?? null,
+    credentials: credentialMetadata,
   };
 
   return inputs;
+}
+
+interface CredentialMaterialResult {
+  runtimeSecretEnv: Record<string, string>;
+  metadata: CredentialMaterialMetadata[];
+}
+
+interface CredentialMaterialMetadata {
+  handle: string;
+  envName: string;
+  kind?: string | null;
+  storagePosture?: string | null;
+  materialAvailable: boolean;
+  runnerLocalRequired: boolean;
+  provider?: string | null;
+  credentialId?: string | number | null;
+  scopes?: unknown;
+}
+
+async function materializeRunCredentials(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+): Promise<CredentialMaterialResult> {
+  const handles = collectCredentialHandles(assignment);
+  if (handles.length === 0) return { runtimeSecretEnv: {}, metadata: [] };
+
+  const runtimeSecretEnv: Record<string, string> = {};
+  const metadata: CredentialMaterialMetadata[] = [];
+  for (const handle of handles) {
+    const response = await materializeCredential(options, assignment, handle);
+    const envName = envNameForCredentialRef(handle);
+    const secret = stringField(response, 'secret');
+    if (secret) {
+      runtimeSecretEnv[envName] = secret;
+    }
+    const wrappedSecret = recordField(response, 'wrapped_secret');
+    if (wrappedSecret) {
+      runtimeSecretEnv[envName] = decryptRunnerWrappedSecret(options.runnerKeyPair, wrappedSecret);
+    }
+    metadata.push({
+      handle,
+      envName,
+      kind: stringField(response, 'kind') ?? null,
+      storagePosture: stringField(response, 'storage_posture') ?? null,
+      materialAvailable: response['material_available'] === true,
+      runnerLocalRequired: response['runner_local_required'] === true,
+      provider: stringField(response, 'provider') ?? null,
+      credentialId:
+        stringField(response, 'credential_id') ?? numberField(response, 'credential_id') ?? null,
+      scopes: response['scopes'],
+    });
+  }
+
+  return { runtimeSecretEnv, metadata };
+}
+
+async function materializeCredential(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+  handle: string,
+): Promise<Record<string, unknown>> {
+  if (!assignment.assignment_claim_token) {
+    throw new Error(`Managed workflow assignment ${assignment.id} is missing claim_token.`);
+  }
+  const body = await platformJson(
+    options,
+    'POST',
+    `workflow-runs/${encodeURIComponent(assignment.id)}/credential-material`,
+    {
+      credential: options.credential,
+      handle,
+      ...repositoryForCredentialMaterialization(assignment, handle),
+    },
+    assignment.assignment_claim_token,
+  );
+  const data = dataFrom(body);
+  if (!isRecord(data)) {
+    throw new Error(`Credential material response for ${handle} was not an object.`);
+  }
+  return data;
+}
+
+function repositoryForCredentialMaterialization(
+  assignment: ManagedAssignment,
+  handle: string,
+): { repository: string } | Record<string, never> {
+  const checkoutEntries = [
+    ...credentialEntriesFrom(
+      pathValue(asRecord(assignment.execution_profile_snapshot), ['credentials', 'repo_checkout']),
+    ),
+    ...credentialEntriesFrom(
+      pathValue(asRecord(assignment.workflow_snapshot), ['credentials', 'repo_checkout']),
+    ),
+  ];
+  const explicit = checkoutEntries.find((entry) => {
+    if (!isRecord(entry)) return entry === handle;
+    const entryHandle =
+      stringField(entry, 'handle') ??
+      stringField(entry, 'ref') ??
+      stringField(entry, 'credential_ref');
+    return entryHandle === handle;
+  });
+  const explicitRepo =
+    explicit && isRecord(explicit)
+      ? (stringField(explicit, 'repository') ?? stringField(explicit, 'repo'))
+      : null;
+  if (explicitRepo) return { repository: explicitRepo };
+
+  const allowed = allowedRepositoriesFromAssignment(assignment);
+  return allowed.length === 1 && allowed[0] ? { repository: allowed[0] } : {};
+}
+
+function allowedRepositoriesFromAssignment(assignment: ManagedAssignment): string[] {
+  const candidates = [
+    pathValue(assignment.workflow_authority_contract ?? {}, ['repos', 'allowed']),
+    pathValue(recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ?? {}, [
+      'repos',
+      'allowed',
+    ]),
+    pathValue(
+      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ?? {},
+      ['repos', 'allowed'],
+    ),
+    pathValue(recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ?? {}, [
+      'repos',
+      'allowed',
+    ]),
+    pathValue(
+      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ?? {},
+      ['repos', 'allowed'],
+    ),
+  ];
+
+  return [
+    ...new Set(
+      candidates
+        .flatMap((value) => (Array.isArray(value) ? value : []))
+        .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+        .map((value) => value.trim()),
+    ),
+  ];
+}
+
+function decryptRunnerWrappedSecret(
+  keyPair: ManagedWorkerRunnerKeyPair,
+  wrapped: Record<string, unknown>,
+): string {
+  const schema = stringField(wrapped, 'schema');
+  const algorithm = stringField(wrapped, 'algorithm');
+  const fingerprint = stringField(wrapped, 'runner_public_key_fingerprint');
+  const ciphertext = stringField(wrapped, 'ciphertext');
+  if (
+    schema !== 'viewport.runner_wrapped_secret/v1' ||
+    algorithm !== 'RSA-OAEP-256' ||
+    !fingerprint ||
+    !ciphertext
+  ) {
+    throw new Error('Runner-encrypted credential material is malformed.');
+  }
+  if (fingerprint !== keyPair.fingerprint) {
+    throw new Error(
+      `Runner-encrypted credential was wrapped for ${fingerprint}, but this runner key is ${keyPair.fingerprint}. Rotate or re-wrap the credential for this runner pool.`,
+    );
+  }
+
+  return privateDecrypt(
+    {
+      key: keyPair.privateKeyPem,
+      oaepHash: 'sha256',
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+    },
+    Buffer.from(ciphertext, 'base64'),
+  ).toString('utf8');
+}
+
+function collectCredentialHandles(assignment: ManagedAssignment): string[] {
+  const snapshots = [assignment.execution_profile_snapshot, assignment.workflow_snapshot].filter(
+    isRecord,
+  );
+  const handles = new Set<string>();
+  for (const snapshot of snapshots) {
+    for (const handle of [
+      ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'include'])),
+      ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'repo_checkout'])),
+      ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'mcp_api'])),
+      ...credentialRefsFrom(snapshot['credential_refs']),
+    ]) {
+      handles.add(handle);
+    }
+  }
+  return [...handles].sort();
+}
+
+function credentialRefsFrom(entries: unknown): string[] {
+  return credentialEntriesFrom(entries).flatMap((entry) => {
+    if (typeof entry === 'string' && entry.trim() !== '') return [entry];
+    if (!isRecord(entry)) return [];
+    for (const key of ['handle', 'ref', 'credential_ref']) {
+      const value = stringField(entry, key);
+      if (value) return [value];
+    }
+    return [];
+  });
+}
+
+function credentialEntriesFrom(entries: unknown): unknown[] {
+  return Array.isArray(entries) ? entries : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function pathValue(value: Record<string, unknown>, pathParts: string[]): unknown {
+  let current: unknown = value;
+  for (const part of pathParts) {
+    if (!isRecord(current)) return undefined;
+    current = current[part];
+  }
+  return current;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -846,15 +1302,46 @@ async function waitForApprovalAndResume(
   while (true) {
     await heartbeat(options, 'online', 'busy');
     const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-    const approved = assignment.nodes?.find(isApprovedManagedGateNode);
+    const approved = await approvedNodeForAssignment(
+      options,
+      platformRunId,
+      assignmentClaimToken,
+      localRunId,
+    );
     if (approved) {
-      return resumeApprovedLocalRun(
+      const resumed = await resumeApprovedLocalRun(
         options,
         platformRunId,
         localRunId,
         approved,
         assignmentClaimToken,
       );
+      if (resumed.status !== 'blocked') return resumed;
+      const blockedIds = blockedNodeIds(resumed);
+      if (alreadyResolvedApprovalRuns.has(resumed) && !blockedIds.has(approved.node_key)) {
+        const nextApproved = await approvedNodeForAssignment(
+          options,
+          platformRunId,
+          assignmentClaimToken,
+          localRunId,
+        );
+        if (
+          nextApproved &&
+          nextApproved.node_key !== approved.node_key &&
+          blockedIds.has(nextApproved.node_key)
+        ) {
+          await delay(options.sleepSeconds * 1000);
+          continue;
+        }
+        await delay(options.sleepSeconds * 1000);
+        return resumed;
+      }
+      if (
+        blockedIds.has(approved.node_key) &&
+        managedApprovalDecision(approved) !== 'request_changes'
+      ) {
+        return resumed;
+      }
     }
     if (assignment.status === 'canceled' || assignment.status === 'failed') {
       const canceled = await daemonJson(
@@ -873,13 +1360,34 @@ async function waitForApprovalAndResume(
   }
 }
 
+const alreadyResolvedApprovalRuns = new WeakSet<WorkflowRunRecord>();
+
 async function approvedNodeForAssignment(
   options: ManagedWorkerOptions,
   platformRunId: string,
   assignmentClaimToken?: string | null,
+  localRunId?: string | null,
 ): Promise<NonNullable<ManagedAssignment['nodes']>[number] | null> {
   const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-  return assignment.nodes?.find(isApprovedManagedGateNode) ?? null;
+  const approvedNodes = assignment.nodes?.filter(isResolvedManagedGateNode) ?? [];
+  if (approvedNodes.length === 0) return null;
+  if (!localRunId) return approvedNodes[0] ?? null;
+
+  const localRun = await readExistingLocalRun(localRunId);
+  const blockedIds = blockedNodeIds(localRun);
+  if (blockedIds.size > 0) {
+    return approvedNodes.find((node) => blockedIds.has(node.node_key)) ?? null;
+  }
+
+  return approvedNodes[0] ?? null;
+}
+
+function blockedNodeIds(run?: WorkflowRunRecord | null): Set<string> {
+  return new Set(
+    Object.values(run?.nodes ?? {})
+      .filter((node) => node.status === 'blocked')
+      .map((node) => node.id),
+  );
 }
 
 async function resumeApprovedLocalRun(
@@ -889,19 +1397,33 @@ async function resumeApprovedLocalRun(
   approved: NonNullable<ManagedAssignment['nodes']>[number],
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
-  await daemonJson(
-    'POST',
-    `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
-      approved.node_key,
-    )}`,
-    {
-      approved: true,
-      message: approvalMessage(approved),
-      actor: approvalActor(approved),
-      expectedActionDigest: approvalExpectedActionDigest(approved),
-      executionGrant: approvalExecutionGrant(approved),
-    },
-  );
+  try {
+    await daemonJson(
+      'POST',
+      `/api/workflows/runs/${encodeURIComponent(localRunId)}/approvals/${encodeURIComponent(
+        approved.node_key,
+      )}`,
+      {
+        approved: managedApprovalApproved(approved),
+        decision: managedApprovalDecision(approved),
+        message: approvalMessage(approved),
+        actor: approvalActor(approved),
+        expectedActionDigest: approvalExpectedActionDigest(approved),
+        executionGrant: approvalExecutionGrant(approved),
+        feedback: approvalFeedback(approved),
+      },
+    );
+  } catch (error) {
+    if (!isAlreadyResolvedApprovalError(error)) throw error;
+
+    const current = await readExistingLocalRun(localRunId);
+    if (!current) throw error;
+    alreadyResolvedApprovalRuns.add(current);
+    await syncLocalRun(options, platformRunId, current, assignmentClaimToken);
+
+    return current;
+  }
+
   const resumed = await pollLocalRun(
     localRunId,
     async (run) => {
@@ -913,16 +1435,55 @@ async function resumeApprovedLocalRun(
   return resumed;
 }
 
-function isApprovedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
+function isAlreadyResolvedApprovalError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message.includes('Workflow node is not awaiting approval');
+}
+
+function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
   if (!['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? ''))) return false;
   if (node.status === 'completed') return true;
-  if (node.type !== 'action' || node.status !== 'queued') return false;
   const approval = node.metadata?.['approval'];
+  if (
+    (node.type === 'plan' || node.type === 'gate' || node.type === 'approval') &&
+    node.status === 'blocked' &&
+    approval &&
+    typeof approval === 'object' &&
+    'approved' in approval
+  ) {
+    return true;
+  }
+  if (node.type !== 'action' || node.status !== 'queued') return false;
   return (
     !!approval &&
     typeof approval === 'object' &&
     (approval as { approved?: unknown }).approved === true
   );
+}
+
+function managedApprovalApproved(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
+  const approval = node.metadata?.['approval'];
+  if (approval && typeof approval === 'object' && 'approved' in approval) {
+    return (approval as { approved?: unknown }).approved === true;
+  }
+  return true;
+}
+
+function managedApprovalDecision(
+  node: NonNullable<ManagedAssignment['nodes']>[number],
+): 'approve' | 'request_changes' | 'reject' {
+  const approval = node.metadata?.['approval'];
+  if (approval && typeof approval === 'object') {
+    const approved = (approval as { approved?: unknown }).approved;
+    const decision = (approval as { decision?: unknown }).decision;
+    if (approved === false) {
+      if (decision === 'request_changes' || decision === 'changes_requested')
+        return 'request_changes';
+      return 'reject';
+    }
+  }
+  return 'approve';
 }
 
 async function getAssignment(
@@ -950,7 +1511,7 @@ async function syncLocalRun(
     options,
     'PATCH',
     `workflow-runs/${encodeURIComponent(platformRunId)}/sync`,
-    localRunToSyncPayload(run),
+    localRunToSyncPayload(run, { includeApprovalDecisions: false }),
     assignmentClaimToken,
   );
   return dataFrom(body) as ManagedAssignment;

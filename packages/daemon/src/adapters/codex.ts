@@ -360,6 +360,14 @@ export class CodexAdapter implements AgentAdapter {
       modern['model'] = model;
       legacy['model'] = model;
     }
+    if (options?.config?.sandboxMode) {
+      modern['sandboxMode'] = options.config.sandboxMode;
+      legacy['sandboxMode'] = options.config.sandboxMode;
+    }
+    if (options?.config?.approvalPolicy) {
+      modern['approvalPolicy'] = options.config.approvalPolicy;
+      legacy['approvalPolicy'] = options.config.approvalPolicy;
+    }
     if (options?.canUseTool) {
       modern['canUseTool'] = options.canUseTool;
       legacy['canUseTool'] = options.canUseTool;

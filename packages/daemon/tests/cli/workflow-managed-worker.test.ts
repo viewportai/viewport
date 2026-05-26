@@ -6,7 +6,11 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
-import { localRunToSyncPayload } from '../../src/cli/workflow-managed-worker-format.js';
+import {
+  approvalFeedback,
+  capabilityPayload,
+  localRunToSyncPayload,
+} from '../../src/cli/workflow-managed-worker-format.js';
 
 const exec = promisify(execFile);
 
@@ -24,6 +28,56 @@ describe('workflow managed worker CLI', () => {
     process.argv = originalArgv;
     global.fetch = originalFetch;
     vi.doUnmock('../../src/cli/daemon-client.js');
+  });
+
+  it('advertises profile-declared tools instead of a hardcoded shell placeholder', () => {
+    expect(
+      capabilityPayload({
+        providerActions: false,
+        tools: ['git', 'node'],
+        agents: ['claude', 'codex'],
+        models: ['default', 'gpt-5.4'],
+        integrations: [],
+        secrets: [],
+      }),
+    ).toMatchObject({
+      tools: ['shell', 'git', 'node'],
+      agents: {
+        claude: expect.objectContaining({
+          available: true,
+          models: [],
+        }),
+        codex: expect.objectContaining({
+          available: true,
+          models: ['gpt-5.4'],
+          default_model: 'gpt-5.4',
+        }),
+      },
+      models: ['default', 'gpt-5.4'],
+    });
+  });
+
+  it('extracts approved plan feedback for local resume commands', () => {
+    expect(
+      approvalFeedback({
+        node_key: 'create_plan',
+        type: 'plan',
+        status: 'completed',
+        metadata: {
+          approval: {
+            feedback: {
+              plan_id: 'plan_1',
+              plan_body: 'Revised approved plan.',
+              plan_body_sha256: 'sha256:plan',
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      plan_id: 'plan_1',
+      plan_body: 'Revised approved plan.',
+      plan_body_sha256: 'sha256:plan',
+    });
   });
 
   it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {
@@ -60,7 +114,15 @@ describe('workflow managed worker CLI', () => {
 
       if (url.endsWith('/heartbeat')) {
         expect(body).toMatchObject({
-          capabilities: { tools: ['shell'], agents: ['codex'], models: ['gpt-5.5'] },
+          capabilities: {
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({
+                models: expect.arrayContaining(['gpt-5.5']),
+              }),
+            },
+            models: expect.arrayContaining(['gpt-5.5']),
+          },
           access_mode: 'relay',
           runner_posture: { transport: { mode: 'relay' } },
         });
@@ -79,6 +141,51 @@ describe('workflow managed worker CLI', () => {
             route_snapshot: { key: 'payments-bugs' },
             execution_profile_snapshot: { key: 'payments-prod' },
             runner_workspace_snapshot: { runner_pool: 'payments-vps' },
+            workflow_authority_contract: {
+              schema_version: 'viewport.workflow_execution_authority/v1',
+              digest: 'sha256:authority',
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+                runner_pool_owns_repo_scope: false,
+              },
+              side_effects: {
+                allowed: [{ provider: 'github', actions: ['create_pr'] }],
+              },
+            },
+            resource_manifest: {
+              schema: 'viewport.session_resource_manifest/v1',
+              manifestDigest: 'sha256:platform-manifest',
+              workingDirectory: 'viewport://execution-profiles/payments-prod',
+              configSources: [],
+              resources: {
+                contexts: [],
+                contextPackages: [],
+                workflows: [],
+                plans: [],
+                agentProfiles: [],
+              },
+              contract: {
+                contextProviders: [
+                  {
+                    id: 'platform_docs',
+                    provider: 'github-repo',
+                    required: true,
+                    privacy: 'third_party_terms',
+                    capabilities: ['search'],
+                    sourceConfigPath: 'viewport://context-sources/platform_docs',
+                    repo: 'viewportai/vp-example-docs',
+                    ref: 'main',
+                    resolution: 'requested_unverified',
+                  },
+                ],
+                contextResolution: { order: ['platform_docs'], strategy: 'provider_order' },
+                workflows: [],
+                contextPackages: [],
+                riskyPathRules: [],
+              },
+              conflicts: [],
+              warnings: [],
+            },
             context_receipts_snapshot: [
               {
                 schema: 'viewport.context_receipt/v1',
@@ -137,7 +244,31 @@ describe('workflow managed worker CLI', () => {
           directoryId: 'dir_1',
           resourceId: 'workspace_1',
           platformRunId: 'run_platform_1',
+          workflowAuthorityContract: {
+            schema_version: 'viewport.workflow_execution_authority/v1',
+            digest: 'sha256:authority',
+            repos: {
+              allowed: ['viewportai/vp-example-repo'],
+              runner_pool_owns_repo_scope: false,
+            },
+            side_effects: {
+              allowed: [{ provider: 'github', actions: ['create_pr'] }],
+            },
+          },
           dataCapturePolicy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
+          resourceManifest: expect.objectContaining({
+            schema: 'viewport.session_resource_manifest/v1',
+            manifestDigest: 'sha256:platform-manifest',
+            contract: expect.objectContaining({
+              contextProviders: [
+                expect.objectContaining({
+                  id: 'platform_docs',
+                  provider: 'github-repo',
+                  repo: 'viewportai/vp-example-docs',
+                }),
+              ],
+            }),
+          }),
           inputs: {
             issue: 'PAY-1842',
             viewport: {
@@ -183,6 +314,168 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
 
+  it('materializes selected repo and API credentials into transient daemon env only', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_credential_material',
+            assignment_claim_token: 'vpclaim_credential_material',
+            yaml_snapshot: `
+schema: viewport.workflow/v1
+name: proof
+nodes:
+  tests:
+    type: shell
+    command: printf ok
+`,
+            source_ref: 'viewport://workflow/proof',
+            directory_path: '/repo',
+            execution_profile_snapshot: {
+              key: 'payments-prod',
+              credentials: {
+                repo_checkout: [{ handle: 'repo/github/payments-api' }],
+                mcp_api: [{ handle: 'agent/anthropic/claude-code' }],
+              },
+            },
+            workflow_authority_contract: {
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+              },
+            },
+            workflow_snapshot: {
+              requires: {
+                secrets: ['slack/notifier', 'github/pr-writer'],
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_credential_material/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_credential_material',
+        );
+        if (body.handle === 'agent/anthropic/claude-code') {
+          return jsonResponse({
+            data: {
+              handle: 'agent/anthropic/claude-code',
+              kind: 'mcp_api_secret',
+              storage_posture: 'runner_local',
+              provider: 'anthropic',
+              material_available: false,
+              runner_local_required: true,
+            },
+          });
+        }
+        expect(body).toMatchObject({
+          credential: 'vpexec_secret',
+          handle: 'repo/github/payments-api',
+          repository: 'viewportai/vp-example-repo',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_repo_1',
+            handle: 'repo/github/payments-api',
+            kind: 'repo_checkout_secret',
+            storage_posture: 'viewport_managed',
+            provider: 'github',
+            scopes: ['repo:viewportai/vp-example-repo'],
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_run_scoped_checkout',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_credential_material/sync')) {
+        return jsonResponse({
+          data: { id: 'run_platform_credential_material', status: 'completed' },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') return jsonResponse({ agents: [] });
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([]);
+      }
+      if (urlPath === '/api/directories' && init?.method === 'POST') {
+        return jsonResponse({ id: 'dir_1' });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
+        });
+        expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_checkout');
+        expect(body.inputs.viewport.credentials).toEqual([
+          expect.objectContaining({
+            handle: 'agent/anthropic/claude-code',
+            envName: 'VIEWPORT_CREDENTIAL_AGENT_ANTHROPIC_CLAUDE_CODE',
+            materialAvailable: false,
+            runnerLocalRequired: true,
+          }),
+          expect.objectContaining({
+            handle: 'repo/github/payments-api',
+            envName: 'VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API',
+            materialAvailable: true,
+            runnerLocalRequired: false,
+            scopes: ['repo:viewportai/vp-example-repo'],
+          }),
+        ]);
+        return jsonResponse({ run: { id: 'local_run_credential_material' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_credential_material') {
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_credential_material' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+  });
+
   it('claims provider action replay work only when an action command is configured', async () => {
     process.argv = [
       'node',
@@ -214,9 +507,9 @@ describe('workflow managed worker CLI', () => {
       if (url.endsWith('/heartbeat')) {
         expect(body).toMatchObject({
           capabilities: {
-            tools: ['shell'],
-            integrations: ['github', 'jira'],
-            action_replay: ['github', 'jira'],
+            tools: expect.arrayContaining(['shell']),
+            integrations: expect.arrayContaining(['github', 'jira']),
+            action_replay: expect.arrayContaining(['github', 'jira']),
           },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
@@ -363,9 +656,9 @@ describe('workflow managed worker CLI', () => {
         if (url.endsWith('/heartbeat')) {
           expect(body).toMatchObject({
             capabilities: {
-              tools: ['shell'],
-              integrations: ['github'],
-              action_replay: ['github'],
+              tools: expect.arrayContaining(['shell']),
+              integrations: expect.arrayContaining(['github']),
+              action_replay: expect.arrayContaining(['github']),
             },
           });
           return jsonResponse({ data: { id: 'executor_1' } });
@@ -739,8 +1032,10 @@ describe('workflow managed worker CLI', () => {
           runner_profile: 'payments-vps',
           capabilities: {
             runner_pool: 'payments-prod',
-            tools: ['shell'],
-            agents: ['codex'],
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({ available: true }),
+            },
           },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
@@ -849,11 +1144,15 @@ describe('workflow managed worker CLI', () => {
           },
           capabilities: {
             runner_pool: 'profile-pool',
-            tools: ['shell'],
-            agents: ['codex'],
-            models: ['gpt-5.5'],
-            integrations: ['github'],
-            secrets: ['github/token'],
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({
+                models: expect.arrayContaining(['gpt-5.5']),
+              }),
+            },
+            models: expect.arrayContaining(['gpt-5.5']),
+            integrations: expect.arrayContaining(['github']),
+            secrets: expect.arrayContaining(['github/token']),
           },
         });
         return jsonResponse({ data: { id: 'executor_profile' } });
@@ -888,6 +1187,308 @@ describe('workflow managed worker CLI', () => {
       runnerProfile: 'profile-runner',
       runnerPool: 'profile-pool',
     });
+  });
+
+  it('advertises live daemon model capabilities instead of stale profile defaults', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-live-models-'));
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential: 'vpexec_profile_secret',
+        capabilities: {
+          runner_pool: 'profile-pool',
+          agents: ['claude', 'codex'],
+          models: ['opus', 'gpt-5.5'],
+        },
+      }),
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--doctor',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          capabilities: {
+            agents: {
+              claude: expect.objectContaining({
+                models: ['default', 'sonnet'],
+                default_model: 'default',
+              }),
+              codex: expect.objectContaining({
+                models: ['gpt-5.4'],
+                default_model: 'gpt-5.4',
+              }),
+            },
+            models: ['default', 'sonnet', 'gpt-5.4'],
+          },
+        });
+        expect(body.capabilities.agents.claude.models).not.toContain('opus');
+        expect(body.capabilities.agents.codex.models).not.toContain('gpt-5.5');
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({
+          agents: [
+            { id: 'claude', available: true },
+            { id: 'codex', available: true },
+          ],
+        });
+      }
+      if (urlPath === '/api/models') {
+        return jsonResponse({
+          models: [
+            { agentId: 'claude', value: 'default', displayName: 'Default' },
+            { agentId: 'claude', value: 'sonnet', displayName: 'Sonnet' },
+            { agentId: 'codex', value: 'gpt-5.4', displayName: 'gpt-5.4' },
+          ],
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+  });
+
+  it('accepts generated equals-style registration profile flags', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-equals-'));
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential: 'vpexec_profile_secret',
+        access_mode: 'polling',
+        runner_profile: 'profile-runner',
+        capabilities: {
+          runner_pool: 'profile-pool',
+          agents: ['codex'],
+        },
+      }),
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      `--registration-profile=${profilePath}`,
+      '--doctor',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          access_mode: 'polling',
+          runner_profile: 'profile-runner',
+          capabilities: {
+            runner_pool: 'profile-pool',
+            agents: {
+              codex: expect.objectContaining({ available: true }),
+            },
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+    ]);
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'))).toMatchObject({
+      command: 'workflow worker doctor',
+      ok: true,
+      accessMode: 'polling',
+      runnerProfile: 'profile-runner',
+      runnerPool: 'profile-pool',
+    });
+  });
+
+  it('advertises profile agent capabilities and claims matching work without manual flags', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-claim-'));
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential: 'vpexec_profile_secret',
+        access_mode: 'polling',
+        runner_profile: 'profile-runner',
+        capabilities: {
+          runner_pool: 'payments-profile',
+          agents: ['codex'],
+          models: ['gpt-5.5'],
+          integrations: ['linear'],
+          secrets: ['linear/vie-commenter'],
+        },
+      }),
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--workdir',
+      '/repo',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          access_mode: 'polling',
+          runner_profile: 'profile-runner',
+          capabilities: {
+            runner_pool: 'payments-profile',
+            tools: expect.arrayContaining(['shell']),
+            agents: {
+              codex: expect.objectContaining({
+                models: expect.arrayContaining(['gpt-5.5']),
+              }),
+            },
+            models: expect.arrayContaining(['gpt-5.5']),
+            integrations: expect.arrayContaining(['linear']),
+            secrets: expect.arrayContaining(['linear/vie-commenter']),
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_profile_claim',
+            assignment_claim_token: 'vpclaim_profile_claim',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: profile-claim\nnodes: {}\n',
+            source_ref: 'viewport://workflow/profile-claim',
+            directory_path: '/repo',
+            input_snapshot: { issue: 'VIE-30' },
+            runner_workspace_snapshot: { runner_pool: 'payments-profile' },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_profile_claim/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_profile_claim',
+        );
+        expect(body).toMatchObject({
+          runtime_run_id: 'local_run_1',
+          status: 'completed',
+        });
+        return jsonResponse({ data: { id: 'run_profile_claim', status: 'completed' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([]);
+      }
+      if (urlPath === '/api/directories' && init?.method === 'POST') {
+        return jsonResponse({ id: 'dir_1' });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({
+          resourceId: 'workspace_profile',
+          platformRunId: 'run_profile_claim',
+          inputs: {
+            issue: 'VIE-30',
+            viewport: {
+              runnerWorkspace: { runner_pool: 'payments-profile' },
+            },
+          },
+        });
+        return jsonResponse({ run: { id: 'local_run_1' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_1') {
+        return jsonResponse({ run: completedLocalRun() });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/claim',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/workflow-runs/run_profile_claim/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_profile/managed-executors/executor_profile/heartbeat',
+    ]);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
 
   it('waits for platform approval, approves the local gate, and syncs the resumed run', async () => {
@@ -948,7 +1549,14 @@ describe('workflow managed worker CLI', () => {
                     approved: true,
                     decision: 'approve',
                     message: 'Ship it',
-                    actor: { name: 'Mehr', source: 'viewport-web' },
+                    actor: {
+                      id: '1',
+                      kind: 'user',
+                      name: 'Mehr',
+                      email: 'mehrshad.sahebsara@gmail.com',
+                      source: 'viewport-web',
+                      displayName: 'Mehr Sahebsara',
+                    },
                     executionGrant: {
                       schema: 'viewport.execution_grant/v1',
                       digest: 'sha256:approved-grant',
@@ -970,6 +1578,7 @@ describe('workflow managed worker CLI', () => {
         expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
           'vpclaim_run_platform_2',
         );
+        expect(body.approval_decisions).toEqual([]);
         platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_2', status: body.status } });
       }
@@ -995,7 +1604,6 @@ describe('workflow managed worker CLI', () => {
         expect(body).toMatchObject({
           approved: true,
           message: 'Ship it',
-          actor: { name: 'Mehr', source: 'viewport-web' },
           expectedActionDigest: 'sha256:reviewed-action',
           executionGrant: {
             schema: 'viewport.execution_grant/v1',
@@ -1004,6 +1612,12 @@ describe('workflow managed worker CLI', () => {
             approval_decision_key: 'approve-open-pr',
             issued_at: '2026-05-17T10:00:00.000Z',
           },
+        });
+        expect(body.actor).toEqual({
+          id: '1',
+          name: 'Mehr',
+          email: 'mehrshad.sahebsara@gmail.com',
+          source: 'viewport-web',
         });
         localApproved = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_2' }) });
@@ -1021,6 +1635,551 @@ describe('workflow managed worker CLI', () => {
 
     expect(platformSyncStatuses).toEqual(['completed']);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
+  });
+
+  it('keeps polling a revised plan after sending request-changes back to the local runner', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let requestChangesApplied = false;
+    let revisedPlanApproved = false;
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_request_changes',
+            assignment_claim_token: 'vpclaim_request_changes',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: gated\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_request_changes') && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_request_changes',
+            status: 'blocked',
+            nodes: [
+              {
+                node_key: 'review_plan',
+                type: 'plan',
+                status: requestChangesApplied ? 'completed' : 'blocked',
+                metadata: {
+                  approval: requestChangesApplied
+                    ? {
+                        approved: true,
+                        decision: 'approve',
+                        message: 'Approved revised plan.',
+                        actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                      }
+                    : {
+                        approved: false,
+                        decision: 'changes_requested',
+                        message: 'Tighten scope before implementation.',
+                        actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                      },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_request_changes/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_request_changes',
+        );
+        return jsonResponse({ data: { id: 'run_platform_request_changes', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_request_changes' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_request_changes') {
+        return jsonResponse({
+          run: twoGateBlockedLocalRun('local_run_request_changes', 'review_plan'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_request_changes/approvals/review_plan') {
+        const body = JSON.parse(String(init?.body));
+        if (body.approved === false) {
+          expect(body).toMatchObject({
+            approved: false,
+            decision: 'request_changes',
+            message: 'Tighten scope before implementation.',
+          });
+          requestChangesApplied = true;
+          return jsonResponse({
+            run: twoGateBlockedLocalRun('local_run_request_changes', 'review_plan'),
+          });
+        }
+        expect(body).toMatchObject({
+          approved: true,
+          decision: 'approve',
+          message: 'Approved revised plan.',
+        });
+        revisedPlanApproved = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_request_changes' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(requestChangesApplied).toBe(true);
+    expect(revisedPlanApproved).toBe(true);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
+  });
+
+  it('continues waiting when an approved gate resumes into another blocked gate', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    let firstApprovedLocally = false;
+    let secondApprovedLocally = false;
+
+    const assignmentNodes = () => [
+      {
+        node_key: 'review_plan',
+        type: 'plan',
+        status: 'completed',
+        output: 'PM approved',
+        metadata: {
+          approval: {
+            approved: true,
+            decision: 'approve',
+            message: 'PM approval',
+            actor: { name: 'PM Reviewer', source: 'viewport-web' },
+          },
+        },
+      },
+      {
+        node_key: 'review_engineering',
+        type: 'plan',
+        status: firstApprovedLocally ? 'completed' : 'blocked',
+        output: firstApprovedLocally ? 'Engineering approved' : null,
+        metadata: firstApprovedLocally
+          ? {
+              approval: {
+                approved: true,
+                decision: 'approve',
+                message: 'Engineering approval',
+                actor: { name: 'Eng Reviewer', source: 'viewport-web' },
+              },
+            }
+          : {},
+      },
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_two_gates',
+            assignment_claim_token: 'vpclaim_two_gates',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: two-gates\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_two_gates') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_two_gates');
+        return jsonResponse({
+          data: {
+            id: 'run_platform_two_gates',
+            status: 'running',
+            nodes: assignmentNodes(),
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_two_gates/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_two_gates');
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ data: { id: 'run_platform_two_gates', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_two_gates' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_two_gates') {
+        if (secondApprovedLocally) {
+          return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });
+        }
+        return jsonResponse({
+          run: firstApprovedLocally
+            ? twoGateBlockedLocalRun('local_run_two_gates', 'review_engineering')
+            : twoGateBlockedLocalRun('local_run_two_gates', 'review_plan'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_plan') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'PM approval' });
+        firstApprovedLocally = true;
+        return jsonResponse({
+          run: twoGateBlockedLocalRun('local_run_two_gates', 'review_engineering'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_engineering') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        secondApprovedLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_two_gates/approvals/review_plan',
+      expect.any(Object),
+    );
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_two_gates/approvals/review_engineering',
+      expect.any(Object),
+    );
+  });
+
+  it('continues waiting when a stale older approval was already resolved locally', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let assignmentPolls = 0;
+    let secondApprovedLocally = false;
+
+    const staleReviewPlan = {
+      node_key: 'review_plan',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Old PM approval',
+          actor: { name: 'PM Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+    const approvedEngineeringPlan = {
+      node_key: 'review_engineering',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Engineering approval',
+          actor: { name: 'Eng Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_gate',
+            assignment_claim_token: 'vpclaim_stale_gate',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: stale-gate\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_gate') && init?.method === 'GET') {
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_gate',
+            status: 'running',
+            nodes:
+              assignmentPolls >= 2 ? [staleReviewPlan, approvedEngineeringPlan] : [staleReviewPlan],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_gate/sync')) {
+        return jsonResponse({ data: { id: 'run_platform_stale_gate', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_stale_gate' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_gate') {
+        return jsonResponse({
+          run: secondApprovedLocally
+            ? completedLocalRun({ id: 'local_run_stale_gate' })
+            : twoGateBlockedLocalRun('local_run_stale_gate', 'review_engineering'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_gate/approvals/review_plan') {
+        throw new Error('Worker must not replay a stale approval for a different blocked node.');
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_gate/approvals/review_engineering') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        secondApprovedLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_gate' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(assignmentPolls).toBeGreaterThanOrEqual(2);
+    expect(secondApprovedLocally).toBe(true);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_stale_gate/approvals/review_engineering',
+      expect.any(Object),
+    );
+  });
+
+  it('ignores stale resolved approvals until the currently blocked approval is visible', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let assignmentPolls = 0;
+    let secondApprovedLocally = false;
+
+    const staleReviewPlan = {
+      node_key: 'review_plan',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Old PM approval',
+          actor: { name: 'PM Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+    const approvedEngineeringPlan = {
+      node_key: 'review_engineering',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Engineering approval',
+          actor: { name: 'Eng Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_then_current_gate',
+            assignment_claim_token: 'vpclaim_stale_then_current_gate',
+            yaml_snapshot:
+              'schema: viewport.workflow/v1\nname: stale-then-current-gate\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (
+        url.endsWith('/workflow-runs/run_platform_stale_then_current_gate') &&
+        init?.method === 'GET'
+      ) {
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_then_current_gate',
+            status: 'running',
+            nodes:
+              assignmentPolls >= 3 ? [staleReviewPlan, approvedEngineeringPlan] : [staleReviewPlan],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_then_current_gate/sync')) {
+        return jsonResponse({
+          data: { id: 'run_platform_stale_then_current_gate', status: body.status },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_stale_then_current_gate' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_then_current_gate') {
+        return jsonResponse({
+          run: secondApprovedLocally
+            ? completedLocalRun({ id: 'local_run_stale_then_current_gate' })
+            : twoGateBlockedLocalRun('local_run_stale_then_current_gate', 'review_engineering'),
+        });
+      }
+      if (
+        urlPath === '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_plan'
+      ) {
+        throw new Error('Worker must not replay a stale approval for a different blocked node.');
+      }
+      if (
+        urlPath ===
+        '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_engineering'
+      ) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        secondApprovedLocally = true;
+        return jsonResponse({
+          run: completedLocalRun({ id: 'local_run_stale_then_current_gate' }),
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(assignmentPolls).toBeGreaterThanOrEqual(3);
+    expect(secondApprovedLocally).toBe(true);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_engineering',
+      expect.any(Object),
+    );
   });
 
   it('resumes an already-started local run after a blocked assignment is reclaimed', async () => {
@@ -1078,6 +2237,19 @@ describe('workflow managed worker CLI', () => {
             id: 'run_platform_reclaimed',
             status: 'running',
             nodes: [
+              {
+                node_key: 'notify_plan_ready',
+                type: 'action',
+                status: 'completed',
+                output: 'slack.post_message',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    message: 'Already approved earlier',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                  },
+                },
+              },
               {
                 node_key: 'approve',
                 type: 'approval',
@@ -1299,6 +2471,157 @@ describe('workflow managed worker CLI', () => {
     await workflow();
 
     expect(platformSyncStatuses).toEqual(['completed']);
+    expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
+  });
+
+  it('ignores stale already-resolved approvals for a different blocked gate', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let assignmentPolls = 0;
+    let approvedActionLocally = false;
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_plan',
+            assignment_claim_token: 'vpclaim_stale_plan',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: stale-plan\nnodes: {}\n',
+            directory_path: '/repo',
+            runtime_run_id: 'local_run_stale_plan',
+            status: 'running',
+            nodes: [],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_plan') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_stale_plan',
+        );
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_plan',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'create_plan',
+                type: 'plan',
+                status: 'completed',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    message: 'Approved while worker was down',
+                    actor: { name: 'Alice', source: 'viewport-web' },
+                    feedback: { plan_body: 'Approved revised plan.' },
+                  },
+                },
+              },
+              ...(assignmentPolls >= 2
+                ? [
+                    {
+                      node_key: 'propose_pr',
+                      type: 'action',
+                      status: 'queued',
+                      metadata: {
+                        approval: {
+                          approved: true,
+                          decision: 'approve',
+                          message: 'Approve PR',
+                          actor: { name: 'Alice', source: 'viewport-web' },
+                        },
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_plan/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_stale_plan',
+        );
+        return jsonResponse({ data: { id: 'run_platform_stale_plan', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const staleBlockedOtherGateRun: WorkflowRunRecord = {
+      ...blockedLocalRun('local_run_stale_plan'),
+      nodes: {
+        propose_pr: {
+          id: 'propose_pr',
+          type: 'action',
+          status: 'blocked',
+          approval: {
+            prompt: 'Approve github.open_pr side effect?',
+            requestedAt: Date.now(),
+          },
+        },
+      },
+    };
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/workflows/runs/local_run_stale_plan' && init?.method === 'GET') {
+        return jsonResponse({
+          run: approvedActionLocally
+            ? completedLocalRun({ id: 'local_run_stale_plan' })
+            : staleBlockedOtherGateRun,
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/create_plan') {
+        throw new Error('Worker must not replay stale plan approval while propose_pr is blocked.');
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Approve PR' });
+        approvedActionLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_plan' }) });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        throw new Error('Stale approved assignments must not start over.');
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(assignmentPolls).toBeGreaterThanOrEqual(2);
+    expect(approvedActionLocally).toBe(true);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr',
+      expect.anything(),
+    );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
@@ -1593,6 +2916,7 @@ describe('workflow managed worker CLI', () => {
       });
       expect(daemonRequests.map((request) => request.path)).toEqual([
         '/health',
+        '/api/models',
         '/api/directories',
         '/api/directories',
         '/api/workflows/runs',
@@ -1956,6 +3280,69 @@ function blockedLocalRun(id = 'local_run_2'): WorkflowRunRecord {
         type: 'approval-requested',
         message: 'Approval requested',
         nodeId: 'approve',
+      },
+    ],
+    createdAt: now - 2000,
+    startedAt: now - 1000,
+    updatedAt: now,
+  };
+}
+
+function twoGateBlockedLocalRun(
+  id = 'local_run_two_gates',
+  blockedNodeId: 'review_plan' | 'review_engineering' = 'review_plan',
+): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    id,
+    workflowName: 'two-gates',
+    sourceType: 'viewport_snapshot',
+    sourcePath: 'viewport://workflow/two-gates',
+    digest: 'sha256:two-gates',
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: 'schema: viewport.workflow/v1\nname: two-gates\nnodes: {}\n',
+    directoryId: 'dir_1',
+    directoryPath: '/repo',
+    machineId: 'machine_1',
+    initiation: 'cli',
+    status: 'blocked',
+    inputs: {},
+    preflight: { ok: true, issues: [] },
+    nodes: {
+      review_plan: {
+        id: 'review_plan',
+        type: 'plan',
+        status: blockedNodeId === 'review_plan' ? 'blocked' : 'completed',
+        approval:
+          blockedNodeId === 'review_plan'
+            ? {
+                prompt: 'Approve PM plan',
+                requestedAt: now,
+              }
+            : undefined,
+      },
+      review_engineering: {
+        id: 'review_engineering',
+        type: 'plan',
+        status: blockedNodeId === 'review_engineering' ? 'blocked' : 'queued',
+        approval:
+          blockedNodeId === 'review_engineering'
+            ? {
+                prompt: 'Approve engineering plan',
+                requestedAt: now,
+              }
+            : undefined,
+      },
+    },
+    artifacts: [],
+    events: [
+      {
+        id: `evt_blocked_${blockedNodeId}`,
+        runId: id,
+        timestamp: now,
+        type: 'approval-requested',
+        message: 'Approval requested',
+        nodeId: blockedNodeId,
       },
     ],
     createdAt: now - 2000,

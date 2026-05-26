@@ -264,6 +264,9 @@ export interface SessionTailer {
   readonly filePath: string;
 }
 
+const MAX_INITIAL_SESSION_TAIL_BYTES = 16 * 1024 * 1024;
+const MAX_SAFE_FILEHANDLE_READ_POSITION = 2_147_483_647;
+
 export function createSessionTailer(filePath: string): SessionTailer {
   let sessionId = path.basename(filePath, '.jsonl');
   let lastSize = 0;
@@ -297,18 +300,24 @@ export function createSessionTailer(filePath: string): SessionTailer {
         return [];
       }
 
-      // Read only the new bytes
-      const fd = await fsp.open(filePath, 'r');
+      let readFrom = lastSize;
+      if (lastSize === 0 && currentSize > MAX_INITIAL_SESSION_TAIL_BYTES) {
+        readFrom = currentSize - MAX_INITIAL_SESSION_TAIL_BYTES;
+        partialLine = '';
+      }
+
       try {
-        const bytesToRead = currentSize - lastSize;
-        const buffer = Buffer.alloc(bytesToRead);
-        await fd.read(buffer, 0, bytesToRead, lastSize);
+        const textRange = await readFileRange(filePath, readFrom, currentSize);
         lastSize = currentSize;
         lastInode = currentInode;
 
         // Parse new lines
-        const text = partialLine + buffer.toString('utf-8');
+        const carriedPartialLine = partialLine;
+        const text = carriedPartialLine + textRange;
         const rawLines = text.split('\n');
+        if (readFrom > 0 && carriedPartialLine === '') {
+          rawLines.shift();
+        }
         if (text.endsWith('\n')) {
           partialLine = '';
         } else {
@@ -331,11 +340,57 @@ export function createSessionTailer(filePath: string): SessionTailer {
         }
 
         return results;
-      } finally {
-        await fd.close();
+      } catch {
+        lastSize = currentSize;
+        lastInode = currentInode;
+
+        return [];
       }
     },
   };
+}
+
+function readFileRange(filePath: string, start: number, endExclusive: number): Promise<string> {
+  if (endExclusive <= start) return Promise.resolve('');
+  if (
+    start <= MAX_SAFE_FILEHANDLE_READ_POSITION &&
+    endExclusive <= MAX_SAFE_FILEHANDLE_READ_POSITION
+  ) {
+    return readFileRangeWithHandle(filePath, start, endExclusive);
+  }
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const stream = fs.createReadStream(filePath, {
+      start,
+      end: endExclusive - 1,
+    });
+
+    stream.on('data', (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    stream.on('error', reject);
+    stream.on('end', () => {
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+  });
+}
+
+async function readFileRangeWithHandle(
+  filePath: string,
+  start: number,
+  endExclusive: number,
+): Promise<string> {
+  const bytesToRead = endExclusive - start;
+  const buffer = Buffer.alloc(bytesToRead);
+  const fd = await fsp.open(filePath, 'r');
+  try {
+    await fd.read(buffer, 0, bytesToRead, start);
+
+    return buffer.toString('utf8');
+  } finally {
+    await fd.close();
+  }
 }
 
 function isSessionJsonl(fileName: string): boolean {

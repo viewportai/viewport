@@ -136,6 +136,30 @@ describe('WorkflowRuntimeCommandApplier', () => {
     expect(runningRunApplied).toBe(false);
     expect(decider).not.toHaveBeenCalled();
   });
+
+  it('marks stale commands for already-resolved nodes as processed', async () => {
+    const run = blockedRun();
+    run.nodes.notify = {
+      id: 'notify',
+      type: 'action',
+      title: 'Notify Slack',
+      status: 'completed',
+      output: 'slack.post_message',
+    };
+    const decider = vi.fn(async () => run);
+    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), decider);
+
+    const applied = await applier.apply({
+      id: 'slack:already-approved',
+      type: 'workflow.approval_decision',
+      workflow_run_id: run.id,
+      workflow_node_id: 'notify',
+      approved: true,
+    });
+
+    expect(applied).toBe(true);
+    expect(decider).not.toHaveBeenCalled();
+  });
 });
 
 function storeWith(runs: WorkflowRunRecord[]): WorkflowRunStore {

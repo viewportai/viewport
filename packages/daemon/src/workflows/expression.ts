@@ -15,6 +15,10 @@ import type { WorkflowInputValue, WorkflowRunRecord } from './types.js';
  *   provenance for prompt nodes.
  */
 export interface ExpressionContext {
+  run: {
+    id: string;
+    status: string;
+  };
   inputs: Record<string, WorkflowInputValue>;
   nodes: Record<string, NodeContextEntry>;
 }
@@ -186,5 +190,5 @@ export function buildExpressionContext(run: WorkflowRunRecord): ExpressionContex
         : null,
     };
   }
-  return { inputs: { ...run.inputs }, nodes };
+  return { run: { id: run.id, status: run.status }, inputs: { ...run.inputs }, nodes };
 }

@@ -3,11 +3,19 @@ import { contextProviderAdapterFor } from '../context-providers/registry.js';
 import type { ContextProviderResult } from '../context-providers/types.js';
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
 import type {
+  PlatformContextSourcePolicy,
+  WorkflowPlatformContextClient,
+} from './platform-context-client.js';
+import type {
+  WorkflowContext,
+  WorkflowContextDefaults,
   WorkflowContextNode,
   WorkflowContextReceiptRecord,
+  WorkflowNodeContextEnvelope,
   WorkflowRunRecord,
 } from './types.js';
-import { addEvent, renderOptionalTemplate } from './runtime-helpers.js';
+import { addEvent, renderOptionalTemplate, renderTemplate } from './runtime-helpers.js';
+import { contextAuthorityDenial } from './workflow-authority-contract.js';
 
 interface NormalizedContextRef {
   ref: string;
@@ -15,10 +23,46 @@ interface NormalizedContextRef {
   required: boolean;
   description?: string;
   refresh?: 'manual' | 'before_run' | 'on_demand';
+  maxItems?: number;
 }
 
 interface ResolvedContextItem extends ContextProviderResult {
   alias?: string;
+}
+
+export interface NodeContextSelection {
+  promptBlock: string | null;
+  briefing: {
+    schema: 'viewport.context_briefing/v1';
+    nodeId: string;
+    selectedSources: Array<Record<string, unknown>>;
+    topEntries: Array<Record<string, unknown>>;
+    freshness: Array<Record<string, unknown>>;
+    confidence: Array<Record<string, unknown>>;
+    securityClassification: Array<Record<string, unknown>>;
+    whySelected: Array<Record<string, unknown>>;
+    retrievalCaps: Record<string, unknown>;
+    excludedSensitiveSources: string[];
+    writeTargets: unknown[];
+  };
+  basis: {
+    schema: 'viewport.node_context_basis/v1';
+    nodeId: string;
+    mode: 'workflow_default' | 'node_envelope' | 'none';
+    query: string | null;
+    maxItems: number | null;
+    writeTargets: unknown[];
+    refs: Array<{
+      ref: string;
+      as: string | null;
+      required: boolean;
+      refresh: string;
+      maxItems: number | null;
+    }>;
+    excludedRefs: string[];
+    selectedItems: Array<Record<string, unknown>>;
+    skipped: Array<{ providerId: string; reason: string }>;
+  };
 }
 
 export async function executeContextNode(
@@ -27,9 +71,16 @@ export async function executeContextNode(
   node: WorkflowContextNode,
 ): Promise<void> {
   const state = run.nodes[nodeId];
-  const refs = normalizeRefs(node.refs ?? []);
+  const refs = await renderContextRefs(normalizeRefs(node.refs ?? []), run);
   const query = await renderOptionalTemplate(node.query, run);
   const providers = selectProviders(run.resourceManifest?.contract.contextProviders ?? [], refs);
+  const denied = providers
+    .map(({ provider }) => contextAuthorityDenial(run, nodeId, provider))
+    .find((entry) => entry !== null);
+  if (denied) {
+    addEvent(run, 'context-blocked', denied.detail, { workflow_authority_denial: denied }, nodeId);
+    throw new Error(denied.detail);
+  }
   const missingRequired = missingRequiredRefs(refs, providers);
   if (missingRequired.length > 0) {
     throw new Error(
@@ -54,7 +105,9 @@ export async function executeContextNode(
       sizeBudgetBytes: run.resourceManifest?.contract.contextResolution.sizeBudgetBytes,
       actorName: run.machineId,
     });
-    items.push(...result.map((item) => ({ ...item, alias })));
+    const refMaxItems = refMaxItemsForProvider(provider, refs);
+    const capped = refMaxItems === null ? result : result.slice(0, refMaxItems);
+    items.push(...capped.map((item) => ({ ...item, alias })));
   }
 
   const output = {
@@ -107,6 +160,173 @@ export async function executeContextNode(
     },
     nodeId,
   );
+}
+
+export async function resolvePromptNodeContext(input: {
+  run: WorkflowRunRecord;
+  nodeId: string;
+  workflowContext?: WorkflowContext | WorkflowContextDefaults;
+  nodeContext?: WorkflowNodeContextEnvelope;
+  prompt: string;
+  platformContextClient?: WorkflowPlatformContextClient;
+}): Promise<NodeContextSelection> {
+  const effective = await effectivePromptContext(
+    input.workflowContext ?? [],
+    input.nodeContext,
+    input.run,
+  );
+  if (effective.refs.length === 0) {
+    return emptyNodeContextBasis(input.nodeId);
+  }
+
+  const query = await renderOptionalTemplate(effective.query ?? input.prompt, input.run);
+  const platformResolution = await input.platformContextClient?.resolveNodePolicy({
+    run: input.run,
+    nodeId: input.nodeId,
+    query: query ?? '',
+    maxSnippets: effective.maxItems,
+  });
+  const platformPolicies = platformResolution?.source_policies ?? [];
+  const providers =
+    platformPolicies.length > 0
+      ? selectProvidersForPolicies(
+          input.run.resourceManifest?.contract.contextProviders ?? [],
+          platformPolicies,
+        )
+      : selectProviders(
+          input.run.resourceManifest?.contract.contextProviders ?? [],
+          effective.refs,
+        );
+  const denied = providers
+    .map(({ provider }) => contextAuthorityDenial(input.run, input.nodeId, provider))
+    .find((entry) => entry !== null);
+  if (denied) {
+    addEvent(
+      input.run,
+      'node-context-blocked',
+      denied.detail,
+      { workflow_authority_denial: denied },
+      input.nodeId,
+    );
+    throw new Error(denied.detail);
+  }
+  const missingRequired = missingRequiredRefs(effective.refs, providers);
+  if (missingRequired.length > 0) {
+    throw new Error(
+      `Prompt node ${input.nodeId} missing required context provider(s): ${missingRequired.join(', ')}`,
+    );
+  }
+
+  const items: ResolvedContextItem[] = [];
+  const skipped: Array<{ providerId: string; reason: string }> = [];
+  for (const { provider, alias } of providers) {
+    const adapter = contextProviderAdapterFor(provider);
+    if (!adapter?.search) {
+      if (provider.required) {
+        throw new Error(`Context provider ${provider.id} does not support search`);
+      }
+      skipped.push({ providerId: provider.id, reason: 'search_not_supported' });
+      continue;
+    }
+    const result = await adapter.search({
+      provider,
+      query: query ?? '',
+      sizeBudgetBytes: input.run.resourceManifest?.contract.contextResolution.sizeBudgetBytes,
+      actorName: input.run.machineId,
+      credentials: contextProviderCredentials(provider),
+    });
+    const refMaxItems = refMaxItemsForProvider(provider, effective.refs);
+    const capped = refMaxItems === null ? result : result.slice(0, refMaxItems);
+    items.push(...capped.map((item) => ({ ...item, alias })));
+  }
+
+  const selectedItems = items.slice(0, effective.maxItems ?? items.length);
+  const contextReceipts = buildContextReceipts({
+    run: input.run,
+    nodeId: input.nodeId,
+    query,
+    refs: effective.refs,
+    providers,
+    items: selectedItems,
+  });
+  input.run.contextReceipts = [
+    ...(input.run.contextReceipts ?? []).filter(
+      (receipt) => receipt.usedBy.nodeId !== input.nodeId,
+    ),
+    ...contextReceipts,
+  ];
+
+  if (input.platformContextClient && platformPolicies.length > 0) {
+    for (const policy of platformPolicies) {
+      const policyItems = selectedItems.filter((item) =>
+        providerMatchesPlatformPolicy(itemProviderForItem(item, providers), policy),
+      );
+      await input.platformContextClient.reportCustomerManagedReceipt({
+        run: input.run,
+        nodeId: input.nodeId,
+        policy,
+        query: query ?? '',
+        items: policyItems,
+      });
+    }
+  }
+
+  const receiptQuery = sanitizeContextQueryForReceipt(query ?? null);
+  const basis: NodeContextSelection['basis'] = {
+    schema: 'viewport.node_context_basis/v1',
+    nodeId: input.nodeId,
+    mode: effective.mode,
+    query: receiptQuery,
+    maxItems: effective.maxItems,
+    writeTargets: effective.writeTargets,
+    refs: effective.refs.map((ref) => ({
+      ref: ref.ref,
+      as: ref.as ?? null,
+      required: ref.required,
+      refresh: ref.refresh ?? 'before_run',
+      maxItems: ref.maxItems ?? null,
+    })),
+    excludedRefs: effective.excludedRefs,
+    selectedItems: selectedItems.map(metadataOnlyContextItem),
+    skipped,
+  };
+  const briefing = buildContextBriefing({
+    nodeId: input.nodeId,
+    basis,
+    items: selectedItems,
+  });
+
+  addEvent(
+    input.run,
+    'node-context-selected',
+    `Node ${input.nodeId} selected ${selectedItems.length} context item${selectedItems.length === 1 ? '' : 's'}`,
+    basis,
+    input.nodeId,
+  );
+
+  return {
+    promptBlock: selectedItems.length > 0 ? formatPromptContextBlock(basis, selectedItems) : null,
+    basis,
+    briefing,
+  };
+}
+
+export function sanitizeContextQueryForReceipt(query: string | null): string | null {
+  if (query === null) return null;
+
+  return query
+    .replace(
+      /("(?:token|access_token|refresh_token|bot_token|api_key|client_secret|signing_secret|private_key)"\s*:\s*")([^"]*)(")/gi,
+      '$1[redacted]$3',
+    )
+    .replace(
+      /('(?:token|access_token|refresh_token|bot_token|api_key|client_secret|signing_secret|private_key)'\s*:\s*')([^']*)(')/gi,
+      '$1[redacted]$3',
+    )
+    .replace(
+      /\b((?:xox[baprs]-|gh[ps]_|vp(?:claim|relay|runner)_[A-Za-z0-9_-]*|slack_[A-Za-z0-9_-]*)(?:[A-Za-z0-9_-]+)?)/g,
+      '[redacted-token]',
+    );
 }
 
 function buildContextReceipts(input: {
@@ -185,19 +405,218 @@ function contextDigest(item: ResolvedContextItem): string {
   return `sha256:${createHash('sha256').update(item.body).digest('hex')}`;
 }
 
-function normalizeRefs(refs: WorkflowContextNode['refs']): NormalizedContextRef[] {
-  return (refs ?? []).map((ref): NormalizedContextRef => {
-    if (typeof ref === 'string') {
-      return { ref, required: false };
+function emptyNodeContextBasis(nodeId: string): NodeContextSelection {
+  const basis: NodeContextSelection['basis'] = {
+    schema: 'viewport.node_context_basis/v1',
+    nodeId,
+    mode: 'none',
+    query: null,
+    maxItems: null,
+    writeTargets: [],
+    refs: [],
+    excludedRefs: [],
+    selectedItems: [],
+    skipped: [],
+  };
+
+  return {
+    promptBlock: null,
+    basis,
+    briefing: buildContextBriefing({ nodeId, basis, items: [] }),
+  };
+}
+
+function buildContextBriefing(input: {
+  nodeId: string;
+  basis: NodeContextSelection['basis'];
+  items: ResolvedContextItem[];
+}): NodeContextSelection['briefing'] {
+  const topEntries = input.items.map((item, index) => ({
+    rank: index + 1,
+    id: item.id,
+    label: item.alias ?? item.provider_id,
+    provider: item.provider,
+    provider_id: item.provider_id,
+    title: item.title,
+    digest: contextDigest(item),
+    score: item.score ?? null,
+    source: safeContextSource(item),
+  }));
+  const selectedSources = input.basis.refs.map((ref) => ({
+    ref: ref.ref,
+    as: ref.as,
+    required: ref.required,
+    maxItems: ref.maxItems,
+  }));
+
+  return {
+    schema: 'viewport.context_briefing/v1',
+    nodeId: input.nodeId,
+    selectedSources,
+    topEntries,
+    freshness: input.basis.selectedItems.map((item) => ({
+      digest: item.digest,
+      freshness: 'resolved_at_run',
+    })),
+    confidence: input.basis.selectedItems.map((item) => ({
+      digest: item.digest,
+      score: item.score ?? null,
+    })),
+    securityClassification: input.basis.selectedItems.map((item) => ({
+      digest: item.digest,
+      privacy: item.privacy ?? null,
+    })),
+    whySelected: input.basis.selectedItems.map((item) => ({
+      digest: item.digest,
+      reason: input.basis.mode,
+      query: input.basis.query,
+    })),
+    retrievalCaps: {
+      maxItems: input.basis.maxItems,
+      refCaps: input.basis.refs.map((ref) => ({
+        ref: ref.ref,
+        maxItems: ref.maxItems,
+      })),
+    },
+    excludedSensitiveSources: input.basis.excludedRefs,
+    writeTargets: input.basis.writeTargets,
+  };
+}
+
+async function effectivePromptContext(
+  workflowContext: WorkflowContext | WorkflowContextDefaults,
+  nodeContext: WorkflowNodeContextEnvelope | undefined,
+  run: WorkflowRunRecord,
+): Promise<{
+  mode: 'workflow_default' | 'node_envelope';
+  refs: NormalizedContextRef[];
+  excludedRefs: string[];
+  maxItems: number | null;
+  query?: string;
+  writeTargets: unknown[];
+}> {
+  const workflowSources = Array.isArray(workflowContext)
+    ? workflowContext
+    : (workflowContext.sources ?? []);
+  const defaultRefs = await renderContextRefs(normalizeRefs(workflowSources), run);
+  const hasNodeEnvelope = Boolean(nodeContext);
+  const include = nodeContext?.include
+    ? await renderContextRefs(normalizeRefs(nodeContext.include), run)
+    : defaultRefs;
+  const excludedRefs = (
+    await renderContextRefs(normalizeRefs(nodeContext?.exclude ?? []), run)
+  ).map((ref) => ref.ref);
+  const excluded = new Set(excludedRefs);
+  const refs = include.filter((ref) => !excluded.has(ref.ref));
+
+  if (
+    defaultRefs.length > 0 &&
+    nodeContext?.include &&
+    !(nodeContext.allow_expansion ?? nodeContext.allowExpansion)
+  ) {
+    const allowed = new Set(defaultRefs.map((ref) => ref.ref));
+    const expanded = refs.filter((ref) => !allowed.has(ref.ref)).map((ref) => ref.ref);
+    if (expanded.length > 0) {
+      throw new Error(
+        `Node context includes refs outside workflow defaults: ${expanded.join(', ')}. Set context.allow_expansion=true only with explicit policy approval.`,
+      );
     }
-    return {
-      ref: ref.ref,
-      as: ref.as,
-      required: ref.required === true,
-      description: ref.description,
-      refresh: ref.refresh,
-    };
-  });
+  }
+
+  return {
+    mode: hasNodeEnvelope ? 'node_envelope' : 'workflow_default',
+    refs,
+    excludedRefs,
+    maxItems: positiveInteger(nodeContext?.max_items ?? nodeContext?.maxItems),
+    query: nodeContext?.query,
+    writeTargets: await renderContextWriteTargets(
+      nodeContext?.write_targets ?? nodeContext?.writeTargets ?? [],
+      run,
+    ),
+  };
+}
+
+async function renderContextRefs(
+  refs: NormalizedContextRef[],
+  run: WorkflowRunRecord,
+): Promise<NormalizedContextRef[]> {
+  const rendered = await Promise.all(
+    refs.map(async (ref) => ({
+      ...ref,
+      ref: await renderTemplate(ref.ref, run),
+      as: ref.as !== undefined ? await renderTemplate(ref.as, run) : undefined,
+      description:
+        ref.description !== undefined ? await renderTemplate(ref.description, run) : undefined,
+    })),
+  );
+  return rendered.filter((ref) => ref.ref.trim() !== '');
+}
+
+async function renderContextWriteTargets(
+  targets: unknown[],
+  run: WorkflowRunRecord,
+): Promise<unknown[]> {
+  return await Promise.all(targets.map((target) => renderContextWriteTarget(target, run)));
+}
+
+async function renderContextWriteTarget(target: unknown, run: WorkflowRunRecord): Promise<unknown> {
+  if (typeof target === 'string') {
+    return await renderTemplate(target, run);
+  }
+  if (!target || typeof target !== 'object' || Array.isArray(target)) {
+    return target;
+  }
+
+  const rendered: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(target)) {
+    rendered[key] = typeof value === 'string' ? await renderTemplate(value, run) : value;
+  }
+  return rendered;
+}
+
+function formatPromptContextBlock(
+  basis: NodeContextSelection['basis'],
+  items: ResolvedContextItem[],
+): string {
+  return [
+    '<viewport_context>',
+    'Viewport selected the following node-scoped context. Use only this context basis for this workflow node and cite labels when relevant.',
+    `Context basis id: ${basis.nodeId}`,
+    '',
+    ...items.map((item, index) =>
+      [
+        `## [context-${index + 1}] ${item.alias ?? item.provider_id} (${item.provider})`,
+        `Source: ${safeContextSource(item)}`,
+        `Digest: ${contextDigest(item)}`,
+        `Title: ${item.title}`,
+        '',
+        item.body,
+      ].join('\n'),
+    ),
+    '</viewport_context>',
+  ].join('\n');
+}
+
+function normalizeRefs(refs: WorkflowContextNode['refs']): NormalizedContextRef[] {
+  return (refs ?? [])
+    .map((ref): NormalizedContextRef => {
+      if (typeof ref === 'string') {
+        return { ref, required: false };
+      }
+      const concreteRef = ref.ref ?? ref.source ?? ref.package ?? ref.artifact;
+      if (!concreteRef) {
+        return { ref: '', required: ref.required === true };
+      }
+      return {
+        ref: concreteRef,
+        as: ref.as,
+        required: ref.required === true,
+        description: ref.description,
+        refresh: ref.refresh,
+        maxItems: positiveInteger(ref.max_items ?? ref.maxItems) ?? undefined,
+      };
+    })
+    .filter((ref) => ref.ref.trim() !== '');
 }
 
 function selectProviders(
@@ -217,6 +636,68 @@ function selectProviders(
     selected.push({ provider, alias: ref.as });
   }
   return selected;
+}
+
+function selectProvidersForPolicies(
+  providers: SessionContextProviderManifest[],
+  policies: PlatformContextSourcePolicy[],
+): Array<{ provider: SessionContextProviderManifest; alias?: string }> {
+  const selected: Array<{ provider: SessionContextProviderManifest; alias?: string }> = [];
+  const seen = new Set<string>();
+  for (const policy of policies) {
+    const provider = providers.find((candidate) =>
+      providerMatchesPlatformPolicy(candidate, policy),
+    );
+    if (!provider || seen.has(provider.id)) continue;
+    seen.add(provider.id);
+    selected.push({ provider, alias: policy.context_source_name });
+  }
+  return selected;
+}
+
+function itemProviderForItem(
+  item: ResolvedContextItem,
+  providers: Array<{ provider: SessionContextProviderManifest }>,
+): SessionContextProviderManifest | undefined {
+  return providers.find(({ provider }) => provider.id === item.provider_id)?.provider;
+}
+
+function providerMatchesPlatformPolicy(
+  provider: SessionContextProviderManifest | undefined,
+  policy: PlatformContextSourcePolicy,
+): boolean {
+  if (!provider) return false;
+  const candidates = [
+    policy.context_source_id,
+    policy.external_ref,
+    policy.source_url ?? undefined,
+    `context://${policy.context_source_id}`,
+    `source:${policy.context_source_id}`,
+    `provider://${policy.context_source_id}`,
+  ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate !== '');
+  if (candidates.some((candidate) => matchesProviderRef(provider, candidate))) return true;
+
+  const gitRef = parseGitSourceRef(policy.external_ref);
+  if (gitRef && provider.provider === 'github-repo') {
+    const repo = provider.repo?.replace(/\.git$/, '');
+    const remote = provider.remote?.replace(/\.git$/, '');
+    return repo === gitRef.repo || remote?.includes(gitRef.repo) === true;
+  }
+
+  if (policy.provider_type === 'git' && provider.provider === 'repo-docs') {
+    return (
+      provider.paths?.some((path) => gitRef?.path.startsWith(path.replace(/\*\*\/\*\.md$/, ''))) ??
+      false
+    );
+  }
+
+  return false;
+}
+
+function parseGitSourceRef(ref: string): { repo: string; path: string } | null {
+  const match = /^git:\/\/([^/]+\/[^/]+)\/(.+)$/.exec(ref.trim());
+  if (!match) return null;
+  return { repo: match[1] ?? '', path: match[2] ?? '' };
 }
 
 function missingRequiredRefs(
@@ -244,11 +725,44 @@ function matchesProviderRef(provider: SessionContextProviderManifest, ref: strin
   return (
     normalized === provider.id ||
     normalized === provider.vault ||
+    normalized === provider.repo ||
+    normalized === provider.ref ||
     normalized === `context://${provider.id}` ||
     normalized === `context://${provider.vault}` ||
     normalized === `context://vault/${provider.vault}` ||
-    normalized === `provider://${provider.id}`
+    normalized === `source:${provider.id}` ||
+    normalized === `package:${provider.id}` ||
+    normalized === `provider://${provider.id}` ||
+    normalized === `provider://${provider.vault}`
   );
+}
+
+function refMaxItemsForProvider(
+  provider: SessionContextProviderManifest,
+  refs: NormalizedContextRef[],
+): number | null {
+  const matching = refs.find((ref) => matchesProviderRef(provider, ref.ref));
+  return matching?.maxItems ?? null;
+}
+
+function contextProviderCredentials(
+  provider: SessionContextProviderManifest,
+): { passphrase: string; recoveryCode: string } | undefined {
+  const key = provider.vault ?? provider.id;
+  const scopedPrefix = `VIEWPORT_CONTEXT_${envKey(key)}`;
+  const passphrase =
+    process.env[`${scopedPrefix}_PASSPHRASE`] ?? process.env.VIEWPORT_CONTEXT_PASSPHRASE;
+  const recoveryCode =
+    process.env[`${scopedPrefix}_RECOVERY_CODE`] ?? process.env.VIEWPORT_CONTEXT_RECOVERY_CODE;
+  if (!passphrase || !recoveryCode) return undefined;
+  return { passphrase, recoveryCode };
+}
+
+function envKey(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_');
 }
 
 function metadataOnlyContextItem(item: ResolvedContextItem): Record<string, unknown> {
@@ -258,8 +772,27 @@ function metadataOnlyContextItem(item: ResolvedContextItem): Record<string, unkn
     provider: item.provider,
     privacy: item.privacy,
     title: item.title,
-    digest: item.digest ?? null,
+    digest: contextDigest(item),
     score: item.score ?? null,
     alias: item.alias ?? null,
+    source: safeContextSource(item),
   };
+}
+
+function safeContextSource(item: ResolvedContextItem): string {
+  const source = typeof item.source === 'string' && item.source.trim() !== '' ? item.source : null;
+  if (!source) return item.provider_id;
+
+  if (source.startsWith('/') || /^[A-Za-z]:[\\/]/.test(source)) {
+    const normalized = source.replaceAll('\\', '/');
+    const basename = normalized.split('/').filter(Boolean).at(-1);
+
+    return basename ? `${item.provider_id}:${basename}` : item.provider_id;
+  }
+
+  return source;
+}
+
+function positiveInteger(value: unknown): number | null {
+  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : null;
 }

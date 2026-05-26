@@ -85,6 +85,138 @@ nodes:
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
+  it('records node authority acknowledgement before executing a node', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: node-authority-ack-proof
+nodes:
+  proof:
+    type: shell
+    command: printf "ack"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const ack = completed?.nodes.proof?.metadata?.['node_contract_ack'];
+    const ackEvent = completed?.events.find(
+      (event) => event.type === 'node-contract-acknowledged' && event.nodeId === 'proof',
+    );
+    const startEvent = completed?.events.find(
+      (event) => event.type === 'node-started' && event.nodeId === 'proof',
+    );
+    const payload = workflowRunToSyncPayload(completed!);
+    const syncedNode = (payload.nodes as Array<{ metadata?: Record<string, unknown> }>).find(
+      (node) => node.metadata?.['node_contract_ack'],
+    );
+
+    expect(completed?.status).toBe('completed');
+    expect(ack).toMatchObject({
+      schema: 'viewport.node_contract_acknowledgement/v1',
+      status: 'acknowledged',
+      source: 'daemon_pre_execute',
+      node_id: 'proof',
+      node_type: 'shell',
+      enforcement: expect.objectContaining({
+        context: 'enforced',
+        repos: 'modeled',
+        tools: 'modeled',
+        budgets: 'modeled',
+      }),
+      modeled: ['repos', 'tools', 'budgets'],
+    });
+    expect(ackEvent).toBeTruthy();
+    expect(startEvent).toBeTruthy();
+    expect(completed!.events.indexOf(ackEvent!)).toBeLessThan(
+      completed!.events.indexOf(startEvent!),
+    );
+    expect(syncedNode?.metadata?.['node_contract_ack']).toMatchObject({
+      status: 'acknowledged',
+      source: 'daemon_pre_execute',
+    });
+  });
+
+  it('injects run-scoped shell env secrets without persisting them as inputs', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-secret-env-proof
+nodes:
+  proof:
+    type: shell
+    env:
+      CHECKOUT_TOKEN:
+        secret: repo/github/payments-api
+    command: test "$CHECKOUT_TOKEN" = "ghs_run_scoped_checkout" && printf "ok"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      runtimeSecretEnv: {
+        VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.output).toBe('ok');
+    expect(JSON.stringify(completed?.inputs)).not.toContain('ghs_run_scoped_checkout');
+    expect(JSON.stringify(workflowRunToSyncPayload(completed!))).not.toContain(
+      'ghs_run_scoped_checkout',
+    );
+  });
+
+  it('fails closed when a workflow asks for unmaterialized shell env secrets', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-missing-secret-proof
+nodes:
+  proof:
+    type: shell
+    env:
+      CHECKOUT_TOKEN:
+        secret: repo/github/payments-api
+    command: printf "should-not-run"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.proof?.error).toContain('Secret binding repo/github/payments-api');
+    expect(failed?.nodes.proof?.output).not.toBe('should-not-run');
+  });
+
   it('cancels a running shell workflow and preserves canceled state', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

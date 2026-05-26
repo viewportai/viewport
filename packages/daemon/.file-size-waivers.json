@@ -3,6 +3,8 @@
   "waived": [
     "src/adapters/claude.ts",
     "src/cli/context-command.ts",
+    "src/cli/lifecycle-status-command.ts",
+    "src/cli/team-resource-command.ts",
     "src/cli/lifecycle-commands.ts",
     "src/cli/workflow-commands.ts",
     "src/cli/workflow-managed-worker.ts",
@@ -10,6 +12,7 @@
     "src/context/local-edge-sync.ts",
     "src/core/config.ts",
     "src/core/session-manager.ts",
+    "src/discovery/watcher.ts",
     "src/discovery/jsonl-reader.ts",
     "src/discovery/jsonl-entry-parser.ts",
     "src/hooks/trusted-edge-plan-artifacts.ts",
@@ -30,6 +33,12 @@
     "src/server/ws-server.ts",
     "src/startup.ts",
     "src/tracking/git-tracker.ts",
-    "src/workflows/runner.ts"
+    "src/workflows/context-node-resolver.ts",
+    "src/workflows/node-executor.ts",
+    "src/workflows/node-registry.ts",
+    "src/workflows/runner.ts",
+    "src/workflows/types.ts",
+    "src/workflows/workflow-authority-contract.ts",
+    "src/workflows/workflow-schema.ts"
   ]
 }

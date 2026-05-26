@@ -74,9 +74,42 @@ export interface WorkflowPolicyDefinition {
 }
 
 export interface WorkflowNotificationDefinition {
-  inbox?: Array<'approval_requested' | 'run_failed' | 'runner_offline' | 'action_failed'>;
+  inbox?:
+    | Array<'approval_requested' | 'run_failed' | 'runner_offline' | 'action_failed'>
+    | {
+        slack?: {
+          enabled?: boolean;
+          credential_ref?: string;
+          credential?: string;
+          delivery?:
+            | 'source_thread'
+            | 'dm_assignee'
+            | 'dm_requester'
+            | 'channel'
+            | Array<'source_thread' | 'dm_assignee' | 'dm_requester' | 'channel'>;
+          events?: string[];
+          channel?: string;
+          template?: string;
+        };
+      };
   email?: Array<'approval_requested' | 'run_failed' | 'run_completed'>;
   webhook?: string[];
+  sourceAccepted?:
+    | boolean
+    | {
+        enabled?: boolean;
+        provider?: string;
+        credential_ref?: string;
+        credential?: string;
+        delivery?: 'source_thread' | 'channel' | 'dm_requester';
+        mode?: 'source_thread' | 'channel' | 'dm_requester';
+        channel?: string;
+        thread_ts?: string;
+        user_id?: string;
+        template?: string;
+        onFailure?: 'continue' | 'fail_run';
+        failurePolicy?: 'continue' | 'fail_run';
+      };
 }
 
 export interface WorkflowDataCaptureDefinition {
@@ -87,11 +120,16 @@ export interface WorkflowDataCaptureDefinition {
 }
 
 export interface WorkflowContextReference {
-  ref: string;
+  ref?: string;
+  source?: string;
+  package?: string;
+  artifact?: string;
   as?: string;
   required?: boolean;
   description?: string;
   refresh?: 'manual' | 'before_run' | 'on_demand';
+  max_items?: number;
+  maxItems?: number;
 }
 
 export type WorkflowContext = Array<string | WorkflowContextReference>;

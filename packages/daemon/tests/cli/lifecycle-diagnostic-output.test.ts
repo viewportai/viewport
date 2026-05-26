@@ -197,6 +197,41 @@ describe('lifecycle relay diagnostic output', () => {
     );
   });
 
+  it('reports stale daemon runtime state with a recovery command', async () => {
+    mocks.readDaemonHealth.mockResolvedValue(null);
+    mocks.isPidRunning.mockReturnValue(false);
+    const output = captureConsole();
+    const { status } = await import('../../src/cli/lifecycle-status-command.js');
+
+    await status();
+
+    expect(output.lines).toContain('Status:      stopped');
+    expect(output.lines).toContain(
+      'Daemon hint: Viewport daemon is not reachable at http://127.0.0.1:7070/health; saved runtime state points at a dead process.',
+    );
+    expect(output.lines).toContain('Recovery:    vpd start --foreground');
+    output.restore();
+  });
+
+  it('includes daemon reachability details in status JSON output', async () => {
+    mocks.isJsonMode.mockReturnValue(true);
+    mocks.readDaemonHealth.mockResolvedValue(null);
+    mocks.isPidRunning.mockReturnValue(false);
+    const { status } = await import('../../src/cli/lifecycle-status-command.js');
+
+    await status();
+
+    expect(mocks.printJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        daemonReachability: expect.objectContaining({
+          status: 'stale_state',
+          staleState: true,
+          recoveryCommand: 'vpd start --foreground',
+        }),
+      }),
+    );
+  });
+
   it('prints per-organization relay health in status output', async () => {
     mocks.readDaemonHealth.mockResolvedValue(
       relayHealth({

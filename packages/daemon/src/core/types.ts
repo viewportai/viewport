@@ -321,8 +321,19 @@ export type PermissionDecision =
 export interface SessionConfig {
   agent: string;
   model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /** Provider sandbox posture for agents that support it, such as Codex. */
+  sandboxMode?: string;
+  /** Provider approval posture for agents that support it, such as Codex. */
+  approvalPolicy?: string;
   /** Explicit resource context selected by the launcher/operator. */
   resourceId?: string;
+  /**
+   * Session prompt context injection mode. Workflow runs set this to
+   * `disabled` after compiling an explicit node context envelope so broad
+   * repo ambient context cannot leak into nodes by default.
+   */
+  contextInjection?: 'auto' | 'disabled';
   gitTracker: GitTrackerConfig;
   permissions: PermissionsConfig;
   costCapUsd?: number;

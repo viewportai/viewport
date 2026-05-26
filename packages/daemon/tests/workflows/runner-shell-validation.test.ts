@@ -101,6 +101,157 @@ nodes:
     expect(blocked?.preflight.issues[0]?.message).toMatch(/not a git repository/);
   });
 
+  it('blocks shell commands that reference repositories outside the workflow authority contract', async () => {
+    const daemon = await setup();
+    await fs.writeFile(path.join(projectDir, 'README.md'), 'proof\n', 'utf8');
+    await runGit(['init'], projectDir);
+    await runGit(['config', 'user.email', 'proof@example.test'], projectDir);
+    await runGit(['config', 'user.name', 'Viewport Proof'], projectDir);
+    await runGit(['add', 'README.md'], projectDir);
+    await runGit(['commit', '-m', 'proof'], projectDir);
+
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-authority-repo-proof
+nodes:
+  clone:
+    type: shell
+    command: git clone git@github.com:acme/forbidden.git forbidden
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.clone?.error).toContain('repository acme/forbidden');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'shell-blocked',
+        nodeId: 'clone',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'shell_repository_not_allowed',
+            repository: 'acme/forbidden',
+            allowed: ['acme/payments'],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('blocks shell side-effect commands not allowed by workflow authority', async () => {
+    const daemon = await setup();
+    await fs.writeFile(path.join(projectDir, 'README.md'), 'proof\n', 'utf8');
+    await runGit(['init'], projectDir);
+    await runGit(['config', 'user.email', 'proof@example.test'], projectDir);
+    await runGit(['config', 'user.name', 'Viewport Proof'], projectDir);
+    await runGit(['add', 'README.md'], projectDir);
+    await runGit(['commit', '-m', 'proof'], projectDir);
+
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-authority-side-effect-proof
+nodes:
+  push:
+    type: shell
+    command: git push git@github.com:acme/payments.git HEAD:viewport/proof
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [{ provider: 'github', actions: ['create_pr'] }] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.push?.error).toContain('github.push-branch');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'shell-blocked',
+        nodeId: 'push',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'shell_provider_side_effect_not_allowed',
+            provider: 'github',
+            action: 'push-branch',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('blocks shell cwd outside the run worktree when workflow authority is present', async () => {
+    const daemon = await setup();
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-outside-worktree-'));
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-authority-cwd-proof
+nodes:
+  inspect:
+    type: shell
+    cwd: ${JSON.stringify(outside)}
+    command: printf outside
+`,
+      'utf-8',
+    );
+
+    try {
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+        workflowAuthorityContract: {
+          schema_version: 'viewport.workflow_execution_authority/v1',
+          digest: 'sha256:authority',
+          repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+          side_effects: { allowed: [] },
+        },
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.inspect?.error).toContain('outside the run worktree');
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it('rejects required inputs before queuing a run', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -226,3 +377,15 @@ nodes:
     expect(right!.startedAt!).toBeLessThan(left!.completedAt!);
   });
 });
+
+async function runGit(args: string[], cwd: string): Promise<void> {
+  const { spawn } = await import('node:child_process');
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('git', args, { cwd, stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`git ${args.join(' ')} failed with ${code}`));
+    });
+  });
+}

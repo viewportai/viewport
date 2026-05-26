@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
 import { WORKFLOW_SCHEMA_VERSION, WorkflowDefinitionSchema } from './workflow-schema.js';
-import type { ParsedWorkflow, WorkflowDefinition } from './types.js';
+import type { ParsedWorkflow, WorkflowContextReference, WorkflowDefinition } from './types.js';
 
 export { WORKFLOW_SCHEMA_VERSION };
 
@@ -146,7 +146,10 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 
         if (reference.kind === 'output') {
           const upstream = definition.nodes[reference.nodeId];
-          if (!upstream?.outputs?.[declaredReferenceName(reference.name, upstream.outputs)]) {
+          if (
+            !upstream?.outputs?.[declaredReferenceName(reference.name, upstream.outputs)] &&
+            !isBuiltinOutputReference(upstream, reference.name)
+          ) {
             throw new Error(
               `Workflow node ${nodeId} references undeclared output ${reference.nodeId}.${reference.name}`,
             );
@@ -173,10 +176,35 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     );
   }
   if (node.type === 'prompt') {
-    return [node.prompt, ...Object.values(node.agents ?? {}).map((agent) => agent.prompt)];
+    return [
+      node.prompt,
+      node.cwd,
+      ...(node.requiredFiles ?? []),
+      ...Object.values(node.agents ?? {}).map((agent) => agent.prompt),
+    ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
+  if (node.type === 'checkout') {
+    return [
+      node.repository,
+      node.remote,
+      node.ref,
+      node.branch,
+      node.path,
+      node.credentialRef,
+    ].filter((value): value is string => typeof value === 'string');
+  }
+  if (node.type === 'git_publish') {
+    return [
+      node.repository,
+      node.cwd,
+      node.branch,
+      node.message,
+      node.credentialRef,
+      ...(node.paths ?? []),
+    ].filter((value): value is string => typeof value === 'string');
+  }
   if (node.type === 'approval') {
     const templates = [node.prompt];
     if (node.onReject) {
@@ -195,9 +223,18 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return [node.gate.waitUntil];
   }
   if (node.type === 'context') {
+    return [node.query, ...(node.refs ?? []).map(workflowContextRef)].filter(
+      (value): value is string => typeof value === 'string',
+    );
+  }
+  if (node.type === 'context_update') {
     return [
-      node.query,
-      ...(node.refs ?? []).map((entry) => (typeof entry === 'string' ? entry : entry.ref)),
+      node.targetRef,
+      node.title,
+      node.summary,
+      node.patch?.text,
+      node.patch?.digest,
+      node.idempotencyKey,
     ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'condition') {
@@ -212,6 +249,7 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return [
       node.adapter,
       node.action,
+      node.proposalKey,
       node.idempotencyKey,
       ...Object.values(node.with ?? {}).map((value) => (typeof value === 'string' ? value : '')),
     ].filter((value): value is string => typeof value === 'string' && value.length > 0);
@@ -241,6 +279,20 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return templates;
   }
   return [];
+}
+
+function isBuiltinOutputReference(
+  node: WorkflowDefinition['nodes'][string] | undefined,
+  name: string,
+): boolean {
+  if (!node) return false;
+  if (node.type === 'checkout') {
+    return ['repository', 'path', 'ref', 'branch', 'commit'].includes(name);
+  }
+  if (node.type === 'git_publish') {
+    return ['repository', 'branch', 'commit', 'pushed', 'changed'].includes(name);
+  }
+  return false;
 }
 
 type WorkflowTemplateReference =
@@ -296,6 +348,12 @@ function declaredReferenceName(
   if (!declared) return referenceName;
   if (Object.hasOwn(declared, referenceName)) return referenceName;
   return referenceName.split('.')[0] ?? referenceName;
+}
+
+function workflowContextRef(entry: string | WorkflowContextReference): string {
+  return typeof entry === 'string'
+    ? entry
+    : (entry.ref ?? entry.source ?? entry.package ?? entry.artifact ?? '');
 }
 
 function transitiveDependencies(definition: WorkflowDefinition, nodeId: string): Set<string> {

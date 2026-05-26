@@ -3,6 +3,7 @@ import { executeProviderAction, type ActionResult } from './action-provider-adap
 import { sanitizeActionInput, workflowActionProposalDigest } from './action-digest.js';
 import { rememberExecutedAction, suppressDuplicateAction } from './action-execution-ledger.js';
 import { actionPolicyReason } from './action-policy.js';
+import { workflowActionAuthorityDenial } from './workflow-authority-contract.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 const MAX_RESPONSE_CHARS = 4_000;
@@ -17,12 +18,32 @@ export async function executeActionAdapter(
 ): Promise<ActionResult> {
   const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
   const actionInput = await renderActionInput(run, node.with ?? {});
+  const denial = workflowActionAuthorityDenial(run, nodeId, node, actionInput);
+  if (denial) {
+    const metadata = {
+      workflow_authority_denial: denial,
+      action: {
+        adapter: node.adapter,
+        action: node.action,
+        proposalKey: node.proposalKey ?? null,
+        idempotencyKey: idempotencyKey ?? null,
+        requiresApproval: node.requiresApproval === true,
+        status: 'blocked_by_workflow_authority',
+        input: sanitizeActionInput(actionInput),
+      },
+    };
+    addEvent(run, 'action-blocked', denial.detail, metadata, nodeId);
+    throw new Error(denial.detail);
+  }
   const duplicate = suppressDuplicateAction(run, nodeId, node, idempotencyKey, actionInput);
   if (duplicate) return duplicate;
 
   if (node.requiresApproval === true && options.approved !== true) {
     return declaredAction(run, nodeId, node, 'awaiting_approval', idempotencyKey, actionInput);
   }
+
+  const brokered = brokeredApprovedAction(run, nodeId, node);
+  if (brokered) return brokered;
 
   if (node.adapter === 'webhook' || node.adapter === 'http') {
     return executeWebhookAction(run, nodeId, node, idempotencyKey, actionInput);
@@ -34,6 +55,28 @@ export async function executeActionAdapter(
   if (providerAction) return providerAction;
 
   return declaredAction(run, nodeId, node, 'declared', idempotencyKey, actionInput);
+}
+
+function brokeredApprovedAction(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+): ActionResult | null {
+  if (node.requiresApproval !== true) return null;
+  const state = run.nodes[nodeId];
+  if (state?.approval?.approved !== true || !state.approval.executionGrant) return null;
+  const existing = state.metadata?.['action'];
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return null;
+
+  return {
+    output: `${node.adapter}.${node.action}`,
+    metadata: {
+      action: {
+        ...(existing as Record<string, unknown>),
+        ...approvedExecutionGrant(run, nodeId, true),
+      },
+    },
+  };
 }
 
 async function executeWebhookAction(
@@ -64,6 +107,7 @@ async function executeWebhookAction(
     action: {
       adapter: node.adapter,
       action: node.action,
+      proposalKey: node.proposalKey ?? null,
       idempotencyKey: idempotencyKey ?? null,
       requiresApproval: node.requiresApproval === true,
       status: response.ok ? 'executed' : 'failed',
@@ -155,6 +199,7 @@ function declaredAction(
       action: {
         adapter: node.adapter,
         action: node.action,
+        proposalKey: node.proposalKey ?? null,
         idempotencyKey: idempotencyKey ?? null,
         requiresApproval: node.requiresApproval === true,
         policyReason: actionPolicyReason(node),

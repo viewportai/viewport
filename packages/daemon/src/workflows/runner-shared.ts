@@ -29,6 +29,7 @@ export function workflowNodeMetadata(
     needs: node.needs ?? [],
     outputs: node.outputs ?? {},
     artifacts: node.artifacts ?? {},
+    context: node.context ?? null,
     retry: node.retry ?? null,
     policy: node.policy ?? null,
     timeoutSeconds: node.timeoutSeconds ?? null,
@@ -72,6 +73,14 @@ export function workflowNodeMetadata(
           summary: node.summary ?? null,
           source: node.source ?? 'workflow',
           waitForApproval: node.waitForApproval ?? true,
+          recipients: node.recipients ?? [],
+          revision: node.revision ?? null,
+        }
+      : {}),
+    ...(node.type === 'approval'
+      ? {
+          recipients: node.recipients ?? [],
+          captureResponse: node.captureResponse ?? false,
         }
       : {}),
   };

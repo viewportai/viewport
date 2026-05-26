@@ -29,6 +29,9 @@ describe('team-resource CLI command', () => {
     await fs.mkdir(remote, { recursive: true });
     await git(remote, ['init', '--bare']);
     await git(repo, ['remote', 'add', 'origin', remote]);
+    await fs.mkdir(path.join(repo, '.viewport/workflows'), { recursive: true });
+    await fs.writeFile(path.join(repo, '.viewport/stale.json'), '{}\n', 'utf8');
+    await fs.writeFile(path.join(repo, '.viewport/workflows/stale.json'), '{}\n', 'utf8');
     const bundlePath = path.join(tempRoot, 'bundle.json');
     const teamJson =
       JSON.stringify(
@@ -78,6 +81,8 @@ describe('team-resource CLI command', () => {
     await expect(
       fs.readFile(path.join(repo, '.viewport/workflows/definitions.json'), 'utf8'),
     ).resolves.toBe(workflowIndex);
+    await expect(fs.stat(path.join(repo, '.viewport/stale.json'))).rejects.toThrow();
+    await expect(fs.stat(path.join(repo, '.viewport/workflows/stale.json'))).rejects.toThrow();
     const head = await git(repo, ['rev-parse', 'HEAD']);
     const log = await git(repo, ['log', '-1', '--pretty=%s']);
     const remoteHead = await git(repo, ['ls-remote', 'origin', 'refs/heads/main']);
@@ -94,6 +99,7 @@ describe('team-resource CLI command', () => {
       ok: true,
       repo,
       bundle_digest: 'sha256:bundle-proof',
+      manifest_authoritative: true,
       commit: {
         created: true,
         status: 'committed',
@@ -108,6 +114,10 @@ describe('team-resource CLI command', () => {
     expect(output['files']).toEqual([
       expect.objectContaining({ path: '.viewport/team.json' }),
       expect.objectContaining({ path: '.viewport/workflows/definitions.json' }),
+    ]);
+    expect(output['deleted_files']).toEqual([
+      '.viewport/stale.json',
+      '.viewport/workflows/stale.json',
     ]);
   });
 

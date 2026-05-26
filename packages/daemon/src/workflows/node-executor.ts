@@ -1,5 +1,13 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
-import { addEvent, renderTemplate, ShellNodeError } from './runtime-helpers.js';
+import {
+  addEvent,
+  renderOptionalTemplate,
+  renderTemplate,
+  resolveNodeCwd,
+  ShellNodeError,
+} from './runtime-helpers.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { collectNodeArtifacts } from './artifact-collector.js';
 import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-output.js';
@@ -7,6 +15,9 @@ import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
+import { resolvePromptNodeContext } from './context-node-resolver.js';
+import { parseWorkflow } from './parser.js';
+import type { WorkflowPlatformContextClient } from './platform-context-client.js';
 import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
@@ -14,6 +25,12 @@ export interface WorkflowNodeExecutorContext {
   daemon: Daemon;
   sessionLinks: WorkflowSessionLinkStore;
   shellAbortRegistry: WorkflowShellAbortRegistry;
+  /**
+   * Run-scoped secret material fetched through the Viewport lease path. This
+   * map is transient process memory only and is never persisted with the run.
+   */
+  runtimeSecretEnv?: Record<string, string>;
+  platformContextClient?: WorkflowPlatformContextClient;
   saveAndEmit: (run: WorkflowRunRecord) => Promise<void>;
 }
 
@@ -27,9 +44,26 @@ export async function executeWorkflowNode(
   if (!state) return 'completed';
   if (state.status === 'completed' || state.status === 'skipped') return 'completed';
 
+  const startedAt = Date.now();
   state.status = 'running';
-  state.startedAt = Date.now();
+  state.startedAt = startedAt;
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    node_contract_ack: preExecuteNodeContractAcknowledgement(run, nodeId, node, startedAt),
+  };
   run.updatedAt = state.startedAt;
+  addEvent(
+    run,
+    'node-contract-acknowledged',
+    `Node ${nodeId} authority contract acknowledged before execution`,
+    {
+      nodeId,
+      nodeType: node.type,
+      status: 'acknowledged',
+      enforcement: nodeContractEnforcement(run),
+    },
+    nodeId,
+  );
   addEvent(run, 'node-started', `Node ${nodeId} started`, undefined, nodeId);
   await context.saveAndEmit(run);
 
@@ -139,6 +173,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function preExecuteNodeContractAcknowledgement(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowNode,
+  acknowledgedAt: number,
+): Record<string, unknown> {
+  return {
+    schema: 'viewport.node_contract_acknowledgement/v1',
+    status: 'acknowledged',
+    source: 'daemon_pre_execute',
+    runner: run.machineId ?? 'local-daemon',
+    node_id: nodeId,
+    node_type: node.type,
+    acknowledged_at: new Date(acknowledgedAt).toISOString(),
+    enforcement: nodeContractEnforcement(run),
+    modeled: run.workflowAuthorityContract ? ['tools', 'budgets'] : ['repos', 'tools', 'budgets'],
+  };
+}
+
+function nodeContractEnforcement(run: WorkflowRunRecord): Record<string, string> {
+  const authorityEnforced = run.workflowAuthorityContract ? 'contract_guarded' : 'modeled';
+
+  return {
+    context: run.workflowAuthorityContract ? 'contract_guarded' : 'enforced',
+    data_capture: 'enforced',
+    credentials: 'materialization_guarded',
+    side_effects: run.workflowAuthorityContract ? 'contract_guarded' : 'approval_guarded',
+    repos: authorityEnforced,
+    tools: 'modeled',
+    budgets: 'modeled',
+  };
+}
+
 async function executeGateNode(
   context: WorkflowNodeExecutorContext,
   run: WorkflowRunRecord,
@@ -223,7 +290,16 @@ async function collectAndRecordArtifacts(
 ): Promise<void> {
   if (!node.artifacts || Object.keys(node.artifacts).length === 0) return;
   const result = await collectNodeArtifacts(run, nodeId, node, cwd);
+  const contextBasis = run.nodes[nodeId]?.metadata?.['context_basis'];
+  const contextBriefing = run.nodes[nodeId]?.metadata?.['context_briefing'];
   for (const artifact of result.artifacts) {
+    if (contextBasis) {
+      artifact.metadata = {
+        ...(artifact.metadata ?? {}),
+        context_basis: contextBasis,
+        ...(contextBriefing ? { context_briefing: contextBriefing } : {}),
+      };
+    }
     run.artifacts ??= [];
     run.artifacts = run.artifacts.filter(
       (existing) => existing.nodeId !== artifact.nodeId || existing.name !== artifact.name,
@@ -261,14 +337,46 @@ async function executePromptNode(
   const state = run.nodes[nodeId];
   if (!state) return;
   const inlineAgents = await runInlineAgents(context, run, nodeId, node);
+  const renderedPrompt = appendInlineAgentResults(
+    await renderTemplate(node.prompt, run),
+    inlineAgents,
+  );
+  const renderedCwd = await renderOptionalTemplate(node.cwd, run);
+  const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+  const selectedContext = await resolvePromptNodeContext({
+    run,
+    nodeId,
+    workflowContext: parsed.definition.context,
+    nodeContext: node.context,
+    prompt: renderedPrompt,
+    platformContextClient: context.platformContextClient,
+  });
+  if (selectedContext.basis.mode !== 'none') {
+    state.outputs = {
+      ...(state.outputs ?? {}),
+      context_basis: selectedContext.basis,
+      context_briefing: selectedContext.briefing,
+    };
+    state.metadata = {
+      ...(state.metadata ?? {}),
+      context_basis: selectedContext.basis,
+      context_briefing: selectedContext.briefing,
+    };
+  }
 
   await runWorkflowDaemonSession(context, {
     run,
     nodeId,
     target: state,
-    prompt: appendInlineAgentResults(await renderTemplate(node.prompt, run), inlineAgents),
+    ...(renderedCwd ? { cwd: resolveNodeCwd(run.directoryPath, renderedCwd) } : {}),
+    prompt: selectedContext.promptBlock
+      ? [selectedContext.promptBlock, '', '<user_request>', renderedPrompt, '</user_request>'].join(
+          '\n',
+        )
+      : renderedPrompt,
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
+    ...(node.effort ? { effort: node.effort } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
     ...(node.timeoutSeconds ? { timeoutSeconds: node.timeoutSeconds } : {}),
     outputFallback: () => readPromptNodeOutput(run, state),
@@ -277,6 +385,58 @@ async function executePromptNode(
       return transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {};
     },
   });
+
+  await verifyPromptRequiredFiles(run, nodeId, node, renderedCwd);
+}
+
+async function verifyPromptRequiredFiles(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: Extract<WorkflowNode, { type: 'prompt' }>,
+  renderedCwd: string | undefined,
+): Promise<void> {
+  if (!node.requiredFiles || node.requiredFiles.length === 0) return;
+
+  const root = renderedCwd ? resolveNodeCwd(run.directoryPath, renderedCwd) : run.directoryPath;
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  for (const fileTemplate of node.requiredFiles) {
+    const renderedFile = await renderTemplate(fileTemplate, run);
+    if (path.isAbsolute(renderedFile)) {
+      invalid.push(renderedFile);
+      continue;
+    }
+    const candidate = path.resolve(root, renderedFile);
+    const relative = path.relative(root, candidate);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      invalid.push(renderedFile);
+      continue;
+    }
+    try {
+      const stat = await fs.stat(candidate);
+      if (!stat.isFile()) missing.push(renderedFile);
+    } catch {
+      missing.push(renderedFile);
+    }
+  }
+
+  if (invalid.length > 0 || missing.length > 0) {
+    const details = [
+      invalid.length > 0 ? `invalid required file path(s): ${invalid.join(', ')}` : null,
+      missing.length > 0 ? `missing required file(s): ${missing.join(', ')}` : null,
+    ]
+      .filter(Boolean)
+      .join('; ');
+    addEvent(
+      run,
+      'node-failed',
+      `Prompt node ${nodeId} did not produce required files: ${details}`,
+      { requiredFiles: node.requiredFiles, invalid, missing, cwd: root },
+      nodeId,
+    );
+    throw new Error(`Prompt node ${nodeId} did not produce required files: ${details}`);
+  }
 }
 
 async function blockForApproval(
