@@ -227,7 +227,7 @@ nodes:
     const sessionId = running?.nodes.review?.sessionId;
     const worktreePath = running?.nodes.review?.worktreePath;
     expect(sessionId).toBeTruthy();
-    expect(worktreePath).toContain(path.join('.viewport', 'worktrees'));
+    expect(worktreePath).toContain(path.join('.viewport', 'node-sessions', run.id, 'review'));
     expect(adapter.lastSession?.id).not.toBe(sessionId);
 
     discovery.setProjectSessions(worktreePath!, [

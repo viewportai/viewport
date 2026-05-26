@@ -262,5 +262,5 @@ function buildSubflowContext(
       approval: null,
     };
   }
-  return { inputs: inputs as ExpressionContext['inputs'], nodes };
+  return { run: { id: 'subflow', status: 'running' }, inputs: inputs as ExpressionContext['inputs'], nodes };
 }

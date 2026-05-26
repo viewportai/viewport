@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { waitForTerminalRun } from './support/workflow-runner-support.js';
+import {
+  MockAdapter,
+  waitForNodeSession,
+  waitForTerminalRun,
+} from './support/workflow-runner-support.js';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
 
@@ -94,6 +98,225 @@ nodes:
         data: expect.objectContaining({
           repository: 'acme/payments',
           branch: 'viewport/proof',
+        }),
+      }),
+    );
+  });
+
+  it('uses a run-scoped default checkout path so repeated runs do not collide', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: checkout-run-scoped-path-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  inspect:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "test -f README.md && printf checked-out"
+`,
+      'utf8',
+    );
+
+    const first = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+    const second = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, first.id);
+    await waitForTerminalRun(daemon, second.id);
+    const completedFirst = await daemon.workflowRunner.getRun(first.id);
+    const completedSecond = await daemon.workflowRunner.getRun(second.id);
+
+    expect(completedFirst?.status).toBe('completed');
+    expect(completedSecond?.status).toBe('completed');
+    expect(completedFirst?.nodes.repo?.outputs?.['path']).toContain(first.id);
+    expect(completedSecond?.nodes.repo?.outputs?.['path']).toContain(second.id);
+    expect(completedFirst?.nodes.repo?.outputs?.['path']).not.toEqual(
+      completedSecond?.nodes.repo?.outputs?.['path'],
+    );
+  });
+
+  it('renders checkout repository and branch expressions before authority checks and git clone', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: checkout-rendered-proof
+inputs:
+  repo:
+    type: string
+    default: acme/payments
+  branch:
+    type: string
+    default: viewport/rendered
+nodes:
+  repo:
+    type: checkout
+    repository: "{{ inputs.repo }}"
+    remote: ${JSON.stringify(remoteDir)}
+    branch: "{{ inputs.branch }}"
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.repo?.outputs).toMatchObject({
+      repository: 'acme/payments',
+      branch: 'viewport/rendered',
+    });
+    expect(completed?.nodes.repo?.error).toBeUndefined();
+  });
+
+  it('runs prompt implementation nodes inside the governed checkout cwd when configured', async () => {
+    const daemon = await setup(projectDir);
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: checkout-prompt-cwd-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+    branch: viewport/proof
+  implement:
+    type: prompt
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    prompt: "Create src/proof.ts in the governed checkout."
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForNodeSession(daemon, run.id, 'implement');
+    expect(adapter.lastSession).not.toBeNull();
+    const active = await daemon.workflowRunner.getRun(run.id);
+    const checkoutPath = active?.nodes.repo?.outputs?.['path'];
+    expect(checkoutPath).toEqual(expect.any(String));
+    expect(adapter.cwdBySession.get(adapter.lastSession!)).toBe(checkoutPath);
+    expect(adapter.lastOptions?.config).toMatchObject({
+      sandboxMode: 'workspace-write',
+      approvalPolicy: 'never',
+      trust: 'automated',
+    });
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+  });
+
+  it('fails prompt implementation nodes that do not produce required files', async () => {
+    const daemon = await setup(projectDir);
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: checkout-prompt-required-files-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+    branch: viewport/proof
+  implement:
+    type: prompt
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    requiredFiles:
+      - src/proof.ts
+      - src/proof.test.ts
+    prompt: "Create the required proof files."
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForNodeSession(daemon, run.id, 'implement');
+    adapter.lastSession?.emitAgentMessage('I could not write the files.');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.implement?.error).toContain('missing required file(s): src/proof.ts, src/proof.test.ts');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-failed',
+        nodeId: 'implement',
+        data: expect.objectContaining({
+          missing: ['src/proof.ts', 'src/proof.test.ts'],
         }),
       }),
     );
@@ -277,6 +500,72 @@ nodes:
       credentialRef: 'repo/github/payments-api',
     });
     expect(JSON.stringify(completed)).not.toContain('ghs_run_scoped_checkout');
+  });
+
+  it('blocks publishing context update target files into the operating repo when the target is a different repo', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: checkout-context-target-wrong-repo-proof
+context:
+  update_targets:
+    - ref: git://acme/payments-docs/docs/context/
+      kind: repo_pr
+      name: Payments support context
+      approval: required
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  accidental_context_write:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "mkdir -p docs/context && printf wrong-repo > docs/context/payment-risk-rules.md"
+  publish:
+    type: git_publish
+    needs: [accidental_context_write]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: "Attempt wrong repo context update"
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.publish?.error).toContain('belongs to context update target acme/payments-docs/docs/context/');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'git-publish-blocked',
+        nodeId: 'publish',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'context_update_target_wrong_repository',
+            repository: 'acme/payments',
+          }),
+        }),
+      }),
+    );
   });
 
   it('blocks checkout before git when the repository is outside workflow authority', async () => {

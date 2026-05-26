@@ -116,6 +116,76 @@ describe('platform-governed customer-managed context', () => {
     }
   });
 
+  it('renders workflow input templates before selecting node context providers', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-platform-context-template-'));
+    try {
+      await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+      await fs.mkdir(path.join(projectDir, 'docs', 'runbooks'), { recursive: true });
+      await fs.writeFile(
+        path.join(projectDir, 'docs', 'runbooks', 'support.md'),
+        'TEMPLATED_EDGE_CONTEXT: render context refs before provider selection.',
+        'utf8',
+      );
+
+      const run = {
+        ...workflowRun(projectDir),
+        inputs: {
+          support_context: 'ctx_support_runbook',
+          support_context_label: 'Support runbook',
+          context_update_target: 'git://viewportai/vp-example-docs/docs/runbooks/support.md',
+        },
+      };
+      const selected = await resolvePromptNodeContext({
+        run,
+        nodeId: 'draft_plan',
+        workflowContext: [{ ref: '{{ inputs.support_context }}' }],
+        nodeContext: {
+          include: [
+            {
+              source: '{{ inputs.support_context }}',
+              as: '{{ inputs.support_context_label }}',
+              required: true,
+            },
+          ],
+          write_targets: [
+            {
+              kind: 'repo_pr',
+              ref: '{{ inputs.context_update_target }}',
+            },
+          ],
+        },
+        prompt: 'Draft a plan using rendered context.',
+      });
+
+      expect(selected.promptBlock).toContain('TEMPLATED_EDGE_CONTEXT');
+      expect(selected.basis.refs).toEqual([
+        expect.objectContaining({
+          ref: 'ctx_support_runbook',
+          as: 'Support runbook',
+          required: true,
+        }),
+      ]);
+      expect(selected.basis.writeTargets).toEqual([
+        expect.objectContaining({
+          kind: 'repo_pr',
+          ref: 'git://viewportai/vp-example-docs/docs/runbooks/support.md',
+        }),
+      ]);
+      expect(JSON.stringify(selected.basis)).not.toContain('{{');
+      expect(run.contextReceipts).toEqual([
+        expect.objectContaining({
+          requested: 'ctx_support_runbook',
+          usedBy: expect.objectContaining({
+            nodeId: 'draft_plan',
+            alias: 'Support runbook',
+          }),
+        }),
+      ]);
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it('registers Notion and Confluence as customer-hosted local adapters that fail closed without runner credentials', async () => {
     expect(supportedContextProviderKinds()).toEqual(
       expect.arrayContaining(['notion', 'confluence']),

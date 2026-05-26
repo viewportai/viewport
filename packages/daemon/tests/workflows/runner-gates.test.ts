@@ -5,6 +5,8 @@ import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
 import {
+  MockAdapter,
+  waitForNodeSession,
   waitForCompletedRun,
   waitForRunState,
   waitForTerminalRun,
@@ -264,6 +266,8 @@ nodes:
 
   it('keeps plan approvals blocked when reviewers request changes', async () => {
     const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
     const workflowPath = path.join(projectDir, 'workflow.yaml');
     await fs.writeFile(
       workflowPath,
@@ -307,24 +311,34 @@ nodes:
         candidate.status === 'blocked' && candidate.nodes.propose?.status === 'blocked',
     );
 
-    await daemon.workflowRunner.decideApproval(run.id, 'propose', {
+    const decision = daemon.workflowRunner.decideApproval(run.id, 'propose', {
       approved: false,
       decision: 'request_changes',
       message: 'Narrow the plan to idempotency evidence first.',
     });
+    await waitForNodeSession(daemon, run.id, 'propose');
+    adapter.lastSession?.emitAgentMessage(
+      '## Revised plan\n1. First gather idempotency evidence, then change the retry path.',
+    );
+    adapter.lastSession?.simulateIdle();
+    await decision;
 
     const blocked = await daemon.workflowRunner.getRun(run.id);
 
     expect(blocked?.status).toBe('blocked');
     expect(blocked?.error).toBeUndefined();
     expect(blocked?.nodes.propose?.status).toBe('blocked');
+    expect(blocked?.nodes.propose?.output).toContain('Revised plan');
     expect(blocked?.nodes.after?.status).toBe('queued');
     expect(blocked?.nodes.propose?.approval).toMatchObject({
-      approved: false,
-      decision: 'request_changes',
-      message: 'Narrow the plan to idempotency evidence first.',
+      feedback: {
+        previousDecision: 'request_changes',
+        message: 'Narrow the plan to idempotency evidence first.',
+      },
     });
     expect(blocked?.nodes.propose?.metadata?.plan).toMatchObject({
+      body: expect.stringContaining('Revised plan'),
+      revisionCount: 1,
       recipients: [{ role: 'pm', label: 'PMs' }],
       revision: {
         onRequestChanges: 'revise_with_agent',
@@ -333,6 +347,7 @@ nodes:
       },
     });
     expect(blocked?.events.map((event) => event.type)).toContain('plan-changes-requested');
+    expect(blocked?.events.map((event) => event.type)).toContain('plan-revised');
   });
 
   it('prepares context update proposals without persisting raw patch text', async () => {
@@ -352,6 +367,9 @@ nodes:
     idempotencyKey: "{{ run.id }}:support-runbook"
     patch:
       mode: append
+      files:
+        - path: docs/context/payment-risk-rules.md
+          operation: modify
       text: "PRIVATE_EDGE_PATCH: check duplicate delivery before changing retry backoff."
 `,
       'utf-8',
@@ -376,6 +394,15 @@ nodes:
       title: 'Add duplicate delivery learning',
       status: 'prepared',
       plaintext_patch_persisted: false,
+      patch: expect.objectContaining({
+        files: [
+          expect.objectContaining({
+            path: 'docs/context/payment-risk-rules.md',
+            operation: 'modify',
+            patch_digest: expect.stringMatching(/^sha256:/),
+          }),
+        ],
+      }),
     });
     expect(
       String(
@@ -385,5 +412,86 @@ nodes:
     ).toMatch(/^sha256:/);
     expect(completed?.events.map((event) => event.type)).toContain('context-update-proposed');
     expect(serialized).not.toContain('PRIVATE_EDGE_PATCH');
+  });
+
+  it('builds run preparation without turning prepared context into ambient node access', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: run-preparation-proof
+inputs:
+  repo:
+    type: string
+    default: viewportai/vp-example-repo
+nodes:
+  checkout_repo:
+    type: checkout
+    when: "false"
+    repository: "{{ inputs.repo }}"
+    credentialMode: runner_local
+  draft_plan:
+    type: shell
+    command: "printf plan"
+    context:
+      include:
+        - git://viewportai/vp-example-docs/docs/runbooks/
+  implement_patch:
+    type: shell
+    command: "printf implement"
+    context:
+      include:
+        - git://viewportai/vp-example-docs/docs/repo-context/
+      exclude:
+        - git://viewportai/vp-example-docs/docs/runbooks/
+  update_docs:
+    type: context_update
+    targetRef: git://viewportai/vp-example-docs/docs/context/
+    title: "Capture support learning"
+    context:
+      write_targets:
+        - ref: git://viewportai/vp-example-docs/docs/context/
+          kind: repo_pr
+          name: Support docs context
+          approval: required
+    patch:
+      mode: append
+      files:
+        - path: docs/context/payment-risk-rules.md
+          operation: modify
+      text: "PRIVATE_EDGE_PATCH: durable learning"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.runPreparation).toMatchObject({
+      schema: 'viewport.run_preparation/v1',
+      operating_repos: [expect.objectContaining({ repository: 'viewportai/vp-example-repo' })],
+      update_targets: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'git://viewportai/vp-example-docs/docs/context/',
+          repository: 'viewportai/vp-example-docs',
+          path: 'docs/context/',
+          scope: 'directory',
+          apply_mode: 'pull_request',
+        }),
+      ]),
+    });
+    expect(completed?.events.map((event) => event.type)).toContain('run-preparation-completed');
+    expect(completed?.events.map((event) => event.type)).toContain('context-source-prepared');
+    expect(completed?.events.map((event) => event.type)).toContain('context-update-target-prepared');
+    expect(completed?.events.map((event) => event.type)).not.toContain('node-context-selected');
+    expect(JSON.stringify(completed?.runPreparation)).not.toContain('PRIVATE_EDGE_PATCH');
   });
 });

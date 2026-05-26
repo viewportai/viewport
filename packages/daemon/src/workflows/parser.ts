@@ -176,7 +176,12 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     );
   }
   if (node.type === 'prompt') {
-    return [node.prompt, ...Object.values(node.agents ?? {}).map((agent) => agent.prompt)];
+    return [
+      node.prompt,
+      node.cwd,
+      ...(node.requiredFiles ?? []),
+      ...Object.values(node.agents ?? {}).map((agent) => agent.prompt),
+    ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'shell')
     return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');

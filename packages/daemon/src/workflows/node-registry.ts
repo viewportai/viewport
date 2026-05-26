@@ -87,7 +87,15 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   checkout: async (context, run, nodeId, node) => {
     if (node.type !== 'checkout') return { result: 'completed' };
     const state = run.nodes[nodeId];
-    const denial = checkoutAuthorityDenial(run, nodeId, node);
+    const renderedNode = {
+      ...node,
+      repository: await renderTemplate(node.repository, run),
+      ...(node.remote ? { remote: await renderTemplate(node.remote, run) } : {}),
+      ...(node.path ? { path: await renderTemplate(node.path, run) } : {}),
+      ...(node.ref ? { ref: await renderTemplate(node.ref, run) } : {}),
+      ...(node.branch ? { branch: await renderTemplate(node.branch, run) } : {}),
+    };
+    const denial = checkoutAuthorityDenial(run, nodeId, renderedNode);
     if (denial) {
       addEvent(run, 'checkout-blocked', denial.detail, { workflow_authority_denial: denial }, nodeId);
       throw new Error(denial.detail);
@@ -103,7 +111,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
               process.env[envNameForCredentialRef(credentialRef)],
           }
         : undefined;
-    const result = await executeCheckoutNode(run, node, credential);
+    const result = await executeCheckoutNode(run, renderedNode, credential);
     if (state) {
       state.output = JSON.stringify(result);
       state.worktreePath = result.path;
@@ -149,18 +157,24 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   git_publish: async (context, run, nodeId, node) => {
     if (node.type !== 'git_publish') return { result: 'completed' };
     const state = run.nodes[nodeId];
+    const renderedNode = {
+      ...node,
+      repository: await renderTemplate(node.repository, run),
+      ...(node.credentialRef ? { credentialRef: await renderTemplate(node.credentialRef, run) } : {}),
+      ...(node.paths ? { paths: await Promise.all(node.paths.map((entry) => renderTemplate(entry, run))) } : {}),
+    };
     const input = {
       cwd: resolveNodeCwd(run.directoryPath, await renderOptionalTemplate(node.cwd, run)),
       branch: await renderTemplate(node.branch, run),
       message: await renderTemplate(node.message, run),
     };
-    const denial = await gitPublishAuthorityDenial(run, nodeId, node, input);
+    const denial = await gitPublishAuthorityDenial(run, nodeId, renderedNode, input);
     if (denial) {
       addEvent(run, 'git-publish-blocked', denial.detail, { workflow_authority_denial: denial }, nodeId);
       throw new Error(denial.detail);
     }
 
-    const credentialRef = node.credentialRef;
+    const credentialRef = renderedNode.credentialRef;
     const credential =
       credentialRef && credentialRef.trim() !== ''
         ? {
@@ -170,7 +184,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
               process.env[envNameForCredentialRef(credentialRef)],
           }
         : undefined;
-    const result = await executeGitPublishNode(node, input, credential);
+    const result = await executeGitPublishNode(renderedNode, input, credential);
     if (state) {
       state.output = JSON.stringify(result);
       state.outputs = {
@@ -340,6 +354,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             target_ref: targetRef,
             title,
             summary: summary ?? null,
+            patch: redactedContextUpdatePatch(patch),
             patch_digest: patchDigest(patch),
             idempotency_key: idempotencyKey ?? null,
             proposal_id: proposal?.proposalId ?? null,
@@ -377,6 +392,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             title,
             status: 'failed',
             error: message,
+            patch: redactedContextUpdatePatch(patch),
             patch_digest: patchDigest(patch),
             plaintext_patch_persisted: false,
           },
@@ -627,16 +643,59 @@ async function renderContextUpdatePatch(
   run: WorkflowRunRecord,
 ): Promise<Record<string, unknown> | undefined> {
   if (!patch) return undefined;
+  const textDigest = patch.text ? digest(await renderTemplate(patch.text, run)) : undefined;
+  const files = patch.files
+    ? await Promise.all(
+        patch.files.map(async (file) => {
+          const path = await renderTemplate(file.path, run);
+          const operation = file.operation ? await renderTemplate(file.operation, run) : undefined;
+          const artifactRef = file.artifact_ref
+            ? await renderTemplate(file.artifact_ref, run)
+            : undefined;
+          const beforeDigest = file.before_digest
+            ? await renderTemplate(file.before_digest, run)
+            : undefined;
+          const afterDigest = file.after_digest ? await renderTemplate(file.after_digest, run) : undefined;
+          const patchDigest = file.patch_digest
+            ? await renderTemplate(file.patch_digest, run)
+            : digest(JSON.stringify({ path, operation, artifactRef, beforeDigest, afterDigest, textDigest }));
+          return {
+            path,
+            ...(operation ? { operation } : {}),
+            ...(artifactRef ? { artifact_ref: artifactRef } : {}),
+            ...(beforeDigest ? { before_digest: beforeDigest } : {}),
+            ...(afterDigest ? { after_digest: afterDigest } : {}),
+            patch_digest: patchDigest,
+          };
+        }),
+      )
+    : undefined;
   return {
     ...(patch.mode ? { mode: patch.mode } : {}),
-    ...(patch.text ? { text_digest: digest(await renderTemplate(patch.text, run)) } : {}),
+    ...(textDigest ? { text_digest: textDigest } : {}),
     ...(patch.digest ? { digest: await renderTemplate(patch.digest, run) } : {}),
+    ...(patch.operation ? { operation: await renderTemplate(patch.operation, run) } : {}),
+    ...(files ? { files } : {}),
   };
 }
 
 function patchDigest(patch: Record<string, unknown> | undefined): string | null {
   if (!patch) return null;
   return digest(JSON.stringify(patch));
+}
+
+function redactedContextUpdatePatch(
+  patch: Record<string, unknown> | undefined,
+): Record<string, unknown> | null {
+  if (!patch) return null;
+  return {
+    ...(typeof patch.mode === 'string' ? { mode: patch.mode } : {}),
+    ...(typeof patch.operation === 'string' ? { operation: patch.operation } : {}),
+    ...(typeof patch.digest === 'string' ? { digest: patch.digest } : {}),
+    ...(typeof patch.text_digest === 'string' ? { text_digest: patch.text_digest } : {}),
+    ...(Array.isArray(patch.files) ? { files: patch.files } : {}),
+    plaintext_patch_persisted: false,
+  };
 }
 
 function digest(value: string): string {

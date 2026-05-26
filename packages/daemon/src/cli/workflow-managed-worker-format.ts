@@ -11,7 +11,12 @@ export function capabilityPayload(
   capabilities: ManagedWorkerCapabilities,
 ): Record<string, unknown> {
   const tools = [...new Set(['shell', ...capabilities.tools])];
-  const agents = agentCapabilityPayload(capabilities.agents, capabilities.models, tools);
+  const agents = agentCapabilityPayload(
+    capabilities.agents,
+    capabilities.models,
+    tools,
+    capabilities.agentModels,
+  );
 
   return {
     tools,
@@ -31,13 +36,18 @@ function agentCapabilityPayload(
   agents: string[],
   models: string[],
   tools: string[],
+  agentModels: Record<string, string[]> | undefined,
 ): Record<string, Record<string, unknown>> {
   const uniqueAgents = [...new Set(agents.filter((agent) => agent.trim() !== ''))];
   const uniqueModels = [...new Set(models.filter((model) => model.trim() !== ''))];
 
   return Object.fromEntries(
     uniqueAgents.map((agent) => {
-      const scopedModels = uniqueModels.filter((model) => modelLooksOwnedByAgent(agent, model));
+      const explicitModels = uniqueStrings(agentModels?.[agent] ?? []);
+      const scopedModels =
+        explicitModels.length > 0
+          ? explicitModels
+          : uniqueModels.filter((model) => modelLooksOwnedByAgent(agent, model));
       const assignedModels =
         scopedModels.length > 0 || uniqueAgents.length > 1 ? scopedModels : uniqueModels;
 
@@ -53,6 +63,10 @@ function agentCapabilityPayload(
       ];
     }),
   );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim() !== ''))];
 }
 
 function modelLooksOwnedByAgent(agent: string, model: string): boolean {

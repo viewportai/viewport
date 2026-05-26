@@ -6,6 +6,7 @@ import type {
   WorkflowExecutionPolicy,
   WorkflowNodeType,
 } from './types.js';
+import type { WorkflowRunPreparation } from './run-preparation.js';
 
 export type WorkflowRunStatus =
   | 'queued'
@@ -179,6 +180,7 @@ export interface WorkflowRunRecord {
   resourceManifest?: SessionResourceManifest;
   workflowContract?: WorkflowContractBinding;
   workflowAuthorityContract?: Record<string, unknown>;
+  runPreparation?: WorkflowRunPreparation;
   runtimeTargetId?: string;
   platformRunId?: string;
   rerunOfWorkflowRunId?: string;

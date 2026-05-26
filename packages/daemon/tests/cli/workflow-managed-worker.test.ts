@@ -1189,6 +1189,93 @@ nodes:
     });
   });
 
+  it('advertises live daemon model capabilities instead of stale profile defaults', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-live-models-'));
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential: 'vpexec_profile_secret',
+        capabilities: {
+          runner_pool: 'profile-pool',
+          agents: ['claude', 'codex'],
+          models: ['opus', 'gpt-5.5'],
+        },
+      }),
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--doctor',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          capabilities: {
+            agents: {
+              claude: expect.objectContaining({
+                models: ['default', 'sonnet'],
+                default_model: 'default',
+              }),
+              codex: expect.objectContaining({
+                models: ['gpt-5.4'],
+                default_model: 'gpt-5.4',
+              }),
+            },
+            models: ['default', 'sonnet', 'gpt-5.4'],
+          },
+        });
+        expect(body.capabilities.agents.claude.models).not.toContain('opus');
+        expect(body.capabilities.agents.codex.models).not.toContain('gpt-5.5');
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({
+          agents: [
+            { id: 'claude', available: true },
+            { id: 'codex', available: true },
+          ],
+        });
+      }
+      if (urlPath === '/api/models') {
+        return jsonResponse({
+          models: [
+            { agentId: 'claude', value: 'default', displayName: 'Default' },
+            { agentId: 'claude', value: 'sonnet', displayName: 'Sonnet' },
+            { agentId: 'codex', value: 'gpt-5.4', displayName: 'gpt-5.4' },
+          ],
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+  });
+
   it('accepts generated equals-style registration profile flags', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-equals-'));
     const profilePath = path.join(dir, 'runner.json');
@@ -1550,6 +1637,557 @@ nodes:
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
   });
 
+  it('keeps polling a revised plan after sending request-changes back to the local runner', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let requestChangesApplied = false;
+    let revisedPlanApproved = false;
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_request_changes',
+            assignment_claim_token: 'vpclaim_request_changes',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: gated\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_request_changes') && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_request_changes',
+            status: 'blocked',
+            nodes: [
+              {
+                node_key: 'review_plan',
+                type: 'plan',
+                status: requestChangesApplied ? 'completed' : 'blocked',
+                metadata: {
+                  approval:
+                    requestChangesApplied
+                      ? {
+                          approved: true,
+                          decision: 'approve',
+                          message: 'Approved revised plan.',
+                          actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                        }
+                      : {
+                          approved: false,
+                          decision: 'changes_requested',
+                          message: 'Tighten scope before implementation.',
+                          actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                        },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_request_changes/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_request_changes',
+        );
+        return jsonResponse({ data: { id: 'run_platform_request_changes', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_request_changes' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_request_changes') {
+        return jsonResponse({
+          run: twoGateBlockedLocalRun('local_run_request_changes', 'review_plan'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_request_changes/approvals/review_plan') {
+        const body = JSON.parse(String(init?.body));
+        if (body.approved === false) {
+          expect(body).toMatchObject({
+            approved: false,
+            decision: 'request_changes',
+            message: 'Tighten scope before implementation.',
+          });
+          requestChangesApplied = true;
+          return jsonResponse({
+            run: twoGateBlockedLocalRun('local_run_request_changes', 'review_plan'),
+          });
+        }
+        expect(body).toMatchObject({
+          approved: true,
+          decision: 'approve',
+          message: 'Approved revised plan.',
+        });
+        revisedPlanApproved = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_request_changes' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(requestChangesApplied).toBe(true);
+    expect(revisedPlanApproved).toBe(true);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
+  });
+
+  it('continues waiting when an approved gate resumes into another blocked gate', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    let firstApprovedLocally = false;
+    let secondApprovedLocally = false;
+
+    const assignmentNodes = () => [
+      {
+        node_key: 'review_plan',
+        type: 'plan',
+        status: 'completed',
+        output: 'PM approved',
+        metadata: {
+          approval: {
+            approved: true,
+            decision: 'approve',
+            message: 'PM approval',
+            actor: { name: 'PM Reviewer', source: 'viewport-web' },
+          },
+        },
+      },
+      {
+        node_key: 'review_engineering',
+        type: 'plan',
+        status: firstApprovedLocally ? 'completed' : 'blocked',
+        output: firstApprovedLocally ? 'Engineering approved' : null,
+        metadata: firstApprovedLocally
+          ? {
+              approval: {
+                approved: true,
+                decision: 'approve',
+                message: 'Engineering approval',
+                actor: { name: 'Eng Reviewer', source: 'viewport-web' },
+              },
+            }
+          : {},
+      },
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_two_gates',
+            assignment_claim_token: 'vpclaim_two_gates',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: two-gates\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_two_gates') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_two_gates',
+        );
+        return jsonResponse({
+          data: {
+            id: 'run_platform_two_gates',
+            status: 'running',
+            nodes: assignmentNodes(),
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_two_gates/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_two_gates',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ data: { id: 'run_platform_two_gates', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_two_gates' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_two_gates') {
+        if (secondApprovedLocally) {
+          return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });
+        }
+        return jsonResponse({
+          run: firstApprovedLocally
+            ? twoGateBlockedLocalRun('local_run_two_gates', 'review_engineering')
+            : twoGateBlockedLocalRun('local_run_two_gates', 'review_plan'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_plan') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'PM approval' });
+        firstApprovedLocally = true;
+        return jsonResponse({
+          run: twoGateBlockedLocalRun('local_run_two_gates', 'review_engineering'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_engineering') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        secondApprovedLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_two_gates/approvals/review_plan',
+      expect.any(Object),
+    );
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_two_gates/approvals/review_engineering',
+      expect.any(Object),
+    );
+  });
+
+  it('continues waiting when a stale older approval was already resolved locally', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let assignmentPolls = 0;
+    let secondApprovedLocally = false;
+
+    const staleReviewPlan = {
+      node_key: 'review_plan',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Old PM approval',
+          actor: { name: 'PM Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+    const approvedEngineeringPlan = {
+      node_key: 'review_engineering',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Engineering approval',
+          actor: { name: 'Eng Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_gate',
+            assignment_claim_token: 'vpclaim_stale_gate',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: stale-gate\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_gate') && init?.method === 'GET') {
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_gate',
+            status: 'running',
+            nodes: assignmentPolls >= 2
+              ? [staleReviewPlan, approvedEngineeringPlan]
+              : [staleReviewPlan],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_gate/sync')) {
+        return jsonResponse({ data: { id: 'run_platform_stale_gate', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_stale_gate' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_gate') {
+        return jsonResponse({
+          run: secondApprovedLocally
+            ? completedLocalRun({ id: 'local_run_stale_gate' })
+            : twoGateBlockedLocalRun('local_run_stale_gate', 'review_engineering'),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_gate/approvals/review_plan') {
+        throw new Error('Worker must not replay a stale approval for a different blocked node.');
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_gate/approvals/review_engineering') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        secondApprovedLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_gate' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(assignmentPolls).toBeGreaterThanOrEqual(2);
+    expect(secondApprovedLocally).toBe(true);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_stale_gate/approvals/review_engineering',
+      expect.any(Object),
+    );
+  });
+
+  it('ignores stale resolved approvals until the currently blocked approval is visible', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    let assignmentPolls = 0;
+    let secondApprovedLocally = false;
+
+    const staleReviewPlan = {
+      node_key: 'review_plan',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Old PM approval',
+          actor: { name: 'PM Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+    const approvedEngineeringPlan = {
+      node_key: 'review_engineering',
+      type: 'plan',
+      status: 'completed',
+      metadata: {
+        approval: {
+          approved: true,
+          decision: 'approve',
+          message: 'Engineering approval',
+          actor: { name: 'Eng Reviewer', source: 'viewport-web' },
+        },
+      },
+    };
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_then_current_gate',
+            assignment_claim_token: 'vpclaim_stale_then_current_gate',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: stale-then-current-gate\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (
+        url.endsWith('/workflow-runs/run_platform_stale_then_current_gate') &&
+        init?.method === 'GET'
+      ) {
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_stale_then_current_gate',
+            status: 'running',
+            nodes:
+              assignmentPolls >= 3
+                ? [staleReviewPlan, approvedEngineeringPlan]
+                : [staleReviewPlan],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_stale_then_current_gate/sync')) {
+        return jsonResponse({
+          data: { id: 'run_platform_stale_then_current_gate', status: body.status },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_stale_then_current_gate' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_then_current_gate') {
+        return jsonResponse({
+          run: secondApprovedLocally
+            ? completedLocalRun({ id: 'local_run_stale_then_current_gate' })
+            : twoGateBlockedLocalRun('local_run_stale_then_current_gate', 'review_engineering'),
+        });
+      }
+      if (
+        urlPath ===
+        '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_plan'
+      ) {
+        throw new Error('Worker must not replay a stale approval for a different blocked node.');
+      }
+      if (
+        urlPath ===
+        '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_engineering'
+      ) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        secondApprovedLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_then_current_gate' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(assignmentPolls).toBeGreaterThanOrEqual(3);
+    expect(secondApprovedLocally).toBe(true);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_stale_then_current_gate/approvals/review_engineering',
+      expect.any(Object),
+    );
+  });
+
   it('resumes an already-started local run after a blocked assignment is reclaimed', async () => {
     process.argv = [
       'node',
@@ -1842,7 +2480,7 @@ nodes:
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
-  it('syncs stale already-resolved approvals instead of failing the worker loop', async () => {
+  it('ignores stale already-resolved approvals for a different blocked gate', async () => {
     process.argv = [
       'node',
       'vpd',
@@ -1865,7 +2503,8 @@ nodes:
       '--json',
     ];
 
-    const platformSyncStatuses: string[] = [];
+    let assignmentPolls = 0;
+    let approvedActionLocally = false;
     global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -1880,21 +2519,7 @@ nodes:
             directory_path: '/repo',
             runtime_run_id: 'local_run_stale_plan',
             status: 'running',
-            nodes: [
-              {
-                node_key: 'create_plan',
-                type: 'plan',
-                status: 'completed',
-                metadata: {
-                  approval: {
-                    approved: true,
-                    message: 'Approved while worker was down',
-                    actor: { name: 'Alice', source: 'viewport-web' },
-                    feedback: { plan_body: 'Approved revised plan.' },
-                  },
-                },
-              },
-            ],
+            nodes: [],
           },
         });
       }
@@ -1902,6 +2527,7 @@ nodes:
         expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
           'vpclaim_stale_plan',
         );
+        assignmentPolls += 1;
         return jsonResponse({
           data: {
             id: 'run_platform_stale_plan',
@@ -1920,6 +2546,23 @@ nodes:
                   },
                 },
               },
+              ...(assignmentPolls >= 2
+                ? [
+                    {
+                      node_key: 'propose_pr',
+                      type: 'action',
+                      status: 'queued',
+                      metadata: {
+                        approval: {
+                          approved: true,
+                          decision: 'approve',
+                          message: 'Approve PR',
+                          actor: { name: 'Alice', source: 'viewport-web' },
+                        },
+                      },
+                    },
+                  ]
+                : []),
             ],
           },
         });
@@ -1928,7 +2571,6 @@ nodes:
         expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
           'vpclaim_stale_plan',
         );
-        platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_stale_plan', status: body.status } });
       }
 
@@ -1951,10 +2593,20 @@ nodes:
     };
     const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
       if (urlPath === '/api/workflows/runs/local_run_stale_plan' && init?.method === 'GET') {
-        return jsonResponse({ run: staleBlockedOtherGateRun });
+        return jsonResponse({
+          run: approvedActionLocally
+            ? completedLocalRun({ id: 'local_run_stale_plan' })
+            : staleBlockedOtherGateRun,
+        });
       }
       if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/create_plan') {
-        return jsonResponse({ error: 'Workflow node is not awaiting approval: create_plan' }, 400);
+        throw new Error('Worker must not replay stale plan approval while propose_pr is blocked.');
+      }
+      if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ approved: true, message: 'Approve PR' });
+        approvedActionLocally = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_plan' }) });
       }
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
         throw new Error('Stale approved assignments must not start over.');
@@ -1970,9 +2622,10 @@ nodes:
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
 
-    expect(platformSyncStatuses).toEqual(['blocked']);
+    expect(assignmentPolls).toBeGreaterThanOrEqual(2);
+    expect(approvedActionLocally).toBe(true);
     expect(daemonFetch).toHaveBeenCalledWith(
-      '/api/workflows/runs/local_run_stale_plan/approvals/create_plan',
+      '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr',
       expect.anything(),
     );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
@@ -2269,6 +2922,7 @@ nodes:
       });
       expect(daemonRequests.map((request) => request.path)).toEqual([
         '/health',
+        '/api/models',
         '/api/directories',
         '/api/directories',
         '/api/workflows/runs',
@@ -2632,6 +3286,69 @@ function blockedLocalRun(id = 'local_run_2'): WorkflowRunRecord {
         type: 'approval-requested',
         message: 'Approval requested',
         nodeId: 'approve',
+      },
+    ],
+    createdAt: now - 2000,
+    startedAt: now - 1000,
+    updatedAt: now,
+  };
+}
+
+function twoGateBlockedLocalRun(
+  id = 'local_run_two_gates',
+  blockedNodeId: 'review_plan' | 'review_engineering' = 'review_plan',
+): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    id,
+    workflowName: 'two-gates',
+    sourceType: 'viewport_snapshot',
+    sourcePath: 'viewport://workflow/two-gates',
+    digest: 'sha256:two-gates',
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: 'schema: viewport.workflow/v1\nname: two-gates\nnodes: {}\n',
+    directoryId: 'dir_1',
+    directoryPath: '/repo',
+    machineId: 'machine_1',
+    initiation: 'cli',
+    status: 'blocked',
+    inputs: {},
+    preflight: { ok: true, issues: [] },
+    nodes: {
+      review_plan: {
+        id: 'review_plan',
+        type: 'plan',
+        status: blockedNodeId === 'review_plan' ? 'blocked' : 'completed',
+        approval:
+          blockedNodeId === 'review_plan'
+            ? {
+                prompt: 'Approve PM plan',
+                requestedAt: now,
+              }
+            : undefined,
+      },
+      review_engineering: {
+        id: 'review_engineering',
+        type: 'plan',
+        status: blockedNodeId === 'review_engineering' ? 'blocked' : 'queued',
+        approval:
+          blockedNodeId === 'review_engineering'
+            ? {
+                prompt: 'Approve engineering plan',
+                requestedAt: now,
+              }
+            : undefined,
+      },
+    },
+    artifacts: [],
+    events: [
+      {
+        id: `evt_blocked_${blockedNodeId}`,
+        runId: id,
+        timestamp: now,
+        type: 'approval-requested',
+        message: 'Approval requested',
+        nodeId: blockedNodeId,
       },
     ],
     createdAt: now - 2000,

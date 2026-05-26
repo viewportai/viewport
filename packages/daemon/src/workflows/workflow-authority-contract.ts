@@ -17,6 +17,7 @@ export interface WorkflowAuthorityDenial {
     | 'git_publish_path_outside_worktree'
     | 'git_publish_remote_mismatch'
     | 'git_publish_run_scoped_grant_unavailable'
+    | 'context_update_target_wrong_repository'
     | 'context_source_not_allowed'
     | 'shell_cwd_outside_worktree'
     | 'shell_repository_not_allowed'

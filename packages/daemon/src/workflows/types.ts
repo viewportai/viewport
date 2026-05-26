@@ -179,6 +179,12 @@ export interface WorkflowNodeBase {
 export interface WorkflowPromptNode extends WorkflowNodeBase {
   type: 'prompt';
   prompt: string;
+  cwd?: string;
+  /**
+   * Files that must exist after the prompt node completes. Paths are resolved
+   * relative to the node cwd/run directory and must stay inside that directory.
+   */
+  requiredFiles?: string[];
   agent?: string;
   provider?: string;
   model?: string;
@@ -294,6 +300,15 @@ export interface WorkflowContextUpdateNode extends WorkflowNodeBase {
     mode?: 'append' | 'replace' | 'patch';
     text?: string;
     digest?: string;
+    operation?: string;
+    files?: Array<{
+      path: string;
+      operation?: string;
+      patch_digest?: string;
+      artifact_ref?: string;
+      before_digest?: string;
+      after_digest?: string;
+    }>;
   };
   idempotencyKey?: string;
 }
@@ -318,6 +333,8 @@ export type WorkflowContextWriteTarget =
       path?: string;
       collection?: string;
       provider?: string;
+      name?: string;
+      approval?: 'required' | 'optional' | 'not_required';
     };
 
 export interface WorkflowNodeContextEnvelope {
@@ -330,6 +347,12 @@ export interface WorkflowNodeContextEnvelope {
   writeTargets?: WorkflowContextWriteTarget[];
   allow_expansion?: boolean;
   allowExpansion?: boolean;
+}
+
+export interface WorkflowContextDefaults {
+  sources?: WorkflowContext;
+  update_targets?: WorkflowContextWriteTarget[];
+  updateTargets?: WorkflowContextWriteTarget[];
 }
 
 export interface WorkflowConditionNode extends WorkflowNodeBase {
@@ -423,7 +446,7 @@ export interface WorkflowDefinition {
   description?: string;
   inputs?: Record<string, WorkflowInputDefinition>;
   triggers?: WorkflowTriggerDefinition[];
-  context?: WorkflowContext;
+  context?: WorkflowContext | WorkflowContextDefaults;
   requires?: WorkflowRequires;
   executor?: WorkflowExecutorRequirement;
   runner?: WorkflowRunnerRequirementV2;

@@ -12,6 +12,7 @@ import {
   OutputDefinitionSchema,
   RequiresSchema,
   RetryPolicySchema,
+  WorkflowContextDefinitionSchema,
 } from './workflow-schema-common.js';
 import {
   WorkflowDataCaptureDefinitionSchema,
@@ -139,6 +140,8 @@ const NodeBaseSchema = z.object({
 const PromptNodeSchema = NodeBaseSchema.extend({
   type: z.literal('prompt'),
   prompt: z.string().trim().min(1),
+  cwd: z.string().trim().min(1).optional(),
+  requiredFiles: z.array(z.string().trim().min(1)).optional(),
   agent: z.string().trim().min(1).optional(),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
@@ -250,6 +253,21 @@ const ContextUpdateNodeSchema = NodeBaseSchema.extend({
       mode: z.enum(['append', 'replace', 'patch']).optional(),
       text: z.string().trim().min(1).optional(),
       digest: z.string().trim().min(1).optional(),
+      operation: z.string().trim().min(1).optional(),
+      files: z
+        .array(
+          z
+            .object({
+              path: z.string().trim().min(1),
+              operation: z.string().trim().min(1).optional(),
+              patch_digest: z.string().trim().min(1).optional(),
+              artifact_ref: z.string().trim().min(1).optional(),
+              before_digest: z.string().trim().min(1).optional(),
+              after_digest: z.string().trim().min(1).optional(),
+            })
+            .strict(),
+        )
+        .optional(),
     })
     .strict()
     .optional(),
@@ -385,7 +403,7 @@ export const WorkflowDefinitionSchema = z
     description: z.string().optional(),
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
     triggers: z.array(WorkflowTriggerDefinitionSchema).optional(),
-    context: ContextSchema.optional(),
+    context: WorkflowContextDefinitionSchema.optional(),
     requires: RequiresSchema.optional(),
     executor: ExecutorRequirementSchema.optional(),
     runner: WorkflowRunnerRequirementSchema.optional(),

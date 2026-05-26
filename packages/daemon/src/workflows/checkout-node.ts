@@ -96,14 +96,14 @@ export async function executeCheckoutNode(
     );
   }
 
-  const destination = checkoutDestination(run.directoryPath, repository, node.path);
+  const destination = checkoutDestination(run.directoryPath, run.id, repository, node.path);
   await fs.mkdir(path.dirname(destination), { recursive: true });
 
   const remote = node.remote ?? `https://github.com/${repository}.git`;
   const credentialEnv = credential?.secret
     ? await checkoutCredentialEnv(run.directoryPath, credential.secret)
-    : undefined;
-  await git(['clone', remote, destination], run.directoryPath, credentialEnv);
+    : nonInteractiveGitEnv();
+  await git(['clone', remote, destination], run.directoryPath, credentialEnv, 45_000);
 
   if (node.ref) {
     await git(['checkout', node.ref], destination);
@@ -126,11 +126,12 @@ export async function executeCheckoutNode(
   };
 }
 
-function checkoutDestination(root: string, repository: string, configuredPath?: string): string {
+function checkoutDestination(root: string, runId: string, repository: string, configuredPath?: string): string {
   const safeRepo = repository.replace(/[^a-z0-9_.-]+/gi, '__');
+  const safeRun = runId.replace(/[^a-z0-9_.-]+/gi, '__');
   const candidate = configuredPath
     ? path.resolve(root, configuredPath)
-    : path.join(root, '.viewport', 'checkouts', safeRepo);
+    : path.join(root, '.viewport', 'checkouts', safeRun, safeRepo);
   if (!isPathWithin(candidate, root)) {
     throw new Error('Checkout path is outside the run worktree.');
   }
@@ -180,30 +181,47 @@ async function checkoutCredentialEnv(root: string, secret: string): Promise<Node
   ].join('\n');
   await fs.writeFile(helperPath, script, { mode: 0o700 });
 
-  return {
-    ...cleanChildProcessEnv(),
+  return nonInteractiveGitEnv({
     GIT_ASKPASS: helperPath,
-    GIT_TERMINAL_PROMPT: '0',
     VIEWPORT_GIT_TOKEN: secret,
+  });
+}
+
+function nonInteractiveGitEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
+  return cleanChildProcessEnv({
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new',
     // Some git builds ignore GIT_ASKPASS without DISPLAY/SSH_ASKPASS on macOS.
     DISPLAY: process.env['DISPLAY'] ?? ':0',
     TMPDIR: process.env['TMPDIR'] ?? os.tmpdir(),
-  };
+    ...overrides,
+  });
 }
 
 async function git(
   args: string[],
   cwd: string,
-  env: NodeJS.ProcessEnv = cleanChildProcessEnv(),
+  env: NodeJS.ProcessEnv = nonInteractiveGitEnv(),
+  timeoutMs = 30_000,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+      reject(new Error(`git ${args[0] ?? 'command'} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timeout.unref();
     child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
     child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
-    child.once('error', reject);
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.once('close', (code) => {
+      clearTimeout(timeout);
       if (code === 0) {
         resolve(Buffer.concat(stdout).toString('utf8'));
         return;

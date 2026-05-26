@@ -122,7 +122,11 @@ export async function preflightWorkflow(
     }
   }
 
-  if (definition.requires?.tools?.includes('git') && capabilities.directoryPath) {
+  if (
+    definition.requires?.tools?.includes('git') &&
+    capabilities.directoryPath &&
+    !usesStructuredGitWorkspace(definition)
+  ) {
     if (!(await isGitWorkTree(capabilities.directoryPath))) {
       issues.push({
         kind: 'tool',
@@ -133,6 +137,12 @@ export async function preflightWorkflow(
   }
 
   return { ok: issues.length === 0, issues };
+}
+
+function usesStructuredGitWorkspace(definition: WorkflowDefinition): boolean {
+  return Object.values(definition.nodes).some(
+    (node) => node.type === 'checkout' || node.type === 'git_publish',
+  );
 }
 
 function addModelIssue(

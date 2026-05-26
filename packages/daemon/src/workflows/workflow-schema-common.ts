@@ -110,6 +110,8 @@ export const ContextWriteTargetSchema = z.union([
       path: z.string().trim().min(1).optional(),
       collection: z.string().trim().min(1).optional(),
       provider: z.string().trim().min(1).optional(),
+      name: z.string().trim().min(1).optional(),
+      approval: z.enum(['required', 'optional', 'not_required']).optional(),
     })
     .strict()
     .refine((entry) => Boolean(entry.ref ?? entry.kind ?? entry.path ?? entry.collection), {
@@ -130,3 +132,20 @@ export const NodeContextEnvelopeSchema = z
     allowExpansion: z.boolean().optional(),
   })
   .strict();
+
+export const WorkflowContextDefaultsSchema = z
+  .object({
+    sources: ContextSchema.optional(),
+    update_targets: z.array(ContextWriteTargetSchema).optional(),
+    updateTargets: z.array(ContextWriteTargetSchema).optional(),
+  })
+  .strict()
+  .refine(
+    (entry) =>
+      Boolean(entry.sources?.length || entry.update_targets?.length || entry.updateTargets?.length),
+    {
+      message: 'Set sources or update_targets for workflow context defaults.',
+    },
+  );
+
+export const WorkflowContextDefinitionSchema = z.union([ContextSchema, WorkflowContextDefaultsSchema]);

@@ -154,6 +154,57 @@ nodes:
     );
   });
 
+  it('runs prompt nodes without explicit cwd in an isolated read-only node directory', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    await fs.mkdir(path.join(projectDir, '.viewport', 'checkouts', 'old-run'), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(projectDir, '.viewport', 'checkouts', 'old-run', 'leak.txt'),
+      'old checkout should not be visible to planning nodes',
+      'utf-8',
+    );
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-isolation-proof
+requires:
+  agents:
+    - claude
+nodes:
+  draft_plan:
+    type: prompt
+    agent: claude
+    prompt: Draft a plan from injected context only.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'draft_plan');
+    const cwd = adapter.lastSession
+      ? adapter.cwdBySession.get(adapter.lastSession)
+      : undefined;
+
+    expect(cwd).toBeTruthy();
+    expect(cwd).not.toBe(projectDir);
+    expect(cwd).toContain(path.join('.viewport', 'node-sessions', run.id, 'draft_plan'));
+    await expect(fs.access(path.join(cwd!, 'leak.txt'))).rejects.toThrow();
+
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+  });
+
   it('runs a deterministic custom command agent through the daemon workflow runner', async () => {
     const daemon = await setup();
     const script = [
@@ -611,6 +662,7 @@ nodes:
   plan:
     type: prompt
     agent: claude
+    cwd: .
     artifacts:
       plan_basis:
         path: artifacts/plan-basis.md

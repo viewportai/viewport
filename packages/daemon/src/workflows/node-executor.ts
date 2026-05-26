@@ -1,5 +1,13 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
-import { addEvent, renderTemplate, ShellNodeError } from './runtime-helpers.js';
+import {
+  addEvent,
+  renderOptionalTemplate,
+  renderTemplate,
+  resolveNodeCwd,
+  ShellNodeError,
+} from './runtime-helpers.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { collectNodeArtifacts } from './artifact-collector.js';
 import { readPromptNodeOutput, readPromptNodeTranscriptExcerpt } from './prompt-output.js';
@@ -330,6 +338,7 @@ async function executePromptNode(
   if (!state) return;
   const inlineAgents = await runInlineAgents(context, run, nodeId, node);
   const renderedPrompt = appendInlineAgentResults(await renderTemplate(node.prompt, run), inlineAgents);
+  const renderedCwd = await renderOptionalTemplate(node.cwd, run);
   const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
   const selectedContext = await resolvePromptNodeContext({
     run,
@@ -356,6 +365,7 @@ async function executePromptNode(
     run,
     nodeId,
     target: state,
+    ...(renderedCwd ? { cwd: resolveNodeCwd(run.directoryPath, renderedCwd) } : {}),
     prompt: selectedContext.promptBlock
       ? [
           selectedContext.promptBlock,
@@ -376,6 +386,58 @@ async function executePromptNode(
       return transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {};
     },
   });
+
+  await verifyPromptRequiredFiles(run, nodeId, node, renderedCwd);
+}
+
+async function verifyPromptRequiredFiles(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: Extract<WorkflowNode, { type: 'prompt' }>,
+  renderedCwd: string | undefined,
+): Promise<void> {
+  if (!node.requiredFiles || node.requiredFiles.length === 0) return;
+
+  const root = renderedCwd ? resolveNodeCwd(run.directoryPath, renderedCwd) : run.directoryPath;
+  const missing: string[] = [];
+  const invalid: string[] = [];
+
+  for (const fileTemplate of node.requiredFiles) {
+    const renderedFile = await renderTemplate(fileTemplate, run);
+    if (path.isAbsolute(renderedFile)) {
+      invalid.push(renderedFile);
+      continue;
+    }
+    const candidate = path.resolve(root, renderedFile);
+    const relative = path.relative(root, candidate);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      invalid.push(renderedFile);
+      continue;
+    }
+    try {
+      const stat = await fs.stat(candidate);
+      if (!stat.isFile()) missing.push(renderedFile);
+    } catch {
+      missing.push(renderedFile);
+    }
+  }
+
+  if (invalid.length > 0 || missing.length > 0) {
+    const details = [
+      invalid.length > 0 ? `invalid required file path(s): ${invalid.join(', ')}` : null,
+      missing.length > 0 ? `missing required file(s): ${missing.join(', ')}` : null,
+    ]
+      .filter(Boolean)
+      .join('; ');
+    addEvent(
+      run,
+      'node-failed',
+      `Prompt node ${nodeId} did not produce required files: ${details}`,
+      { requiredFiles: node.requiredFiles, invalid, missing, cwd: root },
+      nodeId,
+    );
+    throw new Error(`Prompt node ${nodeId} did not produce required files: ${details}`);
+  }
 }
 
 async function blockForApproval(

@@ -8,12 +8,13 @@ import type {
 } from './platform-context-client.js';
 import type {
   WorkflowContext,
+  WorkflowContextDefaults,
   WorkflowContextNode,
   WorkflowContextReceiptRecord,
   WorkflowNodeContextEnvelope,
   WorkflowRunRecord,
 } from './types.js';
-import { addEvent, renderOptionalTemplate } from './runtime-helpers.js';
+import { addEvent, renderOptionalTemplate, renderTemplate } from './runtime-helpers.js';
 import { contextAuthorityDenial } from './workflow-authority-contract.js';
 
 interface NormalizedContextRef {
@@ -70,7 +71,7 @@ export async function executeContextNode(
   node: WorkflowContextNode,
 ): Promise<void> {
   const state = run.nodes[nodeId];
-  const refs = normalizeRefs(node.refs ?? []);
+  const refs = await renderContextRefs(normalizeRefs(node.refs ?? []), run);
   const query = await renderOptionalTemplate(node.query, run);
   const providers = selectProviders(run.resourceManifest?.contract.contextProviders ?? [], refs);
   const denied = providers
@@ -164,12 +165,16 @@ export async function executeContextNode(
 export async function resolvePromptNodeContext(input: {
   run: WorkflowRunRecord;
   nodeId: string;
-  workflowContext?: WorkflowContext;
+  workflowContext?: WorkflowContext | WorkflowContextDefaults;
   nodeContext?: WorkflowNodeContextEnvelope;
   prompt: string;
   platformContextClient?: WorkflowPlatformContextClient;
 }): Promise<NodeContextSelection> {
-  const effective = effectivePromptContext(input.workflowContext ?? [], input.nodeContext);
+  const effective = await effectivePromptContext(
+    input.workflowContext ?? [],
+    input.nodeContext,
+    input.run,
+  );
   if (effective.refs.length === 0) {
     return emptyNodeContextBasis(input.nodeId);
   }
@@ -261,11 +266,12 @@ export async function resolvePromptNodeContext(input: {
     }
   }
 
+  const receiptQuery = sanitizeContextQueryForReceipt(query ?? null);
   const basis: NodeContextSelection['basis'] = {
     schema: 'viewport.node_context_basis/v1',
     nodeId: input.nodeId,
     mode: effective.mode,
-    query: query ?? null,
+    query: receiptQuery,
     maxItems: effective.maxItems,
     writeTargets: effective.writeTargets,
     refs: effective.refs.map((ref) => ({
@@ -298,6 +304,24 @@ export async function resolvePromptNodeContext(input: {
     basis,
     briefing,
   };
+}
+
+export function sanitizeContextQueryForReceipt(query: string | null): string | null {
+  if (query === null) return null;
+
+  return query
+    .replace(
+      /("(?:token|access_token|refresh_token|bot_token|api_key|client_secret|signing_secret|private_key)"\s*:\s*")([^"]*)(")/gi,
+      '$1[redacted]$3',
+    )
+    .replace(
+      /('(?:token|access_token|refresh_token|bot_token|api_key|client_secret|signing_secret|private_key)'\s*:\s*')([^']*)(')/gi,
+      '$1[redacted]$3',
+    )
+    .replace(
+      /\b((?:xox[baprs]-|gh[ps]_|vp(?:claim|relay|runner)_[A-Za-z0-9_-]*|slack_[A-Za-z0-9_-]*)(?:[A-Za-z0-9_-]+)?)/g,
+      '[redacted-token]',
+    );
 }
 
 function buildContextReceipts(input: {
@@ -454,21 +478,27 @@ function buildContextBriefing(input: {
   };
 }
 
-function effectivePromptContext(
-  workflowContext: WorkflowContext,
+async function effectivePromptContext(
+  workflowContext: WorkflowContext | WorkflowContextDefaults,
   nodeContext: WorkflowNodeContextEnvelope | undefined,
-): {
+  run: WorkflowRunRecord,
+): Promise<{
   mode: 'workflow_default' | 'node_envelope';
   refs: NormalizedContextRef[];
   excludedRefs: string[];
   maxItems: number | null;
   query?: string;
   writeTargets: unknown[];
-} {
-  const defaultRefs = normalizeRefs(workflowContext);
+}> {
+  const workflowSources = Array.isArray(workflowContext) ? workflowContext : (workflowContext.sources ?? []);
+  const defaultRefs = await renderContextRefs(normalizeRefs(workflowSources), run);
   const hasNodeEnvelope = Boolean(nodeContext);
-  const include = nodeContext?.include ? normalizeRefs(nodeContext.include) : defaultRefs;
-  const excludedRefs = normalizeRefs(nodeContext?.exclude ?? []).map((ref) => ref.ref);
+  const include = nodeContext?.include
+    ? await renderContextRefs(normalizeRefs(nodeContext.include), run)
+    : defaultRefs;
+  const excludedRefs = (await renderContextRefs(normalizeRefs(nodeContext?.exclude ?? []), run)).map(
+    (ref) => ref.ref,
+  );
   const excluded = new Set(excludedRefs);
   const refs = include.filter((ref) => !excluded.has(ref.ref));
 
@@ -492,8 +522,49 @@ function effectivePromptContext(
     excludedRefs,
     maxItems: positiveInteger(nodeContext?.max_items ?? nodeContext?.maxItems),
     query: nodeContext?.query,
-    writeTargets: nodeContext?.write_targets ?? nodeContext?.writeTargets ?? [],
+    writeTargets: await renderContextWriteTargets(
+      nodeContext?.write_targets ?? nodeContext?.writeTargets ?? [],
+      run,
+    ),
   };
+}
+
+async function renderContextRefs(
+  refs: NormalizedContextRef[],
+  run: WorkflowRunRecord,
+): Promise<NormalizedContextRef[]> {
+  const rendered = await Promise.all(
+    refs.map(async (ref) => ({
+      ...ref,
+      ref: await renderTemplate(ref.ref, run),
+      as: ref.as !== undefined ? await renderTemplate(ref.as, run) : undefined,
+      description:
+        ref.description !== undefined ? await renderTemplate(ref.description, run) : undefined,
+    })),
+  );
+  return rendered.filter((ref) => ref.ref.trim() !== '');
+}
+
+async function renderContextWriteTargets(
+  targets: unknown[],
+  run: WorkflowRunRecord,
+): Promise<unknown[]> {
+  return await Promise.all(targets.map((target) => renderContextWriteTarget(target, run)));
+}
+
+async function renderContextWriteTarget(target: unknown, run: WorkflowRunRecord): Promise<unknown> {
+  if (typeof target === 'string') {
+    return await renderTemplate(target, run);
+  }
+  if (!target || typeof target !== 'object' || Array.isArray(target)) {
+    return target;
+  }
+
+  const rendered: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(target)) {
+    rendered[key] = typeof value === 'string' ? await renderTemplate(value, run) : value;
+  }
+  return rendered;
 }
 
 function formatPromptContextBlock(

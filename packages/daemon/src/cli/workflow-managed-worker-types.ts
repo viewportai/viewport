@@ -38,6 +38,7 @@ export interface ManagedWorkerCapabilities {
   tools: string[];
   agents: string[];
   models: string[];
+  agentModels?: Record<string, string[]>;
   integrations: string[];
   secrets: string[];
 }

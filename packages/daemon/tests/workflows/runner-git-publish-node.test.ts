@@ -45,10 +45,14 @@ describe('workflow runner git publish node', () => {
       `
 schema: viewport.workflow/v1
 name: git-publish-proof
+inputs:
+  repo:
+    type: string
+    default: acme/payments
 nodes:
   repo:
     type: checkout
-    repository: acme/payments
+    repository: "{{ inputs.repo }}"
     remote: ${JSON.stringify(remoteDir)}
   edit:
     type: shell
@@ -58,7 +62,7 @@ nodes:
   publish:
     type: git_publish
     needs: [edit]
-    repository: acme/payments
+    repository: "{{ inputs.repo }}"
     cwd: "{{ nodes.repo.outputs.path }}"
     branch: viewport/proof
     message: Publish proof update

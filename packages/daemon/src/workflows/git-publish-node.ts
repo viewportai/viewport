@@ -10,6 +10,10 @@ import {
   type WorkflowAuthorityDenial,
 } from './workflow-authority-contract.js';
 import { cleanChildProcessEnv } from '../security/child-env.js';
+import {
+  gitContextTargetAllowsPath,
+  parseGitContextUpdateTargetRef,
+} from './context-update-targets.js';
 
 export interface RenderedGitPublishInput {
   cwd: string;
@@ -99,6 +103,9 @@ export async function gitPublishAuthorityDenial(
     };
   }
 
+  const contextTargetDenial = await contextUpdateTargetPublishDenial(run, nodeId, repository, input.cwd, node.paths);
+  if (contextTargetDenial) return contextTargetDenial;
+
   return null;
 }
 
@@ -187,6 +194,92 @@ function normalizeRepository(value: string | undefined): string {
 function isPathWithin(candidate: string, root: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+async function contextUpdateTargetPublishDenial(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  repository: string,
+  cwd: string,
+  publishPaths: string[] | undefined,
+): Promise<WorkflowAuthorityDenial | null> {
+  const targets = (run.runPreparation?.update_targets ?? [])
+    .map((target) => {
+      const ref = typeof target['ref'] === 'string' ? target['ref'] : null;
+      return ref ? parseGitContextUpdateTargetRef(ref) : null;
+    })
+    .filter((target): target is NonNullable<ReturnType<typeof parseGitContextUpdateTargetRef>> => Boolean(target));
+
+  if (targets.length === 0) return null;
+
+  const changedPaths = await gitChangedPaths(cwd);
+  const publishablePaths = filterPublishablePaths(changedPaths, publishPaths);
+  if (publishablePaths.length === 0) return null;
+
+  for (const target of targets) {
+    if (target.repository === repository) continue;
+
+    const conflictingPath = publishablePaths.find((changedPath) =>
+      gitContextTargetAllowsPath(target, changedPath),
+    );
+    if (!conflictingPath) continue;
+
+    return {
+      schema: 'viewport.workflow_authority_denial/v1',
+      reason: 'context_update_target_wrong_repository',
+      runId: run.id,
+      nodeId,
+      repository,
+      detail:
+        `Git publish would include ${conflictingPath} in ${repository}, but that path belongs to context update target ${target.repository}` +
+        (target.path ? `/${target.path}` : '') +
+        '. Use the context update proposal/writeback path instead of writing target docs into the operating repo.',
+      contractDigest: workflowAuthorityContractDigest(run),
+      allowed: [repository],
+    };
+  }
+
+  return null;
+}
+
+async function gitChangedPaths(cwd: string): Promise<string[]> {
+  const status = await git(['status', '--porcelain', '--untracked-files=all'], cwd);
+  return status
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const pathPart = line.length > 3 ? line.slice(3) : line;
+      const renameSeparator = ' -> ';
+      return normalizeGitPath(pathPart.includes(renameSeparator)
+        ? pathPart.slice(pathPart.indexOf(renameSeparator) + renameSeparator.length)
+        : pathPart);
+    })
+    .filter((value): value is string => Boolean(value));
+}
+
+function filterPublishablePaths(paths: string[], publishPaths: string[] | undefined): string[] {
+  const scopes = (publishPaths ?? [])
+    .map(normalizeGitPath)
+    .filter((value): value is string => Boolean(value));
+  if (scopes.length === 0) return paths;
+
+  return paths.filter((changedPath) =>
+    scopes.some((scope) => changedPath === scope || changedPath.startsWith(`${scope.replace(/\/+$/, '')}/`)),
+  );
+}
+
+function normalizeGitPath(value: string | undefined): string | null {
+  const normalized = (value ?? '')
+    .replace(/^"+|"+$/g, '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+  if (!normalized || normalized.split('/').some((segment) => segment === '..' || segment === '.')) {
+    return null;
+  }
+
+  return normalized;
 }
 
 async function git(

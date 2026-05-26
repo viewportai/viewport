@@ -1,7 +1,8 @@
 import type { Daemon } from '../core/daemon.js';
+import { createHash } from 'node:crypto';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
-import { addEvent, normalizeInputs } from './runtime-helpers.js';
+import { addEvent, normalizeInputs, renderTemplate } from './runtime-helpers.js';
 import { WorkflowRunPlatformSync } from './platform-sync.js';
 import { WorkflowSessionLinkStore } from './session-links.js';
 import { WorkflowRunStore } from './store.js';
@@ -16,9 +17,12 @@ import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './r
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import { buildWorkflowContractBinding } from './contract-binding.js';
 import { recordWorkflowHookEvent } from './runner-hook-events.js';
+import { runWorkflowDaemonSession } from './daemon-session.js';
+import { buildRunPreparation } from './run-preparation.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
+  WorkflowNode,
   WorkflowNodeRunState,
   WorkflowRunRecord,
   WorkflowRunRequest,
@@ -178,6 +182,33 @@ export class WorkflowRunner {
       warningCount: resourceManifest.warnings.length,
       conflictCount: resourceManifest.conflicts.length,
     });
+    try {
+      const { preparation, receipts } = await buildRunPreparation(parsed, run);
+      run.runPreparation = preparation;
+      addEvent(run, 'run-preparation-completed', 'Run preparation completed', {
+        preparation,
+        receiptCount: receipts.length,
+      });
+      for (const receipt of receipts) {
+        addEvent(
+          run,
+          receipt.kind.replaceAll('_', '-') as
+            | 'operating-repo-prepared'
+            | 'context-source-prepared'
+            | 'context-update-target-prepared'
+            | 'credential-binding-verified'
+            | 'side-effect-prepared',
+          receipt.reason,
+          { ...receipt },
+          receipt.node_id,
+        );
+      }
+    } catch (error) {
+      addEvent(run, 'run-preparation-failed', 'Run preparation failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     if (run.executionPolicy) {
       addEvent(
         run,
@@ -220,6 +251,96 @@ export class WorkflowRunner {
       initiation: 'cli',
       rerunOfWorkflowRunId: sourceRun.id,
     });
+  }
+
+  private async revisePlanAfterChangesRequested(
+    run: WorkflowRunRecord,
+    nodeId: string,
+    state: WorkflowNodeRunState,
+    decision: WorkflowApprovalDecision,
+  ): Promise<void> {
+    const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+    const node = parsed.definition.nodes[nodeId] as WorkflowNode | undefined;
+    if (node?.type !== 'plan') return;
+
+    const revision = node.revision;
+    if (revision?.onRequestChanges !== 'revise_with_agent' || !revision.prompt) return;
+
+    const revisedAt = Date.now();
+    const revisionPrompt = await renderTemplate(revision.prompt, run);
+    state.status = 'running';
+
+    const result = await runWorkflowDaemonSession(
+      {
+        daemon: this.daemon,
+        sessionLinks: this.sessionLinks,
+        saveAndEmit: (candidate) => this.saveAndEmit(candidate),
+      },
+      {
+        run,
+        nodeId,
+        target: state,
+        prompt: revisionPrompt,
+        ...(revision.agent ? { agent: revision.agent } : {}),
+        ...(revision.model ? { model: revision.model } : {}),
+      },
+    );
+
+    const revisionHistory = Array.isArray(state.metadata?.['revision_history'])
+      ? state.metadata['revision_history']
+      : [];
+    const previousPlan = isRecord(state.metadata?.['plan']) ? state.metadata['plan'] : {};
+    const planTitle = typeof previousPlan['title'] === 'string' ? previousPlan['title'] : nodeId;
+    state.output = result.output;
+    state.status = 'blocked';
+    state.error = undefined;
+    state.metadata = {
+      ...(state.metadata ?? {}),
+      revision_history: [
+        ...revisionHistory,
+        {
+          requestedAt: state.approval?.resolvedAt ?? revisedAt,
+          revisedAt,
+          message: decision.message ?? null,
+          actor: decision.actor ?? null,
+          sessionId: result.sessionId,
+          nativeSessionId: result.nativeSessionId,
+          body_sha256: hashString(result.output),
+        },
+      ],
+      plan: {
+        ...previousPlan,
+        body: result.output,
+        revisedAt,
+        revisionCount: revisionHistory.length + 1,
+      },
+    };
+    state.approval = {
+      prompt: `Approve revised plan: ${planTitle}`,
+      requestedAt: revisedAt,
+      feedback: {
+        previousDecision: 'request_changes',
+        message: decision.message ?? null,
+        actor: decision.actor ?? null,
+      },
+    };
+    run.status = 'blocked';
+    run.error = undefined;
+    run.updatedAt = revisedAt;
+    addEvent(
+      run,
+      'plan-revised',
+      `Plan node ${nodeId} produced a revised plan after changes were requested`,
+      {
+        message: decision.message ?? null,
+        actor: decision.actor ?? null,
+        body_sha256: hashString(result.output),
+      },
+      nodeId,
+    );
+    addEvent(run, 'approval-requested', `Approval requested for revised plan ${nodeId}`, {
+      prompt: state.approval.prompt,
+    }, nodeId);
   }
 
   async decideApproval(
@@ -294,6 +415,7 @@ export class WorkflowRunner {
         },
         nodeId,
       );
+      await this.revisePlanAfterChangesRequested(run, nodeId, state, decision);
       await this.saveAndEmit(run);
       return run;
     }
@@ -464,4 +586,12 @@ function sanitizeRuntimeSecretEnv(
       ([key, secret]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && secret.length > 0,
     ),
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hashString(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }

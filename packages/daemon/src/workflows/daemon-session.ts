@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
 import type { SessionMessage } from '../core/types.js';
 import { addEvent } from './runtime-helpers.js';
@@ -31,6 +33,7 @@ export interface WorkflowDaemonSessionRequest {
   nodeId: string;
   target: WorkflowSessionTarget;
   prompt: string;
+  cwd?: string;
   agent?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
@@ -63,10 +66,29 @@ export async function runWorkflowDaemonSession(
 
   context.daemon.on('session:message', messageHandler);
   try {
-    const sessionId = await context.daemon.launchSession(run.directoryId, request.prompt, {
+    const sessionCwd =
+      request.cwd ??
+      path.join(run.directoryPath, '.viewport', 'node-sessions', run.id, nodeId);
+    await fs.mkdir(sessionCwd, { recursive: true });
+    const directoryId = (await context.daemon.directoryManager.register(sessionCwd, {
+      gitTracker: {
+        enabled: false,
+        commitOn: [],
+        ignore: [],
+        autoSquashOnComplete: false,
+        branchPrefix: 'viewport/session-',
+        commitAuthor: 'Viewport Agent <noreply@example.test>',
+        maxCommitsPerSession: 500,
+        worktreeRoot: '.viewport/worktrees',
+      },
+    })).id;
+    const sessionId = await context.daemon.launchSession(directoryId, request.prompt, {
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),
       ...(request.effort ? { effort: request.effort } : {}),
+      sandboxMode: request.cwd ? 'workspace-write' : 'read-only',
+      approvalPolicy: 'never',
+      trust: 'automated',
       contextInjection: 'disabled',
     });
     activeSessionId = sessionId;

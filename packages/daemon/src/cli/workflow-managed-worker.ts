@@ -54,6 +54,7 @@ export async function workflowWorker(): Promise<void> {
     throw new Error('Daemon is not running. Start it first with `vpd start`.');
   }
   await validateDaemonAgentCapabilities(options);
+  await syncDaemonModelCapabilities(options);
   if (hasFlag('doctor')) {
     await heartbeat(options, 'online', 'idle');
     await safeHeartbeat(options, 'offline', 'offline');
@@ -139,8 +140,23 @@ export async function workflowWorker(): Promise<void> {
             approved,
             assignment.assignment_claim_token,
           );
-          stats.completed += resumed.status === 'completed' ? 1 : 0;
-          stats.failed += resumed.status === 'failed' || resumed.status === 'canceled' ? 1 : 0;
+          const blockedIds = blockedNodeIds(resumed);
+          const shouldKeepWaiting =
+            resumed.status === 'blocked' &&
+            (!alreadyResolvedApprovalRuns.has(resumed) || !blockedIds.has(approved.node_key)) &&
+            (!blockedIds.has(approved.node_key) ||
+              managedApprovalDecision(approved) === 'request_changes');
+          const finalRun =
+            shouldKeepWaiting
+              ? await waitForApprovalAndResume(
+                  options,
+                  assignment.id,
+                  localRun.id,
+                  assignment.assignment_claim_token,
+                )
+              : resumed;
+          stats.completed += finalRun.status === 'completed' ? 1 : 0;
+          stats.failed += finalRun.status === 'failed' || finalRun.status === 'canceled' ? 1 : 0;
 
           if (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns) {
             break;
@@ -232,6 +248,47 @@ async function validateDaemonAgentCapabilities(options: ManagedWorkerOptions): P
       ', ',
     )}. Start the daemon with the matching built-in agent installed, or configure a custom command agent with VIEWPORT_CUSTOM_AGENT_COMMAND.`,
   );
+}
+
+async function syncDaemonModelCapabilities(options: ManagedWorkerOptions): Promise<void> {
+  const response = await daemonFetch('/api/models', {
+    method: 'GET',
+    timeoutMs: 30_000,
+  });
+  if (!response?.ok) {
+    return;
+  }
+
+  const body = (await response.json()) as {
+    models?: Array<{
+      agentId?: unknown;
+      agent_id?: unknown;
+      value?: unknown;
+      id?: unknown;
+    }>;
+  };
+  const catalog = daemonModelCatalog(body.models ?? []);
+  const allModels = [...new Set(Object.values(catalog).flat())];
+  if (allModels.length === 0) {
+    return;
+  }
+
+  options.capabilities.models = allModels;
+  options.capabilities.agentModels = catalog;
+}
+
+function daemonModelCatalog(
+  models: Array<{ agentId?: unknown; agent_id?: unknown; value?: unknown; id?: unknown }>,
+): Record<string, string[]> {
+  const catalog: Record<string, string[]> = {};
+  for (const model of models) {
+    const agentId = stringValue(model.agentId) ?? stringValue(model.agent_id);
+    const value = stringValue(model.value) ?? stringValue(model.id);
+    if (!agentId || !value) continue;
+    catalog[agentId] = [...new Set([...(catalog[agentId] ?? []), value])];
+  }
+
+  return catalog;
 }
 
 function resolveWorkerOptions(): ManagedWorkerOptions {
@@ -1220,14 +1277,33 @@ async function waitForApprovalAndResume(
       assignmentClaimToken,
       localRunId,
     );
-    if (approved) {
-      return resumeApprovedLocalRun(
+      if (approved) {
+      const resumed = await resumeApprovedLocalRun(
         options,
         platformRunId,
         localRunId,
         approved,
         assignmentClaimToken,
       );
+      if (resumed.status !== 'blocked') return resumed;
+      const blockedIds = blockedNodeIds(resumed);
+      if (alreadyResolvedApprovalRuns.has(resumed) && !blockedIds.has(approved.node_key)) {
+        const nextApproved = await approvedNodeForAssignment(
+          options,
+          platformRunId,
+          assignmentClaimToken,
+          localRunId,
+        );
+        if (nextApproved && nextApproved.node_key !== approved.node_key && blockedIds.has(nextApproved.node_key)) {
+          await delay(options.sleepSeconds * 1000);
+          continue;
+        }
+        await delay(options.sleepSeconds * 1000);
+        return resumed;
+      }
+      if (blockedIds.has(approved.node_key) && managedApprovalDecision(approved) !== 'request_changes') {
+        return resumed;
+      }
     }
     if (assignment.status === 'canceled' || assignment.status === 'failed') {
       const canceled = await daemonJson(
@@ -1246,6 +1322,8 @@ async function waitForApprovalAndResume(
   }
 }
 
+const alreadyResolvedApprovalRuns = new WeakSet<WorkflowRunRecord>();
+
 async function approvedNodeForAssignment(
   options: ManagedWorkerOptions,
   platformRunId: string,
@@ -1253,16 +1331,25 @@ async function approvedNodeForAssignment(
   localRunId?: string | null,
 ): Promise<NonNullable<ManagedAssignment['nodes']>[number] | null> {
   const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-  const approvedNodes = assignment.nodes?.filter(isApprovedManagedGateNode) ?? [];
-  if (approvedNodes.length <= 1 || !localRunId) return approvedNodes[0] ?? null;
+  const approvedNodes = assignment.nodes?.filter(isResolvedManagedGateNode) ?? [];
+  if (approvedNodes.length === 0) return null;
+  if (!localRunId) return approvedNodes[0] ?? null;
 
   const localRun = await readExistingLocalRun(localRunId);
-  const blockedNodeIds = new Set(
-    Object.values(localRun?.nodes ?? {})
+  const blockedIds = blockedNodeIds(localRun);
+  if (blockedIds.size > 0) {
+    return approvedNodes.find((node) => blockedIds.has(node.node_key)) ?? null;
+  }
+
+  return approvedNodes[0] ?? null;
+}
+
+function blockedNodeIds(run?: WorkflowRunRecord | null): Set<string> {
+  return new Set(
+    Object.values(run?.nodes ?? {})
       .filter((node) => node.status === 'blocked')
       .map((node) => node.id),
   );
-  return approvedNodes.find((node) => blockedNodeIds.has(node.node_key)) ?? approvedNodes[0] ?? null;
 }
 
 async function resumeApprovedLocalRun(
@@ -1279,7 +1366,8 @@ async function resumeApprovedLocalRun(
         approved.node_key,
       )}`,
       {
-        approved: true,
+        approved: managedApprovalApproved(approved),
+        decision: managedApprovalDecision(approved),
         message: approvalMessage(approved),
         actor: approvalActor(approved),
         expectedActionDigest: approvalExpectedActionDigest(approved),
@@ -1292,6 +1380,7 @@ async function resumeApprovedLocalRun(
 
     const current = await readExistingLocalRun(localRunId);
     if (!current) throw error;
+    alreadyResolvedApprovalRuns.add(current);
     await syncLocalRun(options, platformRunId, current, assignmentClaimToken);
 
     return current;
@@ -1314,16 +1403,48 @@ function isAlreadyResolvedApprovalError(error: unknown): boolean {
   return message.includes('Workflow node is not awaiting approval');
 }
 
-function isApprovedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
+function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
   if (!['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? ''))) return false;
   if (node.status === 'completed') return true;
-  if (node.type !== 'action' || node.status !== 'queued') return false;
   const approval = node.metadata?.['approval'];
+  if (
+    (node.type === 'plan' || node.type === 'gate' || node.type === 'approval') &&
+    node.status === 'blocked' &&
+    approval &&
+    typeof approval === 'object' &&
+    'approved' in approval
+  ) {
+    return true;
+  }
+  if (node.type !== 'action' || node.status !== 'queued') return false;
   return (
     !!approval &&
     typeof approval === 'object' &&
     (approval as { approved?: unknown }).approved === true
   );
+}
+
+function managedApprovalApproved(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
+  const approval = node.metadata?.['approval'];
+  if (approval && typeof approval === 'object' && 'approved' in approval) {
+    return (approval as { approved?: unknown }).approved === true;
+  }
+  return true;
+}
+
+function managedApprovalDecision(
+  node: NonNullable<ManagedAssignment['nodes']>[number],
+): 'approve' | 'request_changes' | 'reject' {
+  const approval = node.metadata?.['approval'];
+  if (approval && typeof approval === 'object') {
+    const approved = (approval as { approved?: unknown }).approved;
+    const decision = (approval as { decision?: unknown }).decision;
+    if (approved === false) {
+      if (decision === 'request_changes' || decision === 'changes_requested') return 'request_changes';
+      return 'reject';
+    }
+  }
+  return 'approve';
 }
 
 async function getAssignment(
