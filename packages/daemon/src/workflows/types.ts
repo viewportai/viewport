@@ -221,7 +221,8 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
 
 export interface WorkflowShellNode extends WorkflowNodeBase {
   type: 'shell';
-  command: string;
+  command?: string;
+  argv?: string[];
   cwd?: string;
 }
 

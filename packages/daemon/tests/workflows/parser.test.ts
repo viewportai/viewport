@@ -49,6 +49,63 @@ describe('workflow parser', () => {
     expect(WORKFLOW_SCHEMA_VERSION).toBe('viewport.workflow/v1');
   });
 
+  it('accepts structured argv shell nodes', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: argv-shell
+nodes:
+  proof:
+    type: shell
+    argv:
+      - npm
+      - test
+      - "--"
+      - "{{ inputs.target }}"
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const proof = parsed.definition.nodes.proof;
+    expect(proof?.type).toBe('shell');
+    if (proof?.type === 'shell') {
+      expect(proof.argv).toEqual(['npm', 'test', '--', '{{ inputs.target }}']);
+      expect(proof.command).toBeUndefined();
+    }
+  });
+
+  it('requires shell nodes to set command or argv, but not both', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: missing-shell-command
+nodes:
+  proof:
+    type: shell
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/must set command or argv/);
+
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: duplicate-shell-command
+nodes:
+  proof:
+    type: shell
+    command: npm test
+    argv:
+      - npm
+      - test
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/must set command or argv, not both/);
+  });
+
   it('accepts Slack source-accepted and inbox notification config objects', () => {
     const parsed = parseWorkflow(
       `

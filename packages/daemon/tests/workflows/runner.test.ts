@@ -108,6 +108,53 @@ nodes:
     expect(runs.map((item) => item.id)).toContain(run.id);
   });
 
+  it('runs a shell workflow through structured argv without sh -lc', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: argv-shell-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - "ok"
+`,
+      'utf-8',
+    );
+
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId,
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.output).toBe('ok');
+    expect(completed?.nodes.proof?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'proof',
+      status: 'completed',
+      executor: {
+        kind: 'argv',
+        command: 'printf',
+        args_count: 1,
+        raw_args_persisted: false,
+      },
+      command_digest: expect.stringMatching(/^sha256:/),
+      command_persisted: false,
+      env_values_persisted: false,
+      exit_code: 0,
+    });
+  });
+
   it('records node authority acknowledgement before executing a node', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

@@ -186,7 +186,8 @@ const AgentNodeSchema = NodeBaseSchema.extend({
 
 const ShellNodeSchema = NodeBaseSchema.extend({
   type: z.literal('shell'),
-  command: z.string().trim().min(1),
+  command: z.string().trim().min(1).optional(),
+  argv: z.array(z.string().trim().min(1)).min(1).optional(),
   cwd: z.string().trim().min(1).optional(),
 }).strict();
 

@@ -107,6 +107,9 @@ function validateWorkflowGraph(definition: WorkflowDefinition): void {
     if (!/^[a-zA-Z0-9._/-]+$/.test(nodeId)) {
       throw new Error(`Invalid workflow node id: ${nodeId}`);
     }
+    if (node.type === 'shell') {
+      validateShellInvocation(nodeId, node.command, node.argv);
+    }
     for (const dependency of node.needs ?? []) {
       if (!nodeIds.has(dependency)) {
         throw new Error(`Workflow node ${nodeId} depends on missing node ${dependency}`);
@@ -188,7 +191,9 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'shell')
-    return [node.command, node.cwd].filter((value): value is string => typeof value === 'string');
+    return [node.command, ...(node.argv ?? []), node.cwd].filter(
+      (value): value is string => typeof value === 'string',
+    );
   if (node.type === 'checkout') {
     return [
       node.repository,
@@ -283,6 +288,19 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
     return templates;
   }
   return [];
+}
+
+function validateShellInvocation(
+  nodeId: string,
+  command: string | undefined,
+  argv: string[] | undefined,
+): void {
+  if (command && argv && argv.length > 0) {
+    throw new Error(`Workflow shell node ${nodeId} must set command or argv, not both`);
+  }
+  if (!command && (!argv || argv.length === 0)) {
+    throw new Error(`Workflow shell node ${nodeId} must set command or argv`);
+  }
 }
 
 function isBuiltinOutputReference(

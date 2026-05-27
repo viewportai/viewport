@@ -5,6 +5,7 @@ import { executeActionAdapter, WorkflowActionError } from './action-adapters.js'
 import {
   addEvent,
   renderOptionalTemplate,
+  runArgvNode,
   renderShellCommandTemplate,
   renderTemplate,
   resolveNodeCwd,
@@ -246,7 +247,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       run.directoryPath,
       await renderOptionalTemplate(node.cwd, run),
     );
-    const command = await renderShellCommandTemplate(node.command, run);
+    const invocation = await renderShellInvocation(node, run);
     const env = await resolveNodeEnv(context, run, node);
     if (state) {
       state.metadata = {
@@ -254,7 +255,8 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         shell_execution: buildShellExecutionReceipt({
           run,
           nodeId,
-          command,
+          commandDigestMaterial: invocation.digestMaterial,
+          executor: invocation.executor,
           cwd: artifactCwd,
           env,
           timeoutSeconds: node.timeoutSeconds,
@@ -263,7 +265,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         }),
       };
     }
-    const denial = shellAuthorityDenial(run, nodeId, command, artifactCwd);
+    const denial = shellAuthorityDenial(run, nodeId, invocation.authorityCommand, artifactCwd);
     if (denial) {
       if (state) {
         state.metadata = {
@@ -271,7 +273,8 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           shell_execution: buildShellExecutionReceipt({
             run,
             nodeId,
-            command,
+            commandDigestMaterial: invocation.digestMaterial,
+            executor: invocation.executor,
             cwd: artifactCwd,
             env,
             timeoutSeconds: node.timeoutSeconds,
@@ -288,7 +291,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     const abort = context.shellAbortRegistry.create(run.id, `node:${nodeId}`);
     let result;
     try {
-      result = await runShellNode(command, {
+      result = await invocation.run({
         cwd: artifactCwd,
         env,
         timeoutSeconds: node.timeoutSeconds,
@@ -316,7 +319,8 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           shell_execution: buildShellExecutionReceipt({
             run,
             nodeId,
-            command,
+            commandDigestMaterial: invocation.digestMaterial,
+            executor: invocation.executor,
             cwd: artifactCwd,
             env,
             timeoutSeconds: node.timeoutSeconds,
@@ -342,7 +346,8 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         shell_execution: buildShellExecutionReceipt({
           run,
           nodeId,
-          command,
+          commandDigestMaterial: invocation.digestMaterial,
+          executor: invocation.executor,
           cwd: artifactCwd,
           env,
           timeoutSeconds: node.timeoutSeconds,
@@ -802,10 +807,57 @@ function redactedContextUpdatePatch(
   };
 }
 
+async function renderShellInvocation(
+  node: Extract<WorkflowNode, { type: 'shell' }>,
+  run: WorkflowRunRecord,
+): Promise<{
+  authorityCommand: string;
+  digestMaterial: string;
+  executor: Record<string, unknown>;
+  run: (options: {
+    cwd: string;
+    timeoutSeconds?: number;
+    env?: Record<string, string>;
+    signal?: AbortSignal;
+    onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
+  }) => Promise<{ output: string; exitCode: number }>;
+}> {
+  if (node.argv && node.argv.length > 0) {
+    const argv = await Promise.all(node.argv.map((entry) => renderTemplate(entry, run)));
+    return {
+      authorityCommand: argv.join(' '),
+      digestMaterial: JSON.stringify({ argv }),
+      executor: {
+        kind: 'argv',
+        command: argv[0] ?? null,
+        args_count: Math.max(0, argv.length - 1),
+        raw_args_persisted: false,
+      },
+      run: (options) => runArgvNode(argv, options),
+    };
+  }
+
+  if (!node.command) {
+    throw new Error(`Shell node must set command or argv.`);
+  }
+  const command = await renderShellCommandTemplate(node.command, run);
+  return {
+    authorityCommand: command,
+    digestMaterial: command,
+    executor: {
+      kind: 'shell',
+      command: 'sh',
+      args: ['-lc'],
+    },
+    run: (options) => runShellNode(command, options),
+  };
+}
+
 function buildShellExecutionReceipt(input: {
   run: WorkflowRunRecord;
   nodeId: string;
-  command: string;
+  commandDigestMaterial: string;
+  executor: Record<string, unknown>;
   cwd: string;
   env: Record<string, string> | undefined;
   timeoutSeconds: number | undefined;
@@ -821,12 +873,8 @@ function buildShellExecutionReceipt(input: {
     schema: 'viewport.shell_execution_receipt/v1',
     node_id: input.nodeId,
     status: input.status,
-    executor: {
-      kind: 'shell',
-      command: 'sh',
-      args: ['-lc'],
-    },
-    command_digest: digest(input.command),
+    executor: input.executor,
+    command_digest: digest(input.commandDigestMaterial),
     command_persisted: false,
     cwd: input.cwd,
     cwd_digest: digest(input.cwd),
