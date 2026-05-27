@@ -302,7 +302,10 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       );
       throw new Error(workspaceDenial.detail);
     }
-    const denial = shellAuthorityDenial(run, nodeId, invocation.authorityCommand, artifactCwd);
+    const denial = shellAuthorityDenial(run, nodeId, invocation.authorityCommand, artifactCwd, {
+      executorKind:
+        typeof invocation.executor.kind === 'string' ? invocation.executor.kind : undefined,
+    });
     if (denial) {
       if (state) {
         state.metadata = {
@@ -965,6 +968,7 @@ function shellAuthorityReceipt(run: WorkflowRunRecord): Record<string, unknown> 
   return {
     source: 'workflow_authority_contract',
     shell_policy: shellPolicy ?? null,
+    legacy_command_allowed: authorityLegacyShellCommandAllowed(contract),
     authority_contract_present: true,
     authority_contract_digest: typeof contract.digest === 'string' ? contract.digest : null,
   };
@@ -979,6 +983,16 @@ function authorityShellPolicy(contract: Record<string, unknown>): string | null 
   const flat = contract['shell_policy'];
   if (typeof flat === 'string' && flat.trim() !== '') return flat;
   return null;
+}
+
+function authorityLegacyShellCommandAllowed(contract: Record<string, unknown>): boolean {
+  const nested = contract['shell'];
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const allowed = (nested as Record<string, unknown>)['allow_legacy_command'];
+    if (typeof allowed === 'boolean') return allowed;
+  }
+  const flat = contract['shell_allow_legacy_command'];
+  return typeof flat === 'boolean' ? flat : false;
 }
 
 function isPathWithin(candidate: string, root: string): boolean {

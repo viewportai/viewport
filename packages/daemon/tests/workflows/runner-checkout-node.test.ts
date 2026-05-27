@@ -73,7 +73,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -135,7 +135,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
     const second = await daemon.workflowRunner.startRun({
@@ -147,7 +147,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -199,7 +199,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -248,7 +248,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -305,7 +305,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -556,7 +556,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -607,7 +607,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 

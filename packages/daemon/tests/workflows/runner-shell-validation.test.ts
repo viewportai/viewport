@@ -181,6 +181,107 @@ nodes:
     );
   });
 
+  it('requires explicit legacy command opt-in when authority contract is present', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-legacy-opt-in-proof
+nodes:
+  inspect:
+    type: shell
+    command: printf legacy
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('shell.allow_legacy_command');
+    expect(failed?.nodes.inspect?.output).not.toBe('legacy');
+    expect(failed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'inspect',
+      status: 'denied',
+      executor: expect.objectContaining({ kind: 'shell' }),
+      authority: expect.objectContaining({
+        source: 'workflow_authority_contract',
+        shell_policy: 'constrained',
+        legacy_command_allowed: false,
+      }),
+      denial: {
+        reason: 'shell_legacy_command_not_allowed',
+        detail: expect.stringContaining('shell.allow_legacy_command'),
+      },
+    });
+  });
+
+  it('allows authority-bound argv shell nodes without legacy command opt-in', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-argv-authority-proof
+nodes:
+  inspect:
+    type: shell
+    argv:
+      - printf
+      - argv-ok
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.inspect?.output).toBe('argv-ok');
+    expect(completed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'inspect',
+      status: 'completed',
+      executor: expect.objectContaining({ kind: 'argv' }),
+      authority: expect.objectContaining({
+        source: 'workflow_authority_contract',
+        shell_policy: 'constrained',
+        legacy_command_allowed: false,
+      }),
+    });
+  });
+
   it('blocks shell commands that reference repositories outside the workflow authority contract', async () => {
     const daemon = await setup();
     await fs.writeFile(path.join(projectDir, 'README.md'), 'proof\n', 'utf8');
@@ -213,7 +314,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -269,7 +370,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [{ provider: 'github', actions: ['create_pr'] }] },
-        shell: { policy: 'constrained' },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -321,7 +422,7 @@ nodes:
           digest: 'sha256:authority',
           repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
           side_effects: { allowed: [] },
-          shell: { policy: 'constrained' },
+          shell: { policy: 'constrained', allow_legacy_command: true },
         },
       });
 
