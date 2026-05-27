@@ -15,7 +15,7 @@ import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
-import { resolveWorkflowSessionPolicy } from './session-policy.js';
+import { resolveWorkflowSessionBudget, resolveWorkflowSessionPolicy } from './session-policy.js';
 import { resolvePromptNodeContext } from './context-node-resolver.js';
 import { parseWorkflow } from './parser.js';
 import type { WorkflowPlatformContextClient } from './platform-context-client.js';
@@ -341,13 +341,14 @@ async function executePromptNode(
     executionMode: node.executionMode,
     timeoutSeconds: node.timeoutSeconds,
   });
-  const inlineAgents = await runInlineAgents(context, run, nodeId, node);
+  const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+  const budget = resolveWorkflowSessionBudget(parsed.definition.policies?.budget);
+  const inlineAgents = await runInlineAgents(context, run, nodeId, node, { budget });
   const renderedPrompt = appendInlineAgentResults(
     await renderTemplate(node.prompt, run),
     inlineAgents,
   );
   const renderedCwd = await renderOptionalTemplate(node.cwd, run);
-  const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
   const selectedContext = await resolvePromptNodeContext({
     run,
     nodeId,
@@ -386,6 +387,7 @@ async function executePromptNode(
     ...(node.allowedTools ? { allowedTools: node.allowedTools } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
     timeoutSeconds: sessionPolicy.timeoutSeconds,
+    ...(budget ? { budget } : {}),
     executionModeDefaulted: sessionPolicy.executionModeDefaulted,
     timeoutDefaulted: sessionPolicy.timeoutDefaulted,
     outputFallback: () => readPromptNodeOutput(run, state),

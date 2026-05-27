@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ClaudeAdapter, ClaudeSession } from '../../src/adapters/claude.js';
 import type { QueryFn } from '../../src/adapters/claude.js';
-import type { SessionMessage, PermissionDecision } from '../../src/core/types.js';
+import type { SessionConfig, SessionMessage, PermissionDecision } from '../../src/core/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — mock SDK query as a controlled async generator
@@ -23,6 +23,30 @@ function createMockQuery(messages: MockMessage[]): QueryFn {
     interrupt: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
   });
+}
+
+function automatedConfig(overrides: Partial<SessionConfig> = {}): SessionConfig {
+  return {
+    agent: 'claude',
+    approvalPolicy: 'never',
+    trust: 'automated',
+    gitTracker: {
+      enabled: false,
+      commitOn: [],
+      ignore: [],
+      autoSquashOnComplete: false,
+      branchPrefix: 'viewport/session-',
+      commitAuthor: 'Viewport Agent <noreply@example.test>',
+      maxCommitsPerSession: 500,
+      worktreeRoot: '.viewport/worktrees',
+    },
+    permissions: {
+      autoApprove: [],
+      requireApproval: ['Bash'],
+      deny: [],
+    },
+    ...overrides,
+  };
 }
 
 function createBlockingQuery(): {
@@ -128,26 +152,7 @@ describe('ClaudeAdapter', () => {
     const adapter = new ClaudeAdapter(queryFn);
     await adapter.startSession('/test/dir', {
       initialPrompt: 'Run without interactive permission prompts',
-      config: {
-        agent: 'claude',
-        approvalPolicy: 'never',
-        trust: 'automated',
-        gitTracker: {
-          enabled: false,
-          commitOn: [],
-          ignore: [],
-          autoSquashOnComplete: false,
-          branchPrefix: 'viewport/session-',
-          commitAuthor: 'Viewport Agent <noreply@example.test>',
-          maxCommitsPerSession: 500,
-          worktreeRoot: '.viewport/worktrees',
-        },
-        permissions: {
-          autoApprove: [],
-          requireApproval: ['Bash'],
-          deny: [],
-        },
-      },
+      config: automatedConfig(),
     });
 
     expect(queryFn).toHaveBeenCalledWith(
@@ -166,27 +171,7 @@ describe('ClaudeAdapter', () => {
     const adapter = new ClaudeAdapter(queryFn);
     await adapter.startSession('/test/dir', {
       initialPrompt: 'Draft a plan without implementing.',
-      config: {
-        agent: 'claude',
-        approvalPolicy: 'never',
-        executionMode: 'plan',
-        trust: 'automated',
-        gitTracker: {
-          enabled: false,
-          commitOn: [],
-          ignore: [],
-          autoSquashOnComplete: false,
-          branchPrefix: 'viewport/session-',
-          commitAuthor: 'Viewport Agent <noreply@example.test>',
-          maxCommitsPerSession: 500,
-          worktreeRoot: '.viewport/worktrees',
-        },
-        permissions: {
-          autoApprove: [],
-          requireApproval: ['Bash'],
-          deny: [],
-        },
-      },
+      config: automatedConfig({ executionMode: 'plan' }),
     });
 
     expect(queryFn).toHaveBeenCalledWith(
@@ -195,6 +180,29 @@ describe('ClaudeAdapter', () => {
         options: expect.objectContaining({
           permissionMode: 'plan',
           tools: [],
+        }),
+      }),
+    );
+  });
+
+  it('passes workflow budget caps to Claude provider options', async () => {
+    const queryFn = createMockQuery([{ type: 'result', subtype: 'success', session_id: 'budget-id' }]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Stay inside the workflow budget.',
+      config: automatedConfig({
+        maxTurns: 4,
+        maxBudgetUsd: 0.25,
+      }),
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Stay inside the workflow budget.',
+        options: expect.objectContaining({
+          maxTurns: 4,
+          maxBudgetUsd: 0.25,
         }),
       }),
     );

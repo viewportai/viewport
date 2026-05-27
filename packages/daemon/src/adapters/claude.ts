@@ -138,6 +138,7 @@ export class ClaudeSession extends EventEmitter implements Session {
           canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
+        ...claudeBudgetOptions(options),
         ...claudePermissionOptions(options),
       },
     });
@@ -171,6 +172,7 @@ export class ClaudeSession extends EventEmitter implements Session {
           canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
+        ...claudeBudgetOptions(options),
         ...claudePermissionOptions(options),
       },
     });
@@ -206,6 +208,7 @@ export class ClaudeSession extends EventEmitter implements Session {
           canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
           abortController: this.abortController,
           persistSession: true,
+          ...claudeBudgetOptions(options),
           ...claudePermissionOptions(options),
         },
       });
@@ -251,6 +254,7 @@ export class ClaudeSession extends EventEmitter implements Session {
         canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
+        ...claudeBudgetOptions(options),
         ...claudePermissionOptions(options),
       },
     });
@@ -610,6 +614,17 @@ function claudePermissionOptions(options: SessionOptions | undefined): { permiss
   }
 
   return {};
+}
+
+function claudeBudgetOptions(
+  options: SessionOptions | undefined,
+): { maxTurns?: number; maxBudgetUsd?: number } {
+  const maxTurns = options?.config?.maxTurns;
+  const maxBudgetUsd = options?.config?.maxBudgetUsd ?? options?.config?.costCapUsd;
+  return {
+    ...(typeof maxTurns === 'number' ? { maxTurns } : {}),
+    ...(typeof maxBudgetUsd === 'number' ? { maxBudgetUsd } : {}),
+  };
 }
 
 function claudeToolOptions(

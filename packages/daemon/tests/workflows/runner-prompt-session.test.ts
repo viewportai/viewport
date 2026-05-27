@@ -356,6 +356,75 @@ nodes:
     });
   });
 
+  it('fails prompt nodes that exceed workflow budget before downstream side effects run', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-budget-denial-proof
+requires:
+  agents:
+    - claude
+policies:
+  budget:
+    maxTokens: 50
+    maxCostUsd: 0.01
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    prompt: Stay inside the budget.
+  after:
+    type: shell
+    needs: [plan]
+    command: printf should-not-run
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    expect(adapter.lastOptions?.config?.maxBudgetUsd).toBe(0.01);
+    adapter.lastSession?.emitTokenUsage(45, 10, 0.012);
+    adapter.lastSession?.emitAgentMessage('expensive plan');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.plan?.status).toBe('failed');
+    expect(failed?.nodes.plan?.error).toContain('budget_exceeded');
+    expect(failed?.nodes.plan?.metadata?.['agentRun']).toMatchObject({
+      stopReason: 'budget_exceeded',
+    });
+    expect(failed?.nodes.plan?.metadata?.['executionPolicy']).toMatchObject({
+      budget: {
+        maxTokens: 50,
+        maxCostUsd: 0.01,
+      },
+      budgetEvaluation: {
+        exceeded: true,
+      },
+    });
+    expect(failed?.nodes.after?.status).toBe('queued');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'budget-exceeded',
+        nodeId: 'plan',
+      }),
+    );
+  });
+
   it('captures valid plan output schema before downstream nodes run', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

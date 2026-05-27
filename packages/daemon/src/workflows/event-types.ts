@@ -22,6 +22,7 @@ export interface WorkflowRunEvent {
     | 'node-contract-acknowledged'
     | 'node-log'
     | 'node-output'
+    | 'budget-exceeded'
     | 'structured-output-invalid'
     | 'node-skipped'
     | 'checkout-blocked'

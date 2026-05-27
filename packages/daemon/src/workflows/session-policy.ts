@@ -14,6 +14,12 @@ export interface ResolvedWorkflowSessionPolicy {
   timeoutDefaulted: boolean;
 }
 
+export interface WorkflowSessionBudget {
+  maxTokens?: number;
+  maxCostUsd?: number;
+  maxTurns?: number;
+}
+
 export function resolveWorkflowSessionPolicy(input: {
   executionMode?: SessionExecutionMode;
   timeoutSeconds?: number;
@@ -45,4 +51,30 @@ export function resolveInlineAgentExecutionMode(input: {
     case undefined:
       return 'review';
   }
+}
+
+export function resolveWorkflowSessionBudget(
+  input:
+    | {
+        maxTokens?: number;
+        tokens?: number;
+        maxCostUsd?: number;
+        usd?: number;
+        maxTurns?: number;
+      }
+    | undefined,
+): WorkflowSessionBudget | undefined {
+  const maxTokens = positiveNumber(input?.maxTokens ?? input?.tokens);
+  const maxCostUsd = positiveNumber(input?.maxCostUsd ?? input?.usd);
+  const maxTurns = positiveNumber(input?.maxTurns);
+  const budget: WorkflowSessionBudget = {
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
+  };
+  return Object.keys(budget).length > 0 ? budget : undefined;
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }

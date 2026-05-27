@@ -3,6 +3,7 @@ import { addEvent, renderTemplate } from './runtime-helpers.js';
 import {
   resolveInlineAgentExecutionMode,
   resolveWorkflowSessionPolicy,
+  type WorkflowSessionBudget,
 } from './session-policy.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type {
@@ -16,6 +17,7 @@ export async function runInlineAgents(
   run: WorkflowRunRecord,
   nodeId: string,
   node: WorkflowPromptNode,
+  options: { budget?: WorkflowSessionBudget } = {},
 ): Promise<Record<string, WorkflowInlineAgentRunState>> {
   const entries = Object.entries(node.agents ?? {});
   const state = run.nodes[nodeId];
@@ -83,6 +85,7 @@ export async function runInlineAgents(
               ? { allowedTools: [] }
               : {}),
           timeoutSeconds: sessionPolicy.timeoutSeconds,
+          ...(options.budget ? { budget: options.budget } : {}),
           executionModeDefaulted: agent.executionMode === undefined,
           timeoutDefaulted: sessionPolicy.timeoutDefaulted,
         });

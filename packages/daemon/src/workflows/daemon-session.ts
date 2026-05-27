@@ -9,7 +9,10 @@ import { isFailedSessionReason, waitForPromptSessionComplete } from './session-c
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { defaultWorktreePath } from './prompt-output.js';
-import { resolveWorkflowSessionPolicy } from './session-policy.js';
+import {
+  resolveWorkflowSessionPolicy,
+  type WorkflowSessionBudget,
+} from './session-policy.js';
 import type {
   WorkflowHookRules,
   WorkflowRunRecord,
@@ -45,6 +48,7 @@ export interface WorkflowDaemonSessionRequest {
   allowedTools?: string[];
   hooks?: WorkflowHookRules;
   timeoutSeconds?: number;
+  budget?: WorkflowSessionBudget;
   executionModeDefaulted?: boolean;
   timeoutDefaulted?: boolean;
   outputFallback?: () => Promise<string>;
@@ -102,6 +106,8 @@ export async function runWorkflowDaemonSession(
       ...(request.effort ? { effort: request.effort } : {}),
       executionMode: sessionPolicy.executionMode,
       ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+      ...(request.budget?.maxTurns ? { maxTurns: request.budget.maxTurns } : {}),
+      ...(request.budget?.maxCostUsd ? { maxBudgetUsd: request.budget.maxCostUsd } : {}),
       sandboxMode: request.cwd ? 'workspace-write' : 'read-only',
       approvalPolicy: 'never',
       trust: 'automated',
@@ -196,6 +202,10 @@ export async function runWorkflowDaemonSession(
       completedAt: Date.now(),
       reason,
     });
+    const budgetEvaluation = evaluateAgentBudget(agentRun, request.budget);
+    if (budgetEvaluation.exceeded) {
+      agentRun.stopReason = 'budget_exceeded';
+    }
     target.metadata = {
       ...(target.metadata ?? {}),
       agentRun,
@@ -205,6 +215,8 @@ export async function runWorkflowDaemonSession(
       executionPolicy: {
         executionMode: sessionPolicy.executionMode,
         timeoutSeconds: sessionPolicy.timeoutSeconds,
+        ...(request.budget ? { budget: request.budget } : {}),
+        budgetEvaluation,
         executionModeDefaulted:
           request.executionModeDefaulted ?? sessionPolicy.executionModeDefaulted,
         timeoutDefaulted: request.timeoutDefaulted ?? sessionPolicy.timeoutDefaulted,
@@ -221,6 +233,17 @@ export async function runWorkflowDaemonSession(
     if (isFailedSessionReason(reason)) {
       throw new Error(`Session ${sessionId} failed: ${reason}`);
     }
+    if (budgetEvaluation.exceeded) {
+      addEvent(
+        run,
+        'budget-exceeded',
+        `Node ${nodeId} exceeded workflow budget`,
+        { ...budgetEvaluation },
+        nodeId,
+      );
+      await context.saveAndEmit(run);
+      throw new WorkflowBudgetExceededError(budgetEvaluation);
+    }
 
     return { sessionId, nativeSessionId, worktreePath, output: capturedOutput, reason, agentRun };
   } finally {
@@ -234,6 +257,72 @@ export async function runWorkflowDaemonSession(
     }
     context.daemon.off('session:message', messageHandler);
   }
+}
+
+class WorkflowBudgetExceededError extends Error {
+  constructor(readonly evaluation: WorkflowBudgetEvaluation) {
+    const reasons = evaluation.reasons.join('; ');
+    super(`budget_exceeded: ${reasons}`);
+    this.name = 'WorkflowBudgetExceededError';
+  }
+}
+
+interface WorkflowBudgetEvaluation {
+  exceeded: boolean;
+  reasons: string[];
+  usage: {
+    available: boolean;
+    totalTokens?: number;
+    totalCostUsd?: number;
+  };
+  caps: {
+    maxTokens?: number;
+    maxCostUsd?: number;
+  };
+}
+
+function evaluateAgentBudget(
+  agentRun: AgentRunResult,
+  budget: WorkflowSessionBudget | undefined,
+): WorkflowBudgetEvaluation {
+  const totalTokens =
+    typeof agentRun.usage.totalTokens === 'number'
+      ? agentRun.usage.totalTokens
+      : typeof agentRun.usage.inputTokens === 'number' || typeof agentRun.usage.outputTokens === 'number'
+        ? (agentRun.usage.inputTokens ?? 0) + (agentRun.usage.outputTokens ?? 0)
+        : undefined;
+  const totalCostUsd = agentRun.usage.totalCostUsd;
+  const reasons: string[] = [];
+  if (
+    budget?.maxTokens !== undefined &&
+    totalTokens !== undefined &&
+    totalTokens > budget.maxTokens
+  ) {
+    reasons.push(`token budget exceeded (${totalTokens} > ${budget.maxTokens})`);
+  }
+  if (
+    budget?.maxCostUsd !== undefined &&
+    totalCostUsd !== undefined &&
+    totalCostUsd > budget.maxCostUsd
+  ) {
+    reasons.push(
+      `cost budget exceeded (${totalCostUsd.toFixed(6)} > ${budget.maxCostUsd.toFixed(6)} USD)`,
+    );
+  }
+
+  return {
+    exceeded: reasons.length > 0,
+    reasons,
+    usage: {
+      available: agentRun.usage.available,
+      ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
+    },
+    caps: {
+      ...(budget?.maxTokens !== undefined ? { maxTokens: budget.maxTokens } : {}),
+      ...(budget?.maxCostUsd !== undefined ? { maxCostUsd: budget.maxCostUsd } : {}),
+    },
+  };
 }
 
 function fallbackAgentDescriptor(agentId: string) {

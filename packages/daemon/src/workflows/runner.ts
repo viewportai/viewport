@@ -19,7 +19,7 @@ import { buildWorkflowContractBinding } from './contract-binding.js';
 import { recordWorkflowHookEvent } from './runner-hook-events.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { buildRunPreparation } from './run-preparation.js';
-import { resolveWorkflowSessionPolicy } from './session-policy.js';
+import { resolveWorkflowSessionBudget, resolveWorkflowSessionPolicy } from './session-policy.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
@@ -273,6 +273,7 @@ export class WorkflowRunner {
       executionMode: 'plan',
       timeoutSeconds: revision.timeoutSeconds,
     });
+    const budget = resolveWorkflowSessionBudget(parsed.definition.policies?.budget);
     state.status = 'running';
 
     const result = await runWorkflowDaemonSession(
@@ -291,6 +292,7 @@ export class WorkflowRunner {
         executionMode: revisionPolicy.executionMode,
         allowedTools: [],
         timeoutSeconds: revisionPolicy.timeoutSeconds,
+        ...(budget ? { budget } : {}),
         executionModeDefaulted: false,
         timeoutDefaulted: revisionPolicy.timeoutDefaulted,
       },

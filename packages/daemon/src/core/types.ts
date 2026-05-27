@@ -335,6 +335,10 @@ export interface SessionConfig {
   executionMode?: SessionExecutionMode;
   /** Exact provider tool allowlist for the session, when supported. */
   allowedTools?: string[];
+  /** Maximum provider turns for adapters that support a hard/provider cap. */
+  maxTurns?: number;
+  /** Maximum provider spend for adapters that support a hard/provider cap. */
+  maxBudgetUsd?: number;
   /** Explicit resource context selected by the launcher/operator. */
   resourceId?: string;
   /**
