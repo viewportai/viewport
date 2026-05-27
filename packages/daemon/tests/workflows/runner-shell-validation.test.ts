@@ -101,6 +101,52 @@ nodes:
     expect(blocked?.preflight.issues[0]?.message).toMatch(/not a git repository/);
   });
 
+  it('requires explicit constrained shell policy when authority contract is present', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-policy-required-proof
+nodes:
+  inspect:
+    type: shell
+    command: printf no-policy
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('requires an explicit constrained shell policy');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'shell-blocked',
+        nodeId: 'inspect',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'shell_policy_required',
+          }),
+        }),
+      }),
+    );
+  });
+
   it('blocks shell commands that reference repositories outside the workflow authority contract', async () => {
     const daemon = await setup();
     await fs.writeFile(path.join(projectDir, 'README.md'), 'proof\n', 'utf8');
@@ -133,6 +179,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -188,6 +235,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [{ provider: 'github', actions: ['create_pr'] }] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -239,6 +287,7 @@ nodes:
           digest: 'sha256:authority',
           repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
           side_effects: { allowed: [] },
+          shell: { policy: 'constrained' },
         },
       });
 

@@ -13,6 +13,8 @@ export interface WorkflowAuthorityDenial {
     | 'git_publish_run_scoped_grant_unavailable'
     | 'context_update_target_wrong_repository'
     | 'context_source_not_allowed'
+    | 'shell_policy_required'
+    | 'shell_disabled_by_policy'
     | 'shell_cwd_outside_worktree'
     | 'shell_repository_not_allowed'
     | 'shell_provider_side_effect_not_allowed';
@@ -143,6 +145,25 @@ export function shellAuthorityDenial(
   const contract = workflowAuthorityContract(run);
   if (!contract) return null;
 
+  const shellPolicy = shellExecutionPolicy(contract);
+  if (shellPolicy !== 'constrained') {
+    const reason =
+      shellPolicy === 'disabled' ? 'shell_disabled_by_policy' : 'shell_policy_required';
+
+    return {
+      schema: 'viewport.workflow_authority_denial/v1',
+      reason,
+      runId: run.id,
+      nodeId,
+      command: redactedCommand(renderedCommand),
+      detail:
+        reason === 'shell_disabled_by_policy'
+          ? 'Shell execution is disabled by the workflow authority contract.'
+          : 'Shell execution under a workflow authority contract requires an explicit constrained shell policy.',
+      contractDigest: workflowAuthorityContractDigest(run),
+    };
+  }
+
   if (!isPathWithin(cwd, run.directoryPath)) {
     return {
       schema: 'viewport.workflow_authority_denial/v1',
@@ -203,6 +224,16 @@ export function shellAuthorityDenial(
       allowed: repositories,
     };
   }
+
+  return null;
+}
+
+function shellExecutionPolicy(contract: Record<string, unknown>): string | null {
+  const nested = readPath(contract, ['shell', 'policy']);
+  if (typeof nested === 'string' && nested.trim() !== '') return normalizeToken(nested);
+
+  const flat = readPath(contract, ['shell_policy']);
+  if (typeof flat === 'string' && flat.trim() !== '') return normalizeToken(flat);
 
   return null;
 }
