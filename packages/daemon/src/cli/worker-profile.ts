@@ -170,7 +170,7 @@ export async function storeWorkerProfile(
           installId: approved.install_id,
           runtimeTargetId: approved.runtime_target_id,
           managedExecutorId: approved.managed_executor_id,
-          serverUrl: approved.server_url ?? profile.serverUrl,
+          serverUrl: profile.serverUrl,
           pairedAt: new Date().toISOString(),
         },
         null,

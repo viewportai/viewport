@@ -207,10 +207,10 @@ async function pairWithCode(
   }
 
   const approved = await pollForApproval(code, server, claimData.status_token, asJson);
-  await storePairingCredentials(approved, server.url);
   if (workerProfile) {
     await storeWorkerProfile(approved, workerProfile);
   } else {
+    await storePairingCredentials(approved, server.url);
     await autoRestartDaemon(asJson, restartDaemon);
   }
 
@@ -330,10 +330,10 @@ async function pairWithoutCode(
   }
 
   const approved = await pollForApproval(code, server, statusToken, asJson);
-  await storePairingCredentials(approved, server.url);
   if (workerProfile) {
     await storeWorkerProfile(approved, workerProfile);
   } else {
+    await storePairingCredentials(approved, server.url);
     await autoRestartDaemon(asJson, restartDaemon);
   }
 

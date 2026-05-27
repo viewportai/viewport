@@ -101,6 +101,7 @@ describe('lifecycle pair command', () => {
 
     const config = JSON.parse(await fs.readFile(path.join(homeDir, 'config.json'), 'utf8')) as {
       daemon: {
+        relay?: unknown;
         worker: {
           serverUrl: string;
           workspaceId: string;
@@ -109,6 +110,7 @@ describe('lifecycle pair command', () => {
         };
       };
     };
+    expect(config.daemon.relay).toBeUndefined();
     expect(config.daemon.worker).toMatchObject({
       serverUrl,
       workspaceId: 'workspace_123',
