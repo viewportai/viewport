@@ -33,6 +33,8 @@ export interface PairingPollApprovedData {
   runtime_target_id?: string;
   machine_id?: string;
   daemon_name?: string;
+  managed_executor_id?: string;
+  managed_executor_credential?: string;
   relay_endpoint?: string;
   token: string;
   server_url?: string;

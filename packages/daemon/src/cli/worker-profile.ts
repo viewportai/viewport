@@ -144,6 +144,9 @@ export async function storeWorkerProfile(
     stateDir: profile.stateDir,
     identityKeyPath: profile.identityKeyPath,
     publicKeyFingerprint: profile.publicKeyFingerprint,
+    workspaceId: approved?.workspace_id,
+    managedExecutorId: approved?.managed_executor_id,
+    credential: approved?.managed_executor_credential,
     capabilities: profile.capabilities,
   };
   await manager.setDaemonConfig({
@@ -166,6 +169,7 @@ export async function storeWorkerProfile(
           workspaceName: approved.workspace_name,
           installId: approved.install_id,
           runtimeTargetId: approved.runtime_target_id,
+          managedExecutorId: approved.managed_executor_id,
           serverUrl: approved.server_url ?? profile.serverUrl,
           pairedAt: new Date().toISOString(),
         },

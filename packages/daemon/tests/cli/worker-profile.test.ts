@@ -157,6 +157,53 @@ describe('worker profile defaults', () => {
     );
   });
 
+  it('stores hosted managed executor fields returned by worker pairing approval', async () => {
+    const { resolvePairingServerTransport } = await import(
+      '../../src/cli/lifecycle-pair-server.js'
+    );
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
+      '../../src/cli/worker-profile.js'
+    );
+
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+    await storeWorkerProfile(
+      {
+        status: 'approved',
+        workspace_id: 'workspace_123',
+        workspace_name: 'Payments',
+        install_id: 'install_123',
+        runtime_target_id: 'runtime_123',
+        managed_executor_id: 'executor_123',
+        managed_executor_credential: 'vpexec_secret',
+        token: 'install_daemon_issue_secret',
+      },
+      profile,
+    );
+
+    const config = JSON.parse(await fs.readFile(path.join(homeDir, 'config.json'), 'utf8')) as {
+      daemon: {
+        worker: {
+          workspaceId: string;
+          managedExecutorId: string;
+          credential: string;
+        };
+      };
+    };
+    expect(config.daemon.worker.workspaceId).toBe('workspace_123');
+    expect(config.daemon.worker.managedExecutorId).toBe('executor_123');
+    expect(config.daemon.worker.credential).toBe('vpexec_secret');
+
+    const pairing = JSON.parse(await fs.readFile(path.join(homeDir, 'worker', 'pairing.json'), 'utf8')) as {
+      managedExecutorId: string;
+      runtimeTargetId: string;
+    };
+    expect(pairing.runtimeTargetId).toBe('runtime_123');
+    expect(pairing.managedExecutorId).toBe('executor_123');
+  });
+
   it('uses the active profile home for worker state instead of the monitor default home', async () => {
     process.env['VIEWPORT_PROFILE'] = 'payments-worker';
     vi.resetModules();
