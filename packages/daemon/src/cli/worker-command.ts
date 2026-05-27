@@ -74,6 +74,7 @@ async function workerDoctor(): Promise<void> {
     serverUrl: workerConfig?.serverUrl ?? null,
     workspaceRoot: workerConfig?.workspaceRoot ?? null,
     publicKeyFingerprint: workerConfig?.publicKeyFingerprint ?? null,
+    capabilities: workerConfig?.capabilities ?? null,
     missing,
   };
   if (asJson) {
@@ -85,6 +86,8 @@ async function workerDoctor(): Promise<void> {
   console.log(`Transport: ${payload.transport ?? 'not configured'}`);
   console.log(`Server:    ${payload.serverUrl ?? 'not configured'}`);
   console.log(`Work root: ${payload.workspaceRoot ?? 'not configured'}`);
+  const agentCount = payload.capabilities?.agents?.length ?? 0;
+  console.log(`Agents:    ${agentCount > 0 ? `${agentCount} detected` : 'not recorded'}`);
   if (missing.length > 0) {
     console.log(`Missing:   ${missing.join(', ')}`);
     console.log('Fix:       run `vpd pair --worker --transport=polling`.');
