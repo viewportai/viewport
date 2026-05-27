@@ -33,6 +33,7 @@ export interface WorkerProfileDefaults {
   publicKeyFingerprint: string;
   capabilities: {
     agents: WorkerCapabilityAgent[];
+    tools: string[];
   };
 }
 
@@ -45,8 +46,11 @@ export interface WorkerPairingPayload {
   worker_identity_fingerprint: string;
   worker_capabilities: {
     agents: WorkerCapabilityAgent[];
+    tools: string[];
   };
 }
+
+const WORKER_RUNTIME_TOOLS = ['shell'];
 
 interface WorkerIdentityFile {
   version: 1;
@@ -88,6 +92,7 @@ export async function resolveWorkerProfileDefaults(options?: {
   const capabilities = {
     agents:
       options?.detectCapabilities === false ? [] : await detectWorkerAgentCapabilities(),
+    tools: WORKER_RUNTIME_TOOLS,
   };
 
   return {

@@ -230,14 +230,15 @@ export interface ViewportConfig {
       identityKeyPath?: string;
       publicKeyFingerprint?: string;
       capabilities?: {
-        agents?: Array<{
-          id: string;
-          displayName?: string;
-          tier?: 'sdk' | 'pty';
-          available: boolean;
-        }>;
+          agents?: Array<{
+            id: string;
+            displayName?: string;
+            tier?: 'sdk' | 'pty';
+            available: boolean;
+          }>;
+          tools?: string[];
+        };
       };
-    };
   };
 }
 
@@ -635,6 +636,7 @@ export class ConfigManager {
               tier?: 'sdk' | 'pty';
               available: boolean;
             }>;
+            tools?: string[];
           };
         };
       }

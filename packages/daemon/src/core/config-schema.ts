@@ -143,6 +143,7 @@ export const ViewportConfigSchema = z
             capabilities: z
               .object({
                 agents: z.array(WorkerCapabilityAgentSchema).optional(),
+                tools: z.array(z.string().min(1).max(128)).optional(),
               })
               .strict()
               .optional(),

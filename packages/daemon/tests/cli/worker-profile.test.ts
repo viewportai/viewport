@@ -119,6 +119,7 @@ describe('worker profile defaults', () => {
     for (const agent of profile.capabilities.agents) {
       expect(typeof agent.available).toBe('boolean');
     }
+    expect(profile.capabilities.tools).toContain('shell');
   });
 
   it('persists worker profile config and identity without monitor state', async () => {
