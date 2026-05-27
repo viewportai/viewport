@@ -143,6 +143,27 @@ describe('standalone worker runtime', () => {
     await expect(worker()).rejects.toThrow('Relay worker transport is not supported');
   });
 
+  it('denies ephemeral inbound and relay run-once transports before control-plane contact', async () => {
+    await writeWorkerProfile('http://127.0.0.1:1');
+    for (const transport of ['inbound', 'relay']) {
+      process.argv = [
+        'node',
+        'vpd',
+        'worker',
+        'run-once',
+        '--lease',
+        `lease_${transport}`,
+        '--transport',
+        transport,
+      ];
+      vi.resetModules();
+      const { worker } = await import('../../src/cli/worker-command.js');
+      await expect(worker()).rejects.toThrow(
+        transport === 'inbound' ? 'Inbound worker transport is disabled' : 'Relay worker transport',
+      );
+    }
+  });
+
   async function writeWorkerProfile(serverUrl: string): Promise<void> {
     process.argv = ['node', 'vpd', 'pair', '--worker', '--server', serverUrl];
     vi.resetModules();
