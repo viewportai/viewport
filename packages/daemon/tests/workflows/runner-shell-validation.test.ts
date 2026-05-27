@@ -61,11 +61,28 @@ nodes:
 
     await waitForTerminalRun(daemon, run.id);
     const failed = await daemon.workflowRunner.getRun(run.id);
-
     expect(failed?.status).toBe('failed');
     expect(failed?.nodes.fail?.status).toBe('failed');
     expect(failed?.nodes.fail?.exitCode).toBe(7);
     expect(failed?.error).toMatch(/code 7/);
+    expect(failed?.nodes.fail?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'fail',
+      status: 'failed',
+      executor: {
+        kind: 'shell',
+        command: 'sh',
+        args: ['-lc'],
+      },
+      command_digest: expect.stringMatching(/^sha256:/),
+      command_persisted: false,
+      cwd: projectDir,
+      env_keys: [],
+      env_values_persisted: false,
+      timeout_seconds: null,
+      exit_code: 7,
+      denial: null,
+    });
   });
 
   it('blocks git workflows before shell execution when the target directory is not a git worktree', async () => {
@@ -134,6 +151,23 @@ nodes:
 
     expect(failed?.status).toBe('failed');
     expect(failed?.nodes.inspect?.error).toContain('requires an explicit constrained shell policy');
+    expect(failed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'inspect',
+      status: 'denied',
+      command_persisted: false,
+      env_values_persisted: false,
+      authority: expect.objectContaining({
+        source: 'workflow_authority_contract',
+        shell_policy: null,
+        authority_contract_present: true,
+        authority_contract_digest: 'sha256:authority',
+      }),
+      denial: {
+        reason: 'shell_policy_required',
+        detail: expect.stringContaining('explicit constrained shell policy'),
+      },
+    });
     expect(failed?.events).toContainEqual(
       expect.objectContaining({
         type: 'shell-blocked',

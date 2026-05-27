@@ -68,6 +68,29 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.proof?.output).toBe('ok');
     expect(completed?.nodes.proof?.exitCode).toBe(0);
+    expect(completed?.nodes.proof?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'proof',
+      status: 'completed',
+      executor: {
+        kind: 'shell',
+        command: 'sh',
+        args: ['-lc'],
+      },
+      command_digest: expect.stringMatching(/^sha256:/),
+      command_persisted: false,
+      cwd: projectDir,
+      cwd_digest: expect.stringMatching(/^sha256:/),
+      env_keys: [],
+      env_values_persisted: false,
+      timeout_seconds: null,
+      exit_code: 0,
+      denial: null,
+      authority: expect.objectContaining({
+        source: 'legacy_local',
+        authority_contract_present: false,
+      }),
+    });
     expect(completed?.events).toContainEqual(
       expect.objectContaining({
         type: 'node-log',
