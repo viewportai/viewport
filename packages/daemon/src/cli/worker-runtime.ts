@@ -122,7 +122,11 @@ export async function runStandaloneWorker(
     if (!lease) break;
     result.claimed += 1;
     let execution = await executeClaim(profile, lease);
-    if (isHostedManagedExecutorProfile(profile) && execution.status === 'blocked' && execution.run) {
+    if (
+      isHostedManagedExecutorProfile(profile) &&
+      execution.status === 'blocked' &&
+      execution.run
+    ) {
       await syncLease(profile, lease, execution);
       execution = await resumeBlockedHostedExecution(profile, lease, execution);
       if (execution.status !== 'blocked') {
@@ -178,8 +182,7 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     lifecycle: worker!.lifecycle ?? 'persistent',
     transport: worker!.transport ?? 'polling',
     workspaceId: worker!.workspaceId ?? process.env['VIEWPORT_WORKSPACE_ID'],
-    managedExecutorId:
-      worker!.managedExecutorId ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ID'],
+    managedExecutorId: worker!.managedExecutorId ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ID'],
     credential:
       worker!.credential ??
       process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
@@ -294,7 +297,10 @@ async function syncLease(
       throw new Error('Hosted managed executor sync requires a workflow run id.');
     }
     const runPayload = execution.run
-      ? workflowRunToSyncPayload(execution.run, { enforceDataCapturePolicy: true })
+      ? workflowRunToSyncPayload(execution.run, {
+          enforceDataCapturePolicy: true,
+          includeApprovalDecisions: false,
+        })
       : undefined;
     const failure = execution.failure ?? hostedWorkerExecutionUnavailableFailure();
     await hostedManagedExecutorFetch(
@@ -310,9 +316,11 @@ async function syncLease(
             : `vpd-worker-${lease.runId}`,
         status,
         completed_at:
-          typeof runPayload?.['completed_at'] === 'string'
-            ? runPayload['completed_at']
-            : new Date().toISOString(),
+          status === 'blocked'
+            ? null
+            : typeof runPayload?.['completed_at'] === 'string'
+              ? runPayload['completed_at']
+              : new Date().toISOString(),
         ...(status === 'failed'
           ? {
               error_summary: failure.summary,
@@ -374,7 +382,8 @@ async function executeHostedWorkflowClaim(
     const directory = await daemon.directoryManager.register(directoryPath);
     const run = await daemon.workflowRunner.startRun({
       workflowYaml: lease.yamlSnapshot,
-      workflowSourceRef: lease.sourceRef ?? `viewport://managed-executor/${lease.runId ?? lease.id}`,
+      workflowSourceRef:
+        lease.sourceRef ?? `viewport://managed-executor/${lease.runId ?? lease.id}`,
       directoryId: directory.id,
       inputs: lease.inputSnapshot,
       resourceId: profile.workspaceId,
@@ -492,7 +501,8 @@ function hostedWorkerExecutionUnavailableFailure(): HostedWorkerFailure {
   return {
     errorCode: 'RUNNER_EXECUTION_ENGINE_UNAVAILABLE',
     failureClass: 'internal_error',
-    summary: 'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
+    summary:
+      'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
     nextCheck: 'Wire the in-process workflow executor before enabling hosted worker completion.',
     retrySafe: false,
   };
@@ -536,21 +546,18 @@ async function workerFetch(
   const requestPath = `/api/runtime/${path}`;
   const serialized = JSON.stringify(body);
   const signed = await signWorkerRequest(profile, 'POST', requestPath, serialized);
-  const response = await transportFetch(
-    `${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
-        'X-Viewport-Worker-Timestamp': signed.timestamp,
-        'X-Viewport-Worker-Nonce': signed.nonce,
-        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
-        'X-Viewport-Worker-Signature': signed.signature,
-      },
-      body: serialized,
+  const response = await transportFetch(`${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+      'X-Viewport-Worker-Timestamp': signed.timestamp,
+      'X-Viewport-Worker-Nonce': signed.nonce,
+      'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+      'X-Viewport-Worker-Signature': signed.signature,
     },
-  );
+    body: serialized,
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(`Worker runtime request ${path} failed with HTTP ${response.status}: ${text}`);
@@ -562,7 +569,9 @@ function isHostedManagedExecutorProfile(profile: WorkerRuntimeProfile): boolean 
   return Boolean(profile.workspaceId && profile.managedExecutorId && profile.credential);
 }
 
-function managedExecutorCapabilities(capabilities: Record<string, unknown>): Record<string, unknown> {
+function managedExecutorCapabilities(
+  capabilities: Record<string, unknown>,
+): Record<string, unknown> {
   const agents = capabilities['agents'];
   if (!Array.isArray(agents)) return capabilities;
   return {
@@ -587,31 +596,30 @@ async function hostedManagedExecutorFetch(
   assignmentClaimToken?: string,
 ): Promise<Response> {
   if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
-    throw new Error('Hosted managed executor profile is missing workspace, executor, or credential.');
+    throw new Error(
+      'Hosted managed executor profile is missing workspace, executor, or credential.',
+    );
   }
   const requestPath = `/api/runtime/workspaces/${encodeURIComponent(
     profile.workspaceId,
   )}/managed-executors/${encodeURIComponent(profile.managedExecutorId)}/${path}`;
   const serialized = method === 'GET' ? '' : JSON.stringify(body);
   const signed = await signWorkerRequest(profile, method, requestPath, serialized);
-  const response = await transportFetch(
-    `${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`,
-    {
-      method,
-      headers: {
-        Authorization: `Bearer ${profile.credential}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
-        'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
-        'X-Viewport-Worker-Timestamp': signed.timestamp,
-        'X-Viewport-Worker-Nonce': signed.nonce,
-        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
-        'X-Viewport-Worker-Signature': signed.signature,
-      },
-      ...(method === 'GET' ? {} : { body: serialized }),
+  const response = await transportFetch(`${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${profile.credential}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
+      'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+      'X-Viewport-Worker-Timestamp': signed.timestamp,
+      'X-Viewport-Worker-Nonce': signed.nonce,
+      'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+      'X-Viewport-Worker-Signature': signed.signature,
     },
-  );
+    ...(method === 'GET' ? {} : { body: serialized }),
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(
@@ -657,7 +665,9 @@ async function signWorkerRequest(
   bodySha256: string;
   signature: string;
 }> {
-  const identity = JSON.parse(await fs.readFile(profile.identityKeyPath, 'utf8')) as WorkerIdentityFile;
+  const identity = JSON.parse(
+    await fs.readFile(profile.identityKeyPath, 'utf8'),
+  ) as WorkerIdentityFile;
   if (identity.publicKeyFingerprint !== profile.publicKeyFingerprint) {
     throw new Error('Worker identity fingerprint does not match worker profile.');
   }
@@ -665,6 +675,8 @@ async function signWorkerRequest(
   const nonce = crypto.randomBytes(16).toString('hex');
   const bodySha256 = crypto.createHash('sha256').update(body).digest('hex');
   const canonical = [method.toUpperCase(), requestPath, bodySha256, nonce, timestamp].join('\n');
-  const signature = crypto.sign(null, Buffer.from(canonical), identity.privateKey).toString('base64');
+  const signature = crypto
+    .sign(null, Buffer.from(canonical), identity.privateKey)
+    .toString('base64');
   return { timestamp, nonce, bodySha256, signature };
 }

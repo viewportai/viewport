@@ -323,6 +323,7 @@ nodes:
     await expectSignedRequest(requests[3], homeDir);
     expect(requests[4]?.body).toMatchObject({
       status: 'completed',
+      approval_decisions: [],
       output_snapshot: expect.objectContaining({
         nodes: expect.objectContaining({
           gate: expect.objectContaining({ status: 'completed', output: 'Approved in test' }),
@@ -394,12 +395,10 @@ nodes:
   async function writeWorkerProfile(serverUrl: string): Promise<void> {
     process.argv = ['node', 'vpd', 'pair', '--worker', '--server', serverUrl];
     vi.resetModules();
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
-    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
-      '../../src/cli/worker-profile.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
     await storeWorkerProfile(
       null,
       await resolveWorkerProfileDefaults({
@@ -455,9 +454,7 @@ async function startRuntimeServer(
       response.end(JSON.stringify({ lease: { id: 'lease_1', run_id: 'run_1' } }));
       return;
     }
-    if (
-      request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim'
-    ) {
+    if (request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim') {
       claimCount += 1;
       if (claimCount > 1) {
         response.statusCode = 204;
@@ -485,7 +482,8 @@ async function startRuntimeServer(
       request.method === 'PATCH' &&
       body['status'] === 'blocked'
     ) {
-      blockedRuntimeRunId = typeof body['runtime_run_id'] === 'string' ? body['runtime_run_id'] : null;
+      blockedRuntimeRunId =
+        typeof body['runtime_run_id'] === 'string' ? body['runtime_run_id'] : null;
     }
     if (
       request.url ===
@@ -578,6 +576,11 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
   ) as { publicKey: string };
   const canonical = [request!.method, request!.url, bodySha256, nonce, timestamp].join('\n');
   expect(
-    crypto.verify(null, Buffer.from(canonical), identity.publicKey, Buffer.from(signature, 'base64')),
+    crypto.verify(
+      null,
+      Buffer.from(canonical),
+      identity.publicKey,
+      Buffer.from(signature, 'base64'),
+    ),
   ).toBe(true);
 }
