@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import { ConfigManager } from '../core/config.js';
 import { transportFetch } from './network.js';
 import type { WorkerLifecycle, WorkerTransport } from './worker-profile.js';
@@ -21,8 +23,15 @@ interface WorkerRuntimeProfile {
   lifecycle: WorkerLifecycle;
   transport: WorkerTransport;
   workspaceRoot: string;
+  identityKeyPath: string;
   publicKeyFingerprint: string;
   capabilities: Record<string, unknown>;
+}
+
+interface WorkerIdentityFile {
+  publicKey: string;
+  privateKey: string;
+  publicKeyFingerprint: string;
 }
 
 interface ClaimedLease {
@@ -103,6 +112,7 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     lifecycle: worker!.lifecycle ?? 'persistent',
     transport: worker!.transport ?? 'polling',
     workspaceRoot: worker!.workspaceRoot!,
+    identityKeyPath: worker!.identityKeyPath!,
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
     capabilities: worker!.capabilities ?? {},
   };
@@ -166,15 +176,22 @@ async function workerFetch(
   path: string,
   body: Record<string, unknown>,
 ): Promise<Response> {
+  const requestPath = `/api/runtime/${path}`;
+  const serialized = JSON.stringify(body);
+  const signed = await signWorkerRequest(profile, 'POST', requestPath, serialized);
   const response = await transportFetch(
-    `${profile.serverUrl.replace(/\/+$/, '')}/api/runtime/${path}`,
+    `${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`,
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+        'X-Viewport-Worker-Timestamp': signed.timestamp,
+        'X-Viewport-Worker-Nonce': signed.nonce,
+        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+        'X-Viewport-Worker-Signature': signed.signature,
       },
-      body: JSON.stringify(body),
+      body: serialized,
     },
   );
   if (!response.ok) {
@@ -186,4 +203,27 @@ async function workerFetch(
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+async function signWorkerRequest(
+  profile: WorkerRuntimeProfile,
+  method: string,
+  requestPath: string,
+  body: string,
+): Promise<{
+  timestamp: string;
+  nonce: string;
+  bodySha256: string;
+  signature: string;
+}> {
+  const identity = JSON.parse(await fs.readFile(profile.identityKeyPath, 'utf8')) as WorkerIdentityFile;
+  if (identity.publicKeyFingerprint !== profile.publicKeyFingerprint) {
+    throw new Error('Worker identity fingerprint does not match worker profile.');
+  }
+  const timestamp = new Date().toISOString();
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const bodySha256 = crypto.createHash('sha256').update(body).digest('hex');
+  const canonical = [method.toUpperCase(), requestPath, bodySha256, nonce, timestamp].join('\n');
+  const signature = crypto.sign(null, Buffer.from(canonical), identity.privateKey).toString('base64');
+  return { timestamp, nonce, bodySha256, signature };
 }

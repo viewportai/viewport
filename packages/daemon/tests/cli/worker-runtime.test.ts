@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,7 +32,7 @@ describe('standalone worker runtime', () => {
   });
 
   it('runs one persistent polling claim through sync and cleanup', async () => {
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
     const baseUrl = serverUrl(server);
     await writeWorkerProfile(baseUrl);
@@ -70,10 +71,11 @@ describe('standalone worker runtime', () => {
       transport: 'polling',
       capabilities: { agents: [] },
     });
+    await expectSignedRequest(requests[0], homeDir);
   });
 
   it('runs an ephemeral lease token through sync and cleanup', async () => {
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
     await writeWorkerProfile(serverUrl(server));
     process.argv = [
@@ -184,12 +186,12 @@ describe('standalone worker runtime', () => {
 });
 
 async function startRuntimeServer(
-  requests: Array<{ url: string; body: Record<string, unknown> }>,
+  requests: RuntimeRequest[],
 ): Promise<http.Server> {
   let claimCount = 0;
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
-    requests.push({ url: request.url ?? '', body });
+    requests.push({ url: request.url ?? '', body, headers: request.headers });
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/api/runtime/workers/claim') {
       claimCount += 1;
@@ -213,6 +215,12 @@ async function startRuntimeServer(
   return server;
 }
 
+interface RuntimeRequest {
+  url: string;
+  body: Record<string, unknown>;
+  headers: http.IncomingHttpHeaders;
+}
+
 function serverUrl(server: http.Server): string {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Missing test server address.');
@@ -232,4 +240,27 @@ async function readBody(request: http.IncomingMessage): Promise<Record<string, u
   }
   const raw = Buffer.concat(chunks).toString('utf8').trim();
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
+async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir: string) {
+  expect(request).toBeDefined();
+  const headers = request!.headers;
+  const fingerprint = String(headers['x-viewport-worker-fingerprint'] ?? '');
+  const timestamp = String(headers['x-viewport-worker-timestamp'] ?? '');
+  const nonce = String(headers['x-viewport-worker-nonce'] ?? '');
+  const bodySha256 = String(headers['x-viewport-worker-body-sha256'] ?? '');
+  const signature = String(headers['x-viewport-worker-signature'] ?? '');
+  expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  expect(timestamp).toContain('T');
+  expect(nonce).toMatch(/^[a-f0-9]{32}$/);
+  expect(bodySha256).toBe(
+    crypto.createHash('sha256').update(JSON.stringify(request!.body)).digest('hex'),
+  );
+  const identity = JSON.parse(
+    await fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8'),
+  ) as { publicKey: string };
+  const canonical = ['POST', request!.url, bodySha256, nonce, timestamp].join('\n');
+  expect(
+    crypto.verify(null, Buffer.from(canonical), identity.publicKey, Buffer.from(signature, 'base64')),
+  ).toBe(true);
 }
