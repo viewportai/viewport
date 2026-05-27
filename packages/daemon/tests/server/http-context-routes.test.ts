@@ -10,6 +10,7 @@ import { registerHttpRoutes } from '../../src/server/http-server.js';
 
 describe('HTTP context routes', () => {
   const trustedEdgeSigningKey = 'trusted-edge-command-test-secret';
+  const daemonAuthToken = 'good-token';
   let app: ReturnType<typeof Fastify>;
   let daemon: Daemon;
   let tempHome: string;
@@ -22,7 +23,12 @@ describe('HTTP context routes', () => {
     daemon = new Daemon();
     await daemon.initialize();
     app = Fastify();
-    registerHttpRoutes(app, daemon);
+    registerHttpRoutes(app, daemon, undefined, {
+      auth: {
+        validate: async (token: string) => token === daemonAuthToken,
+        getDisplayToken: () => daemonAuthToken,
+      },
+    });
     await app.ready();
   });
 
@@ -37,7 +43,7 @@ describe('HTTP context routes', () => {
   });
 
   it('initializes, adds, statuses, and resolves local context over HTTP', async () => {
-    const init = await app.inject({
+    const init = await injectApi({
       method: 'POST',
       url: '/api/context/init',
       payload: credentials({
@@ -49,7 +55,7 @@ describe('HTTP context routes', () => {
     });
     expect(init.statusCode).toBe(201);
 
-    const add = await app.inject({
+    const add = await injectApi({
       method: 'POST',
       url: '/api/context/entries',
       payload: credentials({
@@ -69,7 +75,7 @@ describe('HTTP context routes', () => {
     expect(raw).not.toContain('Review standard');
     expect(raw).not.toContain('Every risky change');
 
-    const status = await app.inject({
+    const status = await injectApi({
       method: 'GET',
       url: '/api/context/status?context=context-alpha',
     });
@@ -82,7 +88,7 @@ describe('HTTP context routes', () => {
       keyStore: 'file',
     });
 
-    const resolveWithoutCapability = await app.inject({
+    const resolveWithoutCapability = await injectApi({
       method: 'POST',
       url: '/api/context/resolve',
       payload: credentials({
@@ -99,7 +105,7 @@ describe('HTTP context routes', () => {
 
     await configureTrustedEdgeCapability(tempHome, daemon);
 
-    const resolved = await app.inject({
+    const resolved = await injectApi({
       method: 'POST',
       url: '/api/context/resolve',
       payload: credentials({
@@ -123,7 +129,7 @@ describe('HTTP context routes', () => {
       body: 'Every risky change needs regression proof.',
     });
 
-    const resolvedFromApprovedDevice = await app.inject({
+    const resolvedFromApprovedDevice = await injectApi({
       method: 'POST',
       url: '/api/context/resolve',
       payload: {
@@ -144,7 +150,7 @@ describe('HTTP context routes', () => {
       body: 'Every risky change needs regression proof.',
     });
 
-    const proposal = await app.inject({
+    const proposal = await injectApi({
       method: 'POST',
       url: '/api/context/candidates',
       payload: {
@@ -166,7 +172,7 @@ describe('HTTP context routes', () => {
   });
 
   it('rejects context writes without a context resource id', async () => {
-    const init = await app.inject({
+    const init = await injectApi({
       method: 'POST',
       url: '/api/context/init',
       payload: credentials({
@@ -228,7 +234,7 @@ describe('HTTP context routes', () => {
     );
 
     try {
-      await app.inject({
+      await injectApi({
         method: 'POST',
         url: '/api/context/init',
         payload: credentials({
@@ -239,7 +245,7 @@ describe('HTTP context routes', () => {
         }),
       });
 
-      const proposal = await app.inject({
+      const proposal = await injectApi({
         method: 'POST',
         url: '/api/context/candidates',
         payload: {
@@ -300,7 +306,7 @@ describe('HTTP context routes', () => {
       ),
     );
 
-    await app.inject({
+    await injectApi({
       method: 'POST',
       url: '/api/context/init',
       payload: credentials({
@@ -311,7 +317,7 @@ describe('HTTP context routes', () => {
       }),
     });
 
-    const proposal = await app.inject({
+    const proposal = await injectApi({
       method: 'POST',
       url: '/api/context/candidates',
       payload: {
@@ -331,7 +337,7 @@ describe('HTTP context routes', () => {
   });
 
   it('requires a scoped trusted-edge command capability before returning candidate plaintext', async () => {
-    await app.inject({
+    await injectApi({
       method: 'POST',
       url: '/api/context/init',
       payload: credentials({
@@ -342,7 +348,7 @@ describe('HTTP context routes', () => {
       }),
     });
 
-    const proposal = await app.inject({
+    const proposal = await injectApi({
       method: 'POST',
       url: '/api/context/candidates',
       payload: {
@@ -360,7 +366,7 @@ describe('HTTP context routes', () => {
       bodyDigest: string;
     };
 
-    const withoutCapability = await app.inject({
+    const withoutCapability = await injectApi({
       method: 'POST',
       url: '/api/context/candidates/preview',
       payload: {
@@ -377,7 +383,7 @@ describe('HTTP context routes', () => {
 
     await configureTrustedEdgeCapability(tempHome, daemon);
 
-    const preview = await app.inject({
+    const preview = await injectApi({
       method: 'POST',
       url: '/api/context/candidates/preview',
       payload: {
@@ -414,6 +420,18 @@ describe('HTTP context routes', () => {
       passphrase: 'alice-passphrase',
       recoveryCode: 'alice-recovery',
     };
+  }
+
+  function injectApi(options: Parameters<typeof app.inject>[0]): ReturnType<typeof app.inject> {
+    return app.inject({
+      ...options,
+      headers: {
+        authorization: `Bearer ${daemonAuthToken}`,
+        ...(typeof options === 'object' && options !== null && 'headers' in options
+          ? options.headers
+          : {}),
+      },
+    });
   }
 
   async function readTree(dir: string): Promise<string> {

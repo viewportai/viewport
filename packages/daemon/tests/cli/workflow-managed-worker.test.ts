@@ -123,8 +123,8 @@ describe('workflow managed worker CLI', () => {
             },
             models: expect.arrayContaining(['gpt-5.5']),
           },
-          access_mode: 'relay',
-          runner_posture: { transport: { mode: 'relay' } },
+          access_mode: 'polling',
+          runner_posture: { transport: { mode: 'polling' } },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
       }
@@ -1028,7 +1028,7 @@ nodes:
 
       if (url.endsWith('/heartbeat')) {
         expect(body).toMatchObject({
-          access_mode: 'relay',
+          access_mode: 'polling',
           runner_profile: 'payments-vps',
           capabilities: {
             runner_pool: 'payments-prod',
