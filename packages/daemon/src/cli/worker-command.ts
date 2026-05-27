@@ -113,7 +113,7 @@ async function workerStart(): Promise<void> {
     return;
   }
   console.log(
-    `Worker stopped. Claimed ${result.claimed}, completed ${result.completed}, cleanup ${result.cleanup}.`,
+    `Worker stopped. Claimed ${result.claimed}, completed ${result.completed}, failed ${result.failed}, cleanup ${result.cleanup}.`,
   );
 }
 

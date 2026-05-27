@@ -14,6 +14,7 @@ export interface StandaloneWorkerOptions {
 export interface StandaloneWorkerResult {
   claimed: number;
   completed: number;
+  failed: number;
   cleanup: number;
   denied: number;
 }
@@ -67,10 +68,16 @@ export async function runStandaloneWorker(
     const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
     await syncLease(profile, lease, 'completed');
     await cleanupLease(profile, lease);
-    return { claimed: 1, completed: 1, cleanup: 1, denied: 0 };
+    return { claimed: 1, completed: 1, failed: 0, cleanup: 1, denied: 0 };
   }
 
-  const result: StandaloneWorkerResult = { claimed: 0, completed: 0, cleanup: 0, denied: 0 };
+  const result: StandaloneWorkerResult = {
+    claimed: 0,
+    completed: 0,
+    failed: 0,
+    cleanup: 0,
+    denied: 0,
+  };
   do {
     const lease = await claimLease(profile, {
       lifecycle: options.lifecycle,
@@ -78,8 +85,13 @@ export async function runStandaloneWorker(
     });
     if (!lease) break;
     result.claimed += 1;
-    await syncLease(profile, lease, 'completed');
-    result.completed += 1;
+    const terminalStatus = terminalStatusForClaim(profile);
+    await syncLease(profile, lease, terminalStatus);
+    if (terminalStatus === 'completed') {
+      result.completed += 1;
+    } else {
+      result.failed += 1;
+    }
     await cleanupLease(profile, lease);
     result.cleanup += 1;
   } while (!options.once);
@@ -92,6 +104,10 @@ export async function runStandaloneWorker(
   });
 
   return result;
+}
+
+function terminalStatusForClaim(profile: WorkerRuntimeProfile): 'completed' | 'failed' {
+  return isHostedManagedExecutorProfile(profile) ? 'failed' : 'completed';
 }
 
 async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
@@ -219,10 +235,32 @@ async function syncLease(
         runtime_run_id: `vpd-worker-${lease.runId}`,
         status,
         completed_at: new Date().toISOString(),
+        ...(status === 'failed'
+          ? {
+              error_summary:
+                'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
+              failure: {
+                schema: 'viewport.workflow_failure/v1',
+                error_code: 'RUNNER_EXECUTION_ENGINE_UNAVAILABLE',
+                failure_class: 'internal_error',
+                summary:
+                  'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
+                next_check:
+                  'Wire the in-process workflow executor before enabling hosted worker completion.',
+                retry_safe: false,
+                lease_released: true,
+                details: {
+                  worker_runtime: 'standalone',
+                  hosted_managed_executor: true,
+                },
+              },
+            }
+          : {}),
         events: [
           {
             runtime_event_id: `vpd-worker-${lease.runId}-${status}`,
             type: status === 'completed' ? 'run-completed' : 'run-failed',
+            severity: status === 'completed' ? 'info' : 'error',
             message: `vpd worker marked run ${status}`,
           },
         ],

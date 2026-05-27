@@ -56,9 +56,10 @@ describe('standalone worker runtime', () => {
     const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
       claimed: number;
       completed: number;
+      failed: number;
       cleanup: number;
     };
-    expect(payload).toMatchObject({ claimed: 1, completed: 1, cleanup: 1 });
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
     expect(requests.map((request) => request.url)).toEqual([
       '/api/runtime/workers/heartbeat',
       '/api/runtime/workers/claim',
@@ -97,9 +98,10 @@ describe('standalone worker runtime', () => {
     const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
       claimed: number;
       completed: number;
+      failed: number;
       cleanup: number;
     };
-    expect(payload).toMatchObject({ claimed: 1, completed: 1, cleanup: 1 });
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
     expect(requests.map((request) => request.url)).toEqual([
       '/api/runtime/workers/heartbeat',
       '/api/runtime/workers/leases/lease_token_123/sync',
@@ -131,9 +133,10 @@ describe('standalone worker runtime', () => {
     const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
       claimed: number;
       completed: number;
+      failed: number;
       cleanup: number;
     };
-    expect(payload).toMatchObject({ claimed: 1, completed: 1, cleanup: 1 });
+    expect(payload).toMatchObject({ claimed: 1, completed: 0, failed: 1, cleanup: 1 });
     expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
@@ -153,8 +156,17 @@ describe('standalone worker runtime', () => {
     expect(requests[2]?.body).toMatchObject({
       credential: 'vpexec_hosted',
       runtime_run_id: 'vpd-worker-run_1',
-      status: 'completed',
-      events: [expect.objectContaining({ type: 'run-completed' })],
+      status: 'failed',
+      error_summary:
+        'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
+      failure: expect.objectContaining({
+        schema: 'viewport.workflow_failure/v1',
+        error_code: 'RUNNER_EXECUTION_ENGINE_UNAVAILABLE',
+        failure_class: 'internal_error',
+        retry_safe: false,
+        lease_released: true,
+      }),
+      events: [expect.objectContaining({ type: 'run-failed', severity: 'error' })],
     });
     await expectSignedRequest(requests[2], homeDir);
   });
