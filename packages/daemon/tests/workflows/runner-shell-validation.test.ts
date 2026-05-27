@@ -394,6 +394,68 @@ nodes:
     );
   });
 
+  it('blocks argv side-effect commands outside first-class authority', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-argv-side-effect-proof
+nodes:
+  push:
+    type: shell
+    argv:
+      - git
+      - push
+      - git@github.com:acme/payments.git
+      - HEAD:viewport/proof
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [{ provider: 'github', actions: ['create_pr'] }] },
+        shell: { policy: 'constrained' },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.push?.error).toContain('github.push-branch');
+    expect(failed?.nodes.push?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      status: 'denied',
+      executor: expect.objectContaining({ kind: 'argv' }),
+      denial: {
+        reason: 'shell_provider_side_effect_not_allowed',
+        detail: expect.stringContaining('github.push-branch'),
+      },
+    });
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'shell-blocked',
+        nodeId: 'push',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'shell_provider_side_effect_not_allowed',
+            provider: 'github',
+            action: 'push-branch',
+          }),
+        }),
+      }),
+    );
+  });
+
   it('blocks shell cwd outside the run worktree when workflow authority is present', async () => {
     const daemon = await setup();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-outside-worktree-'));
