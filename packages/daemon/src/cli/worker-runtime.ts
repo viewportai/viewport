@@ -22,6 +22,9 @@ interface WorkerRuntimeProfile {
   serverUrl: string;
   lifecycle: WorkerLifecycle;
   transport: WorkerTransport;
+  workspaceId?: string;
+  managedExecutorId?: string;
+  credential?: string;
   workspaceRoot: string;
   identityKeyPath: string;
   publicKeyFingerprint: string;
@@ -38,6 +41,7 @@ interface ClaimedLease {
   id: string;
   runId?: string;
   leaseToken?: string;
+  assignmentClaimToken?: string;
 }
 
 export async function runStandaloneWorker(
@@ -52,14 +56,11 @@ export async function runStandaloneWorker(
     throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
   }
 
-  await workerRequest(profile, 'workers/heartbeat', {
+  await heartbeat(profile, {
     status: 'online',
-    health_status: 'idle',
+    healthStatus: 'idle',
     lifecycle: options.lifecycle,
     transport,
-    workspace_root: profile.workspaceRoot,
-    public_key_fingerprint: profile.publicKeyFingerprint,
-    capabilities: profile.capabilities,
   });
 
   if (options.leaseToken) {
@@ -83,14 +84,11 @@ export async function runStandaloneWorker(
     result.cleanup += 1;
   } while (!options.once);
 
-  await workerRequest(profile, 'workers/heartbeat', {
+  await heartbeat(profile, {
     status: 'offline',
-    health_status: 'offline',
+    healthStatus: 'offline',
     lifecycle: options.lifecycle,
     transport,
-    workspace_root: profile.workspaceRoot,
-    public_key_fingerprint: profile.publicKeyFingerprint,
-    capabilities: profile.capabilities,
   });
 
   return result;
@@ -111,6 +109,13 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     serverUrl: worker!.serverUrl!,
     lifecycle: worker!.lifecycle ?? 'persistent',
     transport: worker!.transport ?? 'polling',
+    workspaceId: worker!.workspaceId ?? process.env['VIEWPORT_WORKSPACE_ID'],
+    managedExecutorId:
+      worker!.managedExecutorId ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ID'],
+    credential:
+      worker!.credential ??
+      process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
+      process.env['VPD_MANAGED_EXECUTOR_TOKEN'],
     workspaceRoot: worker!.workspaceRoot!,
     identityKeyPath: worker!.identityKeyPath!,
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
@@ -122,22 +127,78 @@ async function claimLease(
   profile: WorkerRuntimeProfile,
   body: Record<string, unknown>,
 ): Promise<ClaimedLease | null> {
-  const response = await workerFetch(profile, 'workers/claim', body);
+  const response = isHostedManagedExecutorProfile(profile)
+    ? await hostedManagedExecutorFetch(profile, 'POST', 'claim', {
+        credential: profile.credential,
+        lease_seconds: 300,
+      })
+    : await workerFetch(profile, 'workers/claim', body);
   if (response.status === 204) return null;
   const parsed = (await response.json()) as Record<string, unknown>;
-  const rawLease =
-    parsed['lease'] && typeof parsed['lease'] === 'object'
-      ? (parsed['lease'] as Record<string, unknown>)
+  const data =
+    parsed['data'] && typeof parsed['data'] === 'object'
+      ? (parsed['data'] as Record<string, unknown>)
       : parsed;
+  const rawLease =
+    data['run_lease'] && typeof data['run_lease'] === 'object'
+      ? (data['run_lease'] as Record<string, unknown>)
+      : data['lease'] && typeof data['lease'] === 'object'
+        ? (data['lease'] as Record<string, unknown>)
+        : data;
   const id = stringValue(rawLease['id'] ?? rawLease['lease_id']);
   if (!id) {
     throw new Error('Worker claim response did not include a lease id.');
   }
   return {
     id,
-    runId: stringValue(rawLease['run_id'] ?? rawLease['runId']),
+    runId: stringValue(
+      data['id'] ?? rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId'],
+    ),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
+    assignmentClaimToken: stringValue(data['assignment_claim_token']),
   };
+}
+
+async function heartbeat(
+  profile: WorkerRuntimeProfile,
+  options: {
+    status: 'online' | 'offline';
+    healthStatus: 'idle' | 'offline';
+    lifecycle: WorkerLifecycle;
+    transport: WorkerTransport;
+  },
+): Promise<void> {
+  const capabilityPayload = managedExecutorCapabilities(profile.capabilities);
+  if (isHostedManagedExecutorProfile(profile)) {
+    await hostedManagedExecutorFetch(profile, 'POST', 'heartbeat', {
+      credential: profile.credential,
+      status: options.status,
+      health_status: options.healthStatus,
+      access_mode: options.transport,
+      runner_mode: options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'self_hosted',
+      runner_provider: options.lifecycle === 'ephemeral' ? 'viewport_cloud' : 'local',
+      context_execution_mode:
+        options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'customer_managed_context_worker',
+      credential_mode: options.lifecycle === 'ephemeral' ? 'run_scoped_grant' : 'runner_local',
+      runner_posture: {
+        transport: { mode: options.transport },
+        execution: {
+          kind: options.lifecycle === 'ephemeral' ? 'ephemeral-worker' : 'persistent-worker',
+        },
+      },
+      capabilities: capabilityPayload,
+    });
+    return;
+  }
+  await workerRequest(profile, 'workers/heartbeat', {
+    status: options.status,
+    health_status: options.healthStatus,
+    lifecycle: options.lifecycle,
+    transport: options.transport,
+    workspace_root: profile.workspaceRoot,
+    public_key_fingerprint: profile.publicKeyFingerprint,
+    capabilities: profile.capabilities,
+  });
 }
 
 async function syncLease(
@@ -145,6 +206,31 @@ async function syncLease(
   lease: ClaimedLease,
   status: 'completed' | 'failed',
 ): Promise<void> {
+  if (isHostedManagedExecutorProfile(profile)) {
+    if (!lease.runId) {
+      throw new Error('Hosted managed executor sync requires a workflow run id.');
+    }
+    await hostedManagedExecutorFetch(
+      profile,
+      'PATCH',
+      `workflow-runs/${encodeURIComponent(lease.runId)}/sync`,
+      {
+        credential: profile.credential,
+        runtime_run_id: `vpd-worker-${lease.runId}`,
+        status,
+        completed_at: new Date().toISOString(),
+        events: [
+          {
+            runtime_event_id: `vpd-worker-${lease.runId}-${status}`,
+            type: status === 'completed' ? 'run-completed' : 'run-failed',
+            message: `vpd worker marked run ${status}`,
+          },
+        ],
+      },
+      lease.assignmentClaimToken,
+    );
+    return;
+  }
   await workerRequest(profile, `workers/leases/${encodeURIComponent(lease.id)}/sync`, {
     lease_id: lease.id,
     run_id: lease.runId ?? null,
@@ -155,6 +241,9 @@ async function syncLease(
 }
 
 async function cleanupLease(profile: WorkerRuntimeProfile, lease: ClaimedLease): Promise<void> {
+  if (isHostedManagedExecutorProfile(profile)) {
+    return;
+  }
   await workerRequest(profile, `workers/leases/${encodeURIComponent(lease.id)}/cleanup`, {
     lease_id: lease.id,
     run_id: lease.runId ?? null,
@@ -197,6 +286,69 @@ async function workerFetch(
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(`Worker runtime request ${path} failed with HTTP ${response.status}: ${text}`);
+  }
+  return response;
+}
+
+function isHostedManagedExecutorProfile(profile: WorkerRuntimeProfile): boolean {
+  return Boolean(profile.workspaceId && profile.managedExecutorId && profile.credential);
+}
+
+function managedExecutorCapabilities(capabilities: Record<string, unknown>): Record<string, unknown> {
+  const agents = capabilities['agents'];
+  if (!Array.isArray(agents)) return capabilities;
+  return {
+    ...capabilities,
+    agents: agents.map((agent) => {
+      if (typeof agent !== 'object' || agent === null || Array.isArray(agent)) return agent;
+      const record = agent as Record<string, unknown>;
+      return {
+        id: record['id'],
+        available: record['available'],
+        tier: record['tier'],
+      };
+    }),
+  };
+}
+
+async function hostedManagedExecutorFetch(
+  profile: WorkerRuntimeProfile,
+  method: 'POST' | 'PATCH',
+  path: string,
+  body: Record<string, unknown>,
+  assignmentClaimToken?: string,
+): Promise<Response> {
+  if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
+    throw new Error('Hosted managed executor profile is missing workspace, executor, or credential.');
+  }
+  const requestPath = `/api/runtime/workspaces/${encodeURIComponent(
+    profile.workspaceId,
+  )}/managed-executors/${encodeURIComponent(profile.managedExecutorId)}/${path}`;
+  const serialized = JSON.stringify(body);
+  const signed = await signWorkerRequest(profile, method, requestPath, serialized);
+  const response = await transportFetch(
+    `${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`,
+    {
+      method,
+      headers: {
+        Authorization: `Bearer ${profile.credential}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
+        'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+        'X-Viewport-Worker-Timestamp': signed.timestamp,
+        'X-Viewport-Worker-Nonce': signed.nonce,
+        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+        'X-Viewport-Worker-Signature': signed.signature,
+      },
+      body: serialized,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(
+      `Hosted managed executor request ${path} failed with HTTP ${response.status}: ${text}`,
+    );
   }
   return response;
 }

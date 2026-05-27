@@ -107,6 +107,58 @@ describe('standalone worker runtime', () => {
     ]);
   });
 
+  it('bridges persistent polling workers to hosted managed executor claim and sync endpoints', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, cleanup: 1 });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests[0]?.body).toMatchObject({
+      credential: 'vpexec_hosted',
+      access_mode: 'polling',
+      runner_mode: 'self_hosted',
+      runner_provider: 'local',
+      capabilities: {
+        agents: [{ id: 'codex', available: true, tier: 'sdk' }],
+      },
+    });
+    expect(requests[2]?.headers['x-viewport-assignment-claim']).toBe('vpclaim_run_1');
+    expect(requests[2]?.body).toMatchObject({
+      credential: 'vpexec_hosted',
+      runtime_run_id: 'vpd-worker-run_1',
+      status: 'completed',
+      events: [expect.objectContaining({ type: 'run-completed' })],
+    });
+    await expectSignedRequest(requests[2], homeDir);
+  });
+
   it('denies inbound transport until signed inbound proof exists', async () => {
     await writeWorkerProfile('http://127.0.0.1:1');
     process.argv = [
@@ -183,6 +235,26 @@ describe('standalone worker runtime', () => {
       }),
     );
   }
+
+  async function writeHostedWorkerProfile(serverUrl: string): Promise<void> {
+    await writeWorkerProfile(serverUrl);
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const existing = manager.getDaemonConfig() ?? {};
+    await manager.setDaemonConfig({
+      ...existing,
+      worker: {
+        ...existing.worker,
+        workspaceId: 'workspace_1',
+        managedExecutorId: 'executor_1',
+        credential: 'vpexec_hosted',
+        capabilities: {
+          agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
+        },
+      },
+    });
+  }
 });
 
 async function startRuntimeServer(
@@ -191,7 +263,12 @@ async function startRuntimeServer(
   let claimCount = 0;
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
-    requests.push({ url: request.url ?? '', body, headers: request.headers });
+    requests.push({
+      url: request.url ?? '',
+      method: request.method ?? 'GET',
+      body,
+      headers: request.headers,
+    });
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/api/runtime/workers/claim') {
       claimCount += 1;
@@ -201,6 +278,29 @@ async function startRuntimeServer(
         return;
       }
       response.end(JSON.stringify({ lease: { id: 'lease_1', run_id: 'run_1' } }));
+      return;
+    }
+    if (
+      request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim'
+    ) {
+      claimCount += 1;
+      if (claimCount > 1) {
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
+      response.end(
+        JSON.stringify({
+          data: {
+            id: 'run_1',
+            assignment_claim_token: 'vpclaim_run_1',
+            run_lease: {
+              lease_id: 'workflow_run:run_1',
+              workflow_run_id: 'run_1',
+            },
+          },
+        }),
+      );
       return;
     }
     response.end(JSON.stringify({ ok: true }));
@@ -217,6 +317,7 @@ async function startRuntimeServer(
 
 interface RuntimeRequest {
   url: string;
+  method: string;
   body: Record<string, unknown>;
   headers: http.IncomingHttpHeaders;
 }
@@ -259,7 +360,7 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
   const identity = JSON.parse(
     await fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8'),
   ) as { publicKey: string };
-  const canonical = ['POST', request!.url, bodySha256, nonce, timestamp].join('\n');
+  const canonical = [request!.method, request!.url, bodySha256, nonce, timestamp].join('\n');
   expect(
     crypto.verify(null, Buffer.from(canonical), identity.publicKey, Buffer.from(signature, 'base64')),
   ).toBe(true);

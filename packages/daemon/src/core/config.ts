@@ -220,6 +220,9 @@ export interface ViewportConfig {
       transport?: 'polling' | 'relay' | 'inbound';
       serverUrl?: string;
       appUrl?: string;
+      workspaceId?: string;
+      managedExecutorId?: string;
+      credential?: string;
       workspaceRoot?: string;
       logsDir?: string;
       cacheDir?: string;
@@ -616,6 +619,9 @@ export class ConfigManager {
           transport?: 'polling' | 'relay' | 'inbound';
           serverUrl?: string;
           appUrl?: string;
+          workspaceId?: string;
+          managedExecutorId?: string;
+          credential?: string;
           workspaceRoot?: string;
           logsDir?: string;
           cacheDir?: string;
