@@ -74,6 +74,53 @@ describe('worker profile defaults', () => {
     expect(profile.appUrl).toBe('http://localhost:8780');
   });
 
+  it('resolves customer-internal servers without hosted URL rewriting', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'pair',
+      '--worker',
+      '--server',
+      'https://viewport.customer.internal',
+      '--transport',
+      'polling',
+    ];
+    vi.resetModules();
+    const { resolvePairingServerTransport } = await import(
+      '../../src/cli/lifecycle-pair-server.js'
+    );
+    const { resolveWorkerProfileDefaults } = await import('../../src/cli/worker-profile.js');
+
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+
+    expect(profile.serverUrl).toBe('https://viewport.customer.internal');
+    expect(profile.appUrl).toBe('https://viewport.customer.internal');
+    expect(profile.transport).toBe('polling');
+  });
+
+  it('auto-detects built-in agent capabilities for worker pairing evidence', async () => {
+    const { resolvePairingServerTransport } = await import(
+      '../../src/cli/lifecycle-pair-server.js'
+    );
+    const { resolveWorkerProfileDefaults } = await import('../../src/cli/worker-profile.js');
+
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+    });
+
+    expect(profile.capabilities.agents.map((agent) => agent.id).sort()).toEqual([
+      'claude',
+      'codex',
+      'gemini',
+    ]);
+    for (const agent of profile.capabilities.agents) {
+      expect(typeof agent.available).toBe('boolean');
+    }
+  });
+
   it('persists worker profile config and identity without monitor state', async () => {
     const { resolvePairingServerTransport } = await import(
       '../../src/cli/lifecycle-pair-server.js'
@@ -108,5 +155,29 @@ describe('worker profile defaults', () => {
     await expect(fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8')).resolves.toContain(
       'BEGIN PRIVATE KEY',
     );
+  });
+
+  it('uses the active profile home for worker state instead of the monitor default home', async () => {
+    process.env['VIEWPORT_PROFILE'] = 'payments-worker';
+    vi.resetModules();
+    const { resolvePairingServerTransport } = await import(
+      '../../src/cli/lifecycle-pair-server.js'
+    );
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
+      '../../src/cli/worker-profile.js'
+    );
+
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+    await storeWorkerProfile(null, profile);
+
+    const profileHome = path.join(homeDir, 'profiles', 'payments-worker');
+    expect(profile.workspaceRoot).toBe(path.join(profileHome, 'workspace'));
+    await expect(fs.readFile(path.join(profileHome, 'config.json'), 'utf8')).resolves.toContain(
+      '"worker"',
+    );
+    await expect(fs.readFile(path.join(homeDir, 'config.json'), 'utf8')).rejects.toThrow();
   });
 });
