@@ -157,6 +157,7 @@ nodes:
     expect(completed?.nodes.review?.metadata?.['agentRun']).toMatchObject({
       schema: 'viewport.agent_run_result/v1',
       agentId: 'claude',
+      adapterVersion: 'test',
       executionMode: 'implement',
       stopReason: 'idle',
       output: 'done',
