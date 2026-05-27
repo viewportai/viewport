@@ -1,6 +1,7 @@
 import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
+import { runStandaloneWorker } from './worker-runtime.js';
 import {
   defaultWorkerWorkspaceRoot,
   normalizeWorkerLifecycle,
@@ -97,21 +98,40 @@ async function workerDoctor(): Promise<void> {
 }
 
 async function workerStart(): Promise<void> {
+  const asJson = isJsonMode();
   const lifecycle = normalizeWorkerLifecycle(getFlag('mode') ?? getFlag('lifecycle'));
   if (lifecycle !== 'persistent') {
     throw new Error('Use `vpd worker run-once` for ephemeral workers.');
   }
-  normalizeWorkerTransport(getFlag('transport'));
-  throw new Error(
-    'Standalone worker execution lands in runner Phase 8. Pair first with `vpd pair --worker --transport=polling`.',
+  const result = await runStandaloneWorker({
+    lifecycle,
+    transport: normalizeWorkerTransport(getFlag('transport')),
+    once: getArgs().includes('--once'),
+  });
+  if (asJson) {
+    printJson({ command: 'worker start', ok: true, ...result });
+    return;
+  }
+  console.log(
+    `Worker stopped. Claimed ${result.claimed}, completed ${result.completed}, cleanup ${result.cleanup}.`,
   );
 }
 
 async function workerRunOnce(): Promise<void> {
+  const asJson = isJsonMode();
   const lease = getFlag('lease');
   if (!lease || lease.trim() === '') {
     throw new Error('Usage: vpd worker run-once --lease <lease-token> [--transport polling|relay|inbound]');
   }
-  normalizeWorkerTransport(getFlag('transport'));
-  throw new Error('Standalone run-once execution lands in runner Phase 8.');
+  const result = await runStandaloneWorker({
+    lifecycle: 'ephemeral',
+    transport: normalizeWorkerTransport(getFlag('transport')),
+    once: true,
+    leaseToken: lease.trim(),
+  });
+  if (asJson) {
+    printJson({ command: 'worker run-once', ok: true, ...result });
+    return;
+  }
+  console.log(`Worker run-once complete. Cleanup receipts: ${result.cleanup}.`);
 }
