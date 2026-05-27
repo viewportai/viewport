@@ -1,6 +1,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
+import { Daemon } from '../core/daemon.js';
+import { loadAgents } from '../startup-agents.js';
+import { GitTracker } from '../tracking/git-tracker.js';
+import { workflowRunToSyncPayload } from '../workflows/platform-sync-payload.js';
+import type {
+  WorkflowDataCapturePolicy,
+  WorkflowInputValue,
+  WorkflowRunRecord,
+  WorkflowRunStatus,
+} from '../workflows/types.js';
 import { transportFetch } from './network.js';
 import type { WorkerLifecycle, WorkerTransport } from './worker-profile.js';
 
@@ -14,6 +25,7 @@ export interface StandaloneWorkerOptions {
 export interface StandaloneWorkerResult {
   claimed: number;
   completed: number;
+  blocked: number;
   failed: number;
   cleanup: number;
   denied: number;
@@ -43,6 +55,28 @@ interface ClaimedLease {
   runId?: string;
   leaseToken?: string;
   assignmentClaimToken?: string;
+  yamlSnapshot?: string;
+  sourceRef?: string;
+  directoryPath?: string;
+  inputSnapshot?: Record<string, WorkflowInputValue>;
+  resourceManifest?: Record<string, unknown>;
+  workflowAuthorityContract?: Record<string, unknown>;
+  runtimeTargetId?: string;
+  dataCapturePolicy?: WorkflowDataCapturePolicy;
+}
+
+interface HostedClaimExecutionResult {
+  status: Extract<WorkflowRunStatus, 'completed' | 'failed' | 'blocked' | 'canceled'>;
+  run?: WorkflowRunRecord;
+  failure?: HostedWorkerFailure;
+}
+
+interface HostedWorkerFailure {
+  errorCode: string;
+  failureClass: string;
+  summary: string;
+  nextCheck: string;
+  retrySafe: boolean;
 }
 
 export async function runStandaloneWorker(
@@ -66,14 +100,15 @@ export async function runStandaloneWorker(
 
   if (options.leaseToken) {
     const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
-    await syncLease(profile, lease, 'completed');
+    await syncLease(profile, lease, { status: 'completed' });
     await cleanupLease(profile, lease);
-    return { claimed: 1, completed: 1, failed: 0, cleanup: 1, denied: 0 };
+    return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
   }
 
   const result: StandaloneWorkerResult = {
     claimed: 0,
     completed: 0,
+    blocked: 0,
     failed: 0,
     cleanup: 0,
     denied: 0,
@@ -85,10 +120,12 @@ export async function runStandaloneWorker(
     });
     if (!lease) break;
     result.claimed += 1;
-    const terminalStatus = terminalStatusForClaim(profile);
-    await syncLease(profile, lease, terminalStatus);
-    if (terminalStatus === 'completed') {
+    const execution = await executeClaim(profile, lease);
+    await syncLease(profile, lease, execution);
+    if (execution.status === 'completed') {
       result.completed += 1;
+    } else if (execution.status === 'blocked') {
+      result.blocked += 1;
     } else {
       result.failed += 1;
     }
@@ -106,8 +143,14 @@ export async function runStandaloneWorker(
   return result;
 }
 
-function terminalStatusForClaim(profile: WorkerRuntimeProfile): 'completed' | 'failed' {
-  return isHostedManagedExecutorProfile(profile) ? 'failed' : 'completed';
+async function executeClaim(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<HostedClaimExecutionResult> {
+  if (!isHostedManagedExecutorProfile(profile)) {
+    return { status: 'completed' };
+  }
+  return executeHostedWorkflowClaim(profile, lease);
 }
 
 async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
@@ -172,6 +215,20 @@ async function claimLease(
     ),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
     assignmentClaimToken: stringValue(data['assignment_claim_token']),
+    yamlSnapshot: stringValue(data['yaml_snapshot'] ?? rawLease['yaml_snapshot']),
+    sourceRef: stringValue(data['source_ref'] ?? rawLease['source_ref']),
+    directoryPath: stringValue(data['directory_path'] ?? rawLease['directory_path']),
+    inputSnapshot: recordValue(data['input_snapshot'] ?? rawLease['input_snapshot']) as
+      | Record<string, WorkflowInputValue>
+      | undefined,
+    resourceManifest: recordValue(data['resource_manifest'] ?? rawLease['resource_manifest']),
+    workflowAuthorityContract: recordValue(
+      data['workflow_authority_contract'] ?? rawLease['workflow_authority_contract'],
+    ),
+    runtimeTargetId: stringValue(data['runtime_target_id'] ?? rawLease['runtime_target_id']),
+    dataCapturePolicy: dataCapturePolicyValue(
+      data['data_capture_policy'] ?? rawLease['data_capture_policy'],
+    ),
   };
 }
 
@@ -220,34 +277,43 @@ async function heartbeat(
 async function syncLease(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
-  status: 'completed' | 'failed',
+  execution: HostedClaimExecutionResult,
 ): Promise<void> {
+  const status = execution.status;
   if (isHostedManagedExecutorProfile(profile)) {
     if (!lease.runId) {
       throw new Error('Hosted managed executor sync requires a workflow run id.');
     }
+    const runPayload = execution.run
+      ? workflowRunToSyncPayload(execution.run, { enforceDataCapturePolicy: true })
+      : undefined;
+    const failure = execution.failure ?? hostedWorkerExecutionUnavailableFailure();
     await hostedManagedExecutorFetch(
       profile,
       'PATCH',
       `workflow-runs/${encodeURIComponent(lease.runId)}/sync`,
       {
+        ...(runPayload ?? {}),
         credential: profile.credential,
-        runtime_run_id: `vpd-worker-${lease.runId}`,
+        runtime_run_id:
+          typeof runPayload?.['runtime_run_id'] === 'string'
+            ? runPayload['runtime_run_id']
+            : `vpd-worker-${lease.runId}`,
         status,
-        completed_at: new Date().toISOString(),
+        completed_at:
+          typeof runPayload?.['completed_at'] === 'string'
+            ? runPayload['completed_at']
+            : new Date().toISOString(),
         ...(status === 'failed'
           ? {
-              error_summary:
-                'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
+              error_summary: failure.summary,
               failure: {
                 schema: 'viewport.workflow_failure/v1',
-                error_code: 'RUNNER_EXECUTION_ENGINE_UNAVAILABLE',
-                failure_class: 'internal_error',
-                summary:
-                  'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
-                next_check:
-                  'Wire the in-process workflow executor before enabling hosted worker completion.',
-                retry_safe: false,
+                error_code: failure.errorCode,
+                failure_class: failure.failureClass,
+                summary: failure.summary,
+                next_check: failure.nextCheck,
+                retry_safe: failure.retrySafe,
                 lease_released: true,
                 details: {
                   worker_runtime: 'standalone',
@@ -257,6 +323,9 @@ async function syncLease(
             }
           : {}),
         events: [
+          ...((Array.isArray(runPayload?.['events'])
+            ? (runPayload['events'] as unknown[])
+            : []) as unknown[]),
           {
             runtime_event_id: `vpd-worker-${lease.runId}-${status}`,
             type: status === 'completed' ? 'run-completed' : 'run-failed',
@@ -276,6 +345,107 @@ async function syncLease(
     event_type: 'phase8_fixture',
     runtime_event_id: `phase8-${lease.id}-${status}`,
   });
+}
+
+async function executeHostedWorkflowClaim(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<HostedClaimExecutionResult> {
+  if (!lease.yamlSnapshot) {
+    return {
+      status: 'failed',
+      failure: hostedWorkerExecutionUnavailableFailure(),
+    };
+  }
+
+  try {
+    const daemon = await createStandaloneWorkerDaemon();
+    const directoryPath = path.resolve(lease.directoryPath ?? profile.workspaceRoot);
+    await fs.mkdir(directoryPath, { recursive: true });
+    const directory = await daemon.directoryManager.register(directoryPath);
+    const run = await daemon.workflowRunner.startRun({
+      workflowYaml: lease.yamlSnapshot,
+      workflowSourceRef: lease.sourceRef ?? `viewport://managed-executor/${lease.runId ?? lease.id}`,
+      directoryId: directory.id,
+      inputs: lease.inputSnapshot,
+      resourceId: profile.workspaceId,
+      runtimeTargetId: lease.runtimeTargetId ?? profile.managedExecutorId,
+      platformRunId: lease.runId,
+      resourceManifest: lease.resourceManifest as never,
+      workflowAuthorityContract: lease.workflowAuthorityContract,
+      dataCapturePolicy: lease.dataCapturePolicy,
+      initiation: 'cli',
+    });
+    const completed = await waitForWorkflowRun(daemon, run.id);
+    return {
+      status: normalizeWorkflowStatus(completed.status),
+      run: completed,
+      ...(completed.status === 'failed' || completed.status === 'canceled'
+        ? { failure: workflowRunFailure(completed) }
+        : {}),
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      failure: {
+        errorCode: 'RUNNER_WORKFLOW_EXECUTION_FAILED',
+        failureClass: 'internal_error',
+        summary: error instanceof Error ? error.message : 'Standalone worker execution failed.',
+        nextCheck: 'Inspect worker logs and workflow execution receipts.',
+        retrySafe: false,
+      },
+    };
+  }
+}
+
+async function createStandaloneWorkerDaemon(): Promise<Daemon> {
+  const daemon = new Daemon();
+  await daemon.initialize();
+  const registry = await loadAgents(daemon);
+  daemon.setModelProvider(() => registry.fetchAllModels());
+  daemon.setTrackerFactory((trackerConfig, sessionId) => new GitTracker(trackerConfig, sessionId));
+  return daemon;
+}
+
+async function waitForWorkflowRun(daemon: Daemon, runId: string): Promise<WorkflowRunRecord> {
+  const deadline = Date.now() + 10 * 60_000;
+  let last: WorkflowRunRecord | null = null;
+  while (Date.now() < deadline) {
+    last = await daemon.workflowRunner.getRun(runId);
+    if (last && ['completed', 'failed', 'blocked', 'canceled'].includes(last.status)) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Workflow run ${runId} did not reach a terminal or blocked state.`);
+}
+
+function normalizeWorkflowStatus(
+  status: WorkflowRunStatus,
+): Extract<WorkflowRunStatus, 'completed' | 'failed' | 'blocked' | 'canceled'> {
+  return ['completed', 'failed', 'blocked', 'canceled'].includes(status)
+    ? (status as Extract<WorkflowRunStatus, 'completed' | 'failed' | 'blocked' | 'canceled'>)
+    : 'failed';
+}
+
+function hostedWorkerExecutionUnavailableFailure(): HostedWorkerFailure {
+  return {
+    errorCode: 'RUNNER_EXECUTION_ENGINE_UNAVAILABLE',
+    failureClass: 'internal_error',
+    summary: 'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
+    nextCheck: 'Wire the in-process workflow executor before enabling hosted worker completion.',
+    retrySafe: false,
+  };
+}
+
+function workflowRunFailure(run: WorkflowRunRecord): HostedWorkerFailure {
+  return {
+    errorCode: run.status === 'canceled' ? 'RUNNER_WORKFLOW_CANCELED' : 'RUNNER_WORKFLOW_FAILED',
+    failureClass: run.status === 'canceled' ? 'canceled' : 'workflow_error',
+    summary: run.error ?? `Workflow run ended with status ${run.status}.`,
+    nextCheck: 'Inspect workflow node receipts and worker logs.',
+    retrySafe: false,
+  };
 }
 
 async function cleanupLease(profile: WorkerRuntimeProfile, lease: ClaimedLease): Promise<void> {
@@ -393,6 +563,27 @@ async function hostedManagedExecutorFetch(
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function dataCapturePolicyValue(value: unknown): WorkflowDataCapturePolicy | undefined {
+  const record = recordValue(value);
+  if (!record) return undefined;
+  const transcripts = record['transcripts'];
+  const logs = record['logs'];
+  const artifacts = record['artifacts'];
+  if (
+    (transcripts === 'none' || transcripts === 'excerpt') &&
+    (logs === 'metadata' || logs === 'content') &&
+    (artifacts === 'metadata' || artifacts === 'local_reference')
+  ) {
+    return { transcripts, logs, artifacts };
+  }
+  return undefined;
 }
 
 async function signWorkerRequest(

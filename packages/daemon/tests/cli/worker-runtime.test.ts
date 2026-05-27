@@ -109,7 +109,7 @@ describe('standalone worker runtime', () => {
     ]);
   });
 
-  it('bridges persistent polling workers to hosted managed executor claim and sync endpoints', async () => {
+  it('fails closed for hosted managed executor claims without executable workflow material', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
     await writeHostedWorkerProfile(serverUrl(server));
@@ -168,6 +168,81 @@ describe('standalone worker runtime', () => {
       }),
       events: [expect.objectContaining({ type: 'run-failed', severity: 'error' })],
     });
+    await expectSignedRequest(requests[2], homeDir);
+  });
+
+  it('executes hosted managed executor workflow material in-process before syncing', async () => {
+    const projectDir = path.join(homeDir, 'hosted-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-shell-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - hosted-ok
+`,
+        source_ref: 'viewport://test/hosted-worker-shell-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    const sync = requests[2]?.body;
+    expect(sync).toMatchObject({
+      credential: 'vpexec_hosted',
+      status: 'completed',
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          proof: expect.objectContaining({ status: 'completed', output: 'hosted-ok' }),
+        }),
+      }),
+      events: expect.arrayContaining([expect.objectContaining({ type: 'run-completed' })]),
+    });
+    expect(String(sync?.['runtime_run_id'] ?? '')).not.toBe('vpd-worker-run_1');
+    expect(sync?.['nodes']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node_key: 'proof',
+          status: 'completed',
+          output: 'hosted-ok',
+        }),
+      ]),
+    );
     await expectSignedRequest(requests[2], homeDir);
   });
 
@@ -271,6 +346,7 @@ describe('standalone worker runtime', () => {
 
 async function startRuntimeServer(
   requests: RuntimeRequest[],
+  options: RuntimeServerOptions = {},
 ): Promise<http.Server> {
   let claimCount = 0;
   const server = http.createServer(async (request, response) => {
@@ -306,6 +382,7 @@ async function startRuntimeServer(
           data: {
             id: 'run_1',
             assignment_claim_token: 'vpclaim_run_1',
+            ...(options.hostedAssignment ?? {}),
             run_lease: {
               lease_id: 'workflow_run:run_1',
               workflow_run_id: 'run_1',
@@ -325,6 +402,10 @@ async function startRuntimeServer(
     });
   });
   return server;
+}
+
+interface RuntimeServerOptions {
+  hostedAssignment?: Record<string, unknown>;
 }
 
 interface RuntimeRequest {
