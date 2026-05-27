@@ -426,19 +426,28 @@ async function resumeBlockedHostedExecution(
     return execution;
   }
 
+  const daemon = execution.daemon;
+  const workflowRunId = execution.run.id;
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     const body = await fetchHostedAssignment(profile, lease);
-    const applied = await execution.daemon.workflowRunner.applyRuntimeCommandBody(
-      execution.run.id,
-      body,
-    );
+    const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body);
     if (applied > 0) {
-      const completed = await waitForWorkflowRun(execution.daemon, execution.run.id);
+      const completed = await waitForWorkflowRun(daemon, workflowRunId);
+      if (completed.status === 'blocked') {
+        const blockedExecution: HostedClaimExecutionResult = {
+          status: 'blocked',
+          run: completed,
+          daemon,
+        };
+        await syncLease(profile, lease, blockedExecution);
+        execution = blockedExecution;
+        continue;
+      }
       return {
         status: normalizeWorkflowStatus(completed.status),
         run: completed,
-        daemon: execution.daemon,
+        daemon,
         ...(completed.status === 'failed' || completed.status === 'canceled'
           ? { failure: workflowRunFailure(completed) }
           : {}),

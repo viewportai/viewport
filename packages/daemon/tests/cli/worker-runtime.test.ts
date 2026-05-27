@@ -333,6 +333,114 @@ nodes:
     });
   });
 
+  it('keeps polling hosted approval commands across sequential blocked gates', async () => {
+    const projectDir = path.join(homeDir, 'hosted-multigate-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-multigate-proof
+nodes:
+  pm_gate:
+    type: gate
+    gate:
+      type: human_review
+      prompt: PM approval.
+  eng_gate:
+    type: gate
+    needs: [pm_gate]
+    gate:
+      type: human_review
+      prompt: Eng approval.
+  proof:
+    type: shell
+    needs: [eng_gate]
+    argv:
+      - printf
+      - multigate-resumed
+`,
+        source_ref: 'viewport://test/hosted-worker-multigate-proof',
+        directory_path: projectDir,
+      },
+      runtimeCommandsByBlockedNode: {
+        pm_gate: { message: 'PM approved in test' },
+        eng_gate: { message: 'Eng approved in test' },
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      blocked: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({
+      claimed: 1,
+      completed: 1,
+      blocked: 0,
+      failed: 0,
+      cleanup: 1,
+    });
+    const requestNames = requests.map((request) => `${request.method} ${request.url}`);
+    expect(requestNames).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests[2]?.body).toMatchObject({
+      status: 'blocked',
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_key: 'pm_gate', status: 'blocked' }),
+      ]),
+    });
+    expect(requests[4]?.body).toMatchObject({
+      status: 'blocked',
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_key: 'pm_gate', status: 'completed' }),
+        expect.objectContaining({ node_key: 'eng_gate', status: 'blocked' }),
+      ]),
+    });
+    expect(requests[6]?.body).toMatchObject({
+      status: 'completed',
+      approval_decisions: [],
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          pm_gate: expect.objectContaining({ status: 'completed', output: 'PM approved in test' }),
+          eng_gate: expect.objectContaining({
+            status: 'completed',
+            output: 'Eng approved in test',
+          }),
+          proof: expect.objectContaining({ status: 'completed', output: 'multigate-resumed' }),
+        }),
+      }),
+    });
+  });
+
   it('denies inbound transport until signed inbound proof exists', async () => {
     await writeWorkerProfile('http://127.0.0.1:1');
     process.argv = [
@@ -435,6 +543,7 @@ async function startRuntimeServer(
 ): Promise<http.Server> {
   let claimCount = 0;
   let blockedRuntimeRunId: string | null = null;
+  let blockedNodeId: string | null = null;
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     requests.push({
@@ -484,6 +593,7 @@ async function startRuntimeServer(
     ) {
       blockedRuntimeRunId =
         typeof body['runtime_run_id'] === 'string' ? body['runtime_run_id'] : null;
+      blockedNodeId = blockedNodeFromSync(body);
     }
     if (
       request.url ===
@@ -513,6 +623,38 @@ async function startRuntimeServer(
       );
       return;
     }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1' &&
+      request.method === 'GET' &&
+      options.runtimeCommandsByBlockedNode &&
+      blockedRuntimeRunId &&
+      blockedNodeId
+    ) {
+      const command = options.runtimeCommandsByBlockedNode[blockedNodeId];
+      response.end(
+        JSON.stringify({
+          data: {
+            id: 'run_1',
+            status: 'running',
+          },
+          runtime_commands: command
+            ? [
+                {
+                  id: `approval-command-${blockedNodeId}`,
+                  type: 'workflow.approval_decision',
+                  workflow_run_id: blockedRuntimeRunId,
+                  workflow_node_id: blockedNodeId,
+                  approved: true,
+                  decision: 'approve',
+                  message: command.message,
+                },
+              ]
+            : [],
+        }),
+      );
+      return;
+    }
     response.end(JSON.stringify({ ok: true }));
   });
   await new Promise<void>((resolve, reject) => {
@@ -528,6 +670,7 @@ async function startRuntimeServer(
 interface RuntimeServerOptions {
   hostedAssignment?: Record<string, unknown>;
   runtimeCommandsAfterBlockedSync?: boolean;
+  runtimeCommandsByBlockedNode?: Record<string, { message: string }>;
 }
 
 interface RuntimeRequest {
@@ -556,6 +699,19 @@ async function readBody(request: http.IncomingMessage): Promise<Record<string, u
   }
   const raw = Buffer.concat(chunks).toString('utf8').trim();
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
+function blockedNodeFromSync(body: Record<string, unknown>): string | null {
+  const nodes = body['nodes'];
+  if (!Array.isArray(nodes)) return null;
+  for (const node of nodes) {
+    if (typeof node !== 'object' || node === null || Array.isArray(node)) continue;
+    const record = node as Record<string, unknown>;
+    if (record['status'] === 'blocked' && typeof record['node_key'] === 'string') {
+      return record['node_key'];
+    }
+  }
+  return null;
 }
 
 async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir: string) {
