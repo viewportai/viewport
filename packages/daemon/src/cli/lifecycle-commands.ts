@@ -464,6 +464,9 @@ export function showHelp(): void {
   console.log('  update [--json] [--yes]      Update daemon package, optionally restart');
   console.log('  service <install|uninstall|status> [--json]');
   console.log('                               Manage OS user service (launchd/systemd)');
+  console.log('  watch <start|doctor|status>  Personal/local monitor commands');
+  console.log('  worker <start|run-once|doctor>');
+  console.log('                               Workflow worker commands; pair with `vpd pair --worker`');
   console.log(
     '  remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>]',
   );

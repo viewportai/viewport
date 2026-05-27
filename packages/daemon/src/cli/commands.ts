@@ -49,3 +49,5 @@ export { profile, useProfileAlias as use } from './profile-command.js';
 export { uninstall } from './uninstall-command.js';
 export { bind } from './bind-command.js';
 export { unlock } from './unlock-command.js';
+export { worker } from './worker-command.js';
+export { watch } from './watch-command.js';

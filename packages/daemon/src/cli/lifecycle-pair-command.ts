@@ -13,6 +13,13 @@ import {
   resolvePairingServerTransport,
   storePairingCredentials,
 } from './lifecycle-pair-server.js';
+import {
+  isWorkerPairing,
+  resolveWorkerProfileDefaults,
+  storeWorkerProfile,
+  workerPairingPayload,
+  type WorkerProfileDefaults,
+} from './worker-profile.js';
 
 interface PairingCommandOptions {
   restartDaemon: () => Promise<void>;
@@ -135,6 +142,9 @@ async function pairWithCode(
     serverUrl: server.url,
     relayServerUrl: server.url,
   });
+  const workerProfile = isWorkerPairing()
+    ? await resolveWorkerProfileDefaults({ server })
+    : undefined;
 
   if (!asJson) {
     console.log(`Claiming pairing code ${code}...`);
@@ -160,6 +170,7 @@ async function pairWithCode(
           relay_server_url: installCapabilities.runtime.relayServerUrl,
           auto_unlock_requested: autoUnlock.enabled,
           auto_unlock_ttl_seconds: autoUnlock.ttlSeconds,
+          ...(workerProfile ? workerPairingPayload(workerProfile) : {}),
         }),
         tlsVerify: server.tlsVerify,
         caCertPath: server.caCertPath,
@@ -197,6 +208,9 @@ async function pairWithCode(
 
   const approved = await pollForApproval(code, server, claimData.status_token, asJson);
   await storePairingCredentials(approved, server.url);
+  if (workerProfile) {
+    await storeWorkerProfile(approved, workerProfile);
+  }
   await autoRestartDaemon(asJson, restartDaemon);
 
   if (asJson) {
@@ -207,6 +221,7 @@ async function pairWithCode(
       code,
       workspaceId: approved.workspace_id,
       workspaceName: approved.workspace_name,
+      worker: workerProfile ? workerJson(workerProfile) : undefined,
       restarted: true,
     });
     return;
@@ -215,6 +230,9 @@ async function pairWithCode(
   console.log('Paired successfully!');
   if (approved.workspace_name) {
     console.log(`  Workspace: ${approved.workspace_name}`);
+  }
+  if (workerProfile) {
+    printWorkerPairedSummary(workerProfile);
   }
   console.log('');
 }
@@ -237,6 +255,9 @@ async function pairWithoutCode(
     serverUrl: server.url,
     relayServerUrl: server.url,
   });
+  const workerProfile = isWorkerPairing()
+    ? await resolveWorkerProfileDefaults({ server })
+    : undefined;
 
   let createRes: Response;
   try {
@@ -256,6 +277,7 @@ async function pairWithoutCode(
         relay_server_url: installCapabilities.runtime.relayServerUrl,
         auto_unlock_requested: autoUnlock.enabled,
         auto_unlock_ttl_seconds: autoUnlock.ttlSeconds,
+        ...(workerProfile ? workerPairingPayload(workerProfile) : {}),
       }),
       tlsVerify: server.tlsVerify,
       caCertPath: server.caCertPath,
@@ -308,6 +330,9 @@ async function pairWithoutCode(
 
   const approved = await pollForApproval(code, server, statusToken, asJson);
   await storePairingCredentials(approved, server.url);
+  if (workerProfile) {
+    await storeWorkerProfile(approved, workerProfile);
+  }
   await autoRestartDaemon(asJson, restartDaemon);
 
   if (asJson) {
@@ -318,6 +343,7 @@ async function pairWithoutCode(
       code,
       workspaceId: approved.workspace_id,
       workspaceName: approved.workspace_name,
+      worker: workerProfile ? workerJson(workerProfile) : undefined,
       restarted: true,
     });
     return;
@@ -327,7 +353,27 @@ async function pairWithoutCode(
   if (approved.workspace_name) {
     console.log(`  Workspace: ${approved.workspace_name}`);
   }
+  if (workerProfile) {
+    printWorkerPairedSummary(workerProfile);
+  }
   console.log('');
+}
+
+function workerJson(profile: WorkerProfileDefaults): Record<string, unknown> {
+  return {
+    lifecycle: profile.lifecycle,
+    transport: profile.transport,
+    serverUrl: profile.serverUrl,
+    workspaceRoot: profile.workspaceRoot,
+    publicKeyFingerprint: profile.publicKeyFingerprint,
+    capabilities: profile.capabilities,
+  };
+}
+
+function printWorkerPairedSummary(profile: WorkerProfileDefaults): void {
+  console.log(`  Worker mode: ${profile.lifecycle}`);
+  console.log(`  Transport:   ${profile.transport}`);
+  console.log(`  Work root:   ${profile.workspaceRoot}`);
 }
 
 function resolveAutoUnlockPreference(): { enabled: boolean; ttlSeconds?: number } {

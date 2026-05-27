@@ -215,6 +215,26 @@ export interface ViewportConfig {
       signingKeys?: Record<string, string>;
       tokenClockSkewSec?: number;
     };
+    worker?: {
+      lifecycle?: 'persistent' | 'ephemeral';
+      transport?: 'polling' | 'relay' | 'inbound';
+      serverUrl?: string;
+      appUrl?: string;
+      workspaceRoot?: string;
+      logsDir?: string;
+      cacheDir?: string;
+      stateDir?: string;
+      identityKeyPath?: string;
+      publicKeyFingerprint?: string;
+      capabilities?: {
+        agents?: Array<{
+          id: string;
+          displayName?: string;
+          tier?: 'sdk' | 'pty';
+          available: boolean;
+        }>;
+      };
+    };
   };
 }
 
@@ -590,6 +610,26 @@ export class ConfigManager {
           tokenJwksUrl?: string;
           signingKeys?: Record<string, string>;
           tokenClockSkewSec?: number;
+        };
+        worker?: {
+          lifecycle?: 'persistent' | 'ephemeral';
+          transport?: 'polling' | 'relay' | 'inbound';
+          serverUrl?: string;
+          appUrl?: string;
+          workspaceRoot?: string;
+          logsDir?: string;
+          cacheDir?: string;
+          stateDir?: string;
+          identityKeyPath?: string;
+          publicKeyFingerprint?: string;
+          capabilities?: {
+            agents?: Array<{
+              id: string;
+              displayName?: string;
+              tier?: 'sdk' | 'pty';
+              available: boolean;
+            }>;
+          };
         };
       }
     | undefined {

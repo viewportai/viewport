@@ -20,6 +20,8 @@
  *   vpd context ...           Local trusted-edge context commands
  *   vpd unlock <id>           Activate a short-lived hosted-web trusted-edge session
  *   vpd skills ...            Install agent skills that call vpd
+ *   vpd watch ...             Personal/local monitor commands
+ *   vpd worker ...            Workflow worker commands
  */
 
 import { getCommand, getArgs } from './cli/args.js';
@@ -65,6 +67,8 @@ import {
   uninstall,
   bind,
   unlock,
+  worker,
+  watch,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
 import { hookCapabilities, hookNotify, showHookHelp } from './cli/hook-command.js';
@@ -122,6 +126,8 @@ const commands: Record<string, () => Promise<void>> = {
   uninstall,
   bind,
   unlock,
+  worker,
+  watch,
 };
 
 const command = getCommand();
@@ -208,6 +214,10 @@ if (command === 'hook') {
       handler = remote;
     } else if (command === 'bind') {
       handler = bind;
+    } else if (command === 'worker') {
+      handler = worker;
+    } else if (command === 'watch') {
+      handler = watch;
     }
     if (!handler) {
       if (command !== 'help') {

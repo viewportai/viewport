@@ -59,6 +59,15 @@ const PartialRelayBindingSchema = z
   })
   .strict();
 
+const WorkerCapabilityAgentSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    displayName: z.string().max(256).optional(),
+    tier: z.enum(['sdk', 'pty']).optional(),
+    available: z.boolean(),
+  })
+  .strict();
+
 export const ViewportConfigSchema = z
   .object({
     defaults: PartialSessionConfigSchema.optional(),
@@ -113,6 +122,27 @@ export const ViewportConfigSchema = z
             tokenJwksUrl: z.string().optional(),
             signingKeys: z.record(z.string(), z.string()).optional(),
             tokenClockSkewSec: z.number().int().nonnegative().optional(),
+          })
+          .strict()
+          .optional(),
+        worker: z
+          .object({
+            lifecycle: z.enum(['persistent', 'ephemeral']).optional(),
+            transport: z.enum(['polling', 'relay', 'inbound']).optional(),
+            serverUrl: z.string().optional(),
+            appUrl: z.string().optional(),
+            workspaceRoot: z.string().optional(),
+            logsDir: z.string().optional(),
+            cacheDir: z.string().optional(),
+            stateDir: z.string().optional(),
+            identityKeyPath: z.string().optional(),
+            publicKeyFingerprint: z.string().optional(),
+            capabilities: z
+              .object({
+                agents: z.array(WorkerCapabilityAgentSchema).optional(),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
           .optional(),
