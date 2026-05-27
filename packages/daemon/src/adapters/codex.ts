@@ -8,7 +8,12 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import type { AgentAdapter, Session, SessionOptions } from '../core/interfaces.js';
+import type {
+  AgentAdapter,
+  AgentAdapterDescriptor,
+  Session,
+  SessionOptions,
+} from '../core/interfaces.js';
 import type { SessionMessage, SessionState } from '../core/types.js';
 import { metrics } from '../core/metrics.js';
 import { importCodexSdkModule } from './codex-sdk-loader.js';
@@ -263,6 +268,31 @@ export class CodexAdapter implements AgentAdapter {
     private readonly createClient: CodexClientFactory = defaultClientFactory,
     private readonly apiKey?: string,
   ) {}
+
+  describe(): AgentAdapterDescriptor {
+    return {
+      schema: 'viewport.agent_adapter/v2',
+      agentId: this.agentId,
+      displayName: 'Codex',
+      adapterVersion: 'codex-sdk',
+      capabilities: {
+        executionModes: {
+          plan: 'unsupported',
+          read_only: 'unsupported',
+          review: 'prompt_only',
+          implement: 'provider',
+        },
+        toolAllowlist: 'unsupported',
+        structuredOutput: 'prompt_only',
+        permissionHooks: 'provider',
+        usageReporting: 'reported',
+        costReporting: 'reported',
+        maxTurns: 'unsupported',
+        maxBudget: 'unsupported',
+        hardTimeout: 'hard',
+      },
+    };
+  }
 
   async startSession(cwd: string, options?: SessionOptions): Promise<Session> {
     metrics.increment('sessions.codex.started');

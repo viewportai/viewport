@@ -189,6 +189,8 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   provider?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
+  allowedTools?: string[];
   hooks?: WorkflowHookRules;
   agents?: Record<string, WorkflowInlineAgentDefinition>;
   inlineAgentFailurePolicy?: 'fail' | 'continue';

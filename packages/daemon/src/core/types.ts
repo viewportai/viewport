@@ -19,6 +19,7 @@ export type SessionState =
 
 export type SessionTrust = 'operator' | 'automated' | 'external';
 export type SessionAgentMode = 'detect' | 'bypass';
+export type SessionExecutionMode = 'plan' | 'read_only' | 'implement' | 'review';
 
 // ---------------------------------------------------------------------------
 // Attention state — centralizes "this session needs your attention"
@@ -326,6 +327,14 @@ export interface SessionConfig {
   sandboxMode?: string;
   /** Provider approval posture for agents that support it, such as Codex. */
   approvalPolicy?: string;
+  /**
+   * Provider-neutral execution intent. Adapters translate this to their own
+   * safe modes; e.g. Claude plan nodes use permissionMode=plan instead of
+   * inheriting implementation tool permissions.
+   */
+  executionMode?: SessionExecutionMode;
+  /** Exact provider tool allowlist for the session, when supported. */
+  allowedTools?: string[];
   /** Explicit resource context selected by the launcher/operator. */
   resourceId?: string;
   /**

@@ -377,6 +377,8 @@ async function executePromptNode(
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
     ...(node.effort ? { effort: node.effort } : {}),
+    ...(node.executionMode ? { executionMode: node.executionMode } : {}),
+    ...(node.allowedTools ? { allowedTools: node.allowedTools } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
     ...(node.timeoutSeconds ? { timeoutSeconds: node.timeoutSeconds } : {}),
     outputFallback: () => readPromptNodeOutput(run, state),

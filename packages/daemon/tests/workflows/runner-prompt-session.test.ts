@@ -136,6 +136,9 @@ nodes:
     });
 
     await waitForNodeSession(daemon, run.id, 'review');
+    adapter.lastSession?.emitToolCall('tool-1', 'Read');
+    adapter.lastSession?.emitToolCallUpdate('tool-1', 'Read', 'completed');
+    adapter.lastSession?.emitTokenUsage(42, 12, 0.0042);
     adapter.lastSession?.emitAgentMessage('done');
     adapter.lastSession?.simulateIdle();
     await waitForTerminalRun(daemon, run.id);
@@ -144,6 +147,27 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.review?.status).toBe('completed');
     expect(completed?.nodes.review?.output).toBe('done');
+    expect(completed?.nodes.review?.metadata?.['usage']).toMatchObject({
+      available: true,
+      inputTokens: 42,
+      outputTokens: 12,
+      totalTokens: 54,
+      totalCostUsd: 0.0042,
+    });
+    expect(completed?.nodes.review?.metadata?.['agentRun']).toMatchObject({
+      schema: 'viewport.agent_run_result/v1',
+      agentId: 'claude',
+      executionMode: 'implement',
+      stopReason: 'idle',
+      output: 'done',
+    });
+    expect(completed?.nodes.review?.metadata?.['toolCalls']).toEqual([
+      expect.objectContaining({
+        id: 'tool-1',
+        name: 'Read',
+        status: 'completed',
+      }),
+    ]);
     expect(completed?.events.map((event) => event.type)).toContain('session-idle');
     expect(completed?.events).toContainEqual(
       expect.objectContaining({
@@ -152,6 +176,48 @@ nodes:
         data: { output: 'done' },
       }),
     );
+  });
+
+  it('passes prompt execution mode and allowed tools into the launched agent session', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-execution-mode-session-proof
+requires:
+  agents:
+    - claude
+nodes:
+  inspect:
+    type: prompt
+    agent: claude
+    executionMode: read_only
+    allowedTools:
+      - Read
+      - Grep
+    prompt: Inspect without changing files.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'inspect');
+    expect(adapter.lastOptions?.config?.executionMode).toBe('read_only');
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual(['Read', 'Grep']);
+    expect(adapter.lastOptions?.allowedTools).toEqual(['Read', 'Grep']);
+
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
   });
 
   it('runs prompt nodes without explicit cwd in an isolated read-only node directory', async () => {

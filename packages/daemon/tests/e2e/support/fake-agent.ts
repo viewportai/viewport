@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import type {
   AgentAdapter,
+  AgentAdapterDescriptor,
   DiscoveredSession,
   Session,
   SessionDiscovery,
@@ -73,6 +74,31 @@ export class FakeAdapter implements AgentAdapter {
   constructor(agentId: string, behavior?: PromptBehavior) {
     this.agentId = agentId;
     this.promptBehavior = behavior ?? {};
+  }
+
+  describe(): AgentAdapterDescriptor {
+    return {
+      schema: 'viewport.agent_adapter/v2',
+      agentId: this.agentId,
+      displayName: 'Fake adapter',
+      adapterVersion: 'test',
+      capabilities: {
+        executionModes: {
+          plan: 'hard',
+          read_only: 'hard',
+          review: 'hard',
+          implement: 'hard',
+        },
+        toolAllowlist: 'hard',
+        structuredOutput: 'hard',
+        permissionHooks: 'hard',
+        usageReporting: 'reported',
+        costReporting: 'reported',
+        maxTurns: 'hard',
+        maxBudget: 'hard',
+        hardTimeout: 'hard',
+      },
+    };
   }
 
   async startSession(_cwd: string, options?: SessionOptions): Promise<Session> {

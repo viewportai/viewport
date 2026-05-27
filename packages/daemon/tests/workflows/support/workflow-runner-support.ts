@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 import type { Daemon } from '../../../src/core/daemon.js';
 import type {
   AgentAdapter,
+  AgentAdapterDescriptor,
   DiscoveredSession,
   RunTracker,
   Session,
@@ -48,6 +49,39 @@ export class MockSession extends EventEmitter implements Session {
       timestamp: Date.now(),
     });
   }
+
+  emitTokenUsage(inputTokens: number, outputTokens: number, totalCostUsd?: number): void {
+    this.emit('message', {
+      type: 'token_usage',
+      inputTokens,
+      outputTokens,
+      ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
+      timestamp: Date.now(),
+    });
+  }
+
+  emitToolCall(toolCallId: string, toolName: string, status: 'in_progress' | 'completed' = 'in_progress'): void {
+    this.emit('message', {
+      type: 'tool_call',
+      toolCallId,
+      toolName,
+      title: `${toolName} call`,
+      status,
+      input: { path: 'README.md' },
+      timestamp: Date.now(),
+    });
+  }
+
+  emitToolCallUpdate(toolCallId: string, toolName: string, status: 'completed' | 'error'): void {
+    this.emit('message', {
+      type: 'tool_call_update',
+      toolCallId,
+      toolName,
+      status,
+      output: status === 'error' ? 'denied' : 'ok',
+      timestamp: Date.now(),
+    });
+  }
 }
 
 export class MockAdapter implements AgentAdapter {
@@ -56,6 +90,31 @@ export class MockAdapter implements AgentAdapter {
   lastOptions: SessionOptions | undefined;
   readonly sessions: MockSession[] = [];
   readonly cwdBySession = new Map<MockSession, string>();
+
+  describe(): AgentAdapterDescriptor {
+    return {
+      schema: 'viewport.agent_adapter/v2',
+      agentId: this.agentId,
+      displayName: 'Mock adapter',
+      adapterVersion: 'test',
+      capabilities: {
+        executionModes: {
+          plan: 'hard',
+          read_only: 'hard',
+          review: 'hard',
+          implement: 'hard',
+        },
+        toolAllowlist: 'hard',
+        structuredOutput: 'hard',
+        permissionHooks: 'hard',
+        usageReporting: 'reported',
+        costReporting: 'reported',
+        maxTurns: 'hard',
+        maxBudget: 'hard',
+        hardTimeout: 'hard',
+      },
+    };
+  }
 
   async startSession(cwd: string, options?: SessionOptions): Promise<Session> {
     this.lastSession = new MockSession();

@@ -1,121 +1,133 @@
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import {
-  readCodexWorktreeSessionOutput,
-  readCodexWorktreeSessionTranscriptExcerpt,
-  transcriptExcerptFromRichMessages,
-} from '../../src/workflows/session-output.js';
+import { describe, expect, it } from 'vitest';
+import { createSessionOutputCollector } from '../../src/workflows/session-output.js';
+import type { AgentAdapterDescriptor } from '../../src/core/interfaces.js';
 
-let tempHome: string | undefined;
-const originalCodexHome = process.env['CODEX_HOME'];
+const adapter: AgentAdapterDescriptor = {
+  schema: 'viewport.agent_adapter/v2',
+  agentId: 'claude',
+  displayName: 'Claude',
+  adapterVersion: 'test',
+  capabilities: {
+    executionModes: {
+      plan: 'provider',
+      read_only: 'provider',
+      review: 'provider',
+      implement: 'provider',
+    },
+    toolAllowlist: 'provider',
+    structuredOutput: 'prompt_only',
+    permissionHooks: 'provider',
+    usageReporting: 'reported',
+    costReporting: 'reported',
+    maxTurns: 'provider',
+    maxBudget: 'provider',
+    hardTimeout: 'hard',
+  },
+};
 
-describe('workflow session output helpers', () => {
-  afterEach(async () => {
-    if (originalCodexHome === undefined) {
-      delete process.env['CODEX_HOME'];
-    } else {
-      process.env['CODEX_HOME'] = originalCodexHome;
-    }
+describe('session output collector', () => {
+  it('collects final text, usage, tool calls, and enforcement into an agent run result', () => {
+    const collector = createSessionOutputCollector();
 
-    if (!tempHome) return;
-    await fs.rm(tempHome, { recursive: true, force: true });
-    tempHome = undefined;
+    collector.push({
+      type: 'agent_message_chunk',
+      messageId: 'message-1',
+      text: 'hel',
+      timestamp: 100,
+    });
+    collector.push({
+      type: 'agent_message_chunk',
+      messageId: 'message-1',
+      text: 'lo',
+      timestamp: 101,
+    });
+    collector.push({
+      type: 'tool_call',
+      toolCallId: 'tool-1',
+      toolName: 'Read',
+      title: 'Read file',
+      input: { file_path: 'README.md' },
+      status: 'in_progress',
+      timestamp: 102,
+    });
+    collector.push({
+      type: 'tool_call_update',
+      toolCallId: 'tool-1',
+      toolName: 'Read',
+      status: 'completed',
+      output: 'ok',
+      timestamp: 103,
+    });
+    collector.push({
+      type: 'token_usage',
+      inputTokens: 12,
+      outputTokens: 5,
+      totalCostUsd: 0.002,
+      modelUsage: {
+        'claude-test': { inputTokens: 12, outputTokens: 5, costUsd: 0.002 },
+      },
+      durationMs: 250,
+      numTurns: 1,
+      timestamp: 104,
+    });
+
+    const result = collector.agentRunResult({
+      agent: adapter,
+      model: 'claude-test',
+      executionMode: 'read_only',
+      startedAt: 100,
+      completedAt: 400,
+      reason: 'idle',
+    });
+
+    expect(result.output).toBe('hello');
+    expect(result.stopReason).toBe('idle');
+    expect(result.executionMode).toBe('read_only');
+    expect(result.usage).toMatchObject({
+      available: true,
+      inputTokens: 12,
+      outputTokens: 5,
+      totalTokens: 17,
+      totalCostUsd: 0.002,
+      durationMs: 250,
+      numTurns: 1,
+    });
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]).toMatchObject({
+      id: 'tool-1',
+      name: 'Read',
+      status: 'completed',
+      title: 'Read file',
+    });
+    expect(result.toolCalls[0]?.inputDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.enforcement).toMatchObject({
+      executionMode: 'read_only',
+      readOnlyMode: 'provider',
+      toolAllowlist: 'provider',
+    });
   });
 
-  it('builds bounded transcript excerpts from rich text messages', () => {
-    const excerpt = transcriptExcerptFromRichMessages(
-      [
-        { kind: 'text', role: 'user', text: 'first request', ts: '1', uuid: '1' },
-        { kind: 'tool_use', toolName: 'Bash', toolId: 'tool-1', input: {}, ts: '2', uuid: '2' },
-        { kind: 'text', role: 'assistant', text: 'first response', ts: '3', uuid: '3' },
-        { kind: 'text', role: 'user', text: 'second request', ts: '4', uuid: '4' },
-        {
-          kind: 'text',
-          role: 'assistant',
-          text: 'x'.repeat(20),
-          ts: '5',
-          uuid: '5',
-        },
-      ],
-      { maxMessages: 3, maxCharsPerMessage: 8 },
-    );
-
-    expect(excerpt).toEqual([
-      { role: 'assistant', text: 'first re...' },
-      { role: 'user', text: 'second r...' },
-      { role: 'assistant', text: 'xxxxxxxx...' },
-    ]);
-  });
-
-  it('recovers Codex transcript output from the matching session id in a shared worktree', async () => {
-    const worktreePath = await setupCodexHome();
-    await writeCodexTranscript({
-      sessionId: 'other-session',
-      cwd: worktreePath,
-      output: 'newer but wrong',
-      timestamp: '2026-04-24T10:01:00.000Z',
-    });
-    await writeCodexTranscript({
-      sessionId: 'target-session',
-      cwd: worktreePath,
-      output: 'target output',
-      timestamp: '2026-04-24T10:00:00.000Z',
+  it('marks usage unavailable when the adapter emits no usage', () => {
+    const collector = createSessionOutputCollector();
+    collector.push({
+      type: 'agent_message',
+      messageId: 'message-1',
+      text: 'done',
+      timestamp: 100,
     });
 
-    await expect(readCodexWorktreeSessionOutput(worktreePath, ['target-session'])).resolves.toBe(
-      'target output',
-    );
-    await expect(
-      readCodexWorktreeSessionTranscriptExcerpt(worktreePath, ['target-session']),
-    ).resolves.toEqual([{ role: 'assistant', text: 'target output' }]);
+    const result = collector.agentRunResult({
+      agent: { ...adapter, capabilities: { ...adapter.capabilities, usageReporting: 'unavailable' } },
+      executionMode: 'plan',
+      startedAt: 100,
+      completedAt: 120,
+      reason: 'completed',
+    });
+
+    expect(result.output).toBe('done');
+    expect(result.usage).toEqual({
+      available: false,
+      reason: 'adapter_no_usage',
+    });
   });
 });
-
-async function setupCodexHome(): Promise<string> {
-  tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-codex-output-'));
-  process.env['CODEX_HOME'] = tempHome;
-  const worktreePath = path.join(tempHome, 'repo');
-  await fs.mkdir(worktreePath, { recursive: true });
-  return worktreePath;
-}
-
-async function writeCodexTranscript({
-  sessionId,
-  cwd,
-  output,
-  timestamp,
-}: {
-  sessionId: string;
-  cwd: string;
-  output: string;
-  timestamp: string;
-}): Promise<void> {
-  const root = path.join(process.env['CODEX_HOME']!, 'sessions', '2026', '04', '24');
-  await fs.mkdir(root, { recursive: true });
-  const lines = [
-    {
-      timestamp,
-      type: 'session_meta',
-      payload: {
-        id: sessionId,
-        cwd,
-      },
-    },
-    {
-      timestamp,
-      type: 'response_item',
-      payload: {
-        type: 'message',
-        role: 'assistant',
-        content: [{ type: 'output_text', text: output }],
-      },
-    },
-  ];
-  await fs.writeFile(
-    path.join(root, `${sessionId}.jsonl`),
-    `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`,
-    'utf-8',
-  );
-}

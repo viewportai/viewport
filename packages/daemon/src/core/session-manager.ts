@@ -25,6 +25,10 @@ import { buildSessionPromptWithContext } from './session-context-prompt.js';
 
 const log = logger.child({ module: 'session-manager' });
 
+function defaultSessionAgentMode(config: SessionConfig): SessionAgentMode {
+  return config.trust === 'automated' && config.approvalPolicy === 'never' ? 'bypass' : 'detect';
+}
+
 // ---------------------------------------------------------------------------
 // Session record — internal tracking of active sessions
 // ---------------------------------------------------------------------------
@@ -101,6 +105,8 @@ export class SessionManager {
     // Create tracker (falls back to noop if git setup fails — e.g. not a git repo)
     const sessionId = crypto.randomUUID();
     const { tracker, worktreePath } = await this.setupTracker(config, sessionId, dir.path);
+    const initialMode = defaultSessionAgentMode(config);
+    this.permissionCoordinator.setSessionMode(sessionId, initialMode);
 
     // Wire permission handler
     const canUseTool = this.permissionCoordinator.createPermissionHandler(
@@ -109,14 +115,21 @@ export class SessionManager {
     );
 
     // Start session
-    const session = await adapter.startSession(worktreePath, {
-      initialPrompt: prompt,
-      deferInitialPrompt: true,
-      model: config.model,
-      effort: config.effort,
-      canUseTool,
-      config,
-    });
+    let session: Session;
+    try {
+      session = await adapter.startSession(worktreePath, {
+        initialPrompt: prompt,
+        deferInitialPrompt: true,
+        model: config.model,
+        effort: config.effort,
+        allowedTools: config.allowedTools,
+        canUseTool,
+        config,
+      });
+    } catch (err) {
+      this.permissionCoordinator.clearSessionMode(sessionId);
+      throw err;
+    }
 
     // Store active session
     const active: ActiveSession = {
@@ -128,7 +141,7 @@ export class SessionManager {
       worktreePath,
     };
     this.sessions.set(sessionId, active);
-    this.sessionModes.set(sessionId, 'detect');
+    this.sessionModes.set(sessionId, initialMode);
     this.directoryManager.addSession(directoryId, sessionId);
     this.eventBus.adjustMaxListeners(this.sessions.size);
 
@@ -173,17 +186,27 @@ export class SessionManager {
     }
 
     const { tracker, worktreePath } = await this.setupTracker(config, originalSessionId, dir.path);
+    const initialMode = defaultSessionAgentMode(config);
+    this.permissionCoordinator.setSessionMode(originalSessionId, initialMode);
     const canUseTool = this.permissionCoordinator.createPermissionHandler(originalSessionId, () => {
       return this.sessions.get(originalSessionId)?.config ?? config;
     });
 
-    const session = await adapter.resumeSession(originalSessionId, worktreePath, {
-      initialPrompt: prompt,
-      deferInitialPrompt: true,
-      model: config.model,
-      canUseTool,
-      config,
-    });
+    let session: Session;
+    try {
+      session = await adapter.resumeSession(originalSessionId, worktreePath, {
+        initialPrompt: prompt,
+        deferInitialPrompt: true,
+        model: config.model,
+        effort: config.effort,
+        allowedTools: config.allowedTools,
+        canUseTool,
+        config,
+      });
+    } catch (err) {
+      this.permissionCoordinator.clearSessionMode(originalSessionId);
+      throw err;
+    }
 
     const active: ActiveSession = {
       session,
@@ -194,7 +217,7 @@ export class SessionManager {
       worktreePath,
     };
     this.sessions.set(originalSessionId, active);
-    this.sessionModes.set(originalSessionId, 'detect');
+    this.sessionModes.set(originalSessionId, initialMode);
     this.directoryManager.addSession(directoryId, originalSessionId);
     this.eventBus.adjustMaxListeners(this.sessions.size);
     this.wireSessionEvents(originalSessionId, active);

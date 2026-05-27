@@ -347,6 +347,12 @@ policies:
     allowedAdapters:
       - github
       - jira
+  budget:
+    maxTokens: 100000
+    maxCostUsd: 25
+    approvalThresholds:
+      tokens: 75000
+      costUsd: 10
 notifications:
   inbox:
     - approval_requested
@@ -411,6 +417,8 @@ nodes:
     expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
     expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
     expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.policies?.budget?.maxTokens).toBe(100000);
+    expect(parsed.definition.policies?.budget?.approvalThresholds?.costUsd).toBe(10);
     expect(parsed.definition.notifications?.inbox).toContain('approval_requested');
     expect(parsed.definition.dataCapture?.approvalPackets).toBe(true);
     expect(parsed.definition.nodes.investigate?.type).toBe('agent');
@@ -896,6 +904,44 @@ nodes:
 
     expect(parsed.definition.nodes.plan?.type).toBe('prompt');
     expect(parsed.definition.nodes.plan?.effort).toBe('high');
+  });
+
+  it('parses prompt execution mode and allowed tools as runtime config', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: prompt-execution-mode-proof
+nodes:
+  draft_plan:
+    type: prompt
+    agent: claude
+    model: sonnet
+    executionMode: plan
+    allowedTools: []
+    prompt: Draft a plan.
+  inspect:
+    type: prompt
+    needs: [draft_plan]
+    agent: claude
+    executionMode: read_only
+    allowedTools:
+      - Read
+      - Grep
+      - Glob
+    prompt: Inspect only.
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const draftPlan = parsed.definition.nodes.draft_plan;
+    const inspect = parsed.definition.nodes.inspect;
+    expect(draftPlan?.type).toBe('prompt');
+    expect(inspect?.type).toBe('prompt');
+    if (draftPlan?.type !== 'prompt' || inspect?.type !== 'prompt') return;
+    expect(draftPlan.executionMode).toBe('plan');
+    expect(draftPlan.allowedTools).toEqual([]);
+    expect(inspect.executionMode).toBe('read_only');
+    expect(inspect.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
   });
 
   it('parses workflows from disk with resolved source paths', async () => {

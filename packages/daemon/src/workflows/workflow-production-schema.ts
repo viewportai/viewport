@@ -89,6 +89,22 @@ export const WorkflowPolicyDefinitionSchema = z
       })
       .strict()
       .optional(),
+    budget: z
+      .object({
+        maxTokens: z.number().int().positive().optional(),
+        tokens: z.number().int().positive().optional(),
+        maxCostUsd: z.number().positive().optional(),
+        usd: z.number().positive().optional(),
+        approvalThresholds: z
+          .object({
+            tokens: z.number().int().positive().optional(),
+            costUsd: z.number().positive().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     maxDurationSeconds: z.number().int().positive().max(604_800).optional(),
   })
   .strict();

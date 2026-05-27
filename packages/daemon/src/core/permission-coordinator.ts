@@ -55,11 +55,15 @@ export class PermissionCoordinator {
       typeof configOrGetter === 'function' ? configOrGetter() : configOrGetter;
 
     return async (toolName, input, context) => {
-      if (this.sessionModes.get(sessionId) === 'bypass') {
+      const config = getConfig();
+      const automatedNeverRequiresBypass =
+        config.trust === 'automated' && config.approvalPolicy === 'never';
+
+      if (this.sessionModes.get(sessionId) === 'bypass' || automatedNeverRequiresBypass) {
         return { behavior: 'allow' };
       }
 
-      const resolution = resolvePermission(toolName, input, getConfig().permissions);
+      const resolution = resolvePermission(toolName, input, config.permissions);
 
       if (resolution === 'auto-approve') {
         return { behavior: 'allow' };

@@ -146,6 +146,8 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+  executionMode: z.enum(['plan', 'read_only', 'implement', 'review']).optional(),
+  allowedTools: z.array(z.string().trim().min(1)).optional(),
   hooks: HookRulesSchema.optional(),
   agents: z.record(identifierSchema, InlineAgentDefinitionSchema).optional(),
   inlineAgentFailurePolicy: z.enum(['fail', 'continue']).optional(),

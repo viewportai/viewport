@@ -7,6 +7,7 @@ import { Daemon, createDaemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
 import type {
   AgentAdapter,
+  AgentAdapterDescriptor,
   DiscoveredSession,
   Session,
   SessionDiscovery,
@@ -64,12 +65,18 @@ class MockSession extends EventEmitter implements Session {
 class MockAdapter implements AgentAdapter {
   readonly agentId: string;
   lastSession: MockSession | null = null;
+  lastOptions: SessionOptions | undefined;
 
   constructor(agentId = 'claude') {
     this.agentId = agentId;
   }
 
-  async startSession(_cwd: string, _options?: SessionOptions): Promise<Session> {
+  describe(): AgentAdapterDescriptor {
+    return testAdapterDescriptor(this.agentId);
+  }
+
+  async startSession(_cwd: string, options?: SessionOptions): Promise<Session> {
+    this.lastOptions = options;
     const session = new MockSession(crypto.randomUUID());
     this.lastSession = session;
     return session;
@@ -78,8 +85,9 @@ class MockAdapter implements AgentAdapter {
   async resumeSession(
     sessionId: string,
     _cwd: string,
-    _options?: SessionOptions,
+    options?: SessionOptions,
   ): Promise<Session> {
+    this.lastOptions = options;
     const session = new MockSession(sessionId);
     this.lastSession = session;
     return session;
@@ -113,6 +121,10 @@ class EagerPromptAdapter implements AgentAdapter {
   readonly agentId = 'claude';
   deferInitialPromptSeen = false;
 
+  describe(): AgentAdapterDescriptor {
+    return testAdapterDescriptor(this.agentId);
+  }
+
   async startSession(_cwd: string, options?: SessionOptions): Promise<Session> {
     this.deferInitialPromptSeen = options?.deferInitialPrompt === true;
     return new EagerPromptSession();
@@ -126,6 +138,31 @@ class EagerPromptAdapter implements AgentAdapter {
     this.deferInitialPromptSeen = options?.deferInitialPrompt === true;
     return new EagerPromptSession();
   }
+}
+
+function testAdapterDescriptor(agentId: string): AgentAdapterDescriptor {
+  return {
+    schema: 'viewport.agent_adapter/v2',
+    agentId,
+    displayName: 'Test adapter',
+    adapterVersion: 'test',
+    capabilities: {
+      executionModes: {
+        plan: 'hard',
+        read_only: 'hard',
+        review: 'hard',
+        implement: 'hard',
+      },
+      toolAllowlist: 'hard',
+      structuredOutput: 'hard',
+      permissionHooks: 'hard',
+      usageReporting: 'reported',
+      costReporting: 'reported',
+      maxTurns: 'hard',
+      maxBudget: 'hard',
+      hardTimeout: 'hard',
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +617,33 @@ describe('Daemon', () => {
     expect(info.directoryId).toBe(dirId);
     expect(info.mode).toBe('detect');
     expect(info.steps).toEqual([]);
+  });
+
+  it('launches automated never-approval sessions in bypass mode', async () => {
+    const { daemon, adapter } = await setupDaemon();
+    const dirId = getDirectoryId();
+    const permissionEvents: unknown[] = [];
+    daemon.on('permission:requested', (data) => permissionEvents.push(data));
+
+    const sessionId = await daemon.launchSession(dirId, 'Hello', {
+      trust: 'automated',
+      approvalPolicy: 'never',
+    });
+
+    expect(daemon.getSessionMode(sessionId)).toBe('bypass');
+    expect(daemon.getSessionInfo(sessionId).mode).toBe('bypass');
+
+    const decision = await adapter.lastOptions!.canUseTool!(
+      'Write',
+      { file_path: '/tmp/test' },
+      {
+        signal: new AbortController().signal,
+        toolUseId: 'tool-automated',
+      },
+    );
+
+    expect(decision.behavior).toBe('allow');
+    expect(permissionEvents).toHaveLength(0);
   });
 
   it('sets and retrieves session mode', async () => {

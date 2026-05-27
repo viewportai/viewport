@@ -43,6 +43,8 @@ export const BUILT_IN_DEFAULTS: SessionConfig = {
     requireApproval: [], // Populated from agent definition
     deny: [],
   },
+  executionMode: undefined,
+  allowedTools: undefined,
   costCapUsd: undefined,
   trust: 'operator',
 };
@@ -298,6 +300,8 @@ function hasSessionDefaultsShape(value: unknown): boolean {
     value['model'] ||
     value['sandboxMode'] ||
     value['approvalPolicy'] ||
+    value['executionMode'] ||
+    value['allowedTools'] ||
     value['gitTracker'] ||
     value['permissions'] ||
     value['costCapUsd'] ||

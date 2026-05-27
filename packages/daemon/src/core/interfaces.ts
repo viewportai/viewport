@@ -11,6 +11,7 @@ import type {
   SessionState,
   SessionMessage,
   SessionConfig,
+  SessionExecutionMode,
   Step,
   PermissionDecision,
   GitTrackerConfig,
@@ -23,6 +24,16 @@ import type {
 export interface AgentAdapter {
   /** Unique identifier for this agent (e.g. 'claude', 'codex'). */
   readonly agentId: string;
+
+  /** Describe the adapter's workflow-relevant capability and accounting contract. */
+  describe(): AgentAdapterDescriptor;
+
+  /**
+   * Transactional workflow-agent entrypoint. Existing adapters may bridge this
+   * through session streams during migration, but durable workflow accounting
+   * must normalize into AgentRunResult.
+   */
+  runAgentTurn?(request: AgentRunRequest): Promise<AgentRunResult>;
 
   /** Start a new agent session in the given working directory. */
   startSession(cwd: string, options?: SessionOptions): Promise<Session>;
@@ -43,10 +54,122 @@ export interface SessionOptions {
   model?: string;
   /** Agent-specific reasoning/effort hint translated by adapters that support it. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /**
+   * Exact tool allowlist for this session. An empty array means the adapter
+   * should run the agent without tools when the provider supports it.
+   */
+  allowedTools?: string[];
   /** Permission handler — called before each tool execution. */
   canUseTool?: PermissionHandler;
   /** Resolved config for this session. */
   config?: SessionConfig;
+}
+
+export type AgentCapabilitySupport = 'hard' | 'provider' | 'prompt_only' | 'unsupported';
+export type AgentReportingSupport = 'reported' | 'estimated' | 'unavailable';
+
+export interface AgentAdapterDescriptor {
+  schema: 'viewport.agent_adapter/v2';
+  agentId: string;
+  displayName: string;
+  adapterVersion: string;
+  capabilities: {
+    executionModes: Record<SessionExecutionMode, AgentCapabilitySupport>;
+    toolAllowlist: AgentCapabilitySupport;
+    structuredOutput: AgentCapabilitySupport;
+    permissionHooks: AgentCapabilitySupport;
+    usageReporting: AgentReportingSupport;
+    costReporting: AgentReportingSupport;
+    maxTurns: AgentCapabilitySupport;
+    maxBudget: AgentCapabilitySupport;
+    hardTimeout: AgentCapabilitySupport;
+  };
+}
+
+export type AgentRunStopReason =
+  | 'completed'
+  | 'idle'
+  | 'max_turns'
+  | 'budget_exceeded'
+  | 'timeout'
+  | 'tool_denied'
+  | 'canceled'
+  | 'error'
+  | 'unknown';
+
+export interface AgentRunUsage {
+  available: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  totalCostUsd?: number;
+  estimated?: boolean;
+  reason?: 'adapter_no_usage' | 'provider_no_cost' | 'stream_missing_final_usage';
+  modelUsage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number }>;
+  durationMs?: number;
+  numTurns?: number;
+}
+
+export interface AgentRunToolCall {
+  id: string;
+  name: string;
+  status: 'in_progress' | 'completed' | 'error' | 'denied';
+  title?: string;
+  startedAt?: number;
+  completedAt?: number;
+  inputDigest?: string;
+}
+
+export interface AgentRunEnforcement {
+  executionMode: SessionExecutionMode;
+  planMode: AgentCapabilitySupport;
+  readOnlyMode: AgentCapabilitySupport;
+  toolAllowlist: AgentCapabilitySupport;
+  structuredOutput: AgentCapabilitySupport;
+  sandbox: AgentCapabilitySupport;
+}
+
+export interface AgentRunRequest {
+  prompt: string;
+  cwd: string;
+  agentId: string;
+  model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode: SessionExecutionMode;
+  allowedTools?: string[];
+  timeoutMs?: number;
+  budget?: {
+    maxCostUsd?: number;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+    maxTurns?: number;
+  };
+  onEvent?: (event: AgentRunEvent) => void;
+}
+
+export type AgentRunEvent =
+  | { type: 'started'; timestamp: number }
+  | { type: 'text_delta'; text: string; timestamp: number }
+  | { type: 'tool_call'; toolCall: AgentRunToolCall; timestamp: number }
+  | { type: 'usage_delta'; usage: AgentRunUsage; timestamp: number }
+  | { type: 'completed'; result: AgentRunResult; timestamp: number }
+  | { type: 'failed'; error: string; timestamp: number };
+
+export interface AgentRunResult {
+  schema: 'viewport.agent_run_result/v1';
+  agentId: string;
+  adapterVersion: string;
+  model?: string;
+  executionMode: SessionExecutionMode;
+  enforcement: AgentRunEnforcement;
+  output: string;
+  usage: AgentRunUsage;
+  toolCalls: AgentRunToolCall[];
+  permissionDenials: Array<{ toolName: string; reason: string; timestamp: number }>;
+  stopReason: AgentRunStopReason;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
 }
 
 /**

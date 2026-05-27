@@ -27,6 +27,8 @@ const PartialSessionConfigSchema = z
     model: z.string().min(1).max(256).optional(),
     sandboxMode: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
     approvalPolicy: z.enum(['never', 'on-request', 'on-failure', 'untrusted']).optional(),
+    executionMode: z.enum(['plan', 'read_only', 'implement', 'review']).optional(),
+    allowedTools: z.array(z.string().trim().min(1)).optional(),
     resourceId: z.string().min(1).max(256).optional(),
     gitTracker: PartialGitTrackerSchema.optional(),
     permissions: PartialPermissionsSchema.optional(),

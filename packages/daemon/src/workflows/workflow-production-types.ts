@@ -70,6 +70,16 @@ export interface WorkflowPolicyDefinition {
     requireApproval?: boolean;
     allowedAdapters?: string[];
   };
+  budget?: {
+    maxTokens?: number;
+    tokens?: number;
+    maxCostUsd?: number;
+    usd?: number;
+    approvalThresholds?: {
+      tokens?: number;
+      costUsd?: number;
+    };
+  };
   maxDurationSeconds?: number;
 }
 

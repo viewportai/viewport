@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
+import type { AgentRunResult } from '../core/interfaces.js';
 import type { SessionMessage } from '../core/types.js';
 import { addEvent } from './runtime-helpers.js';
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
@@ -20,6 +21,7 @@ export interface WorkflowSessionTarget {
   worktreePath?: string;
   output?: string;
   transcriptExcerpt?: WorkflowTranscriptExcerptMessage[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface WorkflowDaemonSessionContext {
@@ -37,6 +39,8 @@ export interface WorkflowDaemonSessionRequest {
   agent?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
+  allowedTools?: string[];
   hooks?: WorkflowHookRules;
   timeoutSeconds?: number;
   outputFallback?: () => Promise<string>;
@@ -49,6 +53,7 @@ export interface WorkflowDaemonSessionResult {
   worktreePath: string;
   output: string;
   reason: string;
+  agentRun: AgentRunResult;
 }
 
 export async function runWorkflowDaemonSession(
@@ -87,12 +92,15 @@ export async function runWorkflowDaemonSession(
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),
       ...(request.effort ? { effort: request.effort } : {}),
+      ...(request.executionMode ? { executionMode: request.executionMode } : {}),
+      ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
       sandboxMode: request.cwd ? 'workspace-write' : 'read-only',
       approvalPolicy: 'never',
       trust: 'automated',
       contextInjection: 'disabled',
     });
     activeSessionId = sessionId;
+    const launchedAgent = context.daemon.getSessionInfo(sessionId).agent;
     const nativeSessionId = context.daemon.getSessionNativeId(sessionId);
     const worktreePath =
       readActiveSessionWorktreePath(context.daemon, sessionId) ??
@@ -137,6 +145,7 @@ export async function runWorkflowDaemonSession(
     run.updatedAt = Date.now();
     await context.saveAndEmit(run);
 
+    const agentStartedAt = Date.now();
     const reason = await waitForPromptSessionComplete(
       context.daemon,
       sessionId,
@@ -167,6 +176,24 @@ export async function runWorkflowDaemonSession(
       );
     }
 
+    const agentDescriptor =
+      context.daemon.getAgentAdapterDescription(launchedAgent) ?? fallbackAgentDescriptor(launchedAgent);
+    const agentRun = output.agentRunResult({
+      agent: agentDescriptor,
+      ...(request.model ? { model: request.model } : {}),
+      ...(request.executionMode ? { executionMode: request.executionMode } : {}),
+      startedAt: agentStartedAt,
+      completedAt: Date.now(),
+      reason,
+    });
+    target.metadata = {
+      ...(target.metadata ?? {}),
+      agentRun,
+      usage: agentRun.usage,
+      toolCalls: agentRun.toolCalls,
+      enforcement: agentRun.enforcement,
+    };
+
     addEvent(
       run,
       reason === 'idle' ? 'session-idle' : 'session-ended',
@@ -178,7 +205,7 @@ export async function runWorkflowDaemonSession(
       throw new Error(`Session ${sessionId} failed: ${reason}`);
     }
 
-    return { sessionId, nativeSessionId, worktreePath, output: capturedOutput, reason };
+    return { sessionId, nativeSessionId, worktreePath, output: capturedOutput, reason, agentRun };
   } finally {
     if (activeSessionId) {
       workflowHookRegistry.unregister(activeSessionId);
@@ -190,6 +217,31 @@ export async function runWorkflowDaemonSession(
     }
     context.daemon.off('session:message', messageHandler);
   }
+}
+
+function fallbackAgentDescriptor(agentId: string) {
+  return {
+    schema: 'viewport.agent_adapter/v2' as const,
+    agentId,
+    displayName: agentId,
+    adapterVersion: 'unknown',
+    capabilities: {
+      executionModes: {
+        plan: 'unsupported' as const,
+        read_only: 'unsupported' as const,
+        review: 'prompt_only' as const,
+        implement: 'prompt_only' as const,
+      },
+      toolAllowlist: 'unsupported' as const,
+      structuredOutput: 'prompt_only' as const,
+      permissionHooks: 'unsupported' as const,
+      usageReporting: 'unavailable' as const,
+      costReporting: 'unavailable' as const,
+      maxTurns: 'unsupported' as const,
+      maxBudget: 'unsupported' as const,
+      hardTimeout: 'hard' as const,
+    },
+  };
 }
 
 function readActiveSessionWorktreePath(daemon: Daemon, sessionId: string): string | undefined {
