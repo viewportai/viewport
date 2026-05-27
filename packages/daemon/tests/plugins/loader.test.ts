@@ -127,6 +127,22 @@ describe('Plugin loader', () => {
     expect(manifests).toEqual([]);
   });
 
+  it('rejects plugin manifests with unsafe agent ids', async () => {
+    const pluginDir = path.join(pluginsDir(), 'node_modules', 'viewport-agent-unsafe-id');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'viewport-agent-unsafe-id',
+        version: '1.0.0',
+        viewport: { type: 'agent', agentId: '../unsafe' },
+      }),
+    );
+
+    const manifests = await listPlugins();
+    expect(manifests).toEqual([]);
+  });
+
   it('handles scoped packages (@viewport/agent-*)', async () => {
     const pluginDir = path.join(pluginsDir(), 'node_modules', '@viewport', 'agent-scoped');
     await fs.mkdir(pluginDir, { recursive: true });
@@ -272,6 +288,35 @@ describe('Plugin loader', () => {
     await fs.writeFile(
       path.join(pluginDir, 'index.js'),
       `module.exports.definition = { id: 'incomplete' };`,
+    );
+
+    const plugins = await loadPluginAgents();
+    expect(plugins).toEqual([]);
+  });
+
+  it('rejects plugins whose exported agent id does not match the manifest', async () => {
+    const pluginDir = path.join(pluginsDir(), 'node_modules', 'viewport-agent-mismatch');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, 'package.json'),
+      JSON.stringify({
+        name: 'viewport-agent-mismatch',
+        version: '1.0.0',
+        main: 'index.js',
+        viewport: { type: 'agent', agentId: 'manifest-agent' },
+      }),
+    );
+    await fs.writeFile(
+      path.join(pluginDir, 'index.js'),
+      `module.exports.definition = {
+        id: 'exported-agent',
+        displayName: 'Mismatch',
+        tier: 'pty',
+        defaults: { commitOn: [], autoApprove: [], requireApproval: [], deny: [] },
+        capabilities: { structuredToolCalls: false, permissionCallbacks: false, tokenUsage: false, resume: false, extendedThinking: false },
+        detection: { check: async () => true, description: 'mismatch' },
+        createAdapter: async () => null,
+      };`,
     );
 
     const plugins = await loadPluginAgents();

@@ -220,6 +220,95 @@ nodes:
     await waitForTerminalRun(daemon, run.id);
   });
 
+  it('fails before launching when an adapter cannot enforce read-only mode', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter({
+      capabilities: {
+        executionModes: {
+          plan: 'unsupported',
+          read_only: 'unsupported',
+          review: 'prompt_only',
+          implement: 'prompt_only',
+        },
+      },
+    });
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-capability-denial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  inspect:
+    type: prompt
+    agent: claude
+    executionMode: read_only
+    prompt: Inspect without changing files.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(adapter.sessions).toHaveLength(0);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('cannot enforce read_only execution mode');
+  });
+
+  it('fails before launching when an adapter cannot enforce an explicit tool allowlist', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter({
+      capabilities: {
+        toolAllowlist: 'unsupported',
+      },
+    });
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-tool-allowlist-denial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  inspect:
+    type: prompt
+    agent: claude
+    executionMode: implement
+    allowedTools:
+      - Read
+    prompt: Use only the configured tool.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(adapter.sessions).toHaveLength(0);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('cannot enforce workflow tool allowlists');
+  });
+
   it('runs prompt nodes without explicit cwd in an isolated read-only node directory', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

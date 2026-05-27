@@ -13,6 +13,12 @@ import type {
 } from '../../../src/core/interfaces.js';
 import type { SessionState, Step } from '../../../src/core/types.js';
 
+type MockAdapterDescriptorOverrides = Omit<Partial<AgentAdapterDescriptor>, 'capabilities'> & {
+  capabilities?: Omit<Partial<AgentAdapterDescriptor['capabilities']>, 'executionModes'> & {
+    executionModes?: Partial<AgentAdapterDescriptor['capabilities']['executionModes']>;
+  };
+};
+
 export class MockSession extends EventEmitter implements Session {
   readonly id = crypto.randomUUID();
   state: SessionState = 'running';
@@ -91,8 +97,10 @@ export class MockAdapter implements AgentAdapter {
   readonly sessions: MockSession[] = [];
   readonly cwdBySession = new Map<MockSession, string>();
 
+  constructor(private readonly descriptorOverrides: MockAdapterDescriptorOverrides = {}) {}
+
   describe(): AgentAdapterDescriptor {
-    return {
+    const base: AgentAdapterDescriptor = {
       schema: 'viewport.agent_adapter/v2',
       agentId: this.agentId,
       displayName: 'Mock adapter',
@@ -112,6 +120,18 @@ export class MockAdapter implements AgentAdapter {
         maxTurns: 'hard',
         maxBudget: 'hard',
         hardTimeout: 'hard',
+      },
+    };
+    return {
+      ...base,
+      ...this.descriptorOverrides,
+      capabilities: {
+        ...base.capabilities,
+        ...(this.descriptorOverrides.capabilities ?? {}),
+        executionModes: {
+          ...base.capabilities.executionModes,
+          ...(this.descriptorOverrides.capabilities?.executionModes ?? {}),
+        },
       },
     };
   }

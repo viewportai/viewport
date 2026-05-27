@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Daemon } from '../core/daemon.js';
 import type { AgentRunResult } from '../core/interfaces.js';
+import type { SessionConfig } from '../core/types.js';
 import type { SessionMessage } from '../core/types.js';
 import { addEvent } from './runtime-helpers.js';
 import { isFailedSessionReason, waitForPromptSessionComplete } from './session-completion.js';
@@ -88,7 +89,7 @@ export async function runWorkflowDaemonSession(
         },
       })
     ).id;
-    const sessionId = await context.daemon.launchSession(directoryId, request.prompt, {
+    const sessionOverrides = {
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),
       ...(request.effort ? { effort: request.effort } : {}),
@@ -98,7 +99,9 @@ export async function runWorkflowDaemonSession(
       approvalPolicy: 'never',
       trust: 'automated',
       contextInjection: 'disabled',
-    });
+    } satisfies Partial<SessionConfig>;
+    validateWorkflowSessionAdapterCapabilities(context, directoryId, sessionOverrides);
+    const sessionId = await context.daemon.launchSession(directoryId, request.prompt, sessionOverrides);
     activeSessionId = sessionId;
     const launchedAgent = context.daemon.getSessionInfo(sessionId).agent;
     const nativeSessionId = context.daemon.getSessionNativeId(sessionId);
@@ -242,6 +245,38 @@ function fallbackAgentDescriptor(agentId: string) {
       hardTimeout: 'hard' as const,
     },
   };
+}
+
+function validateWorkflowSessionAdapterCapabilities(
+  context: WorkflowDaemonSessionContext,
+  directoryId: string,
+  overrides: Partial<SessionConfig>,
+): void {
+  const config = context.daemon.configManager.resolveSessionConfig(directoryId, overrides);
+  const descriptor = context.daemon.getAgentAdapterDescription(config.agent);
+  if (!descriptor) {
+    throw new Error(`No adapter registered for agent: ${config.agent}`);
+  }
+
+  const executionMode = config.executionMode ?? 'implement';
+  const modeSupport = descriptor.capabilities.executionModes[executionMode];
+  if (executionMode === 'plan' || executionMode === 'read_only') {
+    if (modeSupport !== 'hard' && modeSupport !== 'provider') {
+      throw new Error(
+        `Adapter ${descriptor.agentId} cannot enforce ${executionMode} execution mode for workflow node sessions.`,
+      );
+    }
+  } else if (modeSupport === 'unsupported') {
+    throw new Error(
+      `Adapter ${descriptor.agentId} does not support ${executionMode} execution mode for workflow node sessions.`,
+    );
+  }
+
+  if (config.allowedTools && descriptor.capabilities.toolAllowlist !== 'hard' && descriptor.capabilities.toolAllowlist !== 'provider') {
+    throw new Error(
+      `Adapter ${descriptor.agentId} cannot enforce workflow tool allowlists.`,
+    );
+  }
 }
 
 function readActiveSessionWorktreePath(daemon: Daemon, sessionId: string): string | undefined {
