@@ -210,8 +210,9 @@ async function pairWithCode(
   await storePairingCredentials(approved, server.url);
   if (workerProfile) {
     await storeWorkerProfile(approved, workerProfile);
+  } else {
+    await autoRestartDaemon(asJson, restartDaemon);
   }
-  await autoRestartDaemon(asJson, restartDaemon);
 
   if (asJson) {
     printJson({
@@ -222,7 +223,7 @@ async function pairWithCode(
       workspaceId: approved.workspace_id,
       workspaceName: approved.workspace_name,
       worker: workerProfile ? workerJson(workerProfile) : undefined,
-      restarted: true,
+      restarted: !workerProfile,
     });
     return;
   }
@@ -332,8 +333,9 @@ async function pairWithoutCode(
   await storePairingCredentials(approved, server.url);
   if (workerProfile) {
     await storeWorkerProfile(approved, workerProfile);
+  } else {
+    await autoRestartDaemon(asJson, restartDaemon);
   }
-  await autoRestartDaemon(asJson, restartDaemon);
 
   if (asJson) {
     printJson({
@@ -344,7 +346,7 @@ async function pairWithoutCode(
       workspaceId: approved.workspace_id,
       workspaceName: approved.workspace_name,
       worker: workerProfile ? workerJson(workerProfile) : undefined,
-      restarted: true,
+      restarted: !workerProfile,
     });
     return;
   }
