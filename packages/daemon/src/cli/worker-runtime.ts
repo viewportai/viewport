@@ -453,7 +453,7 @@ async function resumeBlockedHostedExecution(
           : {}),
       };
     }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await sleep(2_000);
   }
 
   return execution;
@@ -472,7 +472,12 @@ async function fetchHostedAssignment(
     `workflow-runs/${encodeURIComponent(lease.runId)}`,
     {},
     lease.assignmentClaimToken,
+    [429],
   );
+  if (response.status === 429) {
+    await sleep(retryAfterMs(response));
+    return { runtime_commands: [] };
+  }
   return response.json();
 }
 
@@ -603,6 +608,7 @@ async function hostedManagedExecutorFetch(
   path: string,
   body: Record<string, unknown>,
   assignmentClaimToken?: string,
+  allowedStatuses: number[] = [],
 ): Promise<Response> {
   if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
     throw new Error(
@@ -629,13 +635,26 @@ async function hostedManagedExecutorFetch(
     },
     ...(method === 'GET' ? {} : { body: serialized }),
   });
-  if (!response.ok) {
+  if (!response.ok && !allowedStatuses.includes(response.status)) {
     const text = await response.text().catch(() => '');
     throw new Error(
       `Hosted managed executor request ${path} failed with HTTP ${response.status}: ${text}`,
     );
   }
   return response;
+}
+
+function retryAfterMs(response: Response): number {
+  const raw = response.headers.get('retry-after');
+  const seconds = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds * 1_000, 30_000);
+  }
+  return 5_000;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function stringValue(value: unknown): string | undefined {

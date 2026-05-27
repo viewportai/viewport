@@ -368,6 +368,7 @@ nodes:
         pm_gate: { message: 'PM approved in test' },
         eng_gate: { message: 'Eng approved in test' },
       },
+      rateLimitOnceForBlockedNode: 'eng_gate',
     });
     await writeHostedWorkerProfile(serverUrl(server));
     process.argv = [
@@ -409,6 +410,7 @@ nodes:
       'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
       'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
       'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
       'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
@@ -425,7 +427,8 @@ nodes:
         expect.objectContaining({ node_key: 'eng_gate', status: 'blocked' }),
       ]),
     });
-    expect(requests[6]?.body).toMatchObject({
+    expect(requests[6]?.method).toBe('GET');
+    expect(requests[7]?.body).toMatchObject({
       status: 'completed',
       approval_decisions: [],
       output_snapshot: expect.objectContaining({
@@ -544,6 +547,7 @@ async function startRuntimeServer(
   let claimCount = 0;
   let blockedRuntimeRunId: string | null = null;
   let blockedNodeId: string | null = null;
+  const rateLimitedBlockedNodes = new Set<string>();
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     requests.push({
@@ -631,6 +635,16 @@ async function startRuntimeServer(
       blockedRuntimeRunId &&
       blockedNodeId
     ) {
+      if (
+        options.rateLimitOnceForBlockedNode === blockedNodeId &&
+        !rateLimitedBlockedNodes.has(blockedNodeId)
+      ) {
+        rateLimitedBlockedNodes.add(blockedNodeId);
+        response.statusCode = 429;
+        response.setHeader('Retry-After', '1');
+        response.end(JSON.stringify({ message: 'Too Many Attempts.' }));
+        return;
+      }
       const command = options.runtimeCommandsByBlockedNode[blockedNodeId];
       response.end(
         JSON.stringify({
@@ -671,6 +685,7 @@ interface RuntimeServerOptions {
   hostedAssignment?: Record<string, unknown>;
   runtimeCommandsAfterBlockedSync?: boolean;
   runtimeCommandsByBlockedNode?: Record<string, { message: string }>;
+  rateLimitOnceForBlockedNode?: string;
 }
 
 interface RuntimeRequest {
