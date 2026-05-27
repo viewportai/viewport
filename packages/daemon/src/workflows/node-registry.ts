@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { executeLoopNode } from './loop-executor.js';
 import { executeContextNode } from './context-node-resolver.js';
 import { executeActionAdapter, WorkflowActionError } from './action-adapters.js';
@@ -264,6 +265,35 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           status: 'preflight',
         }),
       };
+    }
+    const workspaceDenial = shellWorkspaceCwdDenial(run, nodeId, artifactCwd);
+    if (workspaceDenial) {
+      if (state) {
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          shell_execution: buildShellExecutionReceipt({
+            run,
+            nodeId,
+            commandDigestMaterial: invocation.digestMaterial,
+            executor: invocation.executor,
+            cwd: artifactCwd,
+            env,
+            timeoutSeconds: node.timeoutSeconds,
+            startedAt,
+            completedAt: Date.now(),
+            status: 'denied',
+            denial: workspaceDenial,
+          }),
+        };
+      }
+      addEvent(
+        run,
+        'shell-blocked',
+        workspaceDenial.detail,
+        { workflow_authority_denial: workspaceDenial },
+        nodeId,
+      );
+      throw new Error(workspaceDenial.detail);
     }
     const denial = shellAuthorityDenial(run, nodeId, invocation.authorityCommand, artifactCwd);
     if (denial) {
@@ -865,7 +895,7 @@ function buildShellExecutionReceipt(input: {
   completedAt?: number;
   status: 'preflight' | 'denied' | 'completed' | 'failed' | 'canceled';
   exitCode?: number | null;
-  denial?: NonNullable<ReturnType<typeof shellAuthorityDenial>>;
+  denial?: { reason: string; detail: string };
 }): Record<string, unknown> {
   const durationMs =
     input.completedAt !== undefined ? Math.max(0, input.completedAt - input.startedAt) : null;
@@ -892,6 +922,21 @@ function buildShellExecutionReceipt(input: {
           detail: input.denial.detail,
         }
       : null,
+  };
+}
+
+function shellWorkspaceCwdDenial(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  cwd: string,
+): { schema: string; reason: string; runId: string; nodeId: string; detail: string } | null {
+  if (isPathWithin(cwd, run.directoryPath)) return null;
+  return {
+    schema: 'viewport.workflow_authority_denial/v1',
+    reason: 'shell_cwd_outside_run_workspace',
+    runId: run.id,
+    nodeId,
+    detail: `Shell cwd ${cwd} is outside the run worktree.`,
   };
 }
 
@@ -922,6 +967,11 @@ function authorityShellPolicy(contract: Record<string, unknown>): string | null 
   const flat = contract['shell_policy'];
   if (typeof flat === 'string' && flat.trim() !== '') return flat;
   return null;
+}
+
+function isPathWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function digest(value: string): string {

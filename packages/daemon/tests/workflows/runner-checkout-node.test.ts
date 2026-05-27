@@ -73,6 +73,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -134,6 +135,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
     const second = await daemon.workflowRunner.startRun({
@@ -145,6 +147,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -196,6 +199,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -244,6 +248,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -300,6 +305,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -550,6 +556,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 
@@ -600,6 +607,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
       },
     });
 

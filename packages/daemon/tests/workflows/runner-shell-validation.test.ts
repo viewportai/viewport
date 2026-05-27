@@ -335,6 +335,63 @@ nodes:
     }
   });
 
+  it('blocks shell cwd outside the run worktree without relying on authority contracts', async () => {
+    const daemon = await setup();
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-outside-worktree-'));
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-cwd-proof
+nodes:
+  inspect:
+    type: shell
+    cwd: ${JSON.stringify(outside)}
+    argv:
+      - printf
+      - outside
+`,
+      'utf-8',
+    );
+
+    try {
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.inspect?.error).toContain('outside the run worktree');
+      expect(failed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+        schema: 'viewport.shell_execution_receipt/v1',
+        status: 'denied',
+        executor: expect.objectContaining({ kind: 'argv' }),
+        denial: {
+          reason: 'shell_cwd_outside_run_workspace',
+          detail: expect.stringContaining('outside the run worktree'),
+        },
+      });
+      expect(failed?.events).toContainEqual(
+        expect.objectContaining({
+          type: 'shell-blocked',
+          nodeId: 'inspect',
+          data: expect.objectContaining({
+            workflow_authority_denial: expect.objectContaining({
+              reason: 'shell_cwd_outside_run_workspace',
+            }),
+          }),
+        }),
+      );
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it('rejects required inputs before queuing a run', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
