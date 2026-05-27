@@ -246,6 +246,92 @@ nodes:
     await expectSignedRequest(requests[2], homeDir);
   });
 
+  it('polls hosted approval commands and resumes a blocked workflow run', async () => {
+    const projectDir = path.join(homeDir, 'hosted-approval-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-approval-proof
+nodes:
+  gate:
+    type: gate
+    gate:
+      type: human_review
+      prompt: Approve the hosted worker proof.
+  proof:
+    type: shell
+    needs: [gate]
+    argv:
+      - printf
+      - approval-resumed
+`,
+        source_ref: 'viewport://test/hosted-worker-approval-proof',
+        directory_path: projectDir,
+      },
+      runtimeCommandsAfterBlockedSync: true,
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      blocked: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({
+      claimed: 1,
+      completed: 1,
+      blocked: 0,
+      failed: 0,
+      cleanup: 1,
+    });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests[2]?.body).toMatchObject({
+      status: 'blocked',
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_key: 'gate', status: 'blocked' }),
+      ]),
+    });
+    expect(requests[3]?.headers['x-viewport-assignment-claim']).toBe('vpclaim_run_1');
+    await expectSignedRequest(requests[3], homeDir);
+    expect(requests[4]?.body).toMatchObject({
+      status: 'completed',
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          gate: expect.objectContaining({ status: 'completed', output: 'Approved in test' }),
+          proof: expect.objectContaining({ status: 'completed', output: 'approval-resumed' }),
+        }),
+      }),
+    });
+  });
+
   it('denies inbound transport until signed inbound proof exists', async () => {
     await writeWorkerProfile('http://127.0.0.1:1');
     process.argv = [
@@ -349,6 +435,7 @@ async function startRuntimeServer(
   options: RuntimeServerOptions = {},
 ): Promise<http.Server> {
   let claimCount = 0;
+  let blockedRuntimeRunId: string | null = null;
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     requests.push({
@@ -392,6 +479,42 @@ async function startRuntimeServer(
       );
       return;
     }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync' &&
+      request.method === 'PATCH' &&
+      body['status'] === 'blocked'
+    ) {
+      blockedRuntimeRunId = typeof body['runtime_run_id'] === 'string' ? body['runtime_run_id'] : null;
+    }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1' &&
+      request.method === 'GET' &&
+      options.runtimeCommandsAfterBlockedSync &&
+      blockedRuntimeRunId
+    ) {
+      response.end(
+        JSON.stringify({
+          data: {
+            id: 'run_1',
+            status: 'running',
+          },
+          runtime_commands: [
+            {
+              id: 'approval-command-1',
+              type: 'workflow.approval_decision',
+              workflow_run_id: blockedRuntimeRunId,
+              workflow_node_id: 'gate',
+              approved: true,
+              decision: 'approve',
+              message: 'Approved in test',
+            },
+          ],
+        }),
+      );
+      return;
+    }
     response.end(JSON.stringify({ ok: true }));
   });
   await new Promise<void>((resolve, reject) => {
@@ -406,6 +529,7 @@ async function startRuntimeServer(
 
 interface RuntimeServerOptions {
   hostedAssignment?: Record<string, unknown>;
+  runtimeCommandsAfterBlockedSync?: boolean;
 }
 
 interface RuntimeRequest {
@@ -447,9 +571,8 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
   expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
   expect(timestamp).toContain('T');
   expect(nonce).toMatch(/^[a-f0-9]{32}$/);
-  expect(bodySha256).toBe(
-    crypto.createHash('sha256').update(JSON.stringify(request!.body)).digest('hex'),
-  );
+  const signedBody = request!.method === 'GET' ? '' : JSON.stringify(request!.body);
+  expect(bodySha256).toBe(crypto.createHash('sha256').update(signedBody).digest('hex'));
   const identity = JSON.parse(
     await fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8'),
   ) as { publicKey: string };

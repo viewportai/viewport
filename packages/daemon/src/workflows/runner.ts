@@ -13,6 +13,7 @@ import { WorkflowRunReconciler } from './runner-reconciler.js';
 import { WorkflowRunCanceler, type WorkflowCancelOptions } from './runner-canceler.js';
 import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
+import { runtimeCommands } from './platform-runtime-command.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import { buildWorkflowContractBinding } from './contract-binding.js';
@@ -552,6 +553,20 @@ export class WorkflowRunner {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
+  }
+
+  async applyRuntimeCommandBody(runId: string, body: unknown): Promise<number> {
+    const run = await this.getRun(runId);
+    if (!run) return 0;
+
+    let applied = 0;
+    for (const command of runtimeCommands(body)) {
+      if (await this.platformCommandApplier.apply(command, run.id)) {
+        applied += 1;
+      }
+    }
+
+    return applied;
   }
 
   async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {

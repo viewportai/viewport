@@ -68,6 +68,7 @@ interface ClaimedLease {
 interface HostedClaimExecutionResult {
   status: Extract<WorkflowRunStatus, 'completed' | 'failed' | 'blocked' | 'canceled'>;
   run?: WorkflowRunRecord;
+  daemon?: Daemon;
   failure?: HostedWorkerFailure;
 }
 
@@ -120,8 +121,16 @@ export async function runStandaloneWorker(
     });
     if (!lease) break;
     result.claimed += 1;
-    const execution = await executeClaim(profile, lease);
-    await syncLease(profile, lease, execution);
+    let execution = await executeClaim(profile, lease);
+    if (isHostedManagedExecutorProfile(profile) && execution.status === 'blocked' && execution.run) {
+      await syncLease(profile, lease, execution);
+      execution = await resumeBlockedHostedExecution(profile, lease, execution);
+      if (execution.status !== 'blocked') {
+        await syncLease(profile, lease, execution);
+      }
+    } else {
+      await syncLease(profile, lease, execution);
+    }
     if (execution.status === 'completed') {
       result.completed += 1;
     } else if (execution.status === 'blocked') {
@@ -380,6 +389,7 @@ async function executeHostedWorkflowClaim(
     return {
       status: normalizeWorkflowStatus(completed.status),
       run: completed,
+      daemon,
       ...(completed.status === 'failed' || completed.status === 'canceled'
         ? { failure: workflowRunFailure(completed) }
         : {}),
@@ -396,6 +406,56 @@ async function executeHostedWorkflowClaim(
       },
     };
   }
+}
+
+async function resumeBlockedHostedExecution(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+  execution: HostedClaimExecutionResult,
+): Promise<HostedClaimExecutionResult> {
+  if (!execution.daemon || !execution.run || execution.status !== 'blocked') {
+    return execution;
+  }
+
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline) {
+    const body = await fetchHostedAssignment(profile, lease);
+    const applied = await execution.daemon.workflowRunner.applyRuntimeCommandBody(
+      execution.run.id,
+      body,
+    );
+    if (applied > 0) {
+      const completed = await waitForWorkflowRun(execution.daemon, execution.run.id);
+      return {
+        status: normalizeWorkflowStatus(completed.status),
+        run: completed,
+        daemon: execution.daemon,
+        ...(completed.status === 'failed' || completed.status === 'canceled'
+          ? { failure: workflowRunFailure(completed) }
+          : {}),
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+
+  return execution;
+}
+
+async function fetchHostedAssignment(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<unknown> {
+  if (!lease.runId) {
+    throw new Error('Hosted managed executor assignment polling requires a workflow run id.');
+  }
+  const response = await hostedManagedExecutorFetch(
+    profile,
+    'GET',
+    `workflow-runs/${encodeURIComponent(lease.runId)}`,
+    {},
+    lease.assignmentClaimToken,
+  );
+  return response.json();
 }
 
 async function createStandaloneWorkerDaemon(): Promise<Daemon> {
@@ -521,7 +581,7 @@ function managedExecutorCapabilities(capabilities: Record<string, unknown>): Rec
 
 async function hostedManagedExecutorFetch(
   profile: WorkerRuntimeProfile,
-  method: 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH',
   path: string,
   body: Record<string, unknown>,
   assignmentClaimToken?: string,
@@ -532,7 +592,7 @@ async function hostedManagedExecutorFetch(
   const requestPath = `/api/runtime/workspaces/${encodeURIComponent(
     profile.workspaceId,
   )}/managed-executors/${encodeURIComponent(profile.managedExecutorId)}/${path}`;
-  const serialized = JSON.stringify(body);
+  const serialized = method === 'GET' ? '' : JSON.stringify(body);
   const signed = await signWorkerRequest(profile, method, requestPath, serialized);
   const response = await transportFetch(
     `${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`,
@@ -549,7 +609,7 @@ async function hostedManagedExecutorFetch(
         'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
         'X-Viewport-Worker-Signature': signed.signature,
       },
-      body: serialized,
+      ...(method === 'GET' ? {} : { body: serialized }),
     },
   );
   if (!response.ok) {
