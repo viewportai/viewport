@@ -33,9 +33,9 @@ describe('setup command planning', () => {
   it('returns recommended defaults', () => {
     expect(recommendedSetupPlan()).toEqual({
       recommended: true,
-      installService: true,
-      installPrereqs: true,
-      installHooks: true,
+      installService: false,
+      installPrereqs: false,
+      installHooks: false,
     });
   });
 
