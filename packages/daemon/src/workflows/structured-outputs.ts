@@ -1,6 +1,23 @@
 import jsonata from 'jsonata';
 import type { WorkflowNode, WorkflowNodeRunState, WorkflowOutputDefinition } from './types.js';
 
+type StructuredOutputRequirement = NonNullable<WorkflowOutputDefinition['requirement']>;
+
+interface StructuredOutputReceiptEntry {
+  requirement: StructuredOutputRequirement;
+  status: 'captured' | 'degraded' | 'invalid';
+  reason?: string;
+}
+
+export class WorkflowStructuredOutputError extends Error {
+  constructor(
+    readonly outputName: string,
+    readonly reason: string,
+  ) {
+    super(`Structured output ${outputName} is invalid: ${reason}`);
+  }
+}
+
 /**
  * After a node finishes running, populate `state.outputs` based on the node's
  * declared output schema and the captured `state.output` text.
@@ -21,16 +38,66 @@ export async function captureNodeStructuredOutputs(
   state: WorkflowNodeRunState,
   node: WorkflowNode,
 ): Promise<void> {
-  if (!node.outputs || Object.keys(node.outputs).length === 0) return;
+  const definitions = structuredOutputDefinitions(node);
+  if (Object.keys(definitions).length === 0) return;
 
   const text = state.output ?? '';
   const parsedJson = parseJson(text);
   const collected: Record<string, unknown> = {};
-  for (const [name, definition] of Object.entries(node.outputs)) {
+  const receipt: Record<string, StructuredOutputReceiptEntry> = {};
+  for (const [name, definition] of Object.entries(definitions)) {
+    const requirement = definition.requirement ?? 'optional';
+    if (requirement === 'unsupported') {
+      receipt[name] = {
+        requirement,
+        status: 'degraded',
+        reason: 'structured_output_unsupported',
+      };
+      continue;
+    }
+
     const source = await outputSource(text, parsedJson, definition);
-    collected[name] = coerceOutputValue(source, definition);
+    const value = coerceOutputValue(source, definition);
+    const invalidReason = invalidOutputReason(value, source, parsedJson, text, definition);
+    if (requirement === 'required' && invalidReason) {
+      receipt[name] = {
+        requirement,
+        status: 'invalid',
+        reason: invalidReason,
+      };
+      state.outputs = {};
+      state.status = 'failed';
+      state.error = `Required structured output ${name} is invalid: ${invalidReason}`;
+      state.metadata = {
+        ...(state.metadata ?? {}),
+        structuredOutputs: {
+          schema: 'viewport.structured_outputs/v1',
+          outputs: receipt,
+        },
+      };
+      throw new WorkflowStructuredOutputError(name, invalidReason);
+    }
+
+    collected[name] = value;
+    receipt[name] = invalidReason
+      ? { requirement, status: 'invalid', reason: invalidReason }
+      : { requirement, status: 'captured' };
   }
   state.outputs = collected;
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    structuredOutputs: {
+      schema: 'viewport.structured_outputs/v1',
+      outputs: receipt,
+    },
+  };
+}
+
+function structuredOutputDefinitions(node: WorkflowNode): Record<string, WorkflowOutputDefinition> {
+  return {
+    ...(node.outputs ?? {}),
+    ...(node.outputSchema ?? {}),
+  };
 }
 
 async function outputSource(
@@ -74,6 +141,37 @@ function coerceOutputValue(value: unknown, definition: WorkflowOutputDefinition)
       return stringifyValue(value) || null;
     default:
       return stringifyValue(value);
+  }
+}
+
+function invalidOutputReason(
+  value: unknown,
+  source: unknown,
+  parsedJson: unknown,
+  text: string,
+  definition: WorkflowOutputDefinition,
+): string | null {
+  if (source === undefined || source === null || stringifyValue(source).trim() === '') {
+    return 'missing';
+  }
+
+  switch (definition.type) {
+    case 'string':
+      return stringifyValue(value).trim() === '' ? 'missing' : null;
+    case 'json':
+      if (!definition.extract && parsedJson === undefined && text.trim() !== '') {
+        return 'malformed_json';
+      }
+      return value === undefined || value === null ? 'missing' : null;
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value) ? null : 'invalid_number';
+    case 'boolean':
+      return typeof value === 'boolean' ? null : 'invalid_boolean';
+    case 'file':
+    case 'artifact':
+      return stringifyValue(value).trim() === '' ? 'missing' : null;
+    default:
+      return null;
   }
 }
 

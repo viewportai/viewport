@@ -109,7 +109,9 @@ export type WorkflowCapabilityRequest =
 
 export interface WorkflowOutputDefinition {
   type: 'string' | 'number' | 'boolean' | 'json' | 'file' | 'artifact';
+  requirement?: 'required' | 'optional' | 'unsupported';
   description?: string;
+  outputSchema?: Record<string, unknown>;
   /**
    * Optional JSONata expression evaluated against `{ output, json }`, where
    * `output` is the bulk text and `json` is the parsed bulk output when valid.
@@ -171,6 +173,7 @@ export interface WorkflowNodeBase {
   retry?: WorkflowRetryPolicy;
   policy?: WorkflowNodePolicy;
   outputs?: Record<string, WorkflowOutputDefinition>;
+  outputSchema?: Record<string, WorkflowOutputDefinition>;
   artifacts?: Record<string, WorkflowArtifactDefinition>;
   env?: Record<string, WorkflowEnvValue>;
   context?: WorkflowNodeContextEnvelope;

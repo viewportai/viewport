@@ -298,6 +298,121 @@ nodes:
     });
   });
 
+  it('fails prompt nodes that emit malformed required structured outputs', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: required-output-denial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    outputSchema:
+      plan:
+        type: json
+        requirement: required
+    prompt: Return the plan as JSON.
+  after:
+    type: shell
+    needs: [plan]
+    command: printf should-not-run
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    adapter.lastSession?.emitAgentMessage('not json {lol}');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.plan?.status).toBe('failed');
+    expect(failed?.nodes.plan?.error).toContain('Required structured output plan is invalid');
+    expect(failed?.nodes.after?.status).toBe('queued');
+    expect(failed?.nodes.plan?.metadata?.['structuredOutputs']).toMatchObject({
+      outputs: {
+        plan: {
+          requirement: 'required',
+          status: 'invalid',
+          reason: 'malformed_json',
+        },
+      },
+    });
+  });
+
+  it('captures valid plan output schema before downstream nodes run', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: plan-output-schema-proof
+requires:
+  agents:
+    - claude
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    outputSchema:
+      plan:
+        type: json
+        requirement: required
+        extract: json.plan
+    prompt: Return the plan as JSON.
+  summarize:
+    type: shell
+    needs: [plan]
+    command: printf "{{ nodes.plan.outputs.plan.title }}"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    adapter.lastSession?.emitAgentMessage('{"plan":{"title":"Ship bounded planning"}}');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.plan?.outputs?.plan).toEqual({ title: 'Ship bounded planning' });
+    expect(completed?.nodes.plan?.metadata?.['structuredOutputs']).toMatchObject({
+      outputs: {
+        plan: {
+          requirement: 'required',
+          status: 'captured',
+        },
+      },
+    });
+    expect(completed?.nodes.summarize?.output).toBe('Ship bounded planning');
+  });
+
   it('fails before launching when an adapter cannot enforce read-only mode', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter({

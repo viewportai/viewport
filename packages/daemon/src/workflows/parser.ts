@@ -146,8 +146,12 @@ function validateTemplateReferences(definition: WorkflowDefinition): void {
 
         if (reference.kind === 'output') {
           const upstream = definition.nodes[reference.nodeId];
+          const declaredOutputs = {
+            ...(upstream?.outputs ?? {}),
+            ...(upstream?.outputSchema ?? {}),
+          };
           if (
-            !upstream?.outputs?.[declaredReferenceName(reference.name, upstream.outputs)] &&
+            !declaredOutputs[declaredReferenceName(reference.name, declaredOutputs)] &&
             !isBuiltinOutputReference(upstream, reference.name)
           ) {
             throw new Error(

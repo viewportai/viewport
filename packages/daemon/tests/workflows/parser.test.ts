@@ -944,6 +944,19 @@ nodes:
     allowedTools:
       - Edit
     prompt: Implement the change.
+  report:
+    type: prompt
+    needs: [execute]
+    agent: claude
+    executionMode: review
+    outputSchema:
+      findings:
+        type: json
+        requirement: required
+        extract: json.findings
+        outputSchema:
+          type: array
+    prompt: Return JSON findings.
 `,
       '/tmp/workflow.yaml',
     );
@@ -962,6 +975,16 @@ nodes:
     if (execute?.type === 'agent') {
       expect(execute.executionMode).toBe('implement');
       expect(execute.allowedTools).toEqual(['Edit']);
+    }
+    const report = parsed.definition.nodes.report;
+    expect(report?.type).toBe('prompt');
+    if (report?.type === 'prompt') {
+      expect(report.outputSchema?.findings).toMatchObject({
+        type: 'json',
+        requirement: 'required',
+        extract: 'json.findings',
+        outputSchema: { type: 'array' },
+      });
     }
   });
 

@@ -136,6 +136,7 @@ const NodeBaseSchema = z.object({
   retry: RetryPolicySchema.optional(),
   policy: NodePolicySchema.optional(),
   outputs: z.record(identifierSchema, OutputDefinitionSchema).optional(),
+  outputSchema: z.record(identifierSchema, OutputDefinitionSchema).optional(),
   artifacts: z.record(identifierSchema, ArtifactDefinitionSchema).optional(),
   env: z.record(identifierSchema, EnvValueSchema).optional(),
   context: NodeContextEnvelopeSchema.optional(),

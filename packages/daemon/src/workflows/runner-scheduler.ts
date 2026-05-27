@@ -148,7 +148,20 @@ export class WorkflowLayerScheduler {
           const node = parsed.definition.nodes[nodeId];
           const state = updated.nodes[nodeId];
           if (state?.status === 'completed' && node) {
-            await captureNodeStructuredOutputs(state, node);
+            try {
+              await captureNodeStructuredOutputs(state, node);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              addEvent(
+                updated,
+                'structured-output-invalid',
+                `Node ${nodeId} produced invalid structured output: ${message}`,
+                { message },
+                nodeId,
+              );
+              await this.ops.saveAndEmit(updated);
+              throw error;
+            }
           }
         }
         await this.ops.saveAndEmit(updated);
