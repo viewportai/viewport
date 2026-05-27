@@ -83,6 +83,13 @@ export interface BuiltinExecutorHelpers {
  */
 export const NODE_EXECUTORS = new Map<string, BuiltinNodeExecutor>();
 
+const SECRET_LIKE_ENV_NAME_PATTERN =
+  /(^|_)(AUTHORIZATION|CREDENTIAL|PASSWORD|PASSWD|PRIVATE_KEY|SECRET|TOKEN|API_KEY)(_|$)/i;
+
+function isSecretLikeEnvName(name: string): boolean {
+  return SECRET_LIKE_ENV_NAME_PATTERN.test(name);
+}
+
 export function registerNodeExecutor(type: string, executor: BuiltinNodeExecutor): void {
   NODE_EXECUTORS.set(type, executor);
 }
@@ -748,6 +755,11 @@ async function resolveNodeEnv(
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(node.env)) {
     if (value.value !== undefined) {
+      if (isSecretLikeEnvName(name)) {
+        throw new Error(
+          `Env ${name} looks secret-like and must use a credential secret handle instead of a literal value.`,
+        );
+      }
       env[name] = await renderTemplate(value.value, run);
       continue;
     }

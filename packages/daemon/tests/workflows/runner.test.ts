@@ -287,6 +287,45 @@ nodes:
     expect(failed?.nodes.proof?.output).not.toBe('should-not-run');
   });
 
+  it('fails closed when secret-like shell env names use literal values', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-literal-secret-env-proof
+nodes:
+  proof:
+    type: shell
+    env:
+      GITHUB_TOKEN:
+        value: ghp_literal_secret
+    argv: [printf, should-not-run]
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.proof?.error).toContain(
+      'Env GITHUB_TOKEN looks secret-like and must use a credential secret handle',
+    );
+    expect(failed?.nodes.proof?.output).not.toBe('should-not-run');
+    expect(JSON.stringify(failed?.inputs)).not.toContain('ghp_literal_secret');
+    expect(JSON.stringify(failed?.nodes.proof?.metadata)).not.toContain('ghp_literal_secret');
+    expect(JSON.stringify(workflowRunToSyncPayload(failed!).nodes)).not.toContain(
+      'ghp_literal_secret',
+    );
+  });
+
   it('cancels a running shell workflow and preserves canceled state', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');
