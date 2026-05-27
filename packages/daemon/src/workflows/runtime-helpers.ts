@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import {
   buildExpressionContext,
+  evaluateExpression,
   renderTemplateString,
   WorkflowExpressionError,
 } from './expression.js';
@@ -113,6 +114,62 @@ export async function renderTemplate(
   }
 }
 
+/**
+ * Render shell command templates without letting workflow inputs/outputs become
+ * raw shell syntax. Unquoted placeholder values are shell-quoted argv fragments.
+ * Placeholders inside double quotes are escaped for that shell context so
+ * substitutions such as $() and backticks remain literal text.
+ */
+export async function renderShellCommandTemplate(
+  template: string,
+  run: WorkflowRunRecord,
+  extras?: Record<string, unknown>,
+): Promise<string> {
+  const rewritten = applyLegacyTemplateAliases(template);
+  const context = { ...buildArtifactAwareContext(run), ...(extras ?? {}) };
+  const placeholderPattern = /\{\{\s*([\s\S]+?)\s*\}\}/g;
+  const matches: Array<{
+    index: number;
+    length: number;
+    expression: string;
+    insideDoubleQuotes: boolean;
+  }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = placeholderPattern.exec(rewritten)) !== null) {
+    matches.push({
+      index: match.index,
+      length: match[0].length,
+      expression: match[1] ?? '',
+      insideDoubleQuotes: isInsideDoubleQuotedShellSpan(rewritten, match.index),
+    });
+  }
+  if (matches.length === 0) return rewritten;
+
+  const resolved = await Promise.all(
+    matches.map((entry) =>
+      evaluateExpression(entry.expression, context).catch((error) => {
+        if (error instanceof WorkflowExpressionError) throw error;
+        throw new WorkflowExpressionError(
+          error instanceof Error ? error.message : String(error),
+          entry.expression,
+          error,
+        );
+      }),
+    ),
+  );
+
+  let result = '';
+  let cursor = 0;
+  matches.forEach((entry, idx) => {
+    result += rewritten.slice(cursor, entry.index);
+    const rendered = stringifyShellTemplateValue(resolved[idx]);
+    result += entry.insideDoubleQuotes ? shellDoubleQuoteEscape(rendered) : shellQuote(rendered);
+    cursor = entry.index + entry.length;
+  });
+  result += rewritten.slice(cursor);
+  return result;
+}
+
 const LEGACY_OUTPUTS_PATTERN = /\{\{\s*outputs\.([A-Za-z0-9._/-]+)\s*\}\}/g;
 const LEGACY_ARTIFACTS_PATTERN = /\{\{\s*artifacts\.([A-Za-z0-9._/-]+)\.([A-Za-z0-9._/-]+)\s*\}\}/g;
 
@@ -124,6 +181,51 @@ function applyLegacyTemplateAliases(template: string): string {
       (_match, nodeId: string, name: string) =>
         `{{ artifacts[nodeId='${nodeId}' and name='${name}'].path }}`,
     );
+}
+
+function isInsideDoubleQuotedShellSpan(value: string, offset: number): boolean {
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  for (let idx = 0; idx < offset; idx += 1) {
+    const char = value[idx];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (char === '"' && !inSingle) {
+      inDouble = !inDouble;
+    }
+  }
+  return inDouble;
+}
+
+function shellQuote(value: string): string {
+  if (value.length === 0) return "''";
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function shellDoubleQuoteEscape(value: string): string {
+  return value.replace(/["\\$`]/g, (char) => `\\${char}`);
+}
+
+function stringifyShellTemplateValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function buildArtifactAwareContext(run: WorkflowRunRecord) {

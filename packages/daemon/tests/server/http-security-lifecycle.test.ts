@@ -53,6 +53,21 @@ describe('HTTP security and lifecycle routes', () => {
     requireAuth: true,
   };
 
+  it('fails closed for protected API requests when no security profile is supplied', async () => {
+    await setup();
+
+    const res = await app!.inject({
+      method: 'GET',
+      url: '/api/directories',
+      headers: {
+        host: '127.0.0.1',
+      },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.payload).error).toContain('auth is required');
+  });
+
   it('rejects protected API requests without auth when profile requires it', async () => {
     await setup({
       securityProfile: lanProfile,

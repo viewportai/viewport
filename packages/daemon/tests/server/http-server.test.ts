@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { recordRedeemAttempt, registerHttpRoutes } from '../../src/server/http-server.js';
 import { Daemon } from '../../src/core/daemon.js';
+import type { SecurityProfile } from '../../src/server/security.js';
 import type { DiscoveredSession, SessionDiscovery } from '../../src/core/interfaces.js';
 import { RingBuffer } from '../../src/server/ring-buffer.js';
 import {
@@ -20,6 +21,12 @@ describe('HTTP Server', () => {
   let testDir: string;
   let daemon: Daemon;
   let app: ReturnType<typeof Fastify>;
+  const localLoopbackProfile: SecurityProfile = {
+    profile: 'local',
+    host: '127.0.0.1',
+    allowedHosts: [],
+    requireAuth: false,
+  };
 
   beforeEach(async () => {
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-http-test-'));
@@ -33,7 +40,7 @@ describe('HTTP Server', () => {
     await daemon.initialize();
 
     app = Fastify();
-    registerHttpRoutes(app, daemon);
+    registerHttpRoutes(app, daemon, undefined, { securityProfile: localLoopbackProfile });
     await app.ready();
   });
 
@@ -438,7 +445,10 @@ describe('HTTP Server', () => {
     const hookRouter = {
       handleEvent: vi.fn().mockResolvedValue({ allowFallback: false }),
     };
-    registerHttpRoutes(localApp, daemon, undefined, { hookRouter: hookRouter as never });
+    registerHttpRoutes(localApp, daemon, undefined, {
+      hookRouter: hookRouter as never,
+      securityProfile: localLoopbackProfile,
+    });
     await localApp.ready();
 
     try {

@@ -55,7 +55,7 @@ export interface HttpServerOptions {
 }
 
 function isHookAuthBypassAllowed(securityProfile?: SecurityProfile): boolean {
-  if (!securityProfile) return true;
+  if (!securityProfile) return false;
   return securityProfile.profile === 'local' && isLoopbackHost(securityProfile.host);
 }
 
@@ -74,7 +74,7 @@ export function registerHttpRoutes(
   const auth = options?.auth;
   const runtime = options?.runtime;
   const securityProfile = options?.securityProfile;
-  const mustRequireAuth = !!auth || securityProfile?.requireAuth === true;
+  const mustRequireAuth = !securityProfile || !!auth || securityProfile.requireAuth === true;
 
   // Security/auth hook for protected routes.
   app.addHook('onRequest', async (request, reply) => {
