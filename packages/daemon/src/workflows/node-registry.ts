@@ -5,6 +5,7 @@ import { executeActionAdapter, WorkflowActionError } from './action-adapters.js'
 import {
   addEvent,
   renderOptionalTemplate,
+  renderShellCommandTemplate,
   renderTemplate,
   resolveNodeCwd,
   runShellNode,
@@ -243,7 +244,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       run.directoryPath,
       await renderOptionalTemplate(node.cwd, run),
     );
-    const command = await renderTemplate(node.command, run);
+    const command = await renderShellCommandTemplate(node.command, run);
     const denial = shellAuthorityDenial(run, nodeId, command, artifactCwd);
     if (denial) {
       addEvent(run, 'shell-blocked', denial.detail, { workflow_authority_denial: denial }, nodeId);

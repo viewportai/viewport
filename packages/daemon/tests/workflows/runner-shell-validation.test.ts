@@ -321,6 +321,82 @@ nodes:
     expect(completed?.nodes.proof?.output).toBe('github:42');
   });
 
+  it('shell-quotes templated input values before invoking sh -lc', async () => {
+    const daemon = await setup();
+    const marker = path.join(projectDir, 'pwned');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-template-quote-proof
+inputs:
+  label:
+    type: string
+    required: true
+nodes:
+  proof:
+    type: shell
+    command: printf %s {{ inputs.label }}
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      inputs: {
+        label: `safe; touch ${marker}`,
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.output).toBe(`safe; touch ${marker}`);
+    await expect(fs.stat(marker)).rejects.toThrow();
+  });
+
+  it('escapes templated shell values inside double quotes', async () => {
+    const daemon = await setup();
+    const marker = path.join(projectDir, 'double-quoted-pwned');
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-template-double-quote-proof
+inputs:
+  label:
+    type: string
+    required: true
+nodes:
+  proof:
+    type: shell
+    command: printf "{{ inputs.label }}"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      inputs: {
+        label: `safe$(touch ${marker})`,
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.output).toBe(`safe$(touch ${marker})`);
+    await expect(fs.stat(marker)).rejects.toThrow();
+  });
+
   it('runs sibling shell nodes concurrently in the same DAG layer', async () => {
     // Two siblings each sleep before writing a marker. The assertion below
     // proves their execution windows overlap, which is stronger and less

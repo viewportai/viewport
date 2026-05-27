@@ -620,7 +620,7 @@ async function safeHeartbeat(
 
 function managedWorkerAccessMode(value: string | undefined): ManagedWorkerAccessMode {
   if (value === 'polling' || value === 'direct' || value === 'relay') return value;
-  return 'relay';
+  return 'polling';
 }
 
 async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAssignment | null> {
