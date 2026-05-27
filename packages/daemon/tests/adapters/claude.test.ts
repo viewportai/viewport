@@ -243,6 +243,49 @@ describe('ClaudeAdapter', () => {
     );
   });
 
+  it('maps review execution mode to Claude read/search tools', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'review-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Review the plan without changing files.',
+      config: {
+        agent: 'claude',
+        approvalPolicy: 'never',
+        executionMode: 'review',
+        trust: 'automated',
+        gitTracker: {
+          enabled: false,
+          commitOn: [],
+          ignore: [],
+          autoSquashOnComplete: false,
+          branchPrefix: 'viewport/session-',
+          commitAuthor: 'Viewport Agent <noreply@example.test>',
+          maxCommitsPerSession: 500,
+          worktreeRoot: '.viewport/worktrees',
+        },
+        permissions: {
+          autoApprove: [],
+          requireApproval: ['Bash'],
+          deny: [],
+        },
+      },
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Review the plan without changing files.',
+        options: expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+          tools: ['Read', 'Grep', 'Glob'],
+          allowedTools: ['Read', 'Grep', 'Glob'],
+        }),
+      }),
+    );
+  });
+
   it('preserves plan mode for deferred initial prompts', async () => {
     const queryFn = createMockQuery([{ type: 'result', subtype: 'success', session_id: 'plan-id' }]);
     const adapter = new ClaudeAdapter(queryFn);

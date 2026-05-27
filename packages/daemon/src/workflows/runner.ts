@@ -19,6 +19,7 @@ import { buildWorkflowContractBinding } from './contract-binding.js';
 import { recordWorkflowHookEvent } from './runner-hook-events.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { buildRunPreparation } from './run-preparation.js';
+import { resolveWorkflowSessionPolicy } from './session-policy.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
@@ -268,6 +269,10 @@ export class WorkflowRunner {
 
     const revisedAt = Date.now();
     const revisionPrompt = await renderTemplate(revision.prompt, run);
+    const revisionPolicy = resolveWorkflowSessionPolicy({
+      executionMode: 'plan',
+      timeoutSeconds: revision.timeoutSeconds,
+    });
     state.status = 'running';
 
     const result = await runWorkflowDaemonSession(
@@ -283,6 +288,11 @@ export class WorkflowRunner {
         prompt: revisionPrompt,
         ...(revision.agent ? { agent: revision.agent } : {}),
         ...(revision.model ? { model: revision.model } : {}),
+        executionMode: revisionPolicy.executionMode,
+        allowedTools: [],
+        timeoutSeconds: revisionPolicy.timeoutSeconds,
+        executionModeDefaulted: false,
+        timeoutDefaulted: revisionPolicy.timeoutDefaulted,
       },
     );
 

@@ -4,6 +4,9 @@ export interface WorkflowInlineAgentDefinition {
   agent?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
+  allowedTools?: string[];
+  timeoutSeconds?: number;
 }
 
 export interface WorkflowInlineAgentRunState {
@@ -12,6 +15,7 @@ export interface WorkflowInlineAgentRunState {
   agent?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
   startedAt?: number;
   completedAt?: number;
@@ -19,5 +23,6 @@ export interface WorkflowInlineAgentRunState {
   nativeSessionId?: string;
   worktreePath?: string;
   output?: string;
+  metadata?: Record<string, unknown>;
   error?: string;
 }

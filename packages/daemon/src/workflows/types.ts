@@ -203,6 +203,8 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
   provider?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
+  allowedTools?: string[];
   session?: {
     resume?: boolean;
     title?: string;
@@ -290,6 +292,7 @@ export interface WorkflowPlanNode extends WorkflowNodeBase {
     prompt?: string;
     agent?: string;
     model?: string;
+    timeoutSeconds?: number;
   };
 }
 

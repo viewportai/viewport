@@ -619,7 +619,7 @@ function claudeToolOptions(
     return { tools: [] };
   }
 
-  if (options?.config?.executionMode === 'read_only') {
+  if (options?.config?.executionMode === 'read_only' || options?.config?.executionMode === 'review') {
     const tools = options.config.allowedTools ?? ['Read', 'Grep', 'Glob'];
     return { tools, allowedTools: tools };
   }

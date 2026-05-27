@@ -9,6 +9,7 @@ import { isFailedSessionReason, waitForPromptSessionComplete } from './session-c
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { defaultWorktreePath } from './prompt-output.js';
+import { resolveWorkflowSessionPolicy } from './session-policy.js';
 import type {
   WorkflowHookRules,
   WorkflowRunRecord,
@@ -44,6 +45,8 @@ export interface WorkflowDaemonSessionRequest {
   allowedTools?: string[];
   hooks?: WorkflowHookRules;
   timeoutSeconds?: number;
+  executionModeDefaulted?: boolean;
+  timeoutDefaulted?: boolean;
   outputFallback?: () => Promise<string>;
   outputData?: (output: string) => Promise<Record<string, unknown>>;
 }
@@ -72,6 +75,10 @@ export async function runWorkflowDaemonSession(
 
   context.daemon.on('session:message', messageHandler);
   try {
+    const sessionPolicy = resolveWorkflowSessionPolicy({
+      executionMode: request.executionMode,
+      timeoutSeconds: request.timeoutSeconds,
+    });
     const sessionCwd =
       request.cwd ?? path.join(run.directoryPath, '.viewport', 'node-sessions', run.id, nodeId);
     await fs.mkdir(sessionCwd, { recursive: true });
@@ -93,7 +100,7 @@ export async function runWorkflowDaemonSession(
       ...(request.agent ? { agent: request.agent } : {}),
       ...(request.model ? { model: request.model } : {}),
       ...(request.effort ? { effort: request.effort } : {}),
-      ...(request.executionMode ? { executionMode: request.executionMode } : {}),
+      executionMode: sessionPolicy.executionMode,
       ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
       sandboxMode: request.cwd ? 'workspace-write' : 'read-only',
       approvalPolicy: 'never',
@@ -152,11 +159,11 @@ export async function runWorkflowDaemonSession(
     const reason = await waitForPromptSessionComplete(
       context.daemon,
       sessionId,
-      request.timeoutSeconds ? request.timeoutSeconds * 1000 : undefined,
+      sessionPolicy.timeoutSeconds * 1000,
     );
     if (reason === 'timeout') {
       await context.daemon.killSession(sessionId).catch(() => undefined);
-      throw new Error(`Prompt session timed out after ${request.timeoutSeconds}s`);
+      throw new Error(`Prompt session timed out after ${sessionPolicy.timeoutSeconds}s`);
     }
     const capturedOutput =
       output.text() || (request.outputFallback ? await request.outputFallback() : '');
@@ -184,7 +191,7 @@ export async function runWorkflowDaemonSession(
     const agentRun = output.agentRunResult({
       agent: agentDescriptor,
       ...(request.model ? { model: request.model } : {}),
-      ...(request.executionMode ? { executionMode: request.executionMode } : {}),
+      executionMode: sessionPolicy.executionMode,
       startedAt: agentStartedAt,
       completedAt: Date.now(),
       reason,
@@ -195,6 +202,13 @@ export async function runWorkflowDaemonSession(
       usage: agentRun.usage,
       toolCalls: agentRun.toolCalls,
       enforcement: agentRun.enforcement,
+      executionPolicy: {
+        executionMode: sessionPolicy.executionMode,
+        timeoutSeconds: sessionPolicy.timeoutSeconds,
+        executionModeDefaulted:
+          request.executionModeDefaulted ?? sessionPolicy.executionModeDefaulted,
+        timeoutDefaulted: request.timeoutDefaulted ?? sessionPolicy.timeoutDefaulted,
+      },
     };
 
     addEvent(

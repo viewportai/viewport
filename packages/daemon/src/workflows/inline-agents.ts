@@ -1,5 +1,9 @@
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { addEvent, renderTemplate } from './runtime-helpers.js';
+import {
+  resolveInlineAgentExecutionMode,
+  resolveWorkflowSessionPolicy,
+} from './session-policy.js';
 import type { WorkflowNodeExecutorContext } from './node-executor.js';
 import type {
   WorkflowInlineAgentRunState,
@@ -27,6 +31,10 @@ export async function runInlineAgents(
         ...((agent.agent ?? node.agent) ? { agent: agent.agent ?? node.agent } : {}),
         ...((agent.model ?? node.model) ? { model: agent.model ?? node.model } : {}),
         ...((agent.effort ?? node.effort) ? { effort: agent.effort ?? node.effort } : {}),
+        executionMode: resolveInlineAgentExecutionMode({
+          explicitExecutionMode: agent.executionMode,
+          parentExecutionMode: node.executionMode,
+        }),
       },
     ]),
   );
@@ -37,6 +45,10 @@ export async function runInlineAgents(
     entries.map(async ([agentId, agent]) => {
       const agentState = state.inlineAgents?.[agentId];
       if (!agentState) return;
+      const sessionPolicy = resolveWorkflowSessionPolicy({
+        executionMode: agentState.executionMode,
+        timeoutSeconds: agent.timeoutSeconds,
+      });
       agentState.status = 'running';
       agentState.startedAt = Date.now();
       addEvent(
@@ -48,6 +60,7 @@ export async function runInlineAgents(
           ...(agentState.agent ? { agent: agentState.agent } : {}),
           ...(agentState.model ? { model: agentState.model } : {}),
           ...(agentState.effort ? { effort: agentState.effort } : {}),
+          executionMode: sessionPolicy.executionMode,
         },
         nodeId,
       );
@@ -63,6 +76,15 @@ export async function runInlineAgents(
           ...(agentState.agent ? { agent: agentState.agent } : {}),
           ...(agentState.model ? { model: agentState.model } : {}),
           ...(agentState.effort ? { effort: agentState.effort } : {}),
+          executionMode: sessionPolicy.executionMode,
+          ...(agent.allowedTools
+            ? { allowedTools: agent.allowedTools }
+            : sessionPolicy.executionMode === 'plan'
+              ? { allowedTools: [] }
+              : {}),
+          timeoutSeconds: sessionPolicy.timeoutSeconds,
+          executionModeDefaulted: agent.executionMode === undefined,
+          timeoutDefaulted: sessionPolicy.timeoutDefaulted,
         });
         agentState.status = 'completed';
         agentState.completedAt = Date.now();

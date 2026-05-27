@@ -317,6 +317,9 @@ nodes:
       message: 'Narrow the plan to idempotency evidence first.',
     });
     await waitForNodeSession(daemon, run.id, 'propose');
+    expect(adapter.lastOptions?.config?.executionMode).toBe('plan');
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
+    expect(adapter.lastOptions?.allowedTools).toEqual([]);
     adapter.lastSession?.emitAgentMessage(
       '## Revised plan\n1. First gather idempotency evidence, then change the retry path.',
     );
@@ -345,6 +348,14 @@ nodes:
         agent: 'claude',
         model: 'opus',
       },
+    });
+    expect(blocked?.nodes.propose?.metadata?.agentRun).toMatchObject({
+      executionMode: 'plan',
+    });
+    expect(blocked?.nodes.propose?.metadata?.executionPolicy).toMatchObject({
+      executionMode: 'plan',
+      timeoutSeconds: 600,
+      timeoutDefaulted: true,
     });
     expect(blocked?.events.map((event) => event.type)).toContain('plan-changes-requested');
     expect(blocked?.events.map((event) => event.type)).toContain('plan-revised');

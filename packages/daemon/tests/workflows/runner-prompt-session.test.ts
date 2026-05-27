@@ -47,6 +47,14 @@ async function cleanup(): Promise<void> {
   await fs.rm(projectDir, { recursive: true, force: true });
 }
 
+async function waitForAdapterSessions(adapter: MockAdapter, count: number): Promise<void> {
+  for (let index = 0; index < 200; index += 1) {
+    if (adapter.sessions.length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${count} adapter session(s)`);
+}
+
 describe('workflow runner prompt sessions', () => {
   beforeEach(async () => {});
   afterEach(cleanup);
@@ -136,6 +144,8 @@ nodes:
     });
 
     await waitForNodeSession(daemon, run.id, 'review');
+    expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
+    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
     adapter.lastSession?.emitToolCall('tool-1', 'Read');
     adapter.lastSession?.emitToolCallUpdate('tool-1', 'Read', 'completed');
     adapter.lastSession?.emitTokenUsage(42, 12, 0.0042);
@@ -161,6 +171,12 @@ nodes:
       executionMode: 'implement',
       stopReason: 'idle',
       output: 'done',
+    });
+    expect(completed?.nodes.review?.metadata?.['executionPolicy']).toMatchObject({
+      executionMode: 'implement',
+      timeoutSeconds: 1800,
+      executionModeDefaulted: true,
+      timeoutDefaulted: true,
     });
     expect(completed?.nodes.review?.metadata?.['toolCalls']).toEqual([
       expect.objectContaining({
@@ -219,6 +235,67 @@ nodes:
     adapter.lastSession?.emitAgentMessage('done');
     adapter.lastSession?.simulateIdle();
     await waitForTerminalRun(daemon, run.id);
+  });
+
+  it('conservatively bounds inline agents that do not declare execution mode', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: inline-agent-mode-proof
+requires:
+  agents:
+    - claude
+nodes:
+  implement:
+    type: prompt
+    agent: claude
+    executionMode: implement
+    prompt: Use the inline reviewer before implementation.
+    agents:
+      reviewer:
+        title: Reviewer
+        prompt: Review the implementation approach.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForAdapterSessions(adapter, 1);
+    expect(adapter.sessions).toHaveLength(1);
+    expect(adapter.lastOptions?.config?.executionMode).toBe('review');
+
+    adapter.lastSession?.emitAgentMessage('Looks safe.');
+    adapter.lastSession?.simulateIdle();
+
+    await waitForNodeSession(daemon, run.id, 'implement');
+    expect(adapter.sessions).toHaveLength(2);
+    expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
+
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.implement?.inlineAgents?.reviewer).toMatchObject({
+      status: 'completed',
+      executionMode: 'review',
+    });
+    expect(completed?.nodes.implement?.inlineAgents?.reviewer?.metadata?.['executionPolicy']).toMatchObject({
+      executionMode: 'review',
+      timeoutSeconds: 900,
+      timeoutDefaulted: true,
+    });
   });
 
   it('fails before launching when an adapter cannot enforce read-only mode', async () => {

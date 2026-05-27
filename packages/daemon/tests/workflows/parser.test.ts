@@ -715,6 +715,10 @@ nodes:
         title: Reviewer
         agent: codex
         model: gpt-5.4
+        executionMode: review
+        allowedTools:
+          - Read
+        timeoutSeconds: 120
         prompt: Review {{ nodes.inspect.outputs.summary }}.
       tester:
         prompt: Design tests for {{ nodes.inspect.output }}.
@@ -727,6 +731,9 @@ nodes:
     if (supervisor?.type === 'prompt') {
       expect(Object.keys(supervisor.agents ?? {})).toEqual(['reviewer', 'tester']);
       expect(supervisor.agents?.reviewer?.agent).toBe('codex');
+      expect(supervisor.agents?.reviewer?.executionMode).toBe('review');
+      expect(supervisor.agents?.reviewer?.allowedTools).toEqual(['Read']);
+      expect(supervisor.agents?.reviewer?.timeoutSeconds).toBe(120);
       expect(supervisor.inlineAgentFailurePolicy).toBe('continue');
     }
   });
@@ -929,6 +936,14 @@ nodes:
       - Grep
       - Glob
     prompt: Inspect only.
+  execute:
+    type: agent
+    needs: [inspect]
+    agent: claude
+    executionMode: implement
+    allowedTools:
+      - Edit
+    prompt: Implement the change.
 `,
       '/tmp/workflow.yaml',
     );
@@ -942,6 +957,12 @@ nodes:
     expect(draftPlan.allowedTools).toEqual([]);
     expect(inspect.executionMode).toBe('read_only');
     expect(inspect.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
+    const execute = parsed.definition.nodes.execute;
+    expect(execute?.type).toBe('agent');
+    if (execute?.type === 'agent') {
+      expect(execute.executionMode).toBe('implement');
+      expect(execute.allowedTools).toEqual(['Edit']);
+    }
   });
 
   it('parses workflows from disk with resolved source paths', async () => {
