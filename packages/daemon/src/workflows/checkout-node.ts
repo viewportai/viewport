@@ -15,6 +15,8 @@ export interface CheckoutResult {
   repository: string;
   remote: string;
   path: string;
+  sourceCategory: 'operating_repo';
+  readWriteMode: 'read_write';
   ref: string | null;
   branch: string | null;
   commit: string;
@@ -118,6 +120,8 @@ export async function executeCheckoutNode(
     repository,
     remote: redactedRemote(remote),
     path: destination,
+    sourceCategory: 'operating_repo',
+    readWriteMode: 'read_write',
     ref: node.ref ?? null,
     branch: node.branch ?? null,
     commit,
@@ -136,7 +140,7 @@ function checkoutDestination(
   const safeRun = runId.replace(/[^a-z0-9_.-]+/gi, '__');
   const candidate = configuredPath
     ? path.resolve(root, configuredPath)
-    : path.join(root, '.viewport', 'checkouts', safeRun, safeRepo);
+    : path.join(root, '.viewport', 'workspace', 'runs', safeRun, 'repos', 'operating', safeRepo);
   if (!isPathWithin(candidate, root)) {
     throw new Error('Checkout path is outside the run worktree.');
   }

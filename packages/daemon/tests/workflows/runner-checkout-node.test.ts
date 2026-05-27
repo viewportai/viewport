@@ -81,15 +81,25 @@ nodes:
     const completed = await daemon.workflowRunner.getRun(run.id);
 
     expect(completed?.status).toBe('completed');
-    expect(completed?.nodes.repo?.worktreePath).toContain(path.join('.viewport', 'checkouts'));
+    expect(completed?.nodes.repo?.worktreePath).toContain(
+      path.join('.viewport', 'workspace', 'runs', run.id, 'repos', 'operating'),
+    );
     expect(completed?.nodes.repo?.outputs).toMatchObject({
       repository: 'acme/payments',
       branch: 'viewport/proof',
+      sourceCategory: 'operating_repo',
+      readWriteMode: 'read_write',
     });
     expect(completed?.nodes.repo?.metadata?.checkout).toMatchObject({
       schema: 'viewport.checkout_receipt/v1',
       repository: 'acme/payments',
+      path: completed?.nodes.repo?.worktreePath,
+      source_category: 'operating_repo',
+      read_write_mode: 'read_write',
+      requested_ref: null,
+      requested_branch: 'viewport/proof',
       branch: 'viewport/proof',
+      exact_commit: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
     expect(completed?.nodes.inspect?.output).toContain('checked-out');
     expect(completed?.events).toContainEqual(
@@ -506,6 +516,9 @@ nodes:
     expect(completed?.nodes.repo?.metadata?.checkout).toMatchObject({
       schema: 'viewport.checkout_receipt/v1',
       repository: 'acme/payments',
+      source_category: 'operating_repo',
+      read_write_mode: 'read_write',
+      exact_commit: expect.stringMatching(/^[0-9a-f]{40}$/),
       credentialMode: 'run_scoped_grant',
       credentialRef: 'repo/github/payments-api',
     });
