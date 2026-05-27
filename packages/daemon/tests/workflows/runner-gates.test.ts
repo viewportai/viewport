@@ -489,6 +489,16 @@ nodes:
     expect(completed?.runPreparation).toMatchObject({
       schema: 'viewport.run_preparation/v1',
       operating_repos: [expect.objectContaining({ repository: 'viewportai/vp-example-repo' })],
+      context_sources: expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'git://viewportai/vp-example-docs/docs/runbooks/',
+          mode: 'read',
+        }),
+        expect.objectContaining({
+          ref: 'git://viewportai/vp-example-docs/docs/repo-context/',
+          mode: 'read',
+        }),
+      ]),
       update_targets: expect.arrayContaining([
         expect.objectContaining({
           ref: 'git://viewportai/vp-example-docs/docs/context/',
@@ -506,5 +516,8 @@ nodes:
     );
     expect(completed?.events.map((event) => event.type)).not.toContain('node-context-selected');
     expect(JSON.stringify(completed?.runPreparation)).not.toContain('PRIVATE_EDGE_PATCH');
+    expect(JSON.stringify(completed?.runPreparation?.operating_repos)).not.toContain(
+      'vp-example-docs',
+    );
   });
 });

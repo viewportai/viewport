@@ -907,6 +907,26 @@ nodes:
     ).toThrow(/undeclared output/);
   });
 
+  it('validates shell command template dataflow references before execution', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: shell-template-dataflow
+nodes:
+  collect:
+    type: shell
+    command: printf ok
+  publish:
+    type: shell
+    needs: [collect]
+    command: printf {{ nodes.collect.outputs.summary }}
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/undeclared output collect.summary/);
+  });
+
   it('allows nested reads from declared structured JSON outputs', () => {
     const parsed = parseWorkflow(
       `
