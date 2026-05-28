@@ -1,3 +1,10 @@
+## [0.22.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.1...@viewportai/daemon@0.22.2) (2026-05-28)
+
+
+### Bug Fixes
+
+* preserve workflow session error reasons ([#126](https://github.com/viewportai/viewport/issues/126)) ([1cf8e33](https://github.com/viewportai/viewport/commit/1cf8e33c9cdae4cf93bfd1c4231c0a6eaa57d935))
+
 ## [0.22.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.0...@viewportai/daemon@0.22.1) (2026-05-28)
 
 
