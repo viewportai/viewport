@@ -75,6 +75,86 @@ describe('standalone worker runtime', () => {
     await expectSignedRequest(requests[0], homeDir);
   });
 
+  it('advertises persisted worker capabilities on standalone heartbeat', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    const baseUrl = serverUrl(server);
+    await writeWorkerProfile(baseUrl);
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const existing = manager.getDaemonConfig() ?? {};
+    await manager.setDaemonConfig({
+      ...existing,
+      worker: {
+        ...existing.worker,
+        runnerPool: 'payments-prod',
+        capabilities: {
+          agents: {
+            claude: {
+              id: 'claude',
+              displayName: 'Claude',
+              tier: 'sdk',
+              available: true,
+              models: ['claude-sonnet-4.6'],
+              default_model: 'claude-sonnet-4.6',
+              tools: ['read', 'grep'],
+              supports_plan_mode: true,
+            },
+          },
+          models: ['claude-sonnet-4.6'],
+          tools: ['shell', 'read', 'grep'],
+          integrations: ['github', 'slack'],
+          secrets: ['github/pr-writer'],
+          runner_pool: 'payments-prod',
+        },
+      },
+    });
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    expect(requests[0]?.body).toMatchObject({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      public_key_fingerprint: expect.any(String),
+      capabilities: {
+        agents: {
+          claude: expect.objectContaining({
+            id: 'claude',
+            available: true,
+            models: ['claude-sonnet-4.6'],
+            supports_plan_mode: true,
+          }),
+        },
+        models: ['claude-sonnet-4.6'],
+        tools: ['shell', 'read', 'grep'],
+        integrations: ['github', 'slack'],
+        secrets: ['github/pr-writer'],
+        runner_pool: 'payments-prod',
+      },
+    });
+    expect(requests.at(-1)?.body).toMatchObject({
+      status: 'offline',
+      capabilities: expect.objectContaining({
+        agents: expect.objectContaining({ claude: expect.any(Object) }),
+      }),
+    });
+  });
+
   it('fails before control-plane contact when the worker workspace root is missing', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
