@@ -1,3 +1,10 @@
+## [0.25.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.0...@viewportai/daemon@0.25.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* manual golden runner execution blockers ([#138](https://github.com/viewportai/viewport/issues/138)) ([7fe71a3](https://github.com/viewportai/viewport/commit/7fe71a31da41a5ad6bf53db04dec7c91ff74b16f))
+
 # [0.25.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.24.0...@viewportai/daemon@0.25.0) (2026-05-28)
 
 
