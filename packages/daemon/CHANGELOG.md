@@ -1,3 +1,10 @@
+## [0.25.3](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.2...@viewportai/daemon@0.25.3) (2026-05-28)
+
+
+### Bug Fixes
+
+* require brokered github action credentials ([#140](https://github.com/viewportai/viewport/issues/140)) ([ad75668](https://github.com/viewportai/viewport/commit/ad756680c0afed886f40c0c4f84ae564d8cae017))
+
 ## [0.25.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.1...@viewportai/daemon@0.25.2) (2026-05-28)
 
 
