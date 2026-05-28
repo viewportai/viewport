@@ -742,6 +742,46 @@ nodes:
     await waitForTerminalRun(daemon, run.id);
   });
 
+  it('blocks prompt node cwd values that escape the run workspace before launching an agent', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-cwd-escape-proof
+requires:
+  agents:
+    - claude
+nodes:
+  implement:
+    type: prompt
+    agent: claude
+    executionMode: implement
+    cwd: ../outside-workspace
+    prompt: This should never launch.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(adapter.sessions).toHaveLength(0);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.implement?.status).toBe('failed');
+    expect(failed?.nodes.implement?.error).toContain(
+      'Prompt session cwd is outside the run workspace',
+    );
+  });
+
   it('runs a deterministic custom command agent through the daemon workflow runner', async () => {
     const daemon = await setup();
     const script = [
