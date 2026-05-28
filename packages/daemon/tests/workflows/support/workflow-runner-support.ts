@@ -217,7 +217,7 @@ export class WorktreeTracker implements RunTracker {
 }
 
 export async function waitForTerminalRun(daemon: Daemon, runId: string): Promise<void> {
-  for (let index = 0; index < 200; index += 1) {
+  for (let index = 0; index < 600; index += 1) {
     const run = await daemon.workflowRunner.getRun(runId);
     if (run && ['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) {
       return;
@@ -228,7 +228,7 @@ export async function waitForTerminalRun(daemon: Daemon, runId: string): Promise
 }
 
 export async function waitForCompletedRun(daemon: Daemon, runId: string): Promise<void> {
-  for (let index = 0; index < 200; index += 1) {
+  for (let index = 0; index < 600; index += 1) {
     const run = await daemon.workflowRunner.getRun(runId);
     if (run?.status === 'completed') return;
     if (run && ['failed', 'canceled'].includes(run.status)) {
