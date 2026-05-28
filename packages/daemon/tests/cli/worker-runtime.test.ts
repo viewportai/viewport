@@ -368,6 +368,81 @@ describe('standalone worker runtime', () => {
     await expectSignedRequest(requests[2], homeDir);
   });
 
+  it('fails hosted managed executor claims before execution when run lease token is missing', async () => {
+    const projectDir = path.join(homeDir, 'hosted-missing-lease-token-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      omitHostedLeaseToken: true,
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-missing-lease-token-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - should-not-execute
+`,
+        source_ref: 'viewport://test/hosted-worker-missing-lease-token-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 0, failed: 1, cleanup: 1 });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests[2]?.headers['x-viewport-assignment-claim']).toBe('vpclaim_run_1');
+    expect(requests[2]?.headers['x-viewport-run-lease']).toBeUndefined();
+    expect(requests[2]?.body).toMatchObject({
+      credential: 'vpexec_hosted',
+      status: 'failed',
+      failure: expect.objectContaining({
+        schema: 'viewport.workflow_failure/v1',
+        error_code: 'RUNNER_LEASE_TOKEN_MISSING',
+        failure_class: 'authorization_denied',
+        retry_safe: false,
+        lease_released: true,
+      }),
+    });
+    expect(requests[2]?.body).not.toMatchObject({
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          proof: expect.anything(),
+        }),
+      }),
+    });
+    await expectSignedRequest(requests[2], homeDir);
+  });
+
   it('retries transient hosted managed executor claim failures before executing', async () => {
     const projectDir = path.join(homeDir, 'hosted-transient-claim-workspace');
     await fs.mkdir(projectDir, { recursive: true });
@@ -993,7 +1068,7 @@ async function startRuntimeServer(
             ...(options.hostedAssignment ?? {}),
             run_lease: {
               lease_id: 'workflow_run:run_1',
-              lease_token: 'vplease_run_1',
+              ...(options.omitHostedLeaseToken ? {} : { lease_token: 'vplease_run_1' }),
               workflow_run_id: 'run_1',
             },
           },
@@ -1107,6 +1182,7 @@ async function startRuntimeServer(
 interface RuntimeServerOptions {
   hostedAssignment?: Record<string, unknown>;
   claimAlwaysEmpty?: boolean;
+  omitHostedLeaseToken?: boolean;
   transientHostedClaimFailures?: number;
   runtimeCommandsAfterBlockedSync?: boolean;
   runtimeCommandsByBlockedNode?: Record<string, { message: string }>;

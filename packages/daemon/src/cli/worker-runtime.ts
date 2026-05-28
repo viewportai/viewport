@@ -445,6 +445,13 @@ async function executeHostedWorkflowClaim(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
 ): Promise<HostedClaimExecutionResult> {
+  if (!lease.leaseToken) {
+    return {
+      status: 'failed',
+      failure: hostedWorkerMissingLeaseTokenFailure(),
+    };
+  }
+
   if (!lease.yamlSnapshot) {
     return {
       status: 'failed',
@@ -616,6 +623,16 @@ function hostedWorkerExecutionUnavailableFailure(): HostedWorkerFailure {
     summary:
       'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
     nextCheck: 'Wire the in-process workflow executor before enabling hosted worker completion.',
+    retrySafe: false,
+  };
+}
+
+function hostedWorkerMissingLeaseTokenFailure(): HostedWorkerFailure {
+  return {
+    errorCode: 'RUNNER_LEASE_TOKEN_MISSING',
+    failureClass: 'authorization_denied',
+    summary: 'Hosted worker claim did not include a server-issued run lease token.',
+    nextCheck: 'Re-pair the worker or upgrade the control plane to return run_lease.lease_token.',
     retrySafe: false,
   };
 }
