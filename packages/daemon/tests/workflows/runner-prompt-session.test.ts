@@ -150,8 +150,8 @@ nodes:
 
     await waitForNodeSession(daemon, run.id, 'review');
     expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
-    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
-    expect(adapter.lastOptions?.allowedTools).toEqual([]);
+    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
+    expect(adapter.lastOptions?.allowedTools).toBeUndefined();
     const sentPrompt = String(adapter.lastSession?.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
     expect(sentPrompt).toContain('<workflow_inputs>');
     expect(sentPrompt).toContain('PAY-1842 broken webhook retry');
@@ -337,7 +337,7 @@ nodes:
     await waitForNodeSession(daemon, run.id, 'implement');
     expect(adapter.sessions).toHaveLength(2);
     expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
-    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
+    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
 
     adapter.lastSession?.emitAgentMessage('done');
     adapter.lastSession?.simulateIdle();

@@ -399,7 +399,7 @@ async function executePromptNode(
     ...(node.model ? { model: node.model } : {}),
     ...(node.effort ? { effort: node.effort } : {}),
     executionMode: sessionPolicy.executionMode,
-    allowedTools: node.allowedTools ?? [],
+    ...(node.allowedTools ? { allowedTools: node.allowedTools } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
     timeoutSeconds: sessionPolicy.timeoutSeconds,
     ...(budget ? { budget } : {}),
