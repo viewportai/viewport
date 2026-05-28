@@ -632,6 +632,13 @@ function claudeToolOptions(options: SessionOptions | undefined): {
   tools?: string[] | { type: 'preset'; preset: 'claude_code' };
   allowedTools?: string[];
 } {
+  if (options?.config?.allowedTools) {
+    return {
+      tools: options.config.allowedTools,
+      allowedTools: options.config.allowedTools,
+    };
+  }
+
   if (options?.config?.executionMode === 'plan') {
     return { tools: [] };
   }

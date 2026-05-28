@@ -61,6 +61,7 @@ async function runPromptFollowUp(
       ...(onReject.agent ? { agent: onReject.agent } : {}),
       ...(onReject.model ? { model: onReject.model } : {}),
       ...(onReject.effort ? { effort: onReject.effort } : {}),
+      allowedTools: [],
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

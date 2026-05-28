@@ -49,7 +49,7 @@ export async function executeProviderAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
-  options: { idempotencyKey?: string } = {},
+  options: { idempotencyKey?: string; runtimeSecretEnv?: Record<string, string> } = {},
 ): Promise<ActionResult | null> {
   if (node.adapter === 'github') {
     return executeGitHubAction(run, nodeId, node, actionInput, options);
@@ -68,7 +68,7 @@ async function executeGitHubAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
-  options: { idempotencyKey?: string },
+  options: { idempotencyKey?: string; runtimeSecretEnv?: Record<string, string> },
 ): Promise<ActionResult> {
   const repository = stringValue(actionInput['repository']);
   const [repositoryOwner, repositoryName] = splitRepository(repository);
@@ -77,6 +77,7 @@ async function executeGitHubAction(
   const token = providerCredentialValue(actionInput, {
     defaultRef: 'github/token',
     defaultEnv: 'GITHUB_TOKEN',
+    runtimeSecretEnv: options.runtimeSecretEnv,
   });
   if (!owner || !repo) {
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);

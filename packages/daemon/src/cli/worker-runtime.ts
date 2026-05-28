@@ -2,9 +2,11 @@ import crypto from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import YAML from 'yaml';
 import { ConfigManager } from '../core/config.js';
 import { Daemon } from '../core/daemon.js';
 import { loadAgents } from '../startup-agents.js';
+import { envNameForCredentialRef } from '../workflows/action-provider-utils.js';
 import { GitTracker } from '../tracking/git-tracker.js';
 import { workflowRunToSyncPayload } from '../workflows/platform-sync-payload.js';
 import { WorkflowRunStore } from '../workflows/store.js';
@@ -500,6 +502,7 @@ async function executeHostedWorkflowClaim(
     const directoryPath = path.resolve(lease.directoryPath ?? profile.workspaceRoot);
     await fs.mkdir(directoryPath, { recursive: true });
     const directory = await daemon.directoryManager.register(directoryPath);
+    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
     const run = await daemon.workflowRunner.startRun({
       workflowYaml: lease.yamlSnapshot,
       workflowSourceRef:
@@ -512,6 +515,7 @@ async function executeHostedWorkflowClaim(
       resourceManifest: lease.resourceManifest as never,
       workflowAuthorityContract: lease.workflowAuthorityContract,
       dataCapturePolicy: lease.dataCapturePolicy,
+      runtimeSecretEnv,
       initiation: 'cli',
     });
     const completed = await waitForWorkflowRun(daemon, run.id);
@@ -534,6 +538,132 @@ async function executeHostedWorkflowClaim(
         retrySafe: false,
       },
     };
+  }
+}
+
+async function materializeHostedRunCredentials(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<Record<string, string>> {
+  if (!lease.runId) {
+    throw new Error(
+      'Hosted managed executor credential materialization requires a workflow run id.',
+    );
+  }
+  if (!lease.assignmentClaimToken) {
+    throw new Error('Hosted managed executor credential materialization requires a claim token.');
+  }
+
+  const runtimeSecretEnv: Record<string, string> = {};
+  const handles = credentialHandlesFromLease(lease);
+  for (const handle of handles) {
+    const response = await hostedManagedExecutorFetch(
+      profile,
+      'POST',
+      `workflow-runs/${encodeURIComponent(lease.runId)}/credential-material`,
+      {
+        credential: profile.credential,
+        handle,
+        ...repositoryForCredentialHandle(lease, handle),
+      },
+      lease.assignmentClaimToken,
+      lease.leaseToken,
+    );
+    const parsed = (await response.json()) as Record<string, unknown>;
+    const data =
+      parsed['data'] && typeof parsed['data'] === 'object'
+        ? (parsed['data'] as Record<string, unknown>)
+        : parsed;
+    const secret = stringValue(data['secret']);
+    if (secret) {
+      runtimeSecretEnv[envNameForCredentialRef(handle)] = secret;
+    }
+  }
+
+  return runtimeSecretEnv;
+}
+
+function credentialHandlesFromLease(lease: ClaimedLease): string[] {
+  const workflow = yamlSnapshotDocument(lease);
+  const handles = new Set<string>();
+  for (const handle of [
+    ...actionCredentialRefs(isRecord(workflow) ? workflow['nodes'] : undefined),
+    ...providerActionCredentialRefs(lease.workflowAuthorityContract),
+  ]) {
+    handles.add(handle);
+  }
+  return [...handles].sort();
+}
+
+function repositoryForCredentialHandle(
+  lease: ClaimedLease,
+  handle: string,
+): { repository: string } | Record<string, never> {
+  const workflow = yamlSnapshotDocument(lease);
+  const nodes = isRecord(workflow) ? workflow['nodes'] : undefined;
+  if (!isRecord(nodes)) return {};
+  for (const node of Object.values(nodes)) {
+    if (!isRecord(node) || stringValue(node['type']) !== 'action') continue;
+    const withValue = isRecord(node['with']) ? node['with'] : {};
+    const credentialRef =
+      stringValue(withValue['credential_ref']) ?? stringValue(withValue['credentialRef']);
+    if (credentialRef !== handle) continue;
+    const repository = renderLeaseTemplate(
+      stringValue(withValue['repository']) ?? stringValue(withValue['repo']),
+      lease,
+    );
+    if (repository) return { repository };
+  }
+  return {};
+}
+
+function actionCredentialRefs(nodes: unknown): string[] {
+  if (!isRecord(nodes)) return [];
+  return Object.values(nodes).flatMap((node) => {
+    if (!isRecord(node) || stringValue(node['type']) !== 'action') return [];
+    const withValue = isRecord(node['with']) ? node['with'] : {};
+    const credentialRef =
+      stringValue(withValue['credential_ref']) ?? stringValue(withValue['credentialRef']);
+    return credentialRef ? [credentialRef] : [];
+  });
+}
+
+function providerActionCredentialRefs(contract: unknown): string[] {
+  const entries = pathValue(asRecord(contract), ['credentials', 'provider_actions']);
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    if (typeof entry === 'string' && entry.trim() !== '') return [entry.trim()];
+    if (!isRecord(entry)) return [];
+    const value =
+      stringValue(entry['handle']) ??
+      stringValue(entry['ref']) ??
+      stringValue(entry['credential_ref']);
+    return value ? [value] : [];
+  });
+}
+
+function renderLeaseTemplate(value: string | undefined, lease: ClaimedLease): string | null {
+  if (!value) return null;
+  const inputs = isRecord(lease.inputSnapshot) ? lease.inputSnapshot : {};
+  const rendered = value.replace(
+    /\{\{\s*inputs\.([A-Za-z0-9_]+)\s*\}\}/g,
+    (_match: string, key: string) => {
+      const input = inputs[key];
+      return typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean'
+        ? String(input)
+        : '';
+    },
+  );
+  const trimmed = rendered.trim();
+  return trimmed === '' || trimmed.includes('{{') ? null : trimmed;
+}
+
+function yamlSnapshotDocument(lease: ClaimedLease): unknown {
+  if (!lease.yamlSnapshot) return null;
+  try {
+    return YAML.parse(lease.yamlSnapshot);
+  } catch {
+    return null;
   }
 }
 
@@ -883,6 +1013,23 @@ function positiveInteger(value: unknown): number | undefined {
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function pathValue(value: Record<string, unknown>, pathParts: string[]): unknown {
+  let current: unknown = value;
+  for (const part of pathParts) {
+    if (!isRecord(current)) return undefined;
+    current = current[part];
+  }
+  return current;
 }
 
 function dataCapturePolicyValue(value: unknown): WorkflowDataCapturePolicy | undefined {

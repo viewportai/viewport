@@ -14,7 +14,7 @@ export async function executeActionAdapter(
   run: WorkflowRunRecord,
   nodeId: string,
   node: WorkflowActionNode,
-  options: { approved?: boolean } = {},
+  options: { approved?: boolean; runtimeSecretEnv?: Record<string, string> } = {},
 ): Promise<ActionResult> {
   const idempotencyKey = await renderOptionalTemplate(run, node.idempotencyKey);
   const actionInput = await renderActionInput(run, node.with ?? {});
@@ -51,6 +51,7 @@ export async function executeActionAdapter(
 
   const providerAction = await executeProviderAction(run, nodeId, node, actionInput, {
     idempotencyKey,
+    runtimeSecretEnv: options.runtimeSecretEnv,
   });
   if (providerAction) return providerAction;
 

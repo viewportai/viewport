@@ -626,7 +626,9 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     if (node.type !== 'action') return { result: 'completed' };
     const state = run.nodes[nodeId];
     if (node.requiresApproval === true && state?.approval?.approved !== true) {
-      const action = await executeActionAdapter(run, nodeId, node);
+      const action = await executeActionAdapter(run, nodeId, node, {
+        runtimeSecretEnv: context.runtimeSecretEnv,
+      });
       if (state) {
         state.output = action.output;
         state.metadata = {
@@ -647,6 +649,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     try {
       action = await executeActionAdapter(run, nodeId, node, {
         approved: state?.approval?.approved === true,
+        runtimeSecretEnv: context.runtimeSecretEnv,
       });
     } catch (error) {
       if (error instanceof WorkflowActionError && state) {

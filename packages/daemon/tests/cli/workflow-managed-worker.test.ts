@@ -429,7 +429,7 @@ describe('workflow managed worker CLI', () => {
     ]);
   });
 
-  it('materializes selected repo and API credentials into transient daemon env only', async () => {
+  it('materializes selected run credentials into transient daemon env only', async () => {
     process.argv = [
       'node',
       'vpd',
@@ -464,11 +464,26 @@ describe('workflow managed worker CLI', () => {
             yaml_snapshot: `
 schema: viewport.workflow/v1
 name: proof
+inputs:
+  repo:
+    type: string
+    default: viewportai/vp-example-repo
 nodes:
+  acknowledge_pr:
+    type: action
+    adapter: github
+    action: pull_request.comment
+    with:
+      credential_ref: github/pr-writer
+      repository: "{{ inputs.repo }}"
+      body: ok
   tests:
     type: shell
     command: printf ok
 `,
+            input_snapshot: {
+              repo: 'viewportai/vp-example-repo',
+            },
             source_ref: 'viewport://workflow/proof',
             directory_path: '/repo',
             execution_profile_snapshot: {
@@ -504,6 +519,27 @@ nodes:
               provider: 'anthropic',
               material_available: false,
               runner_local_required: true,
+            },
+          });
+        }
+        if (body.handle === 'github/pr-writer') {
+          expect(body).toMatchObject({
+            credential: 'vpexec_secret',
+            handle: 'github/pr-writer',
+            repository: 'viewportai/vp-example-repo',
+          });
+          return jsonResponse({
+            data: {
+              credential_id: 'cred_github_action_1',
+              handle: 'github/pr-writer',
+              kind: 'provider_action_secret',
+              storage_posture: 'viewport_managed',
+              material_source: 'github_app_installation_token',
+              provider: 'github',
+              scopes: ['repo:viewportai/vp-example-repo'],
+              material_available: true,
+              runner_local_required: false,
+              secret: 'ghs_run_scoped_pr_writer',
             },
           });
         }
@@ -546,15 +582,24 @@ nodes:
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
         const body = JSON.parse(String(init.body));
         expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer',
           VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
         });
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_checkout');
+        expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_pr_writer');
         expect(body.inputs.viewport.credentials).toEqual([
           expect.objectContaining({
             handle: 'agent/anthropic/claude-code',
             envName: 'VIEWPORT_CREDENTIAL_AGENT_ANTHROPIC_CLAUDE_CODE',
             materialAvailable: false,
             runnerLocalRequired: true,
+          }),
+          expect.objectContaining({
+            handle: 'github/pr-writer',
+            envName: 'VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER',
+            materialAvailable: true,
+            runnerLocalRequired: false,
+            kind: 'provider_action_secret',
           }),
           expect.objectContaining({
             handle: 'repo/github/payments-api',
@@ -584,6 +629,7 @@ nodes:
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/credential-material',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/sync',

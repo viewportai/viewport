@@ -977,7 +977,7 @@ nodes:
     }
   });
 
-  it('executes GitHub pull request comments using the source PR event number', async () => {
+  it('executes GitHub pull request comments using run-scoped credential material', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -1002,7 +1002,7 @@ nodes:
     const originalToken = process.env['GITHUB_TOKEN'];
     const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
+    delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
 
     try {
       const daemon = await setup();
@@ -1029,6 +1029,9 @@ nodes:
         workflowPath,
         directoryId: DirectoryManager.idFromPath(projectDir),
         initiation: 'cli',
+        runtimeSecretEnv: {
+          VIEWPORT_CREDENTIAL_GITHUB_TOKEN: 'ghs_runner_token',
+        },
         inputs: {
           integration_event: {
             payload: {

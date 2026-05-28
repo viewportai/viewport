@@ -18,6 +18,9 @@ export interface ExpressionContext {
   run: {
     id: string;
     status: string;
+    platformId: string | null;
+    resourceId: string | null;
+    url: string | null;
   };
   inputs: Record<string, WorkflowInputValue>;
   nodes: Record<string, NodeContextEntry>;
@@ -190,5 +193,25 @@ export function buildExpressionContext(run: WorkflowRunRecord): ExpressionContex
         : null,
     };
   }
-  return { run: { id: run.id, status: run.status }, inputs: { ...run.inputs }, nodes };
+  const platformRunId = run.platformRunId ?? null;
+  const resourceId = run.resourceId ?? null;
+  const runUrl = platformRunId
+    ? `/workflows/runs/${encodeURIComponent(platformRunId)}${
+        resourceId
+          ? `?resource=${encodeURIComponent(resourceId)}&platformRun=${encodeURIComponent(platformRunId)}`
+          : ''
+      }`
+    : null;
+
+  return {
+    run: {
+      id: run.id,
+      status: run.status,
+      platformId: platformRunId,
+      resourceId,
+      url: runUrl,
+    },
+    inputs: { ...run.inputs },
+    nodes,
+  };
 }

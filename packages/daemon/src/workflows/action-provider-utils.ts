@@ -99,12 +99,17 @@ export function envNameForCredentialRef(ref: string): string {
 
 export function providerCredentialValue(
   input: Record<string, WorkflowInputValue>,
-  _options: { defaultRef: string; defaultEnv: string },
+  options: {
+    defaultRef: string;
+    defaultEnv: string;
+    runtimeSecretEnv?: Record<string, string>;
+  },
 ): string | undefined {
   const explicitRef = explicitCredentialRefValue(input);
   if (!explicitRef) return undefined;
 
-  const refEnvValue = process.env[envNameForCredentialRef(explicitRef)];
+  const envName = envNameForCredentialRef(explicitRef);
+  const refEnvValue = options.runtimeSecretEnv?.[envName] ?? process.env[envName];
   if (refEnvValue) return refEnvValue;
   return undefined;
 }

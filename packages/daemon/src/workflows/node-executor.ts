@@ -379,15 +379,27 @@ async function executePromptNode(
     target: state,
     ...(renderedCwd ? { cwd: resolveNodeCwd(run.directoryPath, renderedCwd) } : {}),
     prompt: selectedContext.promptBlock
-      ? [selectedContext.promptBlock, '', '<user_request>', renderedPrompt, '</user_request>'].join(
-          '\n',
-        )
-      : renderedPrompt,
+      ? [
+          selectedContext.promptBlock,
+          '',
+          workflowInputsPromptBlock(run),
+          '',
+          '<user_request>',
+          renderedPrompt,
+          '</user_request>',
+        ].join('\n')
+      : [
+          workflowInputsPromptBlock(run),
+          '',
+          '<user_request>',
+          renderedPrompt,
+          '</user_request>',
+        ].join('\n'),
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
     ...(node.effort ? { effort: node.effort } : {}),
     executionMode: sessionPolicy.executionMode,
-    ...(node.allowedTools ? { allowedTools: node.allowedTools } : {}),
+    allowedTools: node.allowedTools ?? [],
     ...(node.hooks ? { hooks: node.hooks } : {}),
     timeoutSeconds: sessionPolicy.timeoutSeconds,
     ...(budget ? { budget } : {}),
@@ -404,6 +416,17 @@ async function executePromptNode(
   });
 
   await verifyPromptRequiredFiles(run, nodeId, node, renderedCwd);
+}
+
+function workflowInputsPromptBlock(run: WorkflowRunRecord): string {
+  const json = JSON.stringify(run.inputs, null, 2);
+  const maxChars = 12_000;
+  const body =
+    json.length > maxChars
+      ? `${json.slice(0, maxChars)}\n...truncated ${json.length - maxChars} chars`
+      : json;
+
+  return ['<workflow_inputs>', body, '</workflow_inputs>'].join('\n');
 }
 
 async function verifyPromptRequiredFiles(
