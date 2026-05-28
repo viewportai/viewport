@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash, generateKeyPairSync, verify } from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -312,6 +313,111 @@ describe('workflow managed worker CLI', () => {
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
+  });
+
+  it('signs runtime platform requests when a worker identity profile is present', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-signature-'));
+    const keyPair = generateKeyPairSync('ed25519', {
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const fingerprint = publicKeyFingerprint(keyPair.publicKey);
+    const identityPath = path.join(tempDir, 'identity.json');
+    const profilePath = path.join(tempDir, 'profile.json');
+    await fs.writeFile(
+      identityPath,
+      JSON.stringify({
+        algorithm: 'ed25519',
+        publicKey: keyPair.publicKey,
+        privateKey: keyPair.privateKey,
+        publicKeyFingerprint: fingerprint,
+      }),
+    );
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        serverUrl: 'https://api.getviewport.com',
+        workspaceId: 'workspace_1',
+        executorId: 'executor_1',
+        credential: 'vpexec_secret',
+        identityKeyPath: identityPath,
+        capabilities: {
+          runner_pool: 'payments-vps',
+          agents: {
+            claude: { id: 'claude', models: ['sonnet'], available: true },
+            codex: { id: 'codex', models: ['gpt-5.4'], available: true },
+          },
+          models: ['sonnet', 'gpt-5.4'],
+        },
+      }),
+    );
+
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--once',
+      '--json',
+    ];
+
+    const signedMethods: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      expectSignedWorkerRequest({
+        url,
+        method: init?.method ?? 'GET',
+        body: init?.body ? String(init.body) : '',
+        headers: init?.headers,
+        publicKeyPem: keyPair.publicKey,
+        fingerprint,
+      });
+      signedMethods.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          capabilities: {
+            agents: {
+              claude: expect.objectContaining({ models: ['sonnet'] }),
+              codex: expect.objectContaining({ models: ['gpt-5.4'] }),
+            },
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_1' } });
+      }
+      if (url.endsWith('/claim')) return new Response(null, { status: 204 });
+      if (url.endsWith('/action-replays/claim')) return new Response(null, { status: 204 });
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch: vi.fn(async (urlPath: string) => {
+        if (urlPath === '/api/agents') {
+          return jsonResponse({
+            agents: [
+              { id: 'claude', available: true },
+              { id: 'codex', available: true },
+            ],
+          });
+        }
+        return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+      }),
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(signedMethods).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
   });
 
   it('materializes selected repo and API credentials into transient daemon env only', async () => {
@@ -3417,6 +3523,51 @@ function headerValue(headers: HeadersInit | undefined, name: string): string | u
     return found?.[1];
   }
   return Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+}
+
+function expectSignedWorkerRequest({
+  url,
+  method,
+  body,
+  headers,
+  publicKeyPem,
+  fingerprint,
+}: {
+  url: string;
+  method: string;
+  body: string;
+  headers: HeadersInit | undefined;
+  publicKeyPem: string;
+  fingerprint: string;
+}): void {
+  const nonce = headerValue(headers, 'X-Viewport-Worker-Nonce');
+  const timestamp = headerValue(headers, 'X-Viewport-Worker-Timestamp');
+  const bodySha256 = headerValue(headers, 'X-Viewport-Worker-Body-SHA256');
+  const signature = headerValue(headers, 'X-Viewport-Worker-Signature');
+  expect(headerValue(headers, 'X-Viewport-Worker-Fingerprint')).toBe(fingerprint);
+  expect(nonce).toBeTruthy();
+  expect(timestamp).toBeTruthy();
+  expect(bodySha256).toBe(createHash('sha256').update(body).digest('hex'));
+  expect(signature).toBeTruthy();
+
+  const canonical = [
+    method.toUpperCase(),
+    new URL(url).pathname,
+    bodySha256,
+    nonce,
+    timestamp,
+  ].join('\n');
+  expect(
+    verify(null, Buffer.from(canonical), publicKeyPem, Buffer.from(signature!, 'base64')),
+  ).toBe(true);
+}
+
+function publicKeyFingerprint(publicKeyPem: string): string {
+  const body = publicKeyPem
+    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+    .replace(/-----END PUBLIC KEY-----/g, '')
+    .replace(/\s+/g, '');
+  return createHash('sha256').update(Buffer.from(body, 'base64')).digest('hex');
 }
 
 async function readRequestJson(req: http.IncomingMessage): Promise<unknown> {

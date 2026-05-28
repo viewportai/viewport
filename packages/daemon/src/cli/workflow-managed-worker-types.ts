@@ -10,6 +10,7 @@ export interface ManagedWorkerOptions {
   runnerProfile?: string;
   runnerPosture?: Record<string, unknown>;
   runnerKeyPair: ManagedWorkerRunnerKeyPair;
+  signingIdentity?: ManagedWorkerSigningIdentity;
   runnerPool?: string;
   workdir?: string;
   leaseSeconds: number;
@@ -22,6 +23,14 @@ export interface ManagedWorkerOptions {
 export interface ManagedWorkerRunnerKeyPair {
   schema: 'viewport.runner_keypair/v1';
   algorithm: 'RSA-OAEP-256';
+  publicKeyPem: string;
+  privateKeyPem: string;
+  fingerprint: string;
+  path: string;
+}
+
+export interface ManagedWorkerSigningIdentity {
+  algorithm: 'ed25519';
   publicKeyPem: string;
   privateKeyPem: string;
   fingerprint: string;

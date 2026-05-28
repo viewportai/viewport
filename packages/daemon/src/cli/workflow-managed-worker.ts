@@ -1,5 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { constants, createHash, generateKeyPairSync, privateDecrypt } from 'node:crypto';
+import {
+  constants,
+  createHash,
+  generateKeyPairSync,
+  privateDecrypt,
+  randomUUID,
+  sign,
+} from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,6 +47,7 @@ import type {
   ManagedWorkerAccessMode,
   ManagedWorkerOptions,
   ManagedWorkerRunnerKeyPair,
+  ManagedWorkerSigningIdentity,
   WorkerStats,
 } from './workflow-managed-worker-types.js';
 
@@ -320,6 +328,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     stringValue(profileCapabilities['runner_pool']) ??
     stringValue(profileCapabilities['runnerPool']);
   const runnerKeyPair = loadOrCreateRunnerKeyPair(workspaceId, executorId);
+  const signingIdentity = loadSigningIdentity(registrationProfile);
   const detected = detectLocalCapabilities();
 
   return {
@@ -339,6 +348,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       undefined,
     runnerPosture: registrationProfile?.runnerPosture,
     runnerKeyPair,
+    signingIdentity,
     runnerPool:
       getFlag('runner-pool') ??
       process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
@@ -369,6 +379,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       ],
       agents: listFlagOrProfile('agents', profileCapabilities['agents']),
       models: listFlagOrProfile('models', profileCapabilities['models']),
+      agentModels: agentModelsFromProfile(profileCapabilities['agents']),
       integrations: [
         ...new Set([
           ...detected.integrations,
@@ -392,6 +403,7 @@ interface RegistrationProfile {
   accessMode?: string;
   runnerProfile?: string;
   runnerPosture?: Record<string, unknown>;
+  identityKeyPath?: string;
   capabilities?: Record<string, unknown>;
 }
 
@@ -406,28 +418,58 @@ function readRegistrationProfile(): RegistrationProfile | null {
     throw new Error(`Managed executor registration profile is not a JSON object: ${resolved}`);
   }
   const record = parsed as Record<string, unknown>;
+  const daemon = recordValue(record['daemon']);
+  const worker = recordValue(daemon?.['worker']);
   const schema = stringValue(record['schema']);
   if (schema && schema !== 'viewport.managed_executor_registration/v1') {
     throw new Error(`Unsupported managed executor registration profile schema: ${schema}`);
   }
 
   return {
-    serverUrl: stringValue(record['server_url']) ?? stringValue(record['serverUrl']),
-    workspaceId: stringValue(record['workspace_id']) ?? stringValue(record['workspaceId']),
+    serverUrl:
+      stringValue(record['server_url']) ??
+      stringValue(record['serverUrl']) ??
+      stringValue(worker?.['serverUrl']) ??
+      stringValue(worker?.['server_url']),
+    workspaceId:
+      stringValue(record['workspace_id']) ??
+      stringValue(record['workspaceId']) ??
+      stringValue(worker?.['workspaceId']) ??
+      stringValue(worker?.['workspace_id']),
     executorId:
       stringValue(record['managed_executor_id']) ??
       stringValue(record['executor_id']) ??
-      stringValue(record['executorId']),
-    credential: stringValue(record['credential']),
-    accessMode: stringValue(record['access_mode']) ?? stringValue(record['accessMode']),
-    runnerProfile: stringValue(record['runner_profile']) ?? stringValue(record['runnerProfile']),
-    runnerPosture: recordValue(record['runner_posture']) ?? recordValue(record['runnerPosture']),
+      stringValue(record['executorId']) ??
+      stringValue(worker?.['managedExecutorId']) ??
+      stringValue(worker?.['managed_executor_id']),
+    credential: stringValue(record['credential']) ?? stringValue(worker?.['credential']),
+    accessMode:
+      stringValue(record['access_mode']) ??
+      stringValue(record['accessMode']) ??
+      stringValue(worker?.['accessMode']) ??
+      stringValue(worker?.['access_mode']) ??
+      stringValue(worker?.['transport']),
+    runnerProfile:
+      stringValue(record['runner_profile']) ??
+      stringValue(record['runnerProfile']) ??
+      stringValue(worker?.['runnerProfile']) ??
+      stringValue(worker?.['runner_profile']),
+    runnerPosture:
+      recordValue(record['runner_posture']) ??
+      recordValue(record['runnerPosture']) ??
+      recordValue(worker?.['runnerPosture']) ??
+      recordValue(worker?.['runner_posture']),
+    identityKeyPath:
+      stringValue(record['identity_key_path']) ??
+      stringValue(record['identityKeyPath']) ??
+      stringValue(worker?.['identityKeyPath']) ??
+      stringValue(worker?.['identity_key_path']),
     capabilities:
       record['capabilities'] &&
       typeof record['capabilities'] === 'object' &&
       !Array.isArray(record['capabilities'])
         ? (record['capabilities'] as Record<string, unknown>)
-        : undefined,
+        : (recordValue(worker?.['capabilities']) ?? undefined),
   };
 }
 
@@ -495,6 +537,61 @@ function publicKeyFingerprint(publicKeyPem: string): string {
   return `sha256:${createHash('sha256').update(der).digest('hex')}`;
 }
 
+function loadSigningIdentity(
+  registrationProfile: RegistrationProfile | null,
+): ManagedWorkerSigningIdentity | undefined {
+  const identityPath =
+    getFlag('identity-key') ??
+    process.env['VIEWPORT_WORKER_IDENTITY_FILE'] ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_IDENTITY_FILE'] ??
+    registrationProfile?.identityKeyPath;
+  if (!identityPath) return undefined;
+
+  const resolved = resolveProfilePath(identityPath);
+  const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Worker identity file is not a JSON object: ${resolved}`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const algorithm = stringValue(record['algorithm'])?.toLowerCase();
+  const publicKeyPem =
+    stringValue(record['public_key_pem']) ??
+    stringValue(record['publicKeyPem']) ??
+    stringValue(record['publicKey']) ??
+    stringValue(record['public_key']);
+  const privateKeyPem =
+    stringValue(record['private_key_pem']) ??
+    stringValue(record['privateKeyPem']) ??
+    stringValue(record['privateKey']) ??
+    stringValue(record['private_key']);
+  const fingerprint = normalizeWorkerFingerprint(
+    stringValue(record['fingerprint']) ??
+      stringValue(record['publicKeyFingerprint']) ??
+      stringValue(record['public_key_fingerprint']) ??
+      '',
+  );
+  if (
+    algorithm !== 'ed25519' ||
+    !publicKeyPem ||
+    !privateKeyPem ||
+    !/^[a-f0-9]{64}$/i.test(fingerprint)
+  ) {
+    throw new Error(`Worker identity file is not a supported ed25519 identity: ${resolved}`);
+  }
+
+  return {
+    algorithm: 'ed25519',
+    publicKeyPem,
+    privateKeyPem,
+    fingerprint: fingerprint.toLowerCase(),
+    path: resolved,
+  };
+}
+
+function normalizeWorkerFingerprint(fingerprint: string): string {
+  return fingerprint.startsWith('sha256:') ? fingerprint.slice('sha256:'.length) : fingerprint;
+}
+
 function safeFilename(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'runner';
 }
@@ -529,8 +626,39 @@ function listFlagOrProfile(flag: string, profileValue: unknown): string[] {
 }
 
 function stringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+  if (Array.isArray(value)) {
+    return value.filter(
+      (entry): entry is string => typeof entry === 'string' && entry.trim() !== '',
+    );
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => {
+        if (typeof entry === 'string') return entry;
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          return stringValue((entry as Record<string, unknown>)['id']) ?? key;
+        }
+        return key;
+      })
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+  }
+  return [];
+}
+
+function agentModelsFromProfile(agents: unknown): Record<string, string[]> | undefined {
+  if (!agents || typeof agents !== 'object' || Array.isArray(agents)) return undefined;
+
+  const entries = Object.entries(agents as Record<string, unknown>)
+    .map(([key, entry]): [string, string[]] | null => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const record = entry as Record<string, unknown>;
+      const id = stringValue(record['id']) ?? key;
+      const models = stringList(record['models']);
+      return id.trim() !== '' && models.length > 0 ? [id, models] : null;
+    })
+    .filter((entry): entry is [string, string[]] => entry !== null);
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -1584,16 +1712,19 @@ async function platformFetch(
   assignmentClaimToken?: string | null,
   extraHeaders?: Record<string, string>,
 ): Promise<Response> {
-  const response = await transportFetch(`${baseManagedUrl(options)}/${pathSuffix}`, {
+  const url = `${baseManagedUrl(options)}/${pathSuffix}`;
+  const bodyText = body !== undefined ? JSON.stringify(body) : undefined;
+  const response = await transportFetch(url, {
     method,
     headers: {
       Authorization: `Bearer ${options.credential}`,
       Accept: 'application/json',
       ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
       ...(extraHeaders ?? {}),
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...workerSignatureHeaders(options, method, url, bodyText),
+      ...(bodyText !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    ...(bodyText !== undefined ? { body: bodyText } : {}),
     timeoutMs: 30_000,
     tlsVerify: parseTlsVerifyMode(process.env['VPD_SERVER_TLS_VERIFY']) ?? 'auto',
     caCertPath: process.env['VPD_SERVER_CA_CERT'],
@@ -1603,6 +1734,33 @@ async function platformFetch(
     throw new Error(`Platform request failed: HTTP ${response.status} ${await response.text()}`);
   }
   return response;
+}
+
+function workerSignatureHeaders(
+  options: ManagedWorkerOptions,
+  method: string,
+  url: string,
+  bodyText: string | undefined,
+): Record<string, string> {
+  const identity = options.signingIdentity;
+  if (!identity) return {};
+
+  const timestamp = new Date().toISOString();
+  const nonce = randomUUID();
+  const bodySha256 = createHash('sha256')
+    .update(bodyText ?? '')
+    .digest('hex');
+  const pathName = new URL(url).pathname;
+  const canonical = [method.toUpperCase(), pathName, bodySha256, nonce, timestamp].join('\n');
+  const signature = sign(null, Buffer.from(canonical), identity.privateKeyPem).toString('base64');
+
+  return {
+    'X-Viewport-Worker-Fingerprint': identity.fingerprint,
+    'X-Viewport-Worker-Timestamp': timestamp,
+    'X-Viewport-Worker-Nonce': nonce,
+    'X-Viewport-Worker-Body-SHA256': bodySha256,
+    'X-Viewport-Worker-Signature': signature,
+  };
 }
 
 async function responseJson(response: Response): Promise<unknown> {
