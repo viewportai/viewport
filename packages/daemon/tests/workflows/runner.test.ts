@@ -392,6 +392,47 @@ nodes:
     expect(saved?.nodes.slow?.output).not.toBe('done');
   });
 
+  it('cancels active execution when the workflow run exceeds maxDurationSeconds', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: run-timeout-proof
+policies:
+  maxDurationSeconds: 1
+nodes:
+  slow:
+    type: shell
+    timeoutSeconds: 10
+    command: sleep 5 && printf done
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForRunState(daemon, run.id, (candidate) => candidate.status === 'canceled');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const saved = await daemon.workflowRunner.getRun(run.id);
+    expect(saved?.status).toBe('canceled');
+    expect(saved?.error).toBe('Workflow run timed out after 1s');
+    expect(saved?.nodes.slow?.status).toBe('canceled');
+    expect(saved?.nodes.slow?.output).not.toBe('done');
+    expect(saved?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'run-canceled',
+        message: 'Workflow run timed out after 1s',
+      }),
+    );
+  });
+
   it('collects declared shell artifacts inside the workflow directory', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

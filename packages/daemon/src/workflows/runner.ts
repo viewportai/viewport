@@ -231,13 +231,11 @@ export class WorkflowRunner {
       );
     }
     await this.store.save(run);
-    void this.scheduler
-      .run(run.id, parsed, {
-        runtimeSecretEnv: sanitizeRuntimeSecretEnv(request.runtimeSecretEnv),
-      })
-      .catch((error) => {
-        void this.failRun(run.id, error instanceof Error ? error.message : String(error));
-      });
+    void this.runSchedulerWithRunTimeout(run.id, parsed, {
+      runtimeSecretEnv: sanitizeRuntimeSecretEnv(request.runtimeSecretEnv),
+    }).catch((error) => {
+      void this.failRun(run.id, error instanceof Error ? error.message : String(error));
+    });
     return run;
   }
 
@@ -506,7 +504,7 @@ export class WorkflowRunner {
       );
       await this.saveAndEmit(run);
 
-      void this.scheduler.run(run.id, parsed, { resumed: true }).catch((error) => {
+      void this.runSchedulerWithRunTimeout(run.id, parsed, { resumed: true }).catch((error) => {
         void this.failRun(run.id, error instanceof Error ? error.message : String(error));
       });
       return run;
@@ -552,7 +550,7 @@ export class WorkflowRunner {
     addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
     await this.saveAndEmit(run);
 
-    void this.scheduler.run(run.id, parsed, { resumed: true }).catch((error) => {
+    void this.runSchedulerWithRunTimeout(run.id, parsed, { resumed: true }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
@@ -619,6 +617,45 @@ export class WorkflowRunner {
       scheduled += 1;
     }
     return scheduled;
+  }
+
+  private async runSchedulerWithRunTimeout(
+    runId: string,
+    parsed: ParsedWorkflow,
+    options: { resumed?: boolean; runtimeSecretEnv?: Record<string, string> } = {},
+  ): Promise<void> {
+    const clearRunTimeout = await this.armRunTimeout(runId, parsed);
+    try {
+      await this.scheduler.run(runId, parsed, options);
+    } finally {
+      clearRunTimeout();
+    }
+  }
+
+  private async armRunTimeout(runId: string, parsed: ParsedWorkflow): Promise<() => void> {
+    const maxDurationSeconds = parsed.definition.policies?.maxDurationSeconds;
+    if (!maxDurationSeconds) return () => undefined;
+
+    const run = await this.store.get(runId);
+    const startedAt = run?.startedAt ?? Date.now();
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
+    const remainingMs = maxDurationSeconds * 1000 - elapsedMs;
+    const message = `Workflow run timed out after ${maxDurationSeconds}s`;
+    let cleared = false;
+
+    const timeout = setTimeout(
+      () => {
+        if (cleared) return;
+        void this.cancelRun(runId, { message }).catch(() => undefined);
+      },
+      Math.max(0, remainingMs),
+    );
+    timeout.unref?.();
+
+    return () => {
+      cleared = true;
+      clearTimeout(timeout);
+    };
   }
 }
 
