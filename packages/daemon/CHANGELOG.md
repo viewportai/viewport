@@ -1,3 +1,10 @@
+## [0.25.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.1...@viewportai/daemon@0.25.2) (2026-05-28)
+
+
+### Bug Fixes
+
+* support gp2 context-backed runner proof ([#139](https://github.com/viewportai/viewport/issues/139)) ([a980a43](https://github.com/viewportai/viewport/commit/a980a432015311eafda65e80599191902dd64573))
+
 ## [0.25.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.0...@viewportai/daemon@0.25.1) (2026-05-28)
 
 
