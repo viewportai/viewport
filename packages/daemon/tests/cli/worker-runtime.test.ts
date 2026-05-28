@@ -348,7 +348,8 @@ describe('standalone worker runtime', () => {
         },
       },
     });
-    expect(requests[2]?.headers['x-viewport-assignment-claim']).toBe('vpclaim_run_1');
+    expect(requests[2]?.headers['x-viewport-run-lease']).toBe('vplease_run_1');
+    expect(requests[2]?.headers['x-viewport-assignment-claim']).toBeUndefined();
     expect(requests[2]?.body).toMatchObject({
       credential: 'vpexec_hosted',
       runtime_run_id: 'vpd-worker-run_1',
@@ -650,7 +651,8 @@ nodes:
         expect.objectContaining({ node_key: 'gate', status: 'blocked' }),
       ]),
     });
-    expect(requests[3]?.headers['x-viewport-assignment-claim']).toBe('vpclaim_run_1');
+    expect(requests[3]?.headers['x-viewport-run-lease']).toBe('vplease_run_1');
+    expect(requests[3]?.headers['x-viewport-assignment-claim']).toBeUndefined();
     await expectSignedRequest(requests[3], homeDir);
     expect(requests[4]?.body).toMatchObject({
       status: 'completed',
@@ -991,6 +993,7 @@ async function startRuntimeServer(
             ...(options.hostedAssignment ?? {}),
             run_lease: {
               lease_id: 'workflow_run:run_1',
+              lease_token: 'vplease_run_1',
               workflow_run_id: 'run_1',
             },
           },

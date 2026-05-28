@@ -428,6 +428,7 @@ async function syncLease(
         ],
       },
       lease.assignmentClaimToken,
+      lease.leaseToken,
     );
     return;
   }
@@ -567,6 +568,7 @@ async function fetchHostedAssignment(
     `workflow-runs/${encodeURIComponent(lease.runId)}`,
     {},
     lease.assignmentClaimToken,
+    lease.leaseToken,
     [429],
   );
   if (response.status === 429) {
@@ -706,6 +708,7 @@ async function hostedManagedExecutorFetch(
   path: string,
   body: Record<string, unknown>,
   assignmentClaimToken?: string,
+  runLeaseToken?: string,
   allowedStatuses: number[] = [],
 ): Promise<Response> {
   if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
@@ -729,7 +732,11 @@ async function hostedManagedExecutorFetch(
         Authorization: `Bearer ${profile.credential}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
+        ...(runLeaseToken
+          ? { 'X-Viewport-Run-Lease': runLeaseToken }
+          : assignmentClaimToken
+            ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken }
+            : {}),
         'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
         'X-Viewport-Worker-Timestamp': signed.timestamp,
         'X-Viewport-Worker-Nonce': signed.nonce,
