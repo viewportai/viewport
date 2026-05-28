@@ -1,3 +1,10 @@
+# [0.22.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.21.0...@viewportai/daemon@0.22.0) (2026-05-28)
+
+
+### Features
+
+* integrate vpd worker runtime hardening ([#124](https://github.com/viewportai/viewport/issues/124)) ([8001d45](https://github.com/viewportai/viewport/commit/8001d45c584a0134d83910affbaf29c4df239980))
+
 # [0.21.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.20.1...@viewportai/daemon@0.21.0) (2026-05-26)
 
 
