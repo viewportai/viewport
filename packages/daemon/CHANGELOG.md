@@ -1,3 +1,10 @@
+## [0.22.3](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.2...@viewportai/daemon@0.22.3) (2026-05-28)
+
+
+### Bug Fixes
+
+* reduce workflow approval command latency ([#127](https://github.com/viewportai/viewport/issues/127)) ([0d93763](https://github.com/viewportai/viewport/commit/0d9376376a8271d19774fa3005889bf0900ad19f))
+
 ## [0.22.2](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.1...@viewportai/daemon@0.22.2) (2026-05-28)
 
 
