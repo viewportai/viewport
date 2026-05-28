@@ -464,11 +464,26 @@ describe('workflow managed worker CLI', () => {
             yaml_snapshot: `
 schema: viewport.workflow/v1
 name: proof
+inputs:
+  repo:
+    type: string
+    default: viewportai/vp-example-repo
 nodes:
+  acknowledge_pr:
+    type: action
+    adapter: github
+    action: pull_request.comment
+    with:
+      credential_ref: github/pr-writer
+      repository: "{{ inputs.repo }}"
+      body: ok
   tests:
     type: shell
     command: printf ok
 `,
+            input_snapshot: {
+              repo: 'viewportai/vp-example-repo',
+            },
             source_ref: 'viewport://workflow/proof',
             directory_path: '/repo',
             execution_profile_snapshot: {
@@ -481,9 +496,6 @@ nodes:
             workflow_authority_contract: {
               repos: {
                 allowed: ['viewportai/vp-example-repo'],
-              },
-              credentials: {
-                provider_actions: ['github/pr-writer'],
               },
             },
             workflow_snapshot: {

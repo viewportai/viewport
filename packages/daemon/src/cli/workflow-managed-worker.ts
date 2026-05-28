@@ -10,6 +10,7 @@ import {
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import YAML from 'yaml';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
@@ -1302,6 +1303,9 @@ function repositoryForCredentialMaterialization(
   assignment: ManagedAssignment,
   handle: string,
 ): { repository: string } | Record<string, never> {
+  const actionRepository = repositoryFromActionCredentialRef(assignment, handle);
+  if (actionRepository) return { repository: actionRepository };
+
   const checkoutEntries = [
     ...credentialEntriesFrom(
       pathValue(asRecord(assignment.execution_profile_snapshot), ['credentials', 'repo_checkout']),
@@ -1392,9 +1396,11 @@ function decryptRunnerWrappedSecret(
 }
 
 function collectCredentialHandles(assignment: ManagedAssignment): string[] {
-  const snapshots = [assignment.execution_profile_snapshot, assignment.workflow_snapshot].filter(
-    isRecord,
-  );
+  const snapshots = [
+    assignment.execution_profile_snapshot,
+    assignment.workflow_snapshot,
+    yamlSnapshotDocument(assignment),
+  ].filter(isRecord);
   const handles = new Set<string>();
   for (const snapshot of snapshots) {
     for (const handle of [
@@ -1448,6 +1454,57 @@ function actionCredentialRefs(nodes: unknown): string[] {
       stringField(withValue, 'credential_ref') ?? stringField(withValue, 'credentialRef');
     return credentialRef ? [credentialRef] : [];
   });
+}
+
+function repositoryFromActionCredentialRef(
+  assignment: ManagedAssignment,
+  handle: string,
+): string | null {
+  const workflow = yamlSnapshotDocument(assignment);
+  const nodes = isRecord(workflow) ? workflow['nodes'] : undefined;
+  if (!isRecord(nodes)) return null;
+
+  for (const node of Object.values(nodes)) {
+    if (!isRecord(node) || stringField(node, 'type') !== 'action') continue;
+    const withValue = isRecord(node['with']) ? node['with'] : {};
+    const credentialRef =
+      stringField(withValue, 'credential_ref') ?? stringField(withValue, 'credentialRef');
+    if (credentialRef !== handle) continue;
+
+    const repository = stringField(withValue, 'repository') ?? stringField(withValue, 'repo');
+    const rendered = renderCredentialTemplate(repository, assignment);
+    if (rendered) return rendered;
+  }
+
+  return null;
+}
+
+function renderCredentialTemplate(
+  value: string | null | undefined,
+  assignment: ManagedAssignment,
+): string | null {
+  if (!value) return null;
+  const inputs = isRecord(assignment.input_snapshot) ? assignment.input_snapshot : {};
+  const rendered = value.replace(
+    /\{\{\s*inputs\.([A-Za-z0-9_]+)\s*\}\}/g,
+    (_match: string, key: string) => {
+      const input = inputs[key];
+      return typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean'
+        ? String(input)
+        : '';
+    },
+  );
+  const trimmed = rendered.trim();
+  return trimmed === '' || trimmed.includes('{{') ? null : trimmed;
+}
+
+function yamlSnapshotDocument(assignment: ManagedAssignment): unknown {
+  if (!assignment.yaml_snapshot) return null;
+  try {
+    return YAML.parse(assignment.yaml_snapshot);
+  } catch {
+    return null;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
