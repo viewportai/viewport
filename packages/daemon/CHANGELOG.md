@@ -1,3 +1,11 @@
+## [0.22.6](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.5...@viewportai/daemon@0.22.6) (2026-05-28)
+
+
+### Bug Fixes
+
+* default shell node timeouts ([#131](https://github.com/viewportai/viewport/issues/131)) ([31cdf89](https://github.com/viewportai/viewport/commit/31cdf8952d599badfd8e5fe2c765590c9cae5bfb))
+* preflight workflow run directories ([#132](https://github.com/viewportai/viewport/issues/132)) ([9f155c8](https://github.com/viewportai/viewport/commit/9f155c802f9c33032328284f6352ebbb04841ded))
+
 ## [0.22.5](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.4...@viewportai/daemon@0.22.5) (2026-05-28)
 
 
