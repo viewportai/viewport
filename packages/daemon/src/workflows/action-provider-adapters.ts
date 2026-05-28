@@ -120,9 +120,11 @@ async function executeGitHubAction(
     });
   }
 
-  if (node.action === 'comment' || node.action === 'comment_issue') {
+  if (isGitHubCommentAction(node.action)) {
     const issueNumber =
-      stringValue(actionInput['issue_number']) ?? stringValue(actionInput['issueNumber']);
+      stringValue(actionInput['issue_number']) ??
+      stringValue(actionInput['issueNumber']) ??
+      sourceGitHubPullRequestNumber(run);
     const body = stringValue(actionInput['body']);
     if (!issueNumber || !body) {
       return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
@@ -364,6 +366,21 @@ function isGitHubPullRequestCreateAction(action: string): boolean {
   ].includes(action);
 }
 
+function isGitHubCommentAction(action: string): boolean {
+  return ['comment', 'comment_issue', 'issue.comment', 'pull_request.comment'].includes(action);
+}
+
+function sourceGitHubPullRequestNumber(run: WorkflowRunRecord): string | undefined {
+  return (
+    scalarStringAt(run.inputs, ['integration_event', 'payload', 'pull_request', 'number']) ??
+    scalarStringAt(run.inputs, ['integration_event', 'payload', 'issue', 'number']) ??
+    scalarStringAt(run.inputs, ['integration_event', 'payload', 'number']) ??
+    scalarStringAt(run.inputs, ['integration_event', 'pull_request', 'number']) ??
+    scalarStringAt(run.inputs, ['integration_event', 'issue', 'number']) ??
+    scalarStringAt(run.inputs, ['integration_event', 'number'])
+  );
+}
+
 function sourceSlackChannel(run: WorkflowRunRecord): string | undefined {
   return (
     stringAt(run.inputs, ['integration_event', 'payload', 'event', 'channel']) ??
@@ -397,6 +414,17 @@ function stringAt(value: unknown, path: string[]): string | undefined {
     cursor = (cursor as Record<string, unknown>)[segment];
   }
   return typeof cursor === 'string' && cursor.trim() !== '' ? cursor : undefined;
+}
+
+function scalarStringAt(value: unknown, path: string[]): string | undefined {
+  let cursor = value;
+  for (const segment of path) {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  if (typeof cursor === 'string' && cursor.trim() !== '') return cursor;
+  if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor > 0) return String(cursor);
+  return undefined;
 }
 
 async function executeJsonApiAction(

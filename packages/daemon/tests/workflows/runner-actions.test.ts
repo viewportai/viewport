@@ -898,6 +898,104 @@ nodes:
     }
   });
 
+  it('executes GitHub pull request comments using the source PR event number', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            html_url: 'https://github.com/acme/payments/issues/1842#issuecomment-43',
+            url: 'https://api.github.com/repos/acme/payments/issues/comments/43',
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            html_url: 'https://github.com/acme/payments/issues/1842#issuecomment-43',
+            url: 'https://api.github.com/repos/acme/payments/issues/comments/43',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalToken = process.env['GITHUB_TOKEN'];
+    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    delete process.env['GITHUB_TOKEN'];
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'runner-token';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-pr-comment-proof
+nodes:
+  comment_pr:
+    type: action
+    adapter: github
+    action: pull_request.comment
+    with:
+      repository: acme/payments
+      body: "Viewport received this PR."
+      credential_ref: github/token
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+        inputs: {
+          integration_event: {
+            payload: {
+              pull_request: {
+                number: 1842,
+              },
+            },
+          },
+        },
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments/issues/1842/comments',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer runner-token',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }),
+          body: JSON.stringify({
+            body: 'Viewport received this PR.',
+          }),
+        }),
+      );
+      expect(completed?.status).toBe('completed');
+      expect(completed?.nodes.comment_pr?.metadata?.action).toMatchObject({
+        adapter: 'github',
+        action: 'pull_request.comment',
+        status: 'executed',
+        response: {
+          status: 201,
+          htmlUrl: 'https://github.com/acme/payments/issues/1842#issuecomment-43',
+        },
+      });
+    } finally {
+      if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
+      else process.env['GITHUB_TOKEN'] = originalToken;
+      if (originalCredentialRefToken === undefined)
+        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+    }
+  });
+
   it('executes GitHub pull_request.create with repository shorthand and runner-local credentials', async () => {
     const fetchMock = vi
       .fn()
