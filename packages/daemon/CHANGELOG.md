@@ -1,3 +1,10 @@
+# [0.23.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.7...@viewportai/daemon@0.23.0) (2026-05-28)
+
+
+### Features
+
+* add worker pairing reset command ([#134](https://github.com/viewportai/viewport/issues/134)) ([96aea0c](https://github.com/viewportai/viewport/commit/96aea0c6bd3a25f090e2e2d8363cf4cf382a1a2a))
+
 ## [0.22.7](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.6...@viewportai/daemon@0.22.7) (2026-05-28)
 
 
