@@ -1,3 +1,11 @@
+## [0.22.5](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.4...@viewportai/daemon@0.22.5) (2026-05-28)
+
+
+### Bug Fixes
+
+* block prompt cwd workspace escapes ([#129](https://github.com/viewportai/viewport/issues/129)) ([db3497b](https://github.com/viewportai/viewport/commit/db3497b92c15ee6ac6d5c63667955dfcaa1514b6))
+* fail automated workflow permission stalls ([#130](https://github.com/viewportai/viewport/issues/130)) ([3366245](https://github.com/viewportai/viewport/commit/3366245e4f5cf81b53e35ed5e3ad2cedc15842b9))
+
 ## [0.22.4](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.3...@viewportai/daemon@0.22.4) (2026-05-28)
 
 
