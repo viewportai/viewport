@@ -16,6 +16,7 @@ import type {
 
 const MAX_OUTPUT_CHARS = 32_000;
 const MAX_LOG_CHUNK_CHARS = 4_000;
+export const WORKFLOW_PROCESS_NODE_DEFAULT_TIMEOUT_SECONDS = 600;
 
 export interface ShellNodeResult {
   output: string;
@@ -286,6 +287,7 @@ async function runProcessNode(
   },
 ): Promise<ShellNodeResult> {
   return await new Promise<ShellNodeResult>((resolve, reject) => {
+    const timeoutSeconds = options.timeoutSeconds ?? WORKFLOW_PROCESS_NODE_DEFAULT_TIMEOUT_SECONDS;
     const child = spawn(file, args, {
       cwd: options.cwd,
       env: cleanChildProcessEnv(options.env),
@@ -354,19 +356,15 @@ async function runProcessNode(
     options.signal?.addEventListener('abort', abort, { once: true });
     if (options.signal?.aborted) abort();
 
-    if (options.timeoutSeconds) {
+    if (timeoutSeconds) {
       timer = setTimeout(() => {
         aborted = true;
         killChild('SIGTERM');
         killTimer = setTimeout(() => killChild('SIGKILL'), 2_000);
         reject(
-          new ShellNodeError(
-            `Shell node timed out after ${options.timeoutSeconds}s`,
-            output.trim(),
-            null,
-          ),
+          new ShellNodeError(`Shell node timed out after ${timeoutSeconds}s`, output.trim(), null),
         );
-      }, options.timeoutSeconds * 1000);
+      }, timeoutSeconds * 1000);
     }
   });
 }
