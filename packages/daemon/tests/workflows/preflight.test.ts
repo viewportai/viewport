@@ -354,4 +354,36 @@ nodes:
     expect(result.ok).toBe(true);
     expect(result.issues).toEqual([]);
   });
+
+  it('does not require the worker root to be a git worktree for provider-only git capability', async () => {
+    const workflow = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: provider-git-capability-proof
+requires:
+  tools:
+    - git
+  integrations:
+    - github
+nodes:
+  acknowledge:
+    type: action
+    adapter: github
+    action: pull_request.comment
+    with:
+      credential_ref: github/pr-writer
+      repository: viewportai/vp-example-integration
+      body: ok
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const result = await preflightWorkflow(workflow.definition, {
+      availableAgents: () => [],
+      directoryPath: '/tmp/not-a-git-repo',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
 });

@@ -93,6 +93,11 @@ interface HostedWorkerFailure {
   retrySafe: boolean;
 }
 
+interface HostedAssignmentCommandPoll {
+  runtime_commands?: unknown;
+  _viewport_worker_retry?: boolean;
+}
+
 const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 
 export async function runStandaloneWorker(
@@ -554,6 +559,12 @@ async function resumeBlockedHostedExecution(
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     const body = await fetchHostedAssignment(profile, lease);
+    if (!hasRuntimeCommands(body)) {
+      if (shouldRetryHostedCommandPoll(body)) {
+        continue;
+      }
+      return execution;
+    }
     const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body);
     if (applied > 0) {
       const completed = await waitForWorkflowRun(daemon, workflowRunId);
@@ -585,7 +596,7 @@ async function resumeBlockedHostedExecution(
 async function fetchHostedAssignment(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
-): Promise<unknown> {
+): Promise<HostedAssignmentCommandPoll> {
   if (!lease.runId) {
     throw new Error('Hosted managed executor assignment polling requires a workflow run id.');
   }
@@ -600,9 +611,17 @@ async function fetchHostedAssignment(
   );
   if (response.status === 429) {
     await sleep(retryAfterMs(response));
-    return { runtime_commands: [] };
+    return { runtime_commands: [], _viewport_worker_retry: true };
   }
-  return response.json();
+  return (await response.json()) as HostedAssignmentCommandPoll;
+}
+
+function hasRuntimeCommands(body: HostedAssignmentCommandPoll): boolean {
+  return Array.isArray(body.runtime_commands) && body.runtime_commands.length > 0;
+}
+
+function shouldRetryHostedCommandPoll(body: HostedAssignmentCommandPoll): boolean {
+  return body._viewport_worker_retry === true;
 }
 
 async function createStandaloneWorkerDaemon(): Promise<Daemon> {

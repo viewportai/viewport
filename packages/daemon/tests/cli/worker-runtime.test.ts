@@ -793,6 +793,79 @@ nodes:
     });
   });
 
+  it('releases a blocked hosted workflow run when no approval command is available', async () => {
+    const projectDir = path.join(homeDir, 'hosted-approval-no-command-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-no-command-proof
+nodes:
+  gate:
+    type: gate
+    gate:
+      type: human_review
+      prompt: Approve the hosted worker proof.
+  proof:
+    type: shell
+    needs: [gate]
+    argv:
+      - printf
+      - should-not-run
+`,
+        source_ref: 'viewport://test/hosted-worker-no-command-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      blocked: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({
+      claimed: 1,
+      completed: 0,
+      blocked: 1,
+      failed: 0,
+      cleanup: 1,
+    });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests[2]?.body).toMatchObject({
+      status: 'blocked',
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_key: 'gate', status: 'blocked' }),
+      ]),
+    });
+  });
+
   it('keeps polling hosted approval commands across sequential blocked gates', async () => {
     const projectDir = path.join(homeDir, 'hosted-multigate-workspace');
     await fs.mkdir(projectDir, { recursive: true });

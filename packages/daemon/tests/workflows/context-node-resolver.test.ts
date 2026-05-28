@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
   resolvePromptNodeContext,
   sanitizeContextQueryForReceipt,
@@ -97,5 +100,64 @@ describe('context node resolver receipts', () => {
         },
       }),
     ).rejects.toThrow('Node context includes refs outside workflow defaults');
+  });
+
+  it('selects configured git-backed context providers for git source refs', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-git-context-ref-'));
+    try {
+      await fs.mkdir(path.join(root, '.viewport'), { recursive: true });
+      await fs.mkdir(path.join(root, 'docs', 'runbooks'), { recursive: true });
+      await fs.writeFile(path.join(root, '.viewport', 'config.yaml'), 'version: 1\n', 'utf8');
+      await fs.writeFile(
+        path.join(root, 'docs', 'runbooks', 'integration-pr-review.md'),
+        'Require replay and stale timestamp tests for webhook signature changes.',
+        'utf8',
+      );
+
+      const run = {
+        id: 'run_git_context_ref',
+        status: 'running',
+        inputs: {
+          review_context: 'git://viewportai/vp-example-docs/docs/runbooks/integration-pr-review.md',
+        },
+        nodes: {},
+        events: [],
+        resourceManifest: {
+          contract: {
+            contextProviders: [
+              {
+                id: 'vp_example_docs_runbooks',
+                provider: 'repo-docs',
+                paths: ['docs/runbooks/integration-pr-review.md'],
+                sourceConfigPath: path.join(root, '.viewport', 'config.yaml'),
+              },
+            ],
+            contextResolution: {},
+          },
+        },
+      } as any;
+
+      const selection = await resolvePromptNodeContext({
+        run,
+        nodeId: 'review_pr',
+        prompt: 'Review the PR.',
+        workflowContext: {
+          sources: ['{{ inputs.review_context }}'],
+        },
+        nodeContext: {
+          include: ['{{ inputs.review_context }}'],
+        },
+      });
+
+      expect(selection.promptBlock).toContain('Require replay and stale timestamp tests');
+      expect(selection.basis.selectedItems).toEqual([
+        expect.objectContaining({
+          provider: 'repo-docs',
+          title: 'docs/runbooks/integration-pr-review.md',
+        }),
+      ]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
