@@ -38,6 +38,19 @@ describe('worker command', () => {
     expect(payload.missing).toEqual(['server URL', 'workspace root', 'worker identity']);
   });
 
+  it('keeps manual capability flags out of the default worker help path', async () => {
+    process.argv = ['node', 'vpd', 'worker', 'help'];
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? '')).join('\n');
+    expect(output).toContain('vpd pair --worker --transport=polling');
+    expect(output).not.toContain('--agents');
+    expect(output).not.toContain('--models');
+    expect(output).not.toContain('--capabilities');
+  });
+
   it('reports configured worker lifecycle, transport, and identity', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
     const { resolvePairingServerTransport } =
