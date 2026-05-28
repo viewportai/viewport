@@ -83,6 +83,7 @@ export async function runWorkflowDaemonSession(
     });
     const sessionCwd =
       request.cwd ?? path.join(run.directoryPath, '.viewport', 'node-sessions', run.id, nodeId);
+    validateWorkflowSessionCwd(run.directoryPath, sessionCwd);
     await fs.mkdir(sessionCwd, { recursive: true });
     const directoryId = (
       await context.daemon.directoryManager.register(sessionCwd, {
@@ -334,6 +335,17 @@ function evaluateAgentBudget(
       ...(budget?.maxCostUsd !== undefined ? { maxCostUsd: budget.maxCostUsd } : {}),
     },
   };
+}
+
+function validateWorkflowSessionCwd(runDirectoryPath: string, cwd: string): void {
+  const root = path.resolve(runDirectoryPath);
+  const candidate = path.resolve(cwd);
+  const relative = path.relative(root, candidate);
+  if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return;
+
+  throw new Error(
+    `Prompt session cwd is outside the run workspace: ${candidate}. Use an in-workspace cwd or a checkout node output.`,
+  );
 }
 
 function fallbackAgentDescriptor(agentId: string) {
