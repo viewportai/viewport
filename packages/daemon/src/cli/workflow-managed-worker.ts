@@ -1402,7 +1402,21 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'repo_checkout'])),
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'mcp_api'])),
       ...credentialRefsFrom(snapshot['credential_refs']),
+      ...actionCredentialRefs(snapshot['nodes']),
     ]) {
+      handles.add(handle);
+    }
+  }
+  for (const contract of [
+    assignment.workflow_authority_contract,
+    recordChildValue(assignment.route_snapshot, 'workflow_authority_contract'),
+    recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract'),
+    recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract'),
+    recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract'),
+  ]) {
+    for (const handle of credentialRefsFrom(
+      pathValue(asRecord(contract), ['credentials', 'provider_actions']),
+    )) {
       handles.add(handle);
     }
   }
@@ -1423,6 +1437,17 @@ function credentialRefsFrom(entries: unknown): string[] {
 
 function credentialEntriesFrom(entries: unknown): unknown[] {
   return Array.isArray(entries) ? entries : [];
+}
+
+function actionCredentialRefs(nodes: unknown): string[] {
+  if (!isRecord(nodes)) return [];
+  return Object.values(nodes).flatMap((node) => {
+    if (!isRecord(node) || stringField(node, 'type') !== 'action') return [];
+    const withValue = isRecord(node['with']) ? node['with'] : {};
+    const credentialRef =
+      stringField(withValue, 'credential_ref') ?? stringField(withValue, 'credentialRef');
+    return credentialRef ? [credentialRef] : [];
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
