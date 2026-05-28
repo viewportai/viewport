@@ -42,8 +42,7 @@ export async function update(): Promise<void> {
       signedReleaseManifest: false,
       restartRequested: shouldRestart,
       commandPlan: ['npm', 'install', '-g', `${packageName}@latest`],
-      note:
-        'vpd update currently delegates to the package manager. Signed release manifests are not available yet.',
+      note: 'vpd update currently delegates to the package manager. Signed release manifests are not available yet.',
     };
     if (asJson) {
       printJson(payload);
