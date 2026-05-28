@@ -9,6 +9,9 @@ export async function waitForPromptSessionComplete(
   sessionId: string,
   timeoutMs?: number,
 ): Promise<string> {
+  const ended = daemon.getSessionEndReason(sessionId);
+  if (ended) return ended;
+
   const initial = getSessionState(daemon, sessionId);
   if (isPromptTerminalState(initial)) return initial;
 
@@ -37,6 +40,12 @@ export async function waitForPromptSessionComplete(
       finish(event.state);
     };
     const timer = setInterval(() => {
+      const ended = daemon.getSessionEndReason(sessionId);
+      if (ended) {
+        finish(ended);
+        return;
+      }
+
       const state = getSessionState(daemon, sessionId);
       if (isPromptTerminalState(state)) {
         if (state === 'errored') {

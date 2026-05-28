@@ -286,6 +286,10 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
     return this.sessionManager.getSessionNativeId(sessionId);
   }
 
+  getSessionEndReason(sessionId: string): string | undefined {
+    return this.sessionManager.getSessionEndReason(sessionId);
+  }
+
   listActiveSessions(): Array<{
     sessionId: string;
     directoryId: string;
