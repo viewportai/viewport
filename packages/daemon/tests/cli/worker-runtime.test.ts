@@ -922,6 +922,7 @@ nodes:
         workspaceId: 'workspace_1',
         managedExecutorId: 'executor_1',
         credential: 'vpexec_hosted',
+        serverId: 'sha256:server_1',
         capabilities: {
           agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
         },
@@ -1159,6 +1160,10 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
   const nonce = String(headers['x-viewport-worker-nonce'] ?? '');
   const bodySha256 = String(headers['x-viewport-worker-body-sha256'] ?? '');
   const signature = String(headers['x-viewport-worker-signature'] ?? '');
+  const serverId =
+    typeof headers['x-viewport-server-id'] === 'string'
+      ? headers['x-viewport-server-id']
+      : undefined;
   expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
   expect(timestamp).toContain('T');
   expect(nonce).toMatch(/^[a-f0-9]{32}$/);
@@ -1167,7 +1172,23 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
   const identity = JSON.parse(
     await fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8'),
   ) as { publicKey: string };
-  const canonical = [request!.method, request!.url, bodySha256, nonce, timestamp].join('\n');
+  const config = JSON.parse(await fs.readFile(path.join(homeDir, 'config.json'), 'utf8')) as {
+    daemon?: { worker?: { serverId?: string } };
+  };
+  const expectedServerId = config.daemon?.worker?.serverId;
+  if (expectedServerId) {
+    expect(serverId).toBe(expectedServerId);
+  } else {
+    expect(serverId).toBeUndefined();
+  }
+  const canonical = [
+    request!.method,
+    request!.url,
+    bodySha256,
+    nonce,
+    timestamp,
+    ...(expectedServerId ? [expectedServerId] : []),
+  ].join('\n');
   expect(
     crypto.verify(
       null,

@@ -37,6 +37,7 @@ export interface StandaloneWorkerResult {
 
 interface WorkerRuntimeProfile {
   serverUrl: string;
+  serverId?: string;
   lifecycle: WorkerLifecycle;
   transport: WorkerTransport;
   inbound?: {
@@ -229,6 +230,7 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
   }
   return {
     serverUrl: worker!.serverUrl!,
+    serverId: worker!.serverId,
     lifecycle: worker!.lifecycle ?? 'persistent',
     transport: worker!.transport ?? 'polling',
     inbound: recordValue(worker!.inbound),
@@ -663,6 +665,7 @@ async function workerFetch(
       'X-Viewport-Worker-Nonce': signed.nonce,
       'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
       'X-Viewport-Worker-Signature': signed.signature,
+      ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
     },
     body: serialized,
   });
@@ -732,6 +735,7 @@ async function hostedManagedExecutorFetch(
         'X-Viewport-Worker-Nonce': signed.nonce,
         'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
         'X-Viewport-Worker-Signature': signed.signature,
+        ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
       },
       ...(method === 'GET' ? {} : { body: serialized }),
     });
@@ -836,6 +840,7 @@ async function signWorkerRequest(
   nonce: string;
   bodySha256: string;
   signature: string;
+  serverId?: string;
 }> {
   const identity = JSON.parse(
     await fs.readFile(profile.identityKeyPath, 'utf8'),
@@ -846,9 +851,16 @@ async function signWorkerRequest(
   const timestamp = new Date().toISOString();
   const nonce = crypto.randomBytes(16).toString('hex');
   const bodySha256 = crypto.createHash('sha256').update(body).digest('hex');
-  const canonical = [method.toUpperCase(), requestPath, bodySha256, nonce, timestamp].join('\n');
+  const canonical = [
+    method.toUpperCase(),
+    requestPath,
+    bodySha256,
+    nonce,
+    timestamp,
+    ...(profile.serverId ? [profile.serverId] : []),
+  ].join('\n');
   const signature = crypto
     .sign(null, Buffer.from(canonical), identity.privateKey)
     .toString('base64');
-  return { timestamp, nonce, bodySha256, signature };
+  return { timestamp, nonce, bodySha256, signature, serverId: profile.serverId };
 }

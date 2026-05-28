@@ -161,6 +161,7 @@ export const ViewportConfigSchema = z
               .strict()
               .optional(),
             serverUrl: z.string().optional(),
+            serverId: z.string().optional(),
             appUrl: z.string().optional(),
             workspaceId: z.string().optional(),
             managedExecutorId: z.string().optional(),

@@ -225,6 +225,7 @@ export interface ViewportConfig {
         controlPlaneClaimVerify?: boolean;
       };
       serverUrl?: string;
+      serverId?: string;
       appUrl?: string;
       workspaceId?: string;
       managedExecutorId?: string;
@@ -656,6 +657,7 @@ export class ConfigManager {
             controlPlaneClaimVerify?: boolean;
           };
           serverUrl?: string;
+          serverId?: string;
           appUrl?: string;
           workspaceId?: string;
           managedExecutorId?: string;

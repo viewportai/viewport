@@ -47,6 +47,7 @@ describe('lifecycle pair command', () => {
             runtime_target_id: 'runtime_123',
             managed_executor_id: 'executor_123',
             managed_executor_credential: 'vpexec_secret',
+            server_id: 'sha256:server_123',
             relay_endpoint: 'wss://relay.getviewport.test/ws',
             token: 'issue_token_123',
             server_url: localServerUrl(server),
@@ -99,6 +100,7 @@ describe('lifecycle pair command', () => {
           workspaceId: string;
           managedExecutorId: string;
           credential: string;
+          serverId: string;
         };
       };
     };
@@ -108,6 +110,7 @@ describe('lifecycle pair command', () => {
       workspaceId: 'workspace_123',
       managedExecutorId: 'executor_123',
       credential: 'vpexec_secret',
+      serverId: 'sha256:server_123',
     });
   });
 });

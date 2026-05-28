@@ -38,6 +38,7 @@ export interface PairingPollApprovedData {
   relay_endpoint?: string;
   token: string;
   server_url?: string;
+  server_id?: string;
 }
 
 interface PairingPollPendingData {
