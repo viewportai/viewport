@@ -501,7 +501,7 @@ nodes:
     const originalToken = process.env['GITHUB_TOKEN'];
     const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'runner-token';
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -543,7 +543,7 @@ nodes:
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
-            Authorization: 'Bearer runner-token',
+            Authorization: 'Bearer ghs_runner_token',
             'X-GitHub-Api-Version': '2022-11-28',
           }),
         }),
@@ -553,7 +553,7 @@ nodes:
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
-            Authorization: 'Bearer runner-token',
+            Authorization: 'Bearer ghs_runner_token',
             'X-GitHub-Api-Version': '2022-11-28',
             'Idempotency-Key': 'pr:PAY-1842',
           }),
@@ -570,7 +570,7 @@ nodes:
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
-            Authorization: 'Bearer runner-token',
+            Authorization: 'Bearer ghs_runner_token',
             'X-GitHub-Api-Version': '2022-11-28',
           }),
         }),
@@ -616,7 +616,7 @@ nodes:
     const fetchMock = vi.fn(async () => new Response('should not be called', { status: 500 }));
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'runner-token';
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -733,15 +733,29 @@ nodes:
       });
 
       await waitForTerminalRun(daemon, run.id);
-      const completed = await daemon.workflowRunner.getRun(run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
 
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(completed?.status).toBe('completed');
-      expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.open_pr?.metadata?.action).toMatchObject({
         adapter: 'github',
         action: 'create_pr',
-        status: 'missing_url',
+        status: 'blocked',
+        credential: {
+          reason: 'github_brokered_credential_missing',
+          required: 'github_app_installation_token',
+        },
+        workflow_authority_denial: {
+          reason: 'github_brokered_credential_missing',
+          provider: 'github',
+        },
       });
+      expect(failed?.events).toContainEqual(
+        expect.objectContaining({
+          type: 'action-blocked',
+          nodeId: 'open_pr',
+        }),
+      );
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
@@ -786,18 +800,83 @@ nodes:
       });
 
       await waitForTerminalRun(daemon, run.id);
-      const completed = await daemon.workflowRunner.getRun(run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
 
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(completed?.status).toBe('completed');
-      expect(completed?.nodes.comment_issue?.metadata?.action).toMatchObject({
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.comment_issue?.metadata?.action).toMatchObject({
         adapter: 'github',
         action: 'comment_issue',
-        status: 'missing_url',
+        status: 'blocked',
+        credential: {
+          reason: 'github_brokered_credential_missing',
+          required: 'github_app_installation_token',
+        },
       });
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
+    }
+  });
+
+  it('rejects user GitHub tokens for brokered provider actions', async () => {
+    const fetchMock = vi.fn(async () => new Response('should not be called', { status: 500 }));
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'gho_user_personal_token';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-user-token-denial-proof
+nodes:
+  comment_issue:
+    type: action
+    adapter: github
+    action: comment_issue
+    with:
+      owner: acme
+      repo: payments
+      issue_number: "1842"
+      body: "Should not run as a user."
+      credential_ref: github/token
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.comment_issue?.metadata?.action).toMatchObject({
+        adapter: 'github',
+        action: 'comment_issue',
+        status: 'blocked',
+        credential: {
+          reason: 'github_credential_must_be_installation_token',
+          required: 'github_app_installation_token',
+          acceptedPrefix: 'ghs_',
+        },
+        workflow_authority_denial: {
+          reason: 'github_credential_must_be_installation_token',
+          provider: 'github',
+        },
+      });
+    } finally {
+      if (originalCredentialRefToken === undefined)
+        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
     }
   });
 
@@ -826,7 +905,7 @@ nodes:
     const originalToken = process.env['GITHUB_TOKEN'];
     const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'runner-token';
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -865,7 +944,7 @@ nodes:
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
-            Authorization: 'Bearer runner-token',
+            Authorization: 'Bearer ghs_runner_token',
             'X-GitHub-Api-Version': '2022-11-28',
           }),
           body: JSON.stringify({
@@ -923,7 +1002,7 @@ nodes:
     const originalToken = process.env['GITHUB_TOKEN'];
     const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'runner-token';
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -969,7 +1048,7 @@ nodes:
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
-            Authorization: 'Bearer runner-token',
+            Authorization: 'Bearer ghs_runner_token',
             'X-GitHub-Api-Version': '2022-11-28',
           }),
           body: JSON.stringify({
@@ -1022,7 +1101,7 @@ nodes:
       );
     global.fetch = fetchMock as typeof fetch;
     const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'] = 'runner-token';
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -1063,7 +1142,7 @@ nodes:
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
-            Authorization: 'Bearer runner-token',
+            Authorization: 'Bearer ghs_runner_token',
             'Idempotency-Key': 'pr-alias:PAY-1842',
           }),
         }),

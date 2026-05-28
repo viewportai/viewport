@@ -78,9 +78,10 @@ async function executeGitHubAction(
     defaultRef: 'github/token',
     defaultEnv: 'GITHUB_TOKEN',
   });
-  if (!owner || !repo || !token) {
+  if (!owner || !repo) {
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
+  assertGitHubBrokeredCredential(run, nodeId, node, actionInput, token, options.idempotencyKey);
 
   if (isGitHubPullRequestCreateAction(node.action)) {
     const title = stringValue(actionInput['title']) ?? 'Viewport workflow change';
@@ -141,6 +142,60 @@ async function executeGitHubAction(
   }
 
   return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
+}
+
+function assertGitHubBrokeredCredential(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+  actionInput: Record<string, WorkflowInputValue>,
+  token: string | undefined,
+  idempotencyKey: string | undefined,
+): asserts token is string {
+  if (token && token.startsWith('ghs_')) return;
+
+  const reason = token
+    ? 'github_credential_must_be_installation_token'
+    : 'github_brokered_credential_missing';
+  const metadata = {
+    action: {
+      adapter: node.adapter,
+      action: node.action,
+      proposalKey: node.proposalKey ?? null,
+      idempotencyKey: idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
+      policyReason: actionPolicyReason(node),
+      status: 'blocked',
+      digest: workflowActionProposalDigest(node, {
+        idempotencyKey,
+        input: actionInput,
+      }),
+      input: sanitizeActionInput(actionInput),
+      credential: {
+        reason,
+        required: 'github_app_installation_token',
+        acceptedPrefix: 'ghs_',
+      },
+      workflow_authority_denial: {
+        reason,
+        provider: 'github',
+        requiredCredential: 'github_app_installation_token',
+      },
+    },
+  };
+
+  addEvent(
+    run,
+    'action-blocked',
+    `Action node ${nodeId} blocked ${node.adapter}.${node.action}: ${reason}`,
+    metadata,
+    nodeId,
+  );
+
+  throw new WorkflowActionError(`GitHub action ${nodeId} blocked: ${reason}`, {
+    output: `${node.adapter}.${node.action} blocked`,
+    metadata,
+  });
 }
 
 async function existingGitHubPullRequest(
