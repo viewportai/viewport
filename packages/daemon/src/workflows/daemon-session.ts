@@ -406,6 +406,7 @@ function validateWorkflowSessionAdapterCapabilities(
 
   if (
     config.allowedTools &&
+    config.allowedTools.length > 0 &&
     descriptor.capabilities.toolAllowlist !== 'hard' &&
     descriptor.capabilities.toolAllowlist !== 'provider'
   ) {

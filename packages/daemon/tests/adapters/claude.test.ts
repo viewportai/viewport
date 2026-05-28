@@ -214,6 +214,32 @@ describe('ClaudeAdapter', () => {
     );
   });
 
+  it('honors explicit empty workflow tool allowlists in implement mode', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'no-tools-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Review without tools.',
+      config: automatedConfig({
+        executionMode: 'implement',
+        allowedTools: [],
+      }),
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Review without tools.',
+        options: expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+          tools: [],
+          allowedTools: [],
+        }),
+      }),
+    );
+  });
+
   it('maps read-only execution mode to Claude read/search tools', async () => {
     const queryFn = createMockQuery([
       { type: 'result', subtype: 'success', session_id: 'readonly-id' },

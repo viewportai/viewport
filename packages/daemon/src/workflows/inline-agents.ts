@@ -79,11 +79,7 @@ export async function runInlineAgents(
           ...(agentState.model ? { model: agentState.model } : {}),
           ...(agentState.effort ? { effort: agentState.effort } : {}),
           executionMode: sessionPolicy.executionMode,
-          ...(agent.allowedTools
-            ? { allowedTools: agent.allowedTools }
-            : sessionPolicy.executionMode === 'plan'
-              ? { allowedTools: [] }
-              : {}),
+          allowedTools: agent.allowedTools ?? [],
           timeoutSeconds: sessionPolicy.timeoutSeconds,
           ...(options.budget ? { budget: options.budget } : {}),
           executionModeDefaulted: agent.executionMode === undefined,

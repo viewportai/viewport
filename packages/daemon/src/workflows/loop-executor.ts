@@ -204,6 +204,7 @@ async function runPromptIteration(
       ...(body.agent ? { agent: body.agent } : {}),
       ...(body.model ? { model: body.model } : {}),
       ...(body.effort ? { effort: body.effort } : {}),
+      allowedTools: [],
     });
     if (record.status === 'canceled') return record;
     record.status = 'completed';

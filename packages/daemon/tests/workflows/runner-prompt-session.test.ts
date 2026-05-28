@@ -141,11 +141,20 @@ nodes:
       workflowPath,
       directoryId: DirectoryManager.idFromPath(projectDir),
       initiation: 'cli',
+      inputs: {
+        issue: {
+          title: 'PAY-1842 broken webhook retry',
+        },
+      },
     });
 
     await waitForNodeSession(daemon, run.id, 'review');
     expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
-    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
+    expect(adapter.lastOptions?.allowedTools).toEqual([]);
+    const sentPrompt = String(adapter.lastSession?.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(sentPrompt).toContain('<workflow_inputs>');
+    expect(sentPrompt).toContain('PAY-1842 broken webhook retry');
     adapter.lastSession?.emitToolCall('tool-1', 'Read');
     adapter.lastSession?.emitToolCallUpdate('tool-1', 'Read', 'completed');
     adapter.lastSession?.emitTokenUsage(42, 12, 0.0042);
@@ -320,6 +329,7 @@ nodes:
     await waitForAdapterSessions(adapter, 1);
     expect(adapter.sessions).toHaveLength(1);
     expect(adapter.lastOptions?.config?.executionMode).toBe('review');
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
 
     adapter.lastSession?.emitAgentMessage('Looks safe.');
     adapter.lastSession?.simulateIdle();
@@ -327,6 +337,7 @@ nodes:
     await waitForNodeSession(daemon, run.id, 'implement');
     expect(adapter.sessions).toHaveLength(2);
     expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
 
     adapter.lastSession?.emitAgentMessage('done');
     adapter.lastSession?.simulateIdle();
