@@ -1,3 +1,10 @@
+## [0.22.4](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.3...@viewportai/daemon@0.22.4) (2026-05-28)
+
+
+### Bug Fixes
+
+* preflight worker workspace root ([#128](https://github.com/viewportai/viewport/issues/128)) ([93bcf98](https://github.com/viewportai/viewport/commit/93bcf98cbd539f0ed1b3c5e702a4a11118f46c3a))
+
 ## [0.22.3](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.2...@viewportai/daemon@0.22.3) (2026-05-28)
 
 
