@@ -465,7 +465,8 @@ export function showHelp(): void {
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');
   console.log('  pair rotate-token [--json]   Rotate auth token on disk (restart required)');
-  console.log('  update [--json] [--yes]      Update daemon package, optionally restart');
+  console.log('  update [--json] [--yes] [--dry-run]');
+  console.log('                               Update daemon package, optionally restart');
   console.log('  service <install|uninstall|status> [--json]');
   console.log('                               Manage OS user service (launchd/systemd)');
   console.log('  watch <start|doctor|status>  Personal/local monitor commands');
