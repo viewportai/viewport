@@ -468,6 +468,21 @@ async function executeHostedWorkflowClaim(
     const daemon = await createStandaloneWorkerDaemon();
     const existing = await existingHostedRuntimeRun(lease);
     if (existing) {
+      if (existing.status === 'blocked') {
+        const body = await fetchHostedAssignment(profile, lease);
+        const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body);
+        if (applied > 0) {
+          const completed = await waitForWorkflowRun(daemon, existing.id);
+          return {
+            status: normalizeWorkflowStatus(completed.status),
+            run: completed,
+            daemon,
+            ...(completed.status === 'failed' || completed.status === 'canceled'
+              ? { failure: workflowRunFailure(completed) }
+              : {}),
+          };
+        }
+      }
       return {
         status: normalizeWorkflowStatus(existing.status),
         run: existing,
