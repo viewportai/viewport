@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 describe('standalone worker runtime', () => {
   const originalArgv = process.argv.slice();
   const originalHome = process.env['VIEWPORT_HOME'];
+  const originalInboundExperimental = process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let homeDir = '';
   let server: http.Server | null = null;
@@ -17,6 +18,7 @@ describe('standalone worker runtime', () => {
     logSpy.mockClear();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-worker-runtime-'));
     process.env['VIEWPORT_HOME'] = homeDir;
+    delete process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
     delete process.env['VIEWPORT_PROFILE'];
   });
 
@@ -24,6 +26,11 @@ describe('standalone worker runtime', () => {
     process.argv = originalArgv;
     if (originalHome) process.env['VIEWPORT_HOME'] = originalHome;
     else delete process.env['VIEWPORT_HOME'];
+    if (originalInboundExperimental) {
+      process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'] = originalInboundExperimental;
+    } else {
+      delete process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+    }
     if (server) {
       await closeServer(server);
       server = null;
@@ -768,7 +775,7 @@ nodes:
     });
   });
 
-  it('denies inbound transport until signed inbound proof exists', async () => {
+  it('denies inbound transport by default before control-plane contact', async () => {
     await writeWorkerProfile('http://127.0.0.1:1');
     process.argv = [
       'node',
@@ -784,7 +791,64 @@ nodes:
     vi.resetModules();
     const { worker } = await import('../../src/cli/worker-command.js');
 
-    await expect(worker()).rejects.toThrow('Inbound worker transport is disabled');
+    await expect(worker()).rejects.toThrow('Inbound worker transport is disabled by default');
+  });
+
+  it('keeps inbound gated when the experimental flag lacks signed request proof', async () => {
+    await writeWorkerProfile('http://127.0.0.1:1');
+    process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'] = '1';
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'inbound',
+      '--once',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await expect(worker()).rejects.toThrow(
+      'Inbound worker transport is gated: missing signed inbound requests, replay protection, control-plane claim verification.',
+    );
+  });
+
+  it('keeps inbound gated after threat flags until a signed listener exists', async () => {
+    await writeWorkerProfile('http://127.0.0.1:1');
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const existing = manager.getDaemonConfig() ?? {};
+    await manager.setDaemonConfig({
+      ...existing,
+      worker: {
+        ...existing.worker,
+        inbound: {
+          enabled: true,
+          signedRequests: true,
+          replayProtection: true,
+          controlPlaneClaimVerify: true,
+        },
+      },
+    });
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'inbound',
+      '--once',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await expect(worker()).rejects.toThrow('Inbound worker transport listener is not implemented');
   });
 
   it('reports relay as unsupported until relay worker runtime lands', async () => {
@@ -822,7 +886,9 @@ nodes:
       vi.resetModules();
       const { worker } = await import('../../src/cli/worker-command.js');
       await expect(worker()).rejects.toThrow(
-        transport === 'inbound' ? 'Inbound worker transport is disabled' : 'Relay worker transport',
+        transport === 'inbound'
+          ? 'Inbound worker transport is disabled by default'
+          : 'Relay worker transport',
       );
     }
   });

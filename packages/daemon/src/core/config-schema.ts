@@ -151,6 +151,15 @@ export const ViewportConfigSchema = z
           .object({
             lifecycle: z.enum(['persistent', 'ephemeral']).optional(),
             transport: z.enum(['polling', 'relay', 'inbound']).optional(),
+            inbound: z
+              .object({
+                enabled: z.boolean().optional(),
+                signedRequests: z.boolean().optional(),
+                replayProtection: z.boolean().optional(),
+                controlPlaneClaimVerify: z.boolean().optional(),
+              })
+              .strict()
+              .optional(),
             serverUrl: z.string().optional(),
             appUrl: z.string().optional(),
             workspaceId: z.string().optional(),

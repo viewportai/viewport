@@ -218,6 +218,12 @@ export interface ViewportConfig {
     worker?: {
       lifecycle?: 'persistent' | 'ephemeral';
       transport?: 'polling' | 'relay' | 'inbound';
+      inbound?: {
+        enabled?: boolean;
+        signedRequests?: boolean;
+        replayProtection?: boolean;
+        controlPlaneClaimVerify?: boolean;
+      };
       serverUrl?: string;
       appUrl?: string;
       workspaceId?: string;
@@ -643,6 +649,12 @@ export class ConfigManager {
         worker?: {
           lifecycle?: 'persistent' | 'ephemeral';
           transport?: 'polling' | 'relay' | 'inbound';
+          inbound?: {
+            enabled?: boolean;
+            signedRequests?: boolean;
+            replayProtection?: boolean;
+            controlPlaneClaimVerify?: boolean;
+          };
           serverUrl?: string;
           appUrl?: string;
           workspaceId?: string;

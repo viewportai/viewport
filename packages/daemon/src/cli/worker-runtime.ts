@@ -39,6 +39,12 @@ interface WorkerRuntimeProfile {
   serverUrl: string;
   lifecycle: WorkerLifecycle;
   transport: WorkerTransport;
+  inbound?: {
+    enabled?: boolean;
+    signedRequests?: boolean;
+    replayProtection?: boolean;
+    controlPlaneClaimVerify?: boolean;
+  };
   workspaceId?: string;
   managedExecutorId?: string;
   credential?: string;
@@ -92,7 +98,7 @@ export async function runStandaloneWorker(
   await validateWorkerWorkspaceRoot(profile.workspaceRoot);
   const transport = options.transport ?? profile.transport;
   if (transport === 'inbound') {
-    throw new Error('Inbound worker transport is disabled until signed inbound proof lands.');
+    validateInboundWorkerGate(profile);
   }
   if (transport === 'relay') {
     throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
@@ -225,6 +231,7 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     serverUrl: worker!.serverUrl!,
     lifecycle: worker!.lifecycle ?? 'persistent',
     transport: worker!.transport ?? 'polling',
+    inbound: recordValue(worker!.inbound),
     workspaceId: worker!.workspaceId ?? process.env['VIEWPORT_WORKSPACE_ID'],
     managedExecutorId: worker!.managedExecutorId ?? process.env['VIEWPORT_MANAGED_EXECUTOR_ID'],
     credential:
@@ -236,6 +243,28 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
     capabilities: worker!.capabilities ?? {},
   };
+}
+
+function validateInboundWorkerGate(profile: WorkerRuntimeProfile): never {
+  const enabled =
+    profile.inbound?.enabled === true || process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'] === '1';
+  if (!enabled) {
+    throw new Error(
+      'Inbound worker transport is disabled by default. Enable VPD_WORKER_INBOUND_EXPERIMENTAL=1 only with signed inbound proof, replay protection, and control-plane claim verification.',
+    );
+  }
+  const missing: string[] = [];
+  if (profile.inbound?.signedRequests !== true) missing.push('signed inbound requests');
+  if (profile.inbound?.replayProtection !== true) missing.push('replay protection');
+  if (profile.inbound?.controlPlaneClaimVerify !== true) {
+    missing.push('control-plane claim verification');
+  }
+  if (missing.length > 0) {
+    throw new Error(`Inbound worker transport is gated: missing ${missing.join(', ')}.`);
+  }
+  throw new Error(
+    'Inbound worker transport listener is not implemented yet; do not enable inbound without the signed listener proof.',
+  );
 }
 
 async function claimLease(
