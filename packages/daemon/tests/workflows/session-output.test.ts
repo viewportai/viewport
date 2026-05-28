@@ -133,7 +133,10 @@ describe('session output collector', () => {
     });
 
     const result = collector.agentRunResult({
-      agent: { ...adapter, capabilities: { ...adapter.capabilities, usageReporting: 'unavailable' } },
+      agent: {
+        ...adapter,
+        capabilities: { ...adapter.capabilities, usageReporting: 'unavailable' },
+      },
       executionMode: 'plan',
       startedAt: 100,
       completedAt: 120,

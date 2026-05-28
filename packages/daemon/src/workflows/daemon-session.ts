@@ -9,10 +9,7 @@ import { isFailedSessionReason, waitForPromptSessionComplete } from './session-c
 import { createSessionOutputCollector } from './session-output.js';
 import type { WorkflowSessionLinkStore } from './session-links.js';
 import { defaultWorktreePath } from './prompt-output.js';
-import {
-  resolveWorkflowSessionPolicy,
-  type WorkflowSessionBudget,
-} from './session-policy.js';
+import { resolveWorkflowSessionPolicy, type WorkflowSessionBudget } from './session-policy.js';
 import type {
   WorkflowHookRules,
   WorkflowRunRecord,
@@ -115,7 +112,11 @@ export async function runWorkflowDaemonSession(
       contextInjection: 'disabled',
     } satisfies Partial<SessionConfig>;
     validateWorkflowSessionAdapterCapabilities(context, directoryId, sessionOverrides);
-    const sessionId = await context.daemon.launchSession(directoryId, request.prompt, sessionOverrides);
+    const sessionId = await context.daemon.launchSession(
+      directoryId,
+      request.prompt,
+      sessionOverrides,
+    );
     activeSessionId = sessionId;
     const launchedAgent = context.daemon.getSessionInfo(sessionId).agent;
     const nativeSessionId = context.daemon.getSessionNativeId(sessionId);
@@ -195,7 +196,8 @@ export async function runWorkflowDaemonSession(
     }
 
     const agentDescriptor =
-      context.daemon.getAgentAdapterDescription(launchedAgent) ?? fallbackAgentDescriptor(launchedAgent);
+      context.daemon.getAgentAdapterDescription(launchedAgent) ??
+      fallbackAgentDescriptor(launchedAgent);
     const agentRun = output.agentRunResult({
       agent: agentDescriptor,
       ...(request.model ? { model: request.model } : {}),
@@ -291,7 +293,8 @@ function evaluateAgentBudget(
   const totalTokens =
     typeof agentRun.usage.totalTokens === 'number'
       ? agentRun.usage.totalTokens
-      : typeof agentRun.usage.inputTokens === 'number' || typeof agentRun.usage.outputTokens === 'number'
+      : typeof agentRun.usage.inputTokens === 'number' ||
+          typeof agentRun.usage.outputTokens === 'number'
         ? (agentRun.usage.inputTokens ?? 0) + (agentRun.usage.outputTokens ?? 0)
         : undefined;
   const budgetedTotalTokens =
@@ -383,10 +386,12 @@ function validateWorkflowSessionAdapterCapabilities(
     );
   }
 
-  if (config.allowedTools && descriptor.capabilities.toolAllowlist !== 'hard' && descriptor.capabilities.toolAllowlist !== 'provider') {
-    throw new Error(
-      `Adapter ${descriptor.agentId} cannot enforce workflow tool allowlists.`,
-    );
+  if (
+    config.allowedTools &&
+    descriptor.capabilities.toolAllowlist !== 'hard' &&
+    descriptor.capabilities.toolAllowlist !== 'provider'
+  ) {
+    throw new Error(`Adapter ${descriptor.agentId} cannot enforce workflow tool allowlists.`);
   }
 }
 

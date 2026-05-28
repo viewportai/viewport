@@ -201,8 +201,7 @@ function mergeModelUsage(
       ...((existing?.cacheCreationInputTokens ?? 0) + (value.cacheCreationInputTokens ?? 0) > 0
         ? {
             cacheCreationInputTokens:
-              (existing?.cacheCreationInputTokens ?? 0) +
-              (value.cacheCreationInputTokens ?? 0),
+              (existing?.cacheCreationInputTokens ?? 0) + (value.cacheCreationInputTokens ?? 0),
           }
         : {}),
     };

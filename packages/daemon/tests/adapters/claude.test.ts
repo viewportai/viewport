@@ -147,7 +147,9 @@ describe('ClaudeAdapter', () => {
   });
 
   it('maps automated approvalPolicy never to Claude bypassPermissions mode', async () => {
-    const queryFn = createMockQuery([{ type: 'result', subtype: 'success', session_id: 'test-id' }]);
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'test-id' },
+    ]);
 
     const adapter = new ClaudeAdapter(queryFn);
     await adapter.startSession('/test/dir', {
@@ -166,7 +168,9 @@ describe('ClaudeAdapter', () => {
   });
 
   it('maps plan execution mode to Claude plan permission mode', async () => {
-    const queryFn = createMockQuery([{ type: 'result', subtype: 'success', session_id: 'plan-id' }]);
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'plan-id' },
+    ]);
 
     const adapter = new ClaudeAdapter(queryFn);
     await adapter.startSession('/test/dir', {
@@ -186,7 +190,9 @@ describe('ClaudeAdapter', () => {
   });
 
   it('passes workflow budget caps to Claude provider options', async () => {
-    const queryFn = createMockQuery([{ type: 'result', subtype: 'success', session_id: 'budget-id' }]);
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'budget-id' },
+    ]);
 
     const adapter = new ClaudeAdapter(queryFn);
     await adapter.startSession('/test/dir', {
@@ -295,7 +301,9 @@ describe('ClaudeAdapter', () => {
   });
 
   it('preserves plan mode for deferred initial prompts', async () => {
-    const queryFn = createMockQuery([{ type: 'result', subtype: 'success', session_id: 'plan-id' }]);
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'plan-id' },
+    ]);
     const adapter = new ClaudeAdapter(queryFn);
 
     const session = await adapter.startSession('/test/dir', {

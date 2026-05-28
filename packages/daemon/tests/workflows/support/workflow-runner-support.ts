@@ -78,7 +78,11 @@ export class MockSession extends EventEmitter implements Session {
     });
   }
 
-  emitToolCall(toolCallId: string, toolName: string, status: 'in_progress' | 'completed' = 'in_progress'): void {
+  emitToolCall(
+    toolCallId: string,
+    toolName: string,
+    status: 'in_progress' | 'completed' = 'in_progress',
+  ): void {
     this.emit('message', {
       type: 'tool_call',
       toolCallId,

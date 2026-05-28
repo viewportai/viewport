@@ -307,5 +307,7 @@ export class WorkflowLayerScheduler {
 }
 
 function isTerminalNodeStatus(status: string): boolean {
-  return status === 'completed' || status === 'failed' || status === 'skipped' || status === 'canceled';
+  return (
+    status === 'completed' || status === 'failed' || status === 'skipped' || status === 'canceled'
+  );
 }

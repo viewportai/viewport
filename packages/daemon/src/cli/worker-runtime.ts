@@ -121,49 +121,49 @@ export async function runStandaloneWorker(
   };
   try {
     while (!options.abortSignal?.aborted) {
-    const lease = await claimLease(profile, {
-      lifecycle: options.lifecycle,
-      transport,
-    });
-    if (!lease) {
-      if (options.once || options.lifecycle !== 'persistent') break;
-      const now = Date.now();
-      if (now - lastHeartbeatAt > 30_000) {
-        await heartbeat(profile, {
-          status: 'online',
-          healthStatus: 'idle',
-          lifecycle: options.lifecycle,
-          transport,
-        });
-        lastHeartbeatAt = now;
+      const lease = await claimLease(profile, {
+        lifecycle: options.lifecycle,
+        transport,
+      });
+      if (!lease) {
+        if (options.once || options.lifecycle !== 'persistent') break;
+        const now = Date.now();
+        if (now - lastHeartbeatAt > 30_000) {
+          await heartbeat(profile, {
+            status: 'online',
+            healthStatus: 'idle',
+            lifecycle: options.lifecycle,
+            transport,
+          });
+          lastHeartbeatAt = now;
+        }
+        await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
+        continue;
       }
-      await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
-      continue;
-    }
-    result.claimed += 1;
-    let execution = await executeClaim(profile, lease);
-    if (
-      isHostedManagedExecutorProfile(profile) &&
-      execution.status === 'blocked' &&
-      execution.run
-    ) {
-      await syncLease(profile, lease, execution);
-      execution = await resumeBlockedHostedExecution(profile, lease, execution);
-      if (execution.status !== 'blocked') {
+      result.claimed += 1;
+      let execution = await executeClaim(profile, lease);
+      if (
+        isHostedManagedExecutorProfile(profile) &&
+        execution.status === 'blocked' &&
+        execution.run
+      ) {
+        await syncLease(profile, lease, execution);
+        execution = await resumeBlockedHostedExecution(profile, lease, execution);
+        if (execution.status !== 'blocked') {
+          await syncLease(profile, lease, execution);
+        }
+      } else {
         await syncLease(profile, lease, execution);
       }
-    } else {
-      await syncLease(profile, lease, execution);
-    }
-    if (execution.status === 'completed') {
-      result.completed += 1;
-    } else if (execution.status === 'blocked') {
-      result.blocked += 1;
-    } else {
-      result.failed += 1;
-    }
-    await cleanupLease(profile, lease);
-    result.cleanup += 1;
+      if (execution.status === 'completed') {
+        result.completed += 1;
+      } else if (execution.status === 'blocked') {
+        result.blocked += 1;
+      } else {
+        result.failed += 1;
+      }
+      await cleanupLease(profile, lease);
+      result.cleanup += 1;
       if (options.once) break;
     }
   } finally {

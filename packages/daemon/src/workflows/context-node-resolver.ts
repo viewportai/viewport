@@ -195,10 +195,7 @@ export async function resolvePromptNodeContext(input: {
           input.run.resourceManifest?.contract.contextProviders ?? [],
           platformPolicies,
         )
-      : selectProviders(
-          input.run.resourceManifest?.contract.contextProviders ?? [],
-          providerRefs,
-        );
+      : selectProviders(input.run.resourceManifest?.contract.contextProviders ?? [], providerRefs);
   const denied = providers
     .map(({ provider }) => contextAuthorityDenial(input.run, input.nodeId, provider))
     .find((entry) => entry !== null);
@@ -757,9 +754,7 @@ function workflowProducedContextRef(
   ref: NormalizedContextRef,
   run: WorkflowRunRecord,
 ): { nodeId: string; name: string } | null {
-  const match = /^([A-Za-z0-9_-][A-Za-z0-9._/-]*)\.(approved_body|output)$/.exec(
-    ref.ref.trim(),
-  );
+  const match = /^([A-Za-z0-9_-][A-Za-z0-9._/-]*)\.(approved_body|output)$/.exec(ref.ref.trim());
   if (!match?.[1] || !match[2]) return null;
 
   const state = run.nodes[match[1]];

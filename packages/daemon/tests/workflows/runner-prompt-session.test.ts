@@ -291,7 +291,9 @@ nodes:
       status: 'completed',
       executionMode: 'review',
     });
-    expect(completed?.nodes.implement?.inlineAgents?.reviewer?.metadata?.['executionPolicy']).toMatchObject({
+    expect(
+      completed?.nodes.implement?.inlineAgents?.reviewer?.metadata?.['executionPolicy'],
+    ).toMatchObject({
       executionMode: 'review',
       timeoutSeconds: 900,
       timeoutDefaulted: true,

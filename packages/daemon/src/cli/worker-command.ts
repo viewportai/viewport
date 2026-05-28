@@ -126,7 +126,9 @@ async function workerRunOnce(): Promise<void> {
   const asJson = isJsonMode();
   const lease = getFlag('lease');
   if (!lease || lease.trim() === '') {
-    throw new Error('Usage: vpd worker run-once --lease <lease-token> [--transport polling|relay|inbound]');
+    throw new Error(
+      'Usage: vpd worker run-once --lease <lease-token> [--transport polling|relay|inbound]',
+    );
   }
   const result = await runStandaloneWorker({
     lifecycle: 'ephemeral',

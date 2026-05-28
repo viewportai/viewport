@@ -231,34 +231,39 @@ export interface ViewportConfig {
       publicKeyFingerprint?: string;
       runnerPool?: string;
       capabilities?: {
-          agents?: Array<{
-            id: string;
-            displayName?: string;
-            tier?: 'sdk' | 'pty';
-            available: boolean;
-            models?: string[];
-            default_model?: string;
-            tools?: string[];
-            supports_plan_mode?: boolean;
-          }> | Record<string, {
-            id?: string;
-            displayName?: string;
-            tier?: 'sdk' | 'pty';
-            available?: boolean;
-            models?: string[];
-            default_model?: string;
-            tools?: string[];
-            supports_plan_mode?: boolean;
-          }>;
-          models?: string[];
-          tools?: string[];
-          integrations?: string[];
-          secrets?: string[];
-          tags?: string[];
-          runner_pool?: string;
-          runnerPool?: string;
-        };
+        agents?:
+          | Array<{
+              id: string;
+              displayName?: string;
+              tier?: 'sdk' | 'pty';
+              available: boolean;
+              models?: string[];
+              default_model?: string;
+              tools?: string[];
+              supports_plan_mode?: boolean;
+            }>
+          | Record<
+              string,
+              {
+                id?: string;
+                displayName?: string;
+                tier?: 'sdk' | 'pty';
+                available?: boolean;
+                models?: string[];
+                default_model?: string;
+                tools?: string[];
+                supports_plan_mode?: boolean;
+              }
+            >;
+        models?: string[];
+        tools?: string[];
+        integrations?: string[];
+        secrets?: string[];
+        tags?: string[];
+        runner_pool?: string;
+        runnerPool?: string;
       };
+    };
   };
 }
 
@@ -651,25 +656,30 @@ export class ConfigManager {
           publicKeyFingerprint?: string;
           runnerPool?: string;
           capabilities?: {
-            agents?: Array<{
-              id: string;
-              displayName?: string;
-              tier?: 'sdk' | 'pty';
-              available: boolean;
-              models?: string[];
-              default_model?: string;
-              tools?: string[];
-              supports_plan_mode?: boolean;
-            }> | Record<string, {
-              id?: string;
-              displayName?: string;
-              tier?: 'sdk' | 'pty';
-              available?: boolean;
-              models?: string[];
-              default_model?: string;
-              tools?: string[];
-              supports_plan_mode?: boolean;
-            }>;
+            agents?:
+              | Array<{
+                  id: string;
+                  displayName?: string;
+                  tier?: 'sdk' | 'pty';
+                  available: boolean;
+                  models?: string[];
+                  default_model?: string;
+                  tools?: string[];
+                  supports_plan_mode?: boolean;
+                }>
+              | Record<
+                  string,
+                  {
+                    id?: string;
+                    displayName?: string;
+                    tier?: 'sdk' | 'pty';
+                    available?: boolean;
+                    models?: string[];
+                    default_model?: string;
+                    tools?: string[];
+                    supports_plan_mode?: boolean;
+                  }
+                >;
             models?: string[];
             tools?: string[];
             integrations?: string[];

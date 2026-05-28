@@ -131,11 +131,11 @@ export class ClaudeSession extends EventEmitter implements Session {
     this.query = this.queryFn({
       prompt: initialPrompt,
       options: {
-          cwd,
-          model: options?.model,
-          sessionId: this.id,
-          ...claudeToolOptions(options),
-          canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
+        cwd,
+        model: options?.model,
+        sessionId: this.id,
+        ...claudeToolOptions(options),
+        canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
         ...claudeBudgetOptions(options),
@@ -165,11 +165,11 @@ export class ClaudeSession extends EventEmitter implements Session {
     this.query = this.queryFn({
       prompt: explicitPrompt,
       options: {
-          cwd,
-          model: options?.model,
-          resume: sessionId,
-          ...claudeToolOptions(options),
-          canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
+        cwd,
+        model: options?.model,
+        resume: sessionId,
+        ...claudeToolOptions(options),
+        canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
         ...claudeBudgetOptions(options),
@@ -616,9 +616,10 @@ function claudePermissionOptions(options: SessionOptions | undefined): { permiss
   return {};
 }
 
-function claudeBudgetOptions(
-  options: SessionOptions | undefined,
-): { maxTurns?: number; maxBudgetUsd?: number } {
+function claudeBudgetOptions(options: SessionOptions | undefined): {
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+} {
   const maxTurns = options?.config?.maxTurns;
   const maxBudgetUsd = options?.config?.maxBudgetUsd ?? options?.config?.costCapUsd;
   return {
@@ -627,14 +628,18 @@ function claudeBudgetOptions(
   };
 }
 
-function claudeToolOptions(
-  options: SessionOptions | undefined,
-): { tools?: string[] | { type: 'preset'; preset: 'claude_code' }; allowedTools?: string[] } {
+function claudeToolOptions(options: SessionOptions | undefined): {
+  tools?: string[] | { type: 'preset'; preset: 'claude_code' };
+  allowedTools?: string[];
+} {
   if (options?.config?.executionMode === 'plan') {
     return { tools: [] };
   }
 
-  if (options?.config?.executionMode === 'read_only' || options?.config?.executionMode === 'review') {
+  if (
+    options?.config?.executionMode === 'read_only' ||
+    options?.config?.executionMode === 'review'
+  ) {
     const tools = options.config.allowedTools ?? ['Read', 'Grep', 'Glob'];
     return { tools, allowedTools: tools };
   }

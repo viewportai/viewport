@@ -40,12 +40,10 @@ describe('worker command', () => {
 
   it('reports configured worker lifecycle, transport, and identity', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
-    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
-      '../../src/cli/worker-profile.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
     await storeWorkerProfile(
       null,
       await resolveWorkerProfileDefaults({

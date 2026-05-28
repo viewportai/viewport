@@ -82,11 +82,7 @@ class MockAdapter implements AgentAdapter {
     return session;
   }
 
-  async resumeSession(
-    sessionId: string,
-    _cwd: string,
-    options?: SessionOptions,
-  ): Promise<Session> {
+  async resumeSession(sessionId: string, _cwd: string, options?: SessionOptions): Promise<Session> {
     this.lastOptions = options;
     const session = new MockSession(sessionId);
     this.lastSession = session;

@@ -125,7 +125,9 @@ describe('standalone worker runtime', () => {
       pollIntervalMs: 5,
       abortSignal: abort.signal,
     });
-    await waitUntil(() => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 2);
+    await waitUntil(
+      () => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 2,
+    );
     abort.abort();
     const result = await run;
 
@@ -253,8 +255,7 @@ nodes:
       requests.filter(
         (request) =>
           request.method === 'POST' &&
-          request.url ===
-            '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+          request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       ),
     ).toHaveLength(2);
     const sync = requests.find(

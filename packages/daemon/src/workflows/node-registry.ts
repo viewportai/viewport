@@ -940,7 +940,8 @@ function buildShellExecutionReceipt(input: {
     timeout_seconds: input.timeoutSeconds ?? null,
     authority: shellAuthorityReceipt(input.run),
     started_at: new Date(input.startedAt).toISOString(),
-    completed_at: input.completedAt !== undefined ? new Date(input.completedAt).toISOString() : null,
+    completed_at:
+      input.completedAt !== undefined ? new Date(input.completedAt).toISOString() : null,
     duration_ms: durationMs,
     exit_code: input.exitCode ?? null,
     denial: input.denial

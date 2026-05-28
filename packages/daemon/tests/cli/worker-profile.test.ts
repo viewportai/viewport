@@ -24,9 +24,8 @@ describe('worker profile defaults', () => {
   });
 
   it('uses hosted Viewport and polling worker defaults with an isolated workspace root', async () => {
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults } = await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
@@ -58,9 +57,8 @@ describe('worker profile defaults', () => {
       'ephemeral',
     ];
     vi.resetModules();
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults } = await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
@@ -86,9 +84,8 @@ describe('worker profile defaults', () => {
       'polling',
     ];
     vi.resetModules();
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults } = await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
@@ -102,29 +99,20 @@ describe('worker profile defaults', () => {
   });
 
   it('auto-detects built-in agent capabilities for worker pairing evidence', async () => {
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults } = await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
     });
 
-    expect(Object.keys(profile.capabilities.agents).sort()).toEqual([
-      'claude',
-      'codex',
-      'gemini',
-    ]);
+    expect(Object.keys(profile.capabilities.agents).sort()).toEqual(['claude', 'codex', 'gemini']);
     for (const agent of Object.values(profile.capabilities.agents)) {
       expect(typeof agent.available).toBe('boolean');
     }
-    expect(profile.capabilities.agents.claude?.models).toEqual(
-      expect.arrayContaining(['sonnet']),
-    );
-    expect(profile.capabilities.agents.codex?.models).toEqual(
-      expect.arrayContaining(['gpt-5.4']),
-    );
+    expect(profile.capabilities.agents.claude?.models).toEqual(expect.arrayContaining(['sonnet']));
+    expect(profile.capabilities.agents.codex?.models).toEqual(expect.arrayContaining(['gpt-5.4']));
     expect(profile.capabilities.integrations).toEqual(
       expect.arrayContaining(['github', 'slack', 'linear']),
     );
@@ -136,21 +124,12 @@ describe('worker profile defaults', () => {
   });
 
   it('carries an explicit runner pool through worker pairing defaults', async () => {
-    process.argv = [
-      'node',
-      'vpd',
-      'pair',
-      '--worker',
-      '--runner-pool',
-      'acme-local',
-    ];
+    process.argv = ['node', 'vpd', 'pair', '--worker', '--runner-pool', 'acme-local'];
     vi.resetModules();
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
-    const { resolveWorkerProfileDefaults, workerPairingPayload } = await import(
-      '../../src/cli/worker-profile.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, workerPairingPayload } =
+      await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
@@ -164,12 +143,10 @@ describe('worker profile defaults', () => {
   });
 
   it('persists worker profile config and identity without monitor state', async () => {
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
-    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
-      '../../src/cli/worker-profile.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
@@ -194,18 +171,16 @@ describe('worker profile defaults', () => {
     expect(config.daemon.worker.transport).toBe('polling');
     expect(config.daemon.worker.workspaceRoot).toBe(path.join(homeDir, 'workspace'));
     expect(config.daemon.worker.publicKeyFingerprint).toBe(profile.publicKeyFingerprint);
-    await expect(fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8')).resolves.toContain(
-      'BEGIN PRIVATE KEY',
-    );
+    await expect(
+      fs.readFile(path.join(homeDir, 'worker', 'identity.json'), 'utf8'),
+    ).resolves.toContain('BEGIN PRIVATE KEY');
   });
 
   it('stores hosted managed executor fields returned by worker pairing approval', async () => {
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
-    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
-      '../../src/cli/worker-profile.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
@@ -239,7 +214,9 @@ describe('worker profile defaults', () => {
     expect(config.daemon.worker.managedExecutorId).toBe('executor_123');
     expect(config.daemon.worker.credential).toBe('vpexec_secret');
 
-    const pairing = JSON.parse(await fs.readFile(path.join(homeDir, 'worker', 'pairing.json'), 'utf8')) as {
+    const pairing = JSON.parse(
+      await fs.readFile(path.join(homeDir, 'worker', 'pairing.json'), 'utf8'),
+    ) as {
       managedExecutorId: string;
       runtimeTargetId: string;
       serverUrl: string;
@@ -252,12 +229,10 @@ describe('worker profile defaults', () => {
   it('uses the active profile home for worker state instead of the monitor default home', async () => {
     process.env['VIEWPORT_PROFILE'] = 'payments-worker';
     vi.resetModules();
-    const { resolvePairingServerTransport } = await import(
-      '../../src/cli/lifecycle-pair-server.js'
-    );
-    const { resolveWorkerProfileDefaults, storeWorkerProfile } = await import(
-      '../../src/cli/worker-profile.js'
-    );
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
 
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),

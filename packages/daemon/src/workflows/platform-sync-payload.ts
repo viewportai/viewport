@@ -409,7 +409,7 @@ function usageCostSource(value: unknown): UsageCostSource | null {
 
 function mergedCostSource(usage: Array<Record<string, unknown>>): UsageCostSource {
   const sources = new Set(usage.map((entry) => usageCostSource(entry['cost_source']) ?? 'unknown'));
-  return sources.size === 1 ? [...sources][0] ?? 'unknown' : 'unknown';
+  return sources.size === 1 ? ([...sources][0] ?? 'unknown') : 'unknown';
 }
 
 function sumNumbers(values: unknown[]): number {

@@ -60,9 +60,7 @@ describe('workflow prompt output recovery', () => {
     const run = workflowRun(projectPath, worktreePath);
     const node = run.nodes['review']!;
 
-    await expect(readPromptNodeOutput(run, node, { allowCodexDiscovery: false })).resolves.toBe(
-      '',
-    );
+    await expect(readPromptNodeOutput(run, node, { allowCodexDiscovery: false })).resolves.toBe('');
     await expect(
       readPromptNodeTranscriptExcerpt(run, node, { allowCodexDiscovery: false }),
     ).resolves.toEqual([]);

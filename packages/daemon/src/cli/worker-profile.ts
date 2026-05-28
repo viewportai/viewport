@@ -7,7 +7,10 @@ import { AgentRegistry } from '../core/agent-registry.js';
 import { ConfigManager, configDir } from '../core/config.js';
 import type { ViewportConfig } from '../core/config.js';
 import { getFlag, hasFlag } from './args.js';
-import type { PairingPollApprovedData, PairingServerTransportConfig } from './lifecycle-pair-server.js';
+import type {
+  PairingPollApprovedData,
+  PairingServerTransportConfig,
+} from './lifecycle-pair-server.js';
 import { resolvePairingServerTransport } from './lifecycle-pair-server.js';
 
 export type WorkerLifecycle = 'persistent' | 'ephemeral';
@@ -69,11 +72,7 @@ export interface WorkerPairingPayload {
 
 const WORKER_RUNTIME_TOOLS = ['shell'];
 const BROKERED_PROVIDER_INTEGRATIONS = ['github', 'slack', 'linear'];
-const DEFAULT_RUNNER_LOCAL_SECRETS = [
-  'github/runner-local',
-  'github/pr-writer',
-  'slack/notifier',
-];
+const DEFAULT_RUNNER_LOCAL_SECRETS = ['github/runner-local', 'github/pr-writer', 'slack/notifier'];
 
 interface WorkerIdentityFile {
   version: 1;
@@ -294,14 +293,18 @@ function normalizeOptionalSlug(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   if (!normalized) return undefined;
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(normalized)) {
-    throw new Error('Worker runner pool must start with a letter or number and contain only letters, numbers, dots, underscores, or dashes.');
+    throw new Error(
+      'Worker runner pool must start with a letter or number and contain only letters, numbers, dots, underscores, or dashes.',
+    );
   }
   return normalized;
 }
 
 async function ensureWorkerIdentity(identityPath: string): Promise<WorkerIdentityFile> {
   try {
-    const parsed = JSON.parse(await fs.readFile(identityPath, 'utf8')) as Partial<WorkerIdentityFile>;
+    const parsed = JSON.parse(
+      await fs.readFile(identityPath, 'utf8'),
+    ) as Partial<WorkerIdentityFile>;
     if (
       parsed.version === 1 &&
       parsed.algorithm === 'ed25519' &&
@@ -319,10 +322,7 @@ async function ensureWorkerIdentity(identityPath: string): Promise<WorkerIdentit
   const publicKey = pair.publicKey.export({ format: 'pem', type: 'spki' }).toString();
   const privateKey = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
   const publicKeyDer = pair.publicKey.export({ format: 'der', type: 'spki' });
-  const publicKeyFingerprint = crypto
-    .createHash('sha256')
-    .update(publicKeyDer)
-    .digest('hex');
+  const publicKeyFingerprint = crypto.createHash('sha256').update(publicKeyDer).digest('hex');
   const record: WorkerIdentityFile = {
     version: 1,
     algorithm: 'ed25519',

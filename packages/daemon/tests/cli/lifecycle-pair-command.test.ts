@@ -60,15 +60,7 @@ describe('lifecycle pair command', () => {
     await listen(server);
     const serverUrl = localServerUrl(server);
 
-    process.argv = [
-      'node',
-      'vpd',
-      'pair',
-      '--worker',
-      '--server',
-      serverUrl,
-      '--json',
-    ];
+    process.argv = ['node', 'vpd', 'pair', '--worker', '--server', serverUrl, '--json'];
     const printed: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((value) => {
       printed.push(String(value));
