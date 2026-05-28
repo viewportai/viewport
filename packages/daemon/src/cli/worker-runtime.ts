@@ -22,6 +22,7 @@ export interface StandaloneWorkerOptions {
   transport: WorkerTransport;
   once: boolean;
   leaseToken?: string;
+  leaseSeconds?: number;
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
 }
@@ -92,6 +93,8 @@ interface HostedWorkerFailure {
   retrySafe: boolean;
 }
 
+const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
+
 export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
@@ -133,6 +136,7 @@ export async function runStandaloneWorker(
       const lease = await claimLease(profile, {
         lifecycle: options.lifecycle,
         transport,
+        leaseSeconds: options.leaseSeconds,
       });
       if (!lease) {
         if (options.once || options.lifecycle !== 'persistent') break;
@@ -273,10 +277,11 @@ async function claimLease(
   profile: WorkerRuntimeProfile,
   body: Record<string, unknown>,
 ): Promise<ClaimedLease | null> {
+  const leaseSeconds = positiveInteger(body['leaseSeconds']) ?? DEFAULT_HOSTED_LEASE_SECONDS;
   const response = isHostedManagedExecutorProfile(profile)
     ? await hostedManagedExecutorFetch(profile, 'POST', 'claim', {
         credential: profile.credential,
-        lease_seconds: 300,
+        lease_seconds: leaseSeconds,
       })
     : await workerFetch(profile, 'workers/claim', body);
   if (response.status === 204) return null;
@@ -831,6 +836,13 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

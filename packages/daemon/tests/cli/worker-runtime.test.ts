@@ -82,6 +82,33 @@ describe('standalone worker runtime', () => {
     await expectSignedRequest(requests[0], homeDir);
   });
 
+  it('lets hosted polling workers request an explicit lease duration', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--lease',
+      '3600',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const claim = requests.find((request) => request.url.endsWith('/claim'));
+    expect(claim?.body).toMatchObject({ lease_seconds: 3600 });
+  });
+
   it('advertises persisted worker capabilities on standalone heartbeat', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
