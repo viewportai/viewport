@@ -290,14 +290,20 @@ function aggregateRunUsage(run: WorkflowRunRecord): Record<string, unknown> | nu
   }
 
   const inputTokens = sumNumbers(available.map((usage) => usage['input_tokens']));
+  const rawProviderInput = available.some((usage) => usage['input_token_scope'] === 'raw_provider');
   const outputTokens = sumNumbers(available.map((usage) => usage['output_tokens']));
+  const billableInputTokens = sumNumbers(available.map((usage) => usage['billable_input_tokens']));
+  const budgetedTotalTokens = sumNumbers(available.map((usage) => usage['budgeted_total_tokens']));
   const costUsd = sumNumbers(available.map((usage) => usage['cost_usd']));
   return {
     schema: 'viewport.usage_ledger/v1',
     available: true,
     input_tokens: inputTokens,
+    input_token_scope: rawProviderInput ? 'raw_provider' : 'billable',
     output_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
+    billable_input_tokens: billableInputTokens,
+    budgeted_total_tokens: budgetedTotalTokens,
     cost_usd: roundCost(costUsd),
     total_cost_usd: roundCost(costUsd),
     llm_cost_usd: roundCost(costUsd),
@@ -329,12 +335,29 @@ function normalizeUsageLedger(value: unknown): Record<string, unknown> | null {
   }
 
   const inputTokens = numberValue(usage['input_tokens']) ?? numberValue(usage['inputTokens']) ?? 0;
+  const inputTokenScope =
+    stringValue(usage['input_token_scope']) ?? stringValue(usage['inputTokenScope']);
   const outputTokens =
     numberValue(usage['output_tokens']) ?? numberValue(usage['outputTokens']) ?? 0;
   const totalTokens =
     numberValue(usage['total_tokens']) ??
     numberValue(usage['totalTokens']) ??
     inputTokens + outputTokens;
+  const cacheReadInputTokens =
+    numberValue(usage['cache_read_input_tokens']) ?? numberValue(usage['cacheReadInputTokens']);
+  const cacheCreationInputTokens =
+    numberValue(usage['cache_creation_input_tokens']) ??
+    numberValue(usage['cacheCreationInputTokens']);
+  const billableInputTokens =
+    numberValue(usage['billable_input_tokens']) ??
+    numberValue(usage['billableInputTokens']) ??
+    (inputTokenScope === 'raw_provider'
+      ? 0
+      : Math.max(0, inputTokens - (cacheReadInputTokens ?? 0)));
+  const budgetedTotalTokens =
+    numberValue(usage['budgeted_total_tokens']) ??
+    numberValue(usage['budgetedTotalTokens']) ??
+    billableInputTokens + outputTokens;
   const costUsd =
     numberValue(usage['cost_usd']) ??
     numberValue(usage['costUsd']) ??
@@ -346,8 +369,13 @@ function normalizeUsageLedger(value: unknown): Record<string, unknown> | null {
     schema: 'viewport.usage_ledger/v1',
     available: true,
     input_tokens: inputTokens,
+    input_token_scope: inputTokenScope === 'raw_provider' ? 'raw_provider' : 'billable',
     output_tokens: outputTokens,
     total_tokens: totalTokens,
+    cache_read_input_tokens: cacheReadInputTokens ?? 0,
+    cache_creation_input_tokens: cacheCreationInputTokens ?? 0,
+    billable_input_tokens: billableInputTokens,
+    budgeted_total_tokens: budgetedTotalTokens,
     cost_usd: roundCost(costUsd),
     total_cost_usd: roundCost(costUsd),
     llm_cost_usd: roundCost(costUsd),

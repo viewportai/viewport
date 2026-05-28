@@ -111,15 +111,56 @@ describe('worker profile defaults', () => {
       server: await resolvePairingServerTransport(),
     });
 
-    expect(profile.capabilities.agents.map((agent) => agent.id).sort()).toEqual([
+    expect(Object.keys(profile.capabilities.agents).sort()).toEqual([
       'claude',
       'codex',
       'gemini',
     ]);
-    for (const agent of profile.capabilities.agents) {
+    for (const agent of Object.values(profile.capabilities.agents)) {
       expect(typeof agent.available).toBe('boolean');
     }
+    expect(profile.capabilities.agents.claude?.models).toEqual(
+      expect.arrayContaining(['sonnet']),
+    );
+    expect(profile.capabilities.agents.codex?.models).toEqual(
+      expect.arrayContaining(['gpt-5.4']),
+    );
+    expect(profile.capabilities.integrations).toEqual(
+      expect.arrayContaining(['github', 'slack', 'linear']),
+    );
+    expect(profile.capabilities.secrets).toEqual(
+      expect.arrayContaining(['github/pr-writer', 'slack/notifier']),
+    );
     expect(profile.capabilities.tools).toContain('shell');
+    expect(profile.capabilities.tools).toContain('git');
+  });
+
+  it('carries an explicit runner pool through worker pairing defaults', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'pair',
+      '--worker',
+      '--runner-pool',
+      'acme-local',
+    ];
+    vi.resetModules();
+    const { resolvePairingServerTransport } = await import(
+      '../../src/cli/lifecycle-pair-server.js'
+    );
+    const { resolveWorkerProfileDefaults, workerPairingPayload } = await import(
+      '../../src/cli/worker-profile.js'
+    );
+
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+    const payload = workerPairingPayload(profile);
+
+    expect(profile.runnerPool).toBe('acme-local');
+    expect(profile.capabilities.runner_pool).toBe('acme-local');
+    expect(payload.worker_runner_pool).toBe('acme-local');
   });
 
   it('persists worker profile config and identity without monitor state', async () => {

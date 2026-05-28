@@ -261,9 +261,23 @@ export interface ToolCallUpdate {
 export interface TokenUsage {
   type: 'token_usage';
   inputTokens: number;
+  inputTokenScope?: 'billable' | 'raw_provider';
   outputTokens: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  billableInputTokens?: number;
+  budgetedTotalTokens?: number;
   totalCostUsd?: number;
-  modelUsage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number }>;
+  modelUsage?: Record<
+    string,
+    {
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
+    }
+  >;
   durationMs?: number;
   numTurns?: number;
   timestamp: number;

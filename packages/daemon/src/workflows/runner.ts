@@ -556,7 +556,10 @@ export class WorkflowRunner {
   }
 
   async applyRuntimeCommandBody(runId: string, body: unknown): Promise<number> {
-    const run = await this.getRun(runId);
+    // Runtime commands are consumed by the worker's active execution loop.
+    // Use the durable store directly so command delivery cannot block on
+    // prompt-output reconciliation while a local run is awaiting approval.
+    const run = await this.store.get(runId);
     if (!run) return 0;
 
     let applied = 0;

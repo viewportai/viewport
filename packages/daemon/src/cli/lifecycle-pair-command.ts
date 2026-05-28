@@ -375,6 +375,9 @@ function workerJson(profile: WorkerProfileDefaults): Record<string, unknown> {
 function printWorkerPairedSummary(profile: WorkerProfileDefaults): void {
   console.log(`  Worker mode: ${profile.lifecycle}`);
   console.log(`  Transport:   ${profile.transport}`);
+  if (profile.runnerPool) {
+    console.log(`  Runner pool: ${profile.runnerPool}`);
+  }
   console.log(`  Work root:   ${profile.workspaceRoot}`);
 }
 

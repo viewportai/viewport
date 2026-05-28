@@ -187,6 +187,8 @@ export async function resolvePromptNodeContext(input: {
     maxSnippets: effective.maxItems,
   });
   const platformPolicies = platformResolution?.source_policies ?? [];
+  const workflowContextItems = workflowProducedContextItems(effective.refs, input.run);
+  const providerRefs = effective.refs.filter((ref) => !workflowProducedContextRef(ref, input.run));
   const providers =
     platformPolicies.length > 0
       ? selectProvidersForPolicies(
@@ -195,7 +197,7 @@ export async function resolvePromptNodeContext(input: {
         )
       : selectProviders(
           input.run.resourceManifest?.contract.contextProviders ?? [],
-          effective.refs,
+          providerRefs,
         );
   const denied = providers
     .map(({ provider }) => contextAuthorityDenial(input.run, input.nodeId, provider))
@@ -210,7 +212,7 @@ export async function resolvePromptNodeContext(input: {
     );
     throw new Error(denied.detail);
   }
-  const missingRequired = missingRequiredRefs(effective.refs, providers);
+  const missingRequired = missingRequiredRefs(providerRefs, providers);
   if (missingRequired.length > 0) {
     throw new Error(
       `Prompt node ${input.nodeId} missing required context provider(s): ${missingRequired.join(', ')}`,
@@ -240,7 +242,8 @@ export async function resolvePromptNodeContext(input: {
     items.push(...capped.map((item) => ({ ...item, alias })));
   }
 
-  const selectedItems = items.slice(0, effective.maxItems ?? items.length);
+  const combinedItems = [...workflowContextItems, ...items];
+  const selectedItems = combinedItems.slice(0, effective.maxItems ?? combinedItems.length);
   const contextReceipts = buildContextReceipts({
     run: input.run,
     nodeId: input.nodeId,
@@ -515,7 +518,9 @@ async function effectivePromptContext(
     !(nodeContext.allow_expansion ?? nodeContext.allowExpansion)
   ) {
     const allowed = new Set(defaultRefs.map((ref) => ref.ref));
-    const expanded = refs.filter((ref) => !allowed.has(ref.ref)).map((ref) => ref.ref);
+    const expanded = refs
+      .filter((ref) => !allowed.has(ref.ref) && !workflowProducedContextRef(ref, run))
+      .map((ref) => ref.ref);
     if (expanded.length > 0) {
       throw new Error(
         `Node context includes refs outside workflow defaults: ${expanded.join(', ')}. Set context.allow_expansion=true only with explicit policy approval.`,
@@ -718,6 +723,50 @@ function selectedProviderMatches(
   return providers.some(
     ({ provider }) => selected.has(provider.id) && matchesProviderRef(provider, ref),
   );
+}
+
+function workflowProducedContextItems(
+  refs: NormalizedContextRef[],
+  run: WorkflowRunRecord,
+): ResolvedContextItem[] {
+  return refs.flatMap((ref): ResolvedContextItem[] => {
+    const artifact = workflowProducedContextRef(ref, run);
+    if (!artifact) return [];
+    const state = run.nodes[artifact.nodeId];
+    const body = state?.output;
+    if (typeof body !== 'string' || body.trim() === '') return [];
+
+    return [
+      {
+        id: `workflow-artifact:${artifact.nodeId}:${artifact.name}`,
+        provider_id: ref.ref,
+        provider: 'workflow-artifact',
+        privacy: 'workflow_internal',
+        title:
+          artifact.name === 'approved_body'
+            ? `Approved body from ${artifact.nodeId}`
+            : `Output from ${artifact.nodeId}`,
+        body,
+        source: `workflow://${run.id}/nodes/${artifact.nodeId}/${artifact.name}`,
+      },
+    ];
+  });
+}
+
+function workflowProducedContextRef(
+  ref: NormalizedContextRef,
+  run: WorkflowRunRecord,
+): { nodeId: string; name: string } | null {
+  const match = /^([A-Za-z0-9_-][A-Za-z0-9._/-]*)\.(approved_body|output)$/.exec(
+    ref.ref.trim(),
+  );
+  if (!match?.[1] || !match[2]) return null;
+
+  const state = run.nodes[match[1]];
+  if (!state || state.status !== 'completed') return null;
+  if (typeof state.output !== 'string' || state.output.trim() === '') return null;
+
+  return { nodeId: match[1], name: match[2] };
 }
 
 function matchesProviderRef(provider: SessionContextProviderManifest, ref: string): boolean {

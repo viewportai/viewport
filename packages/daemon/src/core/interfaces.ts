@@ -100,12 +100,26 @@ export type AgentRunStopReason =
 export interface AgentRunUsage {
   available: boolean;
   inputTokens?: number;
+  inputTokenScope?: 'billable' | 'raw_provider';
   outputTokens?: number;
   totalTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  billableInputTokens?: number;
+  budgetedTotalTokens?: number;
   totalCostUsd?: number;
   estimated?: boolean;
   reason?: 'adapter_no_usage' | 'provider_no_cost' | 'stream_missing_final_usage';
-  modelUsage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number }>;
+  modelUsage?: Record<
+    string,
+    {
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
+    }
+  >;
   durationMs?: number;
   numTurns?: number;
 }

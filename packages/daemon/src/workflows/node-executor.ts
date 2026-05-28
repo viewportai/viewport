@@ -390,9 +390,12 @@ async function executePromptNode(
     ...(budget ? { budget } : {}),
     executionModeDefaulted: sessionPolicy.executionModeDefaulted,
     timeoutDefaulted: sessionPolicy.timeoutDefaulted,
-    outputFallback: () => readPromptNodeOutput(run, state),
+    outputFallback: () =>
+      readPromptNodeOutput(run, state, { allowCodexDiscovery: node.agent === 'codex' }),
     outputData: async () => {
-      const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state);
+      const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state, {
+        allowCodexDiscovery: node.agent === 'codex',
+      });
       return transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {};
     },
   });

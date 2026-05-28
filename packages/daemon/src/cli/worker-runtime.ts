@@ -6,6 +6,7 @@ import { Daemon } from '../core/daemon.js';
 import { loadAgents } from '../startup-agents.js';
 import { GitTracker } from '../tracking/git-tracker.js';
 import { workflowRunToSyncPayload } from '../workflows/platform-sync-payload.js';
+import { WorkflowRunStore } from '../workflows/store.js';
 import type {
   WorkflowDataCapturePolicy,
   WorkflowInputValue,
@@ -20,6 +21,8 @@ export interface StandaloneWorkerOptions {
   transport: WorkerTransport;
   once: boolean;
   leaseToken?: string;
+  pollIntervalMs?: number;
+  abortSignal?: AbortSignal;
 }
 
 export interface StandaloneWorkerResult {
@@ -92,6 +95,7 @@ export async function runStandaloneWorker(
     throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
   }
 
+  let lastHeartbeatAt = Date.now();
   await heartbeat(profile, {
     status: 'online',
     healthStatus: 'idle',
@@ -114,12 +118,27 @@ export async function runStandaloneWorker(
     cleanup: 0,
     denied: 0,
   };
-  do {
+  try {
+    while (!options.abortSignal?.aborted) {
     const lease = await claimLease(profile, {
       lifecycle: options.lifecycle,
       transport,
     });
-    if (!lease) break;
+    if (!lease) {
+      if (options.once || options.lifecycle !== 'persistent') break;
+      const now = Date.now();
+      if (now - lastHeartbeatAt > 30_000) {
+        await heartbeat(profile, {
+          status: 'online',
+          healthStatus: 'idle',
+          lifecycle: options.lifecycle,
+          transport,
+        });
+        lastHeartbeatAt = now;
+      }
+      await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
+      continue;
+    }
     result.claimed += 1;
     let execution = await executeClaim(profile, lease);
     if (
@@ -144,14 +163,16 @@ export async function runStandaloneWorker(
     }
     await cleanupLease(profile, lease);
     result.cleanup += 1;
-  } while (!options.once);
-
-  await heartbeat(profile, {
-    status: 'offline',
-    healthStatus: 'offline',
-    lifecycle: options.lifecycle,
-    transport,
-  });
+      if (options.once) break;
+    }
+  } finally {
+    await heartbeat(profile, {
+      status: 'offline',
+      healthStatus: 'offline',
+      lifecycle: options.lifecycle,
+      transport,
+    });
+  }
 
   return result;
 }
@@ -493,8 +514,9 @@ async function createStandaloneWorkerDaemon(): Promise<Daemon> {
 async function waitForWorkflowRun(daemon: Daemon, runId: string): Promise<WorkflowRunRecord> {
   const deadline = Date.now() + 10 * 60_000;
   let last: WorkflowRunRecord | null = null;
+  const store = new WorkflowRunStore();
   while (Date.now() < deadline) {
-    last = await daemon.workflowRunner.getRun(runId);
+    last = (await store.get(runId)) ?? (await daemon.workflowRunner.getRun(runId));
     if (last && ['completed', 'failed', 'blocked', 'canceled'].includes(last.status)) {
       return last;
     }
@@ -590,15 +612,16 @@ function managedExecutorCapabilities(
   if (!Array.isArray(agents)) return capabilities;
   return {
     ...capabilities,
-    agents: agents.map((agent) => {
-      if (typeof agent !== 'object' || agent === null || Array.isArray(agent)) return agent;
-      const record = agent as Record<string, unknown>;
-      return {
-        id: record['id'],
-        available: record['available'],
-        tier: record['tier'],
-      };
-    }),
+    agents: Object.fromEntries(
+      agents
+        .filter((agent) => typeof agent === 'object' && agent !== null && !Array.isArray(agent))
+        .map((agent) => {
+          const record = agent as Record<string, unknown>;
+          const id = stringValue(record['id']);
+          return id ? [id, record] : null;
+        })
+        .filter((entry): entry is [string, Record<string, unknown>] => entry !== null),
+    ),
   };
 }
 
@@ -619,29 +642,64 @@ async function hostedManagedExecutorFetch(
     profile.workspaceId,
   )}/managed-executors/${encodeURIComponent(profile.managedExecutorId)}/${path}`;
   const serialized = method === 'GET' ? '' : JSON.stringify(body);
-  const signed = await signWorkerRequest(profile, method, requestPath, serialized);
-  const response = await transportFetch(`${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${profile.credential}`,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
-      'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
-      'X-Viewport-Worker-Timestamp': signed.timestamp,
-      'X-Viewport-Worker-Nonce': signed.nonce,
-      'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
-      'X-Viewport-Worker-Signature': signed.signature,
-    },
-    ...(method === 'GET' ? {} : { body: serialized }),
-  });
-  if (!response.ok && !allowedStatuses.includes(response.status)) {
+  const url = `${profile.serverUrl.replace(/\/+$/, '')}${requestPath}`;
+  let lastResponse: Response | null = null;
+  const maxAttempts = hostedManagedExecutorMaxAttempts();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const signed = await signWorkerRequest(profile, method, requestPath, serialized);
+    const response = await transportFetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${profile.credential}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
+        'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+        'X-Viewport-Worker-Timestamp': signed.timestamp,
+        'X-Viewport-Worker-Nonce': signed.nonce,
+        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+        'X-Viewport-Worker-Signature': signed.signature,
+      },
+      ...(method === 'GET' ? {} : { body: serialized }),
+    });
+    if (response.ok || allowedStatuses.includes(response.status)) {
+      return response;
+    }
+    lastResponse = response;
+    if (!isHostedManagedExecutorTransientStatus(response.status) || attempt === maxAttempts) {
+      break;
+    }
+    await response.text().catch(() => '');
+    await sleep(hostedManagedExecutorRetryDelayMs(response, attempt));
+  }
+
+  const response = lastResponse;
+  if (!response) {
+    throw new Error(`Hosted managed executor request ${path} failed before dispatch.`);
+  }
+  if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(
       `Hosted managed executor request ${path} failed with HTTP ${response.status}: ${text}`,
     );
   }
   return response;
+}
+
+function hostedManagedExecutorMaxAttempts(): number {
+  return 4;
+}
+
+function isHostedManagedExecutorTransientStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function hostedManagedExecutorRetryDelayMs(response: Response, attempt: number): number {
+  if (response.status === 429) {
+    return retryAfterMs(response);
+  }
+  return Math.min(500 * 2 ** (attempt - 1), 5_000);
 }
 
 function retryAfterMs(response: Response): number {
@@ -655,6 +713,20 @@ function retryAfterMs(response: Response): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+    function done(): void {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+  });
 }
 
 function stringValue(value: unknown): string | undefined {

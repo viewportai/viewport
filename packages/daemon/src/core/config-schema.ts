@@ -65,6 +65,28 @@ const WorkerCapabilityAgentSchema = z
     displayName: z.string().max(256).optional(),
     tier: z.enum(['sdk', 'pty']).optional(),
     available: z.boolean(),
+    models: z.array(z.string().min(1).max(255)).optional(),
+    default_model: z.string().min(1).max(255).optional(),
+    tools: z.array(z.string().min(1).max(128)).optional(),
+    supports_plan_mode: z.boolean().optional(),
+  })
+  .strict();
+
+const WorkerCapabilitiesSchema = z
+  .object({
+    agents: z
+      .union([
+        z.array(WorkerCapabilityAgentSchema),
+        z.record(z.string(), WorkerCapabilityAgentSchema),
+      ])
+      .optional(),
+    models: z.array(z.string().min(1).max(255)).optional(),
+    tools: z.array(z.string().min(1).max(128)).optional(),
+    integrations: z.array(z.string().min(1).max(255)).optional(),
+    secrets: z.array(z.string().min(1).max(255)).optional(),
+    tags: z.array(z.string().min(1).max(255)).optional(),
+    runner_pool: z.string().min(1).max(128).optional(),
+    runnerPool: z.string().min(1).max(128).optional(),
   })
   .strict();
 
@@ -140,13 +162,8 @@ export const ViewportConfigSchema = z
             stateDir: z.string().optional(),
             identityKeyPath: z.string().optional(),
             publicKeyFingerprint: z.string().optional(),
-            capabilities: z
-              .object({
-                agents: z.array(WorkerCapabilityAgentSchema).optional(),
-                tools: z.array(z.string().min(1).max(128)).optional(),
-              })
-              .strict()
-              .optional(),
+            runnerPool: z.string().min(1).max(128).optional(),
+            capabilities: WorkerCapabilitiesSchema.optional(),
           })
           .strict()
           .optional(),

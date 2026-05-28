@@ -56,11 +56,23 @@ export class MockSession extends EventEmitter implements Session {
     });
   }
 
-  emitTokenUsage(inputTokens: number, outputTokens: number, totalCostUsd?: number): void {
+  emitTokenUsage(
+    inputTokens: number,
+    outputTokens: number,
+    totalCostUsd?: number,
+    options: {
+      inputTokenScope?: 'billable' | 'raw_provider';
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
+      billableInputTokens?: number;
+      budgetedTotalTokens?: number;
+    } = {},
+  ): void {
     this.emit('message', {
       type: 'token_usage',
       inputTokens,
       outputTokens,
+      ...options,
       ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
       timestamp: Date.now(),
     });

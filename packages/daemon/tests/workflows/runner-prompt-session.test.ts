@@ -425,6 +425,79 @@ nodes:
     );
   });
 
+  it('does not count cache-read input tokens against workflow token budget', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-cache-budget-proof
+requires:
+  agents:
+    - claude
+policies:
+  budget:
+    maxTokens: 10000
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    prompt: Reuse cached context without exhausting budget.
+  after:
+    type: shell
+    needs: [plan]
+    command: printf ok
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    adapter.lastSession?.emitTokenUsage(560_000, 4_000, undefined, {
+      cacheReadInputTokens: 556_000,
+      billableInputTokens: 4_000,
+      budgetedTotalTokens: 8_000,
+    });
+    adapter.lastSession?.emitAgentMessage('cached plan');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.plan?.status).toBe('completed');
+    expect(completed?.nodes.plan?.metadata?.['usage']).toMatchObject({
+      inputTokens: 560_000,
+      outputTokens: 4_000,
+      totalTokens: 564_000,
+      cacheReadInputTokens: 556_000,
+      billableInputTokens: 4_000,
+      budgetedTotalTokens: 8_000,
+    });
+    expect(completed?.nodes.plan?.metadata?.['executionPolicy']).toMatchObject({
+      budgetEvaluation: {
+        exceeded: false,
+        usage: {
+          totalTokens: 564_000,
+          budgetedTotalTokens: 8_000,
+        },
+      },
+    });
+    expect(completed?.events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'budget-exceeded',
+      }),
+    );
+  });
+
   it('captures valid plan output schema before downstream nodes run', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

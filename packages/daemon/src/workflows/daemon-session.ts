@@ -71,9 +71,10 @@ export async function runWorkflowDaemonSession(
   const { run, nodeId, target } = request;
   const output = createSessionOutputCollector();
   let activeSessionId: string | null = null;
+  let activeNativeSessionId: string | null = null;
 
   const messageHandler = (event: { sessionId: string; message: SessionMessage }): void => {
-    if (event.sessionId !== activeSessionId) return;
+    if (event.sessionId !== activeSessionId && event.sessionId !== activeNativeSessionId) return;
     output.push(event.message);
   };
 
@@ -118,6 +119,7 @@ export async function runWorkflowDaemonSession(
     activeSessionId = sessionId;
     const launchedAgent = context.daemon.getSessionInfo(sessionId).agent;
     const nativeSessionId = context.daemon.getSessionNativeId(sessionId);
+    activeNativeSessionId = nativeSessionId;
     const worktreePath =
       readActiveSessionWorktreePath(context.daemon, sessionId) ??
       defaultWorktreePath(run, sessionId);
@@ -273,6 +275,7 @@ interface WorkflowBudgetEvaluation {
   usage: {
     available: boolean;
     totalTokens?: number;
+    budgetedTotalTokens?: number;
     totalCostUsd?: number;
   };
   caps: {
@@ -291,14 +294,18 @@ function evaluateAgentBudget(
       : typeof agentRun.usage.inputTokens === 'number' || typeof agentRun.usage.outputTokens === 'number'
         ? (agentRun.usage.inputTokens ?? 0) + (agentRun.usage.outputTokens ?? 0)
         : undefined;
+  const budgetedTotalTokens =
+    typeof agentRun.usage.budgetedTotalTokens === 'number'
+      ? agentRun.usage.budgetedTotalTokens
+      : totalTokens;
   const totalCostUsd = agentRun.usage.totalCostUsd;
   const reasons: string[] = [];
   if (
     budget?.maxTokens !== undefined &&
-    totalTokens !== undefined &&
-    totalTokens > budget.maxTokens
+    budgetedTotalTokens !== undefined &&
+    budgetedTotalTokens > budget.maxTokens
   ) {
-    reasons.push(`token budget exceeded (${totalTokens} > ${budget.maxTokens})`);
+    reasons.push(`token budget exceeded (${budgetedTotalTokens} > ${budget.maxTokens})`);
   }
   if (
     budget?.maxCostUsd !== undefined &&
@@ -316,6 +323,7 @@ function evaluateAgentBudget(
     usage: {
       available: agentRun.usage.available,
       ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(budgetedTotalTokens !== undefined ? { budgetedTotalTokens } : {}),
       ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
     },
     caps: {

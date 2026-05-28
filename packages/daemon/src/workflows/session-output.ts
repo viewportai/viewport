@@ -54,8 +54,32 @@ export function createSessionOutputCollector(): SessionOutputCollector {
         usage.available = true;
         delete usage.reason;
         usage.inputTokens = (usage.inputTokens ?? 0) + message.inputTokens;
+        usage.inputTokenScope =
+          usage.inputTokenScope === 'raw_provider' || message.inputTokenScope === 'raw_provider'
+            ? 'raw_provider'
+            : 'billable';
         usage.outputTokens = (usage.outputTokens ?? 0) + message.outputTokens;
         usage.totalTokens = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        if (typeof message.cacheReadInputTokens === 'number') {
+          usage.cacheReadInputTokens =
+            (usage.cacheReadInputTokens ?? 0) + message.cacheReadInputTokens;
+        }
+        if (typeof message.cacheCreationInputTokens === 'number') {
+          usage.cacheCreationInputTokens =
+            (usage.cacheCreationInputTokens ?? 0) + message.cacheCreationInputTokens;
+        }
+        usage.billableInputTokens =
+          typeof message.billableInputTokens === 'number'
+            ? (usage.billableInputTokens ?? 0) + message.billableInputTokens
+            : message.inputTokenScope === 'raw_provider'
+              ? usage.billableInputTokens
+              : Math.max(0, (usage.inputTokens ?? 0) - (usage.cacheReadInputTokens ?? 0));
+        usage.budgetedTotalTokens =
+          typeof message.budgetedTotalTokens === 'number'
+            ? (usage.budgetedTotalTokens ?? 0) + message.budgetedTotalTokens
+            : message.inputTokenScope === 'raw_provider'
+              ? (usage.budgetedTotalTokens ?? 0) + message.outputTokens
+              : (usage.billableInputTokens ?? 0) + (usage.outputTokens ?? 0);
         if (typeof message.totalCostUsd === 'number') {
           usage.totalCostUsd = (usage.totalCostUsd ?? 0) + message.totalCostUsd;
         }
@@ -168,6 +192,19 @@ function mergeModelUsage(
       inputTokens: (existing?.inputTokens ?? 0) + value.inputTokens,
       outputTokens: (existing?.outputTokens ?? 0) + value.outputTokens,
       costUsd: (existing?.costUsd ?? 0) + value.costUsd,
+      ...((existing?.cacheReadInputTokens ?? 0) + (value.cacheReadInputTokens ?? 0) > 0
+        ? {
+            cacheReadInputTokens:
+              (existing?.cacheReadInputTokens ?? 0) + (value.cacheReadInputTokens ?? 0),
+          }
+        : {}),
+      ...((existing?.cacheCreationInputTokens ?? 0) + (value.cacheCreationInputTokens ?? 0) > 0
+        ? {
+            cacheCreationInputTokens:
+              (existing?.cacheCreationInputTokens ?? 0) +
+              (value.cacheCreationInputTokens ?? 0),
+          }
+        : {}),
     };
   }
   return merged;

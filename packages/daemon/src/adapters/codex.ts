@@ -152,6 +152,8 @@ export class CodexSession extends EventEmitter implements Session {
         }
       } else if (typeof thread.run === 'function') {
         const result = await this.run(thread, text);
+        const usage = extractTokenUsageEvent(result);
+        if (usage) this.emitMessage(usage);
         aggregated = extractText(result);
       } else {
         throw new Error('Codex thread does not expose run or runStreamed');

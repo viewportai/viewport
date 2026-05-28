@@ -70,7 +70,7 @@ describe('standalone worker runtime', () => {
     expect(requests[0]?.body).toMatchObject({
       lifecycle: 'persistent',
       transport: 'polling',
-      capabilities: { agents: [] },
+      capabilities: { agents: {} },
     });
     await expectSignedRequest(requests[0], homeDir);
   });
@@ -107,6 +107,36 @@ describe('standalone worker runtime', () => {
       '/api/runtime/workers/leases/lease_token_123/sync',
       '/api/runtime/workers/leases/lease_token_123/cleanup',
     ]);
+  });
+
+  it('keeps persistent polling workers online while idle until stopped', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
+    const baseUrl = serverUrl(server);
+    await writeWorkerProfile(baseUrl);
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+    const abort = new AbortController();
+
+    const run = runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: false,
+      pollIntervalMs: 5,
+      abortSignal: abort.signal,
+    });
+    await waitUntil(() => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 2);
+    abort.abort();
+    const result = await run;
+
+    expect(result).toMatchObject({ claimed: 0, completed: 0, failed: 0, cleanup: 0 });
+    expect(requests.map((request) => request.url)).toEqual([
+      '/api/runtime/workers/heartbeat',
+      '/api/runtime/workers/claim',
+      '/api/runtime/workers/claim',
+      '/api/runtime/workers/heartbeat',
+    ]);
+    expect(requests.at(-1)?.body).toMatchObject({ status: 'offline', health_status: 'offline' });
   });
 
   it('fails closed for hosted managed executor claims without executable workflow material', async () => {
@@ -149,7 +179,9 @@ describe('standalone worker runtime', () => {
       runner_mode: 'self_hosted',
       runner_provider: 'local',
       capabilities: {
-        agents: [{ id: 'codex', available: true, tier: 'sdk' }],
+        agents: {
+          codex: { id: 'codex', available: true, tier: 'sdk' },
+        },
       },
     });
     expect(requests[2]?.headers['x-viewport-assignment-claim']).toBe('vpclaim_run_1');
@@ -169,6 +201,76 @@ describe('standalone worker runtime', () => {
       events: [expect.objectContaining({ type: 'run-failed', severity: 'error' })],
     });
     await expectSignedRequest(requests[2], homeDir);
+  });
+
+  it('retries transient hosted managed executor claim failures before executing', async () => {
+    const projectDir = path.join(homeDir, 'hosted-transient-claim-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      transientHostedClaimFailures: 1,
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-transient-claim-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - transient-claim-ok
+`,
+        source_ref: 'viewport://test/hosted-worker-transient-claim-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
+    expect(
+      requests.filter(
+        (request) =>
+          request.method === 'POST' &&
+          request.url ===
+            '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      ),
+    ).toHaveLength(2);
+    const sync = requests.find(
+      (request) =>
+        request.method === 'PATCH' &&
+        request.url ===
+          '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+    );
+    expect(sync?.body).toMatchObject({
+      status: 'completed',
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          proof: expect.objectContaining({ status: 'completed', output: 'transient-claim-ok' }),
+        }),
+      }),
+    });
   });
 
   it('executes hosted managed executor workflow material in-process before syncing', async () => {
@@ -244,6 +346,72 @@ nodes:
       ]),
     );
     await expectSignedRequest(requests[2], homeDir);
+  });
+
+  it('retries transient hosted managed executor sync failures without losing the lease', async () => {
+    const projectDir = path.join(homeDir, 'hosted-transient-sync-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      transientHostedSyncFailures: 1,
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-transient-sync-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - transient-sync-ok
+`,
+        source_ref: 'viewport://test/hosted-worker-transient-sync-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
+    const syncRequests = requests.filter(
+      (request) =>
+        request.method === 'PATCH' &&
+        request.url ===
+          '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+    );
+    expect(syncRequests).toHaveLength(2);
+    expect(syncRequests[0]?.body).toMatchObject({
+      status: 'completed',
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          proof: expect.objectContaining({ status: 'completed', output: 'transient-sync-ok' }),
+        }),
+      }),
+    });
+    expect(syncRequests[1]?.body).toMatchObject(syncRequests[0]?.body ?? {});
+    await expectSignedRequest(syncRequests[0], homeDir);
+    await expectSignedRequest(syncRequests[1], homeDir);
   });
 
   it('polls hosted approval commands and resumes a blocked workflow run', async () => {
@@ -548,6 +716,8 @@ async function startRuntimeServer(
   let blockedRuntimeRunId: string | null = null;
   let blockedNodeId: string | null = null;
   const rateLimitedBlockedNodes = new Set<string>();
+  let transientHostedClaimFailures = options.transientHostedClaimFailures ?? 0;
+  let transientHostedSyncFailures = options.transientHostedSyncFailures ?? 0;
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     requests.push({
@@ -559,6 +729,11 @@ async function startRuntimeServer(
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/api/runtime/workers/claim') {
       claimCount += 1;
+      if (options.claimAlwaysEmpty) {
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
       if (claimCount > 1) {
         response.statusCode = 204;
         response.end();
@@ -568,7 +743,18 @@ async function startRuntimeServer(
       return;
     }
     if (request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim') {
+      if (transientHostedClaimFailures > 0) {
+        transientHostedClaimFailures -= 1;
+        response.statusCode = 500;
+        response.end(JSON.stringify({ message: 'database is locked' }));
+        return;
+      }
       claimCount += 1;
+      if (options.claimAlwaysEmpty) {
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
       if (claimCount > 1) {
         response.statusCode = 204;
         response.end();
@@ -587,6 +773,17 @@ async function startRuntimeServer(
           },
         }),
       );
+      return;
+    }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync' &&
+      request.method === 'PATCH' &&
+      transientHostedSyncFailures > 0
+    ) {
+      transientHostedSyncFailures -= 1;
+      response.statusCode = 500;
+      response.end(JSON.stringify({ message: 'database is locked' }));
       return;
     }
     if (
@@ -683,9 +880,12 @@ async function startRuntimeServer(
 
 interface RuntimeServerOptions {
   hostedAssignment?: Record<string, unknown>;
+  claimAlwaysEmpty?: boolean;
+  transientHostedClaimFailures?: number;
   runtimeCommandsAfterBlockedSync?: boolean;
   runtimeCommandsByBlockedNode?: Record<string, { message: string }>;
   rateLimitOnceForBlockedNode?: string;
+  transientHostedSyncFailures?: number;
 }
 
 interface RuntimeRequest {
@@ -754,4 +954,13 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
       Buffer.from(signature, 'base64'),
     ),
   ).toBe(true);
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('Timed out waiting for condition.');
 }
