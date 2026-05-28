@@ -79,9 +79,86 @@ nodes:
       cwd: projectDir,
       env_keys: [],
       env_values_persisted: false,
-      timeout_seconds: null,
+      timeout_seconds: 600,
       exit_code: 7,
       denial: null,
+    });
+  });
+
+  it('applies and receipts the hard default shell timeout', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-default-timeout-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - ok
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'proof',
+      status: 'completed',
+      timeout_seconds: 600,
+    });
+  });
+
+  it('kills shell nodes when their explicit timeout is reached', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-timeout-proof
+nodes:
+  proof:
+    type: shell
+    timeoutSeconds: 1
+    argv:
+      - ${JSON.stringify(process.execPath)}
+      - -e
+      - setTimeout(() => {}, 5000)
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.proof?.status).toBe('failed');
+    expect(failed?.nodes.proof?.error).toContain('timed out after 1s');
+    expect(failed?.nodes.proof?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'proof',
+      status: 'failed',
+      timeout_seconds: 1,
+      exit_code: null,
     });
   });
 

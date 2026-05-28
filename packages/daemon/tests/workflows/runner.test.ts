@@ -83,7 +83,7 @@ nodes:
       cwd_digest: expect.stringMatching(/^sha256:/),
       env_keys: [],
       env_values_persisted: false,
-      timeout_seconds: null,
+      timeout_seconds: 600,
       exit_code: 0,
       denial: null,
       authority: expect.objectContaining({

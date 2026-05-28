@@ -12,6 +12,7 @@ import {
   resolveNodeCwd,
   runShellNode,
   ShellNodeError,
+  WORKFLOW_PROCESS_NODE_DEFAULT_TIMEOUT_SECONDS,
 } from './runtime-helpers.js';
 import { envNameForCredentialRef } from './action-provider-utils.js';
 import { executeSubflowNode } from './subflow-executor.js';
@@ -267,6 +268,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       run.directoryPath,
       await renderOptionalTemplate(node.cwd, run),
     );
+    const timeoutSeconds = node.timeoutSeconds ?? WORKFLOW_PROCESS_NODE_DEFAULT_TIMEOUT_SECONDS;
     const invocation = await renderShellInvocation(node, run);
     const env = await resolveNodeEnv(context, run, node);
     if (state) {
@@ -279,7 +281,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           executor: invocation.executor,
           cwd: artifactCwd,
           env,
-          timeoutSeconds: node.timeoutSeconds,
+          timeoutSeconds,
           startedAt,
           status: 'preflight',
         }),
@@ -297,7 +299,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             executor: invocation.executor,
             cwd: artifactCwd,
             env,
-            timeoutSeconds: node.timeoutSeconds,
+            timeoutSeconds,
             startedAt,
             completedAt: Date.now(),
             status: 'denied',
@@ -329,7 +331,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             executor: invocation.executor,
             cwd: artifactCwd,
             env,
-            timeoutSeconds: node.timeoutSeconds,
+            timeoutSeconds,
             startedAt,
             completedAt: Date.now(),
             status: 'denied',
@@ -346,7 +348,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       result = await invocation.run({
         cwd: artifactCwd,
         env,
-        timeoutSeconds: node.timeoutSeconds,
+        timeoutSeconds,
         signal: abort.signal,
         onOutput: ({ source, chunk, output }) => {
           addEvent(
@@ -375,7 +377,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             executor: invocation.executor,
             cwd: artifactCwd,
             env,
-            timeoutSeconds: node.timeoutSeconds,
+            timeoutSeconds,
             startedAt,
             completedAt: Date.now(),
             status:
@@ -402,7 +404,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           executor: invocation.executor,
           cwd: artifactCwd,
           env,
-          timeoutSeconds: node.timeoutSeconds,
+          timeoutSeconds,
           startedAt,
           completedAt: Date.now(),
           status: 'completed',
