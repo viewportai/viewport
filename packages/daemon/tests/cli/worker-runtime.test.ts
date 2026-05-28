@@ -75,6 +75,41 @@ describe('standalone worker runtime', () => {
     await expectSignedRequest(requests[0], homeDir);
   });
 
+  it('fails before control-plane contact when the worker workspace root is missing', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    await writeWorkerProfile(serverUrl(server));
+    const missingRoot = path.join(homeDir, 'missing-worker-root');
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const existing = manager.getDaemonConfig() ?? {};
+    await manager.setDaemonConfig({
+      ...existing,
+      worker: {
+        ...existing.worker,
+        workspaceRoot: missingRoot,
+      },
+    });
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await expect(worker()).rejects.toThrow('Worker workspace root is not available');
+    expect(requests).toEqual([]);
+  });
+
   it('runs an ephemeral lease token through sync and cleanup', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);

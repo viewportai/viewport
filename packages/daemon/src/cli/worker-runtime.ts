@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
@@ -88,6 +89,7 @@ export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
   const profile = await loadWorkerRuntimeProfile();
+  await validateWorkerWorkspaceRoot(profile.workspaceRoot);
   const transport = options.transport ?? profile.transport;
   if (transport === 'inbound') {
     throw new Error('Inbound worker transport is disabled until signed inbound proof lands.');
@@ -176,6 +178,26 @@ export async function runStandaloneWorker(
   }
 
   return result;
+}
+
+async function validateWorkerWorkspaceRoot(workspaceRoot: string): Promise<void> {
+  const resolved = path.resolve(workspaceRoot);
+  let stat;
+  try {
+    stat = await fs.stat(resolved);
+  } catch {
+    throw new Error(
+      `Worker workspace root is not available: ${resolved}. Run vpd pair --worker or configure a valid worker workspace root before starting the worker.`,
+    );
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Worker workspace root is not a directory: ${resolved}.`);
+  }
+  try {
+    await fs.access(resolved, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK);
+  } catch {
+    throw new Error(`Worker workspace root is not readable and writable: ${resolved}.`);
+  }
 }
 
 async function executeClaim(
