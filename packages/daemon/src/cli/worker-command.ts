@@ -6,6 +6,7 @@ import {
   defaultWorkerWorkspaceRoot,
   normalizeWorkerLifecycle,
   normalizeWorkerTransport,
+  resetWorkerProfile,
 } from './worker-profile.js';
 
 export async function worker(): Promise<void> {
@@ -20,6 +21,9 @@ export async function worker(): Promise<void> {
       return;
     case 'doctor':
       await workerDoctor();
+      return;
+    case 'reset':
+      await workerReset();
       return;
     case 'start':
       await workerStart();
@@ -44,6 +48,7 @@ function workerHelpText(): string {
     '  start --mode persistent --transport polling|relay|inbound',
     '  run-once --lease <lease-token> --transport polling|relay|inbound',
     '  doctor [--json]',
+    '  reset [--json]',
     '  help',
     '',
     'Pairing:',
@@ -100,6 +105,21 @@ async function workerDoctor(): Promise<void> {
     return;
   }
   console.log('Status:    configured');
+}
+
+async function workerReset(): Promise<void> {
+  const asJson = isJsonMode();
+  const result = await resetWorkerProfile();
+  if (asJson) {
+    printJson({ command: 'worker reset', ok: true, ...result });
+    return;
+  }
+  if (!result.hadWorkerProfile) {
+    console.log('No worker profile was configured.');
+    return;
+  }
+  console.log('Worker pairing reset.');
+  console.log('Run `vpd pair --worker --transport=polling` to pair this worker again.');
 }
 
 async function workerStart(): Promise<void> {

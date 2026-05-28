@@ -110,6 +110,46 @@ describe('standalone worker runtime', () => {
     expect(requests).toEqual([]);
   });
 
+  it('resets worker pairing and identity before re-pairing', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    await writeWorkerProfile(serverUrl(server));
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const firstWorker = manager.getDaemonConfig()?.worker;
+    const firstFingerprint = firstWorker?.publicKeyFingerprint;
+    const identityPath = firstWorker?.identityKeyPath;
+    expect(firstFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(identityPath).toBeTruthy();
+    await expect(fs.stat(String(identityPath))).resolves.toBeTruthy();
+
+    process.argv = ['node', 'vpd', 'worker', 'reset', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      ok: boolean;
+      hadWorkerProfile: boolean;
+      removedIdentity: boolean;
+    };
+    expect(payload).toMatchObject({
+      ok: true,
+      hadWorkerProfile: true,
+      removedIdentity: true,
+    });
+    await manager.load();
+    expect(manager.getDaemonConfig()?.worker).toBeUndefined();
+    await expect(fs.stat(String(identityPath))).rejects.toThrow();
+
+    await writeWorkerProfile(serverUrl(server));
+    await manager.load();
+    const nextWorker = manager.getDaemonConfig()?.worker;
+    expect(nextWorker?.publicKeyFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(nextWorker?.publicKeyFingerprint).not.toBe(firstFingerprint);
+  });
+
   it('runs an ephemeral lease token through sync and cleanup', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);

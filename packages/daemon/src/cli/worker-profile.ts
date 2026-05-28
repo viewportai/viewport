@@ -224,8 +224,50 @@ export async function storeWorkerProfile(
   }
 }
 
+export async function resetWorkerProfile(): Promise<{
+  hadWorkerProfile: boolean;
+  removedIdentity: boolean;
+  removedPairing: boolean;
+}> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const existing = manager.getDaemonConfig() ?? {};
+  const worker = existing.worker;
+  const identityKeyPath = worker?.identityKeyPath;
+  const stateDir = worker?.stateDir ?? path.join(configDir(), 'worker');
+  const pairingPath = path.join(stateDir, 'pairing.json');
+  let removedIdentity = false;
+  let removedPairing = false;
+
+  if (identityKeyPath) {
+    removedIdentity = await removeFileIfPresent(identityKeyPath);
+  }
+  removedPairing = await removeFileIfPresent(pairingPath);
+
+  await manager.setDaemonConfig({
+    ...existing,
+    worker: undefined,
+  });
+
+  return {
+    hadWorkerProfile: worker !== undefined,
+    removedIdentity,
+    removedPairing,
+  };
+}
+
 export function isWorkerPairing(): boolean {
   return hasFlag('worker');
+}
+
+async function removeFileIfPresent(filePath: string): Promise<boolean> {
+  try {
+    await fs.stat(filePath);
+    await fs.rm(filePath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function detectWorkerAgentCapabilities(): Promise<Record<string, WorkerCapabilityAgent>> {
