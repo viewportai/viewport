@@ -1,3 +1,10 @@
+## [0.22.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.0...@viewportai/daemon@0.22.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* sign managed worker runtime requests ([#125](https://github.com/viewportai/viewport/issues/125)) ([786d522](https://github.com/viewportai/viewport/commit/786d5225739deb79979816c5b090546fb3e3bec6))
+
 # [0.22.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.21.0...@viewportai/daemon@0.22.0) (2026-05-28)
 
 
