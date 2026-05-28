@@ -15,6 +15,7 @@ export interface ManagedWorkerOptions {
   workdir?: string;
   leaseSeconds: number;
   sleepSeconds: number;
+  commandSleepSeconds: number;
   maxRuns?: number;
   once: boolean;
   capabilities: ManagedWorkerCapabilities;
