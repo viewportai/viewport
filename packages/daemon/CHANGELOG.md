@@ -1,3 +1,10 @@
+## [0.22.7](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.6...@viewportai/daemon@0.22.7) (2026-05-28)
+
+
+### Bug Fixes
+
+* enforce workflow run max duration ([#133](https://github.com/viewportai/viewport/issues/133)) ([d728842](https://github.com/viewportai/viewport/commit/d728842930c4484d91c60e525e8e78fd9331b4f6))
+
 ## [0.22.6](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.5...@viewportai/daemon@0.22.6) (2026-05-28)
 
 
