@@ -15,6 +15,7 @@ import { daemonFetch, isDaemonRunning } from './daemon-client.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import { parseCsvList, parseTlsVerifyMode, transportFetch } from './network.js';
 import {
+  commandPollSeconds,
   delay,
   listFlagValue,
   positiveIntFlagValue,
@@ -331,6 +332,8 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
   const signingIdentity = loadSigningIdentity(registrationProfile);
   const detected = detectLocalCapabilities();
 
+  const sleepSeconds = positiveIntFlagValue(getFlag('sleep')) ?? 5;
+
   return {
     server: server.replace(/\/+$/, ''),
     workspaceId,
@@ -357,7 +360,12 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       undefined,
     workdir: getFlag('workdir') ? path.resolve(getFlag('workdir')!) : undefined,
     leaseSeconds: positiveIntFlagValue(getFlag('lease')) ?? 300,
-    sleepSeconds: positiveIntFlagValue(getFlag('sleep')) ?? 5,
+    sleepSeconds,
+    commandSleepSeconds: commandPollSeconds(
+      positiveIntFlagValue(getFlag('command-sleep')) ??
+        positiveIntFlagValue(process.env['VIEWPORT_MANAGED_EXECUTOR_COMMAND_SLEEP_SECONDS']),
+      sleepSeconds,
+    ),
     maxRuns: positiveIntFlagValue(getFlag('max-runs')),
     once: hasFlag('once'),
     capabilities: {
@@ -392,7 +400,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
 }
 
 function workflowWorkerUsage(): string {
-  return 'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--doctor|--preflight|--once]';
+  return 'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--sleep <seconds>] [--command-sleep <seconds>] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--sleep <seconds>] [--command-sleep <seconds>] [--doctor|--preflight|--once]';
 }
 
 interface RegistrationProfile {
@@ -1458,10 +1466,10 @@ async function waitForApprovalAndResume(
           nextApproved.node_key !== approved.node_key &&
           blockedIds.has(nextApproved.node_key)
         ) {
-          await delay(options.sleepSeconds * 1000);
+          await delay(options.commandSleepSeconds * 1000);
           continue;
         }
-        await delay(options.sleepSeconds * 1000);
+        await delay(options.commandSleepSeconds * 1000);
         return resumed;
       }
       if (
@@ -1484,7 +1492,7 @@ async function waitForApprovalAndResume(
       await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
-    await delay(options.sleepSeconds * 1000);
+    await delay(options.commandSleepSeconds * 1000);
   }
 }
 

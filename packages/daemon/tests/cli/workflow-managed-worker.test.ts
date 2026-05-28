@@ -12,6 +12,7 @@ import {
   capabilityPayload,
   localRunToSyncPayload,
 } from '../../src/cli/workflow-managed-worker-format.js';
+import { commandPollSeconds } from '../../src/cli/workflow-managed-worker-util.js';
 
 const exec = promisify(execFile);
 
@@ -29,6 +30,12 @@ describe('workflow managed worker CLI', () => {
     process.argv = originalArgv;
     global.fetch = originalFetch;
     vi.doUnmock('../../src/cli/daemon-client.js');
+  });
+
+  it('keeps approval command polling faster than idle assignment polling by default', () => {
+    expect(commandPollSeconds(undefined, 5)).toBe(1);
+    expect(commandPollSeconds(undefined, 1)).toBe(1);
+    expect(commandPollSeconds(3, 5)).toBe(3);
   });
 
   it('advertises profile-declared tools instead of a hardcoded shell placeholder', () => {

@@ -12,6 +12,10 @@ export function positiveIntFlagValue(value: string | undefined): number | undefi
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+export function commandPollSeconds(value: number | undefined, idleSeconds: number): number {
+  return value ?? Math.min(idleSeconds, 1);
+}
+
 export async function safeText(response: Response | undefined): Promise<string> {
   if (!response) return '';
   try {
