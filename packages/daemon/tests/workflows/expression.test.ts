@@ -56,6 +56,22 @@ describe('expression', () => {
     expect(context.nodes.review?.output).toContain('issues found');
   });
 
+  it('exposes platform run identifiers and relative run URLs', () => {
+    const context = buildExpressionContext(
+      makeRun({
+        resourceId: 'workspace-1',
+        platformRunId: 'platform-run-1',
+      }),
+    );
+
+    expect(context.run).toMatchObject({
+      id: 'run-1',
+      platformId: 'platform-run-1',
+      resourceId: 'workspace-1',
+      url: '/workflows/runs/platform-run-1?resource=workspace-1&platformRun=platform-run-1',
+    });
+  });
+
   it('evaluates JSONata expressions over the run context', async () => {
     const context = buildExpressionContext(makeRun());
     expect(await evaluateExpression('inputs.focus', context)).toBe('reliability');
