@@ -89,7 +89,7 @@ nodes:
 
   it('recovers missing prompt output from the agent transcript', async () => {
     const daemon = await setup();
-    const adapter = new MockAdapter();
+    const adapter = new MockAdapter({ agentId: 'codex' });
     daemon.registerAdapter(adapter);
     const workflowPath = path.join(projectDir, 'workflow.yaml');
     await fs.writeFile(
@@ -99,11 +99,11 @@ schema: viewport.workflow/v1
 name: prompt-transcript-proof
 requires:
   agents:
-    - claude
+    - codex
 nodes:
   review:
     type: prompt
-    agent: claude
+    agent: codex
     prompt: Review the current directory.
 `,
       'utf-8',
@@ -152,6 +152,7 @@ nodes:
           type: 'prompt',
           status: 'running',
           sessionId,
+          metadata: { agent: 'codex' },
           startedAt: now - 1000,
         },
       },
