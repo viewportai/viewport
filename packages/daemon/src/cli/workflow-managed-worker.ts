@@ -1690,6 +1690,11 @@ async function resumeApprovedLocalRun(
   approved: NonNullable<ManagedAssignment['nodes']>[number],
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
+  const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+  const material = await materializeRunCredentials(options, {
+    ...assignment,
+    assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
+  });
   try {
     await daemonJson(
       'POST',
@@ -1704,6 +1709,7 @@ async function resumeApprovedLocalRun(
         expectedActionDigest: approvalExpectedActionDigest(approved),
         executionGrant: approvalExecutionGrant(approved),
         feedback: approvalFeedback(approved),
+        runtimeSecretEnv: material.runtimeSecretEnv,
       },
     );
   } catch (error) {

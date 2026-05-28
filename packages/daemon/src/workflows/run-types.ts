@@ -267,6 +267,7 @@ export interface WorkflowApprovalDecision {
   decision?: 'approve' | 'request_changes' | 'reject';
   message?: string;
   expectedActionDigest?: string;
+  runtimeSecretEnv?: Record<string, string>;
   actor?: WorkflowApprovalActor;
   feedback?: Record<string, unknown>;
   executionGrant?: WorkflowExecutionGrant;

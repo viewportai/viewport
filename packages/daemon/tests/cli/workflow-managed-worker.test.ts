@@ -1695,6 +1695,35 @@ nodes:
             assignment_claim_token: 'vpclaim_run_platform_2',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: gated\nnodes: {}\n',
             directory_path: '/repo',
+            workflow_authority_contract: {
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+              },
+              credentials: {
+                provider_actions: ['github/pr-writer'],
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_2/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_2',
+        );
+        expect(body).toMatchObject({
+          handle: 'github/pr-writer',
+          repository: 'viewportai/vp-example-repo',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_github_pr_writer',
+            handle: 'github/pr-writer',
+            kind: 'provider_action_secret',
+            provider: 'github',
+            storage_posture: 'viewport_managed',
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_run_scoped_pr_writer_after_approval',
           },
         });
       }
@@ -1706,6 +1735,14 @@ nodes:
           data: {
             id: 'run_platform_2',
             status: 'running',
+            workflow_authority_contract: {
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+              },
+              credentials: {
+                provider_actions: ['github/pr-writer'],
+              },
+            },
             nodes: [
               {
                 node_key: 'approve',
@@ -1779,6 +1816,9 @@ nodes:
             proposal_key: 'action:approve',
             approval_decision_key: 'approve-open-pr',
             issued_at: '2026-05-17T10:00:00.000Z',
+          },
+          runtimeSecretEnv: {
+            VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer_after_approval',
           },
         });
         expect(body.actor).toEqual({

@@ -136,6 +136,7 @@ export const WorkflowApprovalBodySchema = z
       })
       .strict()
       .optional(),
+    runtimeSecretEnv: z.record(z.string(), z.string()).optional(),
     message: z.string().trim().min(1).max(2_000).optional(),
     feedback: z.record(z.string(), z.unknown()).optional(),
     actor: z

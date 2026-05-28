@@ -1174,6 +1174,107 @@ nodes:
     }
   });
 
+  it('keeps run-scoped provider credentials available when resuming after approval', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 43,
+            html_url: 'https://github.com/acme/payments/pull/43',
+            url: 'https://api.github.com/repos/acme/payments/pulls/43',
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 43,
+            html_url: 'https://github.com/acme/payments/pull/43',
+            url: 'https://api.github.com/repos/acme/payments/pulls/43',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: provider-credential-resume-proof
+nodes:
+  review:
+    type: approval
+    prompt: Approve PR creation
+  open_pr:
+    type: action
+    needs: [review]
+    adapter: github
+    action: pull_request.create
+    idempotencyKey: pr-resume:PAY-1843
+    with:
+      repository: acme/payments
+      title: Viewport support fix
+      head: viewport/pay-1843
+      base: main
+      body: "Tests are passing."
+      credential_ref: github/pr-writer
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.status === 'blocked' && candidate.nodes.review?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'review', {
+      approved: true,
+      decision: 'approve',
+      message: 'Approved by test',
+      runtimeSecretEnv: {
+        VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer_after_approval',
+      },
+    });
+
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.github.com/repos/acme/payments/pulls',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer ghs_run_scoped_pr_writer_after_approval',
+          'Idempotency-Key': 'pr-resume:PAY-1843',
+        }),
+      }),
+    );
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
+      adapter: 'github',
+      action: 'pull_request.create',
+      status: 'executed',
+      response: {
+        status: 201,
+        htmlUrl: 'https://github.com/acme/payments/pull/43',
+        number: 43,
+      },
+    });
+  });
+
   it('executes native Jira comments and transitions with runner-local credentials', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);

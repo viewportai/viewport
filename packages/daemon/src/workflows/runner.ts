@@ -507,7 +507,10 @@ export class WorkflowRunner {
       );
       await this.saveAndEmit(run);
 
-      void this.runSchedulerWithRunTimeout(run.id, parsed, { resumed: true }).catch((error) => {
+      void this.runSchedulerWithRunTimeout(run.id, parsed, {
+        resumed: true,
+        runtimeSecretEnv: sanitizeRuntimeSecretEnv(decision.runtimeSecretEnv),
+      }).catch((error) => {
         void this.failRun(run.id, error instanceof Error ? error.message : String(error));
       });
       return run;
@@ -553,7 +556,10 @@ export class WorkflowRunner {
     addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
     await this.saveAndEmit(run);
 
-    void this.runSchedulerWithRunTimeout(run.id, parsed, { resumed: true }).catch((error) => {
+    void this.runSchedulerWithRunTimeout(run.id, parsed, {
+      resumed: true,
+      runtimeSecretEnv: sanitizeRuntimeSecretEnv(decision.runtimeSecretEnv),
+    }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
