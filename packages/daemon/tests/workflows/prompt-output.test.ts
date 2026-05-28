@@ -37,6 +37,7 @@ describe('workflow prompt output recovery', () => {
 
     const run = workflowRun(projectPath, worktreePath);
     const node = run.nodes['review']!;
+    node.metadata = { agent: 'codex' };
 
     await expect(readPromptNodeOutput(run, node)).resolves.toBe(
       'recovered from parent repo transcript',
@@ -46,7 +47,7 @@ describe('workflow prompt output recovery', () => {
     ]);
   });
 
-  it('can skip Codex transcript discovery for non-Codex workflow nodes', async () => {
+  it('skips Codex transcript discovery by default for non-Codex workflow nodes', async () => {
     const projectPath = await setupCodexHome();
     const worktreePath = path.join(projectPath, '.viewport', 'worktrees', 'workflow-session');
     await fs.mkdir(worktreePath, { recursive: true });
@@ -60,10 +61,8 @@ describe('workflow prompt output recovery', () => {
     const run = workflowRun(projectPath, worktreePath);
     const node = run.nodes['review']!;
 
-    await expect(readPromptNodeOutput(run, node, { allowCodexDiscovery: false })).resolves.toBe('');
-    await expect(
-      readPromptNodeTranscriptExcerpt(run, node, { allowCodexDiscovery: false }),
-    ).resolves.toEqual([]);
+    await expect(readPromptNodeOutput(run, node)).resolves.toBe('');
+    await expect(readPromptNodeTranscriptExcerpt(run, node)).resolves.toEqual([]);
   });
 });
 
