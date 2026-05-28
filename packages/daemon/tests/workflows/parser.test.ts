@@ -512,6 +512,25 @@ nodes:
     ]);
   });
 
+  it('accepts dynamic self-hosted runner target identifiers', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: runner/dynamic-target
+runner:
+  kind: self_hosted_runner
+  target: mehrs-macbook-pro-worker-2
+nodes:
+  inspect:
+    type: shell
+    command: npm test
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.runner?.target).toBe('mehrs-macbook-pro-worker-2');
+  });
+
   it('accepts mature workflow schema fields without losing deterministic parsing', () => {
     const parsed = parseWorkflow(
       `

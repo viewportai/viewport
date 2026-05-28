@@ -43,7 +43,7 @@ export const WorkflowTriggerDefinitionSchema = z.discriminatedUnion('type', [
 export const WorkflowRunnerRequirementSchema = z
   .object({
     kind: z.enum(['paired_daemon', 'self_hosted_runner']).optional(),
-    target: z.enum(['local_private', 'local_sandbox', 'managed', 'self_hosted', 'ci']).optional(),
+    target: identifierSchema.optional(),
     capabilities: z
       .array(
         z.enum([

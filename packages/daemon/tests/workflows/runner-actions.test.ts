@@ -476,6 +476,7 @@ nodes:
   it('executes native GitHub PR actions with runner-local credentials', async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -537,6 +538,16 @@ nodes:
       await waitForTerminalRun(daemon, run.id);
       const completed = await daemon.workflowRunner.getRun(run.id);
 
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('https://api.github.com/repos/acme/payments/pulls?'),
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer runner-token',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }),
+        }),
+      );
       expect(fetchMock).toHaveBeenCalledWith(
         'https://api.github.com/repos/acme/payments/pulls',
         expect.objectContaining({
@@ -890,6 +901,7 @@ nodes:
   it('executes GitHub pull_request.create with repository shorthand and runner-local credentials', async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -958,7 +970,7 @@ nodes:
           }),
         }),
       );
-      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
         title: 'Viewport support fix',
         head: 'viewport/pay-1842',
         base: 'main',

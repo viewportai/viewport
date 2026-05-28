@@ -56,6 +56,7 @@ interface WorkerIdentityFile {
 interface ClaimedLease {
   id: string;
   runId?: string;
+  runtimeRunId?: string;
   leaseToken?: string;
   assignmentClaimToken?: string;
   yamlSnapshot?: string;
@@ -246,6 +247,7 @@ async function claimLease(
     runId: stringValue(
       data['id'] ?? rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId'],
     ),
+    runtimeRunId: stringValue(data['runtime_run_id'] ?? rawLease['runtime_run_id']),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
     assignmentClaimToken: stringValue(data['assignment_claim_token']),
     yamlSnapshot: stringValue(data['yaml_snapshot'] ?? rawLease['yaml_snapshot']),
@@ -398,6 +400,17 @@ async function executeHostedWorkflowClaim(
 
   try {
     const daemon = await createStandaloneWorkerDaemon();
+    const existing = await existingHostedRuntimeRun(lease);
+    if (existing) {
+      return {
+        status: normalizeWorkflowStatus(existing.status),
+        run: existing,
+        daemon,
+        ...(existing.status === 'failed' || existing.status === 'canceled'
+          ? { failure: workflowRunFailure(existing) }
+          : {}),
+      };
+    }
     const directoryPath = path.resolve(lease.directoryPath ?? profile.workspaceRoot);
     await fs.mkdir(directoryPath, { recursive: true });
     const directory = await daemon.directoryManager.register(directoryPath);
@@ -436,6 +449,14 @@ async function executeHostedWorkflowClaim(
       },
     };
   }
+}
+
+async function existingHostedRuntimeRun(lease: ClaimedLease): Promise<WorkflowRunRecord | null> {
+  if (!lease.runtimeRunId) return null;
+  const existing = await new WorkflowRunStore().get(lease.runtimeRunId);
+  if (!existing) return null;
+  if (lease.runId && existing.platformRunId !== lease.runId) return null;
+  return existing;
 }
 
 async function resumeBlockedHostedExecution(

@@ -83,16 +83,36 @@ async function executeGitHubAction(
   }
 
   if (isGitHubPullRequestCreateAction(node.action)) {
+    const title = stringValue(actionInput['title']) ?? 'Viewport workflow change';
+    const head = stringValue(actionInput['head']) ?? stringValue(actionInput['branch']);
+    const base = stringValue(actionInput['base']) ?? 'main';
+    const body = stringValue(actionInput['body']);
+    const existing = await existingGitHubPullRequest(
+      run,
+      nodeId,
+      node,
+      actionInput,
+      {
+        owner,
+        repo,
+        token,
+        head,
+        base,
+      },
+      options.idempotencyKey,
+    );
+    if (existing) return existing;
+
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
       proposalInput: actionInput,
       body: {
-        title: stringValue(actionInput['title']) ?? 'Viewport workflow change',
-        head: stringValue(actionInput['head']) ?? stringValue(actionInput['branch']),
-        base: stringValue(actionInput['base']) ?? 'main',
-        body: stringValue(actionInput['body']),
+        title,
+        head,
+        base,
+        body,
         draft: booleanValue(actionInput['draft']),
       },
       reconcile: (parsed) =>
@@ -119,6 +139,103 @@ async function executeGitHubAction(
   }
 
   return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
+}
+
+async function existingGitHubPullRequest(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+  actionInput: Record<string, WorkflowInputValue>,
+  request: {
+    owner: string;
+    repo: string;
+    token: string;
+    head: string | undefined;
+    base: string;
+  },
+  idempotencyKey: string | undefined,
+): Promise<ActionResult | null> {
+  if (!request.head) return null;
+
+  const params = new URLSearchParams({
+    state: 'open',
+    head: request.head.includes(':') ? request.head : `${request.owner}:${request.head}`,
+    base: request.base,
+    per_page: '1',
+  });
+  const response = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(request.owner)}/${encodeURIComponent(request.repo)}/pulls?${params.toString()}`,
+    {
+      method: 'GET',
+      headers: githubHeaders(request.token),
+    },
+  );
+  if (!response.ok) return null;
+
+  const parsed = parseJson(await safeResponseText(response));
+  const pullRequest = Array.isArray(parsed) ? parsed[0] : null;
+  if (!pullRequest || typeof pullRequest !== 'object') return null;
+
+  const providerReconciliation = await reconcileProviderAction(
+    githubReconciliationRequest(githubHeaders(request.token), pullRequest, 'pull_request'),
+    undefined,
+    pullRequest,
+  );
+  const metadata = {
+    action: {
+      adapter: node.adapter,
+      action: node.action,
+      proposalKey: node.proposalKey ?? null,
+      idempotencyKey: idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
+      policyReason: actionPolicyReason(node),
+      status: 'executed',
+      idempotentReplay: true,
+      idempotent_replay: true,
+      digest: workflowActionProposalDigest(node, {
+        idempotencyKey,
+        input: actionInput,
+      }),
+      input: sanitizeActionInput(actionInput),
+      request: {
+        method: 'GET',
+        url: `https://api.github.com/repos/${encodeURIComponent(request.owner)}/${encodeURIComponent(request.repo)}/pulls`,
+      },
+      response: {
+        status: 200,
+        ok: true,
+        bodyExcerpt: 'Existing open pull request matched by head/base.',
+        htmlUrl: objectString(pullRequest, 'html_url'),
+        apiUrl: objectString(pullRequest, 'url'),
+        number: objectNumber(pullRequest, 'number'),
+      },
+      ...(providerReconciliation
+        ? {
+            providerReconciliation,
+            provider_reconciliation: providerReconciliation,
+          }
+        : {}),
+      ...approvedExecutionGrant(run, nodeId, node.requiresApproval === true),
+    },
+  };
+
+  addEvent(
+    run,
+    'action-executed',
+    `Action node ${nodeId} reused existing ${node.adapter}.${node.action}`,
+    metadata,
+    nodeId,
+  );
+  rememberExecutedAction(run, nodeId, node, idempotencyKey, actionInput, {
+    output: `${node.adapter}.${node.action} 200`,
+    response: metadata.action.response,
+    ...(providerReconciliation ? { providerReconciliation } : {}),
+  });
+
+  return {
+    output: `${node.adapter}.${node.action} 200`,
+    metadata,
+  };
 }
 
 async function executeJiraAction(
