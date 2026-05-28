@@ -1424,6 +1424,46 @@ nodes:
     expect(completed?.nodes.review?.error).toContain('timed out after 1s');
   }, 10_000);
 
+  it('fails and kills automated prompt sessions that enter permission wait', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-permission-stall-proof
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Try to use a tool that asks for local approval.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    const session = await waitForSessionWithPrompt(
+      adapter,
+      'Try to use a tool that asks for local approval.',
+    );
+    session.state = 'waiting_permission';
+    session.emit('state-change', 'waiting_permission');
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(session.kill).toHaveBeenCalled();
+    expect(completed?.status).toBe('failed');
+    expect(completed?.nodes.review?.status).toBe('failed');
+    expect(completed?.nodes.review?.error).toContain('interactive permission wait');
+  }, 10_000);
+
   it('does not relaunch a running prompt node that already has a session id on boot resume', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

@@ -32,7 +32,12 @@ export async function waitForPromptSessionComplete(
       finish(event.reason);
     };
     const stateHandler = (event: { sessionId: string; state: SessionState }): void => {
-      if (event.sessionId !== sessionId || !isPromptTerminalState(event.state)) return;
+      if (event.sessionId !== sessionId) return;
+      if (event.state === 'waiting_permission') {
+        finish('waiting_permission');
+        return;
+      }
+      if (!isPromptTerminalState(event.state)) return;
       if (event.state === 'errored') {
         setTimeout(() => finish('errored'), 0);
         return;
@@ -47,6 +52,10 @@ export async function waitForPromptSessionComplete(
       }
 
       const state = getSessionState(daemon, sessionId);
+      if (state === 'waiting_permission') {
+        finish('waiting_permission');
+        return;
+      }
       if (isPromptTerminalState(state)) {
         if (state === 'errored') {
           setTimeout(() => finish('errored'), 0);

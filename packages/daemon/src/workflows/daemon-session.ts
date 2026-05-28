@@ -171,6 +171,12 @@ export async function runWorkflowDaemonSession(
       sessionId,
       sessionPolicy.timeoutSeconds * 1000,
     );
+    if (reason === 'waiting_permission') {
+      await context.daemon.killSession(sessionId).catch(() => undefined);
+      throw new Error(
+        'Prompt session entered an interactive permission wait during automated workflow execution. Configure the node execution mode, allowed tools, or adapter permissions so workflow runs fail closed instead of waiting for local approval.',
+      );
+    }
     if (reason === 'timeout') {
       await context.daemon.killSession(sessionId).catch(() => undefined);
       throw new Error(`Prompt session timed out after ${sessionPolicy.timeoutSeconds}s`);
