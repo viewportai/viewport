@@ -195,6 +195,53 @@ nodes:
     );
   });
 
+  it('persists the detailed adapter error reason when a prompt session fails', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-error-detail-proof
+requires:
+  agents:
+    - claude
+nodes:
+  review:
+    type: prompt
+    agent: claude
+    prompt: Review the current directory.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'review');
+    if (!adapter.lastSession) throw new Error('Expected prompt session to launch');
+    adapter.lastSession.state = 'errored';
+    adapter.lastSession.emit('state-change', 'errored');
+    adapter.lastSession.emit('ended', 'error: codex quota exhausted');
+    await waitForTerminalRun(daemon, run.id);
+
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.review?.status).toBe('failed');
+    expect(failed?.nodes.review?.error).toContain('codex quota exhausted');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'session-ended',
+        data: expect.objectContaining({ reason: 'error: codex quota exhausted' }),
+      }),
+    );
+  });
+
   it('passes prompt execution mode and allowed tools into the launched agent session', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

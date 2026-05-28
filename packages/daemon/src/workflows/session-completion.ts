@@ -30,11 +30,21 @@ export async function waitForPromptSessionComplete(
     };
     const stateHandler = (event: { sessionId: string; state: SessionState }): void => {
       if (event.sessionId !== sessionId || !isPromptTerminalState(event.state)) return;
+      if (event.state === 'errored') {
+        setTimeout(() => finish('errored'), 0);
+        return;
+      }
       finish(event.state);
     };
     const timer = setInterval(() => {
       const state = getSessionState(daemon, sessionId);
-      if (isPromptTerminalState(state)) finish(state);
+      if (isPromptTerminalState(state)) {
+        if (state === 'errored') {
+          setTimeout(() => finish('errored'), 0);
+        } else {
+          finish(state);
+        }
+      }
       if (state === null && !daemon.hasSession(sessionId)) {
         missingPolls += 1;
         if (missingPolls >= 2) finish('completed');
