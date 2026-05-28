@@ -57,6 +57,7 @@ export interface ActiveSession {
 export class SessionManager {
   private sessions = new Map<string, ActiveSession>();
   private sessionModes = new Map<string, SessionAgentMode>();
+  private sessionEndReasons = new Map<string, string>();
 
   constructor(
     private readonly eventBus: TypedEventEmitter<DaemonEvents>,
@@ -104,6 +105,7 @@ export class SessionManager {
 
     // Create tracker (falls back to noop if git setup fails — e.g. not a git repo)
     const sessionId = crypto.randomUUID();
+    this.sessionEndReasons.delete(sessionId);
     const { tracker, worktreePath } = await this.setupTracker(config, sessionId, dir.path);
     const initialMode = defaultSessionAgentMode(config);
     this.permissionCoordinator.setSessionMode(sessionId, initialMode);
@@ -186,6 +188,7 @@ export class SessionManager {
     }
 
     const { tracker, worktreePath } = await this.setupTracker(config, originalSessionId, dir.path);
+    this.sessionEndReasons.delete(originalSessionId);
     const initialMode = defaultSessionAgentMode(config);
     this.permissionCoordinator.setSessionMode(originalSessionId, initialMode);
     const canUseTool = this.permissionCoordinator.createPermissionHandler(originalSessionId, () => {
@@ -273,6 +276,10 @@ export class SessionManager {
 
   getSessionNativeId(sessionId: string): string {
     return this.getActiveSession(sessionId).session.id;
+  }
+
+  getSessionEndReason(sessionId: string): string | undefined {
+    return this.sessionEndReasons.get(sessionId);
   }
 
   listSessionSummaries(): Array<{
@@ -517,6 +524,7 @@ export class SessionManager {
       session.off('state-change', onStateChange);
       session.off('ended', onEnded);
 
+      this.sessionEndReasons.set(sessionId, reason);
       this.eventBus.emit('session:ended', { sessionId, reason });
 
       // Reject any dangling permission promises before teardown
