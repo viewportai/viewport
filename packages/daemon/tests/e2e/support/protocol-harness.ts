@@ -179,7 +179,7 @@ export class ProtocolHarness {
       process.env['HOME'] = this.originalHome;
     }
     if (this.tempHome) {
-      await fs.rm(this.tempHome, { recursive: true, force: true });
+      await fs.rm(this.tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }
 

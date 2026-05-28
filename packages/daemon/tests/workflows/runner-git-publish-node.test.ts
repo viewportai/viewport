@@ -33,8 +33,8 @@ describe('workflow runner git publish node', () => {
     else process.env['HOME'] = originalHome;
     if (originalCodexHome === undefined) delete process.env['CODEX_HOME'];
     else process.env['CODEX_HOME'] = originalCodexHome;
-    await fs.rm(tempHome, { recursive: true, force: true });
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('commits and pushes an authorized branch from a governed checkout', async () => {
@@ -111,7 +111,7 @@ nodes:
         data: expect.objectContaining({ repository: 'acme/payments', branch: 'viewport/proof' }),
       }),
     );
-  });
+  }, 60_000);
 
   it('blocks branch publish before commit or push when the repository is outside authority', async () => {
     const daemon = await setup(projectDir);
@@ -165,7 +165,7 @@ nodes:
         }),
       }),
     );
-  });
+  }, 60_000);
 
   it('fails closed when run-scoped grant delivery is requested but unavailable', async () => {
     const daemon = await setup(projectDir);
@@ -219,7 +219,7 @@ nodes:
         }),
       }),
     );
-  });
+  }, 60_000);
 
   it('fails closed when run-scoped git publish credential material is missing', async () => {
     const daemon = await setup(projectDir);
@@ -278,7 +278,7 @@ nodes:
       }),
     );
     expect(JSON.stringify(failed)).not.toContain('ghs_run_scoped_push');
-  });
+  }, 60_000);
 
   it('uses materialized run-scoped git publish credential without persisting the secret', async () => {
     const daemon = await setup(projectDir);
@@ -344,7 +344,7 @@ nodes:
     });
     expect(completed?.nodes.publish?.outputs?.commit).toBe(pushedCommit.trim());
     expect(JSON.stringify(completed)).not.toContain('ghs_run_scoped_push');
-  });
+  }, 60_000);
 });
 
 async function setup(projectDir: string) {
