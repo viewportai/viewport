@@ -113,9 +113,14 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
     // registered when the runner picks them back up.
     const { loadPlugins } = await import('../workflows/plugin-loader.js');
     await loadPlugins();
-    // Resume any workflow runs that were running when we last shut down.
-    // Failures during resume are logged onto the run record; never block the
-    // daemon from coming online.
+  }
+
+  /**
+   * Resume workflow runs after startup has registered agent adapters and model
+   * providers. Running this before adapters are loaded makes valid resumed runs
+   * fail preflight as "agent unavailable".
+   */
+  resumePendingWorkflowRuns(): void {
     void this.workflowRunner.resumePendingRuns().catch(() => undefined);
   }
 

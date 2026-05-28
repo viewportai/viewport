@@ -611,6 +611,7 @@ async function createStandaloneWorkerDaemon(): Promise<Daemon> {
   const registry = await loadAgents(daemon);
   daemon.setModelProvider(() => registry.fetchAllModels());
   daemon.setTrackerFactory((trackerConfig, sessionId) => new GitTracker(trackerConfig, sessionId));
+  daemon.resumePendingWorkflowRuns();
   return daemon;
 }
 

@@ -347,6 +347,7 @@ export async function runDaemonWorker(config: RuntimeLaunchConfig): Promise<void
 
   const registry = await loadAgents(daemon);
   daemon.setModelProvider(() => registry.fetchAllModels());
+  daemon.resumePendingWorkflowRuns();
   const startupDiscoveryDisabled = isStartupDiscoveryDisabled();
   if (startupDiscoveryDisabled) {
     logger.log('Startup session discovery disabled by VIEWPORT_DISABLE_STARTUP_DISCOVERY.');
