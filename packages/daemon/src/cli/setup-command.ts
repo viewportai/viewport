@@ -40,9 +40,9 @@ interface SetupState {
 export function recommendedSetupPlan(): SetupPlan {
   return {
     recommended: true,
-    installService: true,
-    installPrereqs: true,
-    installHooks: true,
+    installService: false,
+    installPrereqs: false,
+    installHooks: false,
   };
 }
 
@@ -224,13 +224,16 @@ async function maybeOfferLinuxLingerEnable(
 async function chooseCustomPlan(): Promise<SetupPlan> {
   const installService = await promptYesNo(
     '\nInstall daemon as an OS boot service (launchd/systemd user service)? [Y/n] ',
-    true,
+    false,
   );
   const installPrereqsChoice = await promptYesNo(
     'Auto-install detected missing Claude/Codex SDK prerequisites? [Y/n] ',
-    true,
+    false,
   );
-  const installHooks = await promptYesNo('Install agent hooks now (vpd install)? [Y/n] ', true);
+  const installHooks = await promptYesNo(
+    'Install agent hooks now (mutates agent config)? [y/N] ',
+    false,
+  );
   return {
     recommended: false,
     installService,
@@ -271,7 +274,7 @@ export async function setup(): Promise<void> {
     plan = await chooseCustomPlan();
   } else if (interactive) {
     const useRecommended = await promptYesNo(
-      '\nFirst-time setup: proceed with recommended defaults (boot service + prerequisites + hooks)? [Y/n] ',
+      '\nFirst-time setup: proceed with safe defaults (profile/config only)? [Y/n] ',
       true,
     );
     plan = useRecommended
@@ -329,7 +332,7 @@ export async function setup(): Promise<void> {
   }
 
   if (plan.installHooks) {
-    await install();
+    await install({ installHooks: true });
   } else {
     console.log('Hook install skipped by choice.');
   }

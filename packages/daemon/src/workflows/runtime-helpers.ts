@@ -252,8 +252,41 @@ export async function runShellNode(
     onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
   },
 ): Promise<ShellNodeResult> {
+  return await runProcessNode('sh', ['-lc', command], options);
+}
+
+export async function runArgvNode(
+  argv: string[],
+  options: {
+    cwd: string;
+    timeoutSeconds?: number;
+    /** Extra environment variables merged into a scrubbed child environment. */
+    env?: Record<string, string>;
+    signal?: AbortSignal;
+    onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
+  },
+): Promise<ShellNodeResult> {
+  const [file, ...args] = argv;
+  if (!file || file.trim() === '') {
+    throw new ShellNodeError('Structured argv command is empty', '', null);
+  }
+  return await runProcessNode(file, args, options);
+}
+
+async function runProcessNode(
+  file: string,
+  args: string[],
+  options: {
+    cwd: string;
+    timeoutSeconds?: number;
+    /** Extra environment variables merged into a scrubbed child environment. */
+    env?: Record<string, string>;
+    signal?: AbortSignal;
+    onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
+  },
+): Promise<ShellNodeResult> {
   return await new Promise<ShellNodeResult>((resolve, reject) => {
-    const child = spawn('sh', ['-lc', command], {
+    const child = spawn(file, args, {
       cwd: options.cwd,
       env: cleanChildProcessEnv(options.env),
       stdio: ['ignore', 'pipe', 'pipe'],

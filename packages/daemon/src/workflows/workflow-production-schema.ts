@@ -43,7 +43,7 @@ export const WorkflowTriggerDefinitionSchema = z.discriminatedUnion('type', [
 export const WorkflowRunnerRequirementSchema = z
   .object({
     kind: z.enum(['paired_daemon', 'self_hosted_runner']).optional(),
-    target: z.enum(['local_private', 'local_sandbox', 'managed', 'self_hosted', 'ci']).optional(),
+    target: identifierSchema.optional(),
     capabilities: z
       .array(
         z.enum([
@@ -86,6 +86,22 @@ export const WorkflowPolicyDefinitionSchema = z
       .object({
         requireApproval: z.boolean().optional(),
         allowedAdapters: z.array(identifierSchema).optional(),
+      })
+      .strict()
+      .optional(),
+    budget: z
+      .object({
+        maxTokens: z.number().int().positive().optional(),
+        tokens: z.number().int().positive().optional(),
+        maxCostUsd: z.number().positive().optional(),
+        usd: z.number().positive().optional(),
+        approvalThresholds: z
+          .object({
+            tokens: z.number().int().positive().optional(),
+            costUsd: z.number().positive().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

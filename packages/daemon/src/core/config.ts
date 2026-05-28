@@ -43,6 +43,8 @@ export const BUILT_IN_DEFAULTS: SessionConfig = {
     requireApproval: [], // Populated from agent definition
     deny: [],
   },
+  executionMode: undefined,
+  allowedTools: undefined,
   costCapUsd: undefined,
   trust: 'operator',
 };
@@ -213,6 +215,55 @@ export interface ViewportConfig {
       signingKeys?: Record<string, string>;
       tokenClockSkewSec?: number;
     };
+    worker?: {
+      lifecycle?: 'persistent' | 'ephemeral';
+      transport?: 'polling' | 'relay' | 'inbound';
+      serverUrl?: string;
+      appUrl?: string;
+      workspaceId?: string;
+      managedExecutorId?: string;
+      credential?: string;
+      workspaceRoot?: string;
+      logsDir?: string;
+      cacheDir?: string;
+      stateDir?: string;
+      identityKeyPath?: string;
+      publicKeyFingerprint?: string;
+      runnerPool?: string;
+      capabilities?: {
+        agents?:
+          | Array<{
+              id: string;
+              displayName?: string;
+              tier?: 'sdk' | 'pty';
+              available: boolean;
+              models?: string[];
+              default_model?: string;
+              tools?: string[];
+              supports_plan_mode?: boolean;
+            }>
+          | Record<
+              string,
+              {
+                id?: string;
+                displayName?: string;
+                tier?: 'sdk' | 'pty';
+                available?: boolean;
+                models?: string[];
+                default_model?: string;
+                tools?: string[];
+                supports_plan_mode?: boolean;
+              }
+            >;
+        models?: string[];
+        tools?: string[];
+        integrations?: string[];
+        secrets?: string[];
+        tags?: string[];
+        runner_pool?: string;
+        runnerPool?: string;
+      };
+    };
   };
 }
 
@@ -298,6 +349,8 @@ function hasSessionDefaultsShape(value: unknown): boolean {
     value['model'] ||
     value['sandboxMode'] ||
     value['approvalPolicy'] ||
+    value['executionMode'] ||
+    value['allowedTools'] ||
     value['gitTracker'] ||
     value['permissions'] ||
     value['costCapUsd'] ||
@@ -586,6 +639,55 @@ export class ConfigManager {
           tokenJwksUrl?: string;
           signingKeys?: Record<string, string>;
           tokenClockSkewSec?: number;
+        };
+        worker?: {
+          lifecycle?: 'persistent' | 'ephemeral';
+          transport?: 'polling' | 'relay' | 'inbound';
+          serverUrl?: string;
+          appUrl?: string;
+          workspaceId?: string;
+          managedExecutorId?: string;
+          credential?: string;
+          workspaceRoot?: string;
+          logsDir?: string;
+          cacheDir?: string;
+          stateDir?: string;
+          identityKeyPath?: string;
+          publicKeyFingerprint?: string;
+          runnerPool?: string;
+          capabilities?: {
+            agents?:
+              | Array<{
+                  id: string;
+                  displayName?: string;
+                  tier?: 'sdk' | 'pty';
+                  available: boolean;
+                  models?: string[];
+                  default_model?: string;
+                  tools?: string[];
+                  supports_plan_mode?: boolean;
+                }>
+              | Record<
+                  string,
+                  {
+                    id?: string;
+                    displayName?: string;
+                    tier?: 'sdk' | 'pty';
+                    available?: boolean;
+                    models?: string[];
+                    default_model?: string;
+                    tools?: string[];
+                    supports_plan_mode?: boolean;
+                  }
+                >;
+            models?: string[];
+            tools?: string[];
+            integrations?: string[];
+            secrets?: string[];
+            tags?: string[];
+            runner_pool?: string;
+            runnerPool?: string;
+          };
         };
       }
     | undefined {

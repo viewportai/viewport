@@ -109,7 +109,9 @@ export type WorkflowCapabilityRequest =
 
 export interface WorkflowOutputDefinition {
   type: 'string' | 'number' | 'boolean' | 'json' | 'file' | 'artifact';
+  requirement?: 'required' | 'optional' | 'unsupported';
   description?: string;
+  outputSchema?: Record<string, unknown>;
   /**
    * Optional JSONata expression evaluated against `{ output, json }`, where
    * `output` is the bulk text and `json` is the parsed bulk output when valid.
@@ -171,6 +173,7 @@ export interface WorkflowNodeBase {
   retry?: WorkflowRetryPolicy;
   policy?: WorkflowNodePolicy;
   outputs?: Record<string, WorkflowOutputDefinition>;
+  outputSchema?: Record<string, WorkflowOutputDefinition>;
   artifacts?: Record<string, WorkflowArtifactDefinition>;
   env?: Record<string, WorkflowEnvValue>;
   context?: WorkflowNodeContextEnvelope;
@@ -189,6 +192,8 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
   provider?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
+  allowedTools?: string[];
   hooks?: WorkflowHookRules;
   agents?: Record<string, WorkflowInlineAgentDefinition>;
   inlineAgentFailurePolicy?: 'fail' | 'continue';
@@ -201,6 +206,8 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
   provider?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  executionMode?: 'plan' | 'read_only' | 'implement' | 'review';
+  allowedTools?: string[];
   session?: {
     resume?: boolean;
     title?: string;
@@ -214,7 +221,8 @@ export interface WorkflowAgentNode extends WorkflowNodeBase {
 
 export interface WorkflowShellNode extends WorkflowNodeBase {
   type: 'shell';
-  command: string;
+  command?: string;
+  argv?: string[];
   cwd?: string;
 }
 
@@ -288,6 +296,7 @@ export interface WorkflowPlanNode extends WorkflowNodeBase {
     prompt?: string;
     agent?: string;
     model?: string;
+    timeoutSeconds?: number;
   };
 }
 

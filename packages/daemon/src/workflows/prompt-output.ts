@@ -11,6 +11,7 @@ import type { WorkflowNodeRunState, WorkflowRunRecord } from './types.js';
 export async function readPromptNodeOutput(
   run: WorkflowRunRecord,
   node: WorkflowNodeRunState,
+  options: { allowCodexDiscovery?: boolean } = {},
 ): Promise<string> {
   if (!node.sessionId) return '';
 
@@ -25,6 +26,9 @@ export async function readPromptNodeOutput(
   const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
     Boolean(id),
   );
+  if (options.allowCodexDiscovery === false) {
+    return '';
+  }
   for (const candidatePath of outputCandidatePaths(run, node)) {
     try {
       const output = await readCodexWorktreeSessionOutput(candidatePath, sessionIds);
@@ -40,6 +44,7 @@ export async function readPromptNodeOutput(
 export async function readPromptNodeTranscriptExcerpt(
   run: WorkflowRunRecord,
   node: WorkflowNodeRunState,
+  options: { allowCodexDiscovery?: boolean } = {},
 ): Promise<TranscriptExcerptMessage[]> {
   if (!node.sessionId) return [];
 
@@ -54,6 +59,9 @@ export async function readPromptNodeTranscriptExcerpt(
   const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
     Boolean(id),
   );
+  if (options.allowCodexDiscovery === false) {
+    return [];
+  }
   for (const candidatePath of outputCandidatePaths(run, node)) {
     try {
       const excerpt = await readCodexWorktreeSessionTranscriptExcerpt(candidatePath, sessionIds);

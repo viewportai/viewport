@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { captureNodeStructuredOutputs } from '../../src/workflows/structured-outputs.js';
+import {
+  captureNodeStructuredOutputs,
+  WorkflowStructuredOutputError,
+} from '../../src/workflows/structured-outputs.js';
 import type { WorkflowNode, WorkflowNodeRunState } from '../../src/workflows/types.js';
 
 function makeShellNode(
-  outputs: Record<string, { type: 'string' | 'number' | 'boolean' | 'json'; extract?: string }>,
+  outputs: Record<
+    string,
+    {
+      type: 'string' | 'number' | 'boolean' | 'json';
+      requirement?: 'required' | 'optional' | 'unsupported';
+      extract?: string;
+    }
+  >,
 ): WorkflowNode {
   return {
     type: 'shell',
@@ -75,5 +85,48 @@ describe('structured outputs', () => {
     const state = makeState('output text');
     await captureNodeStructuredOutputs(state, { type: 'shell', command: 'noop' });
     expect(state.outputs).toBeUndefined();
+  });
+
+  it('fails required malformed JSON outputs before exposing values', async () => {
+    const state = makeState('not json {lol}');
+    await expect(
+      captureNodeStructuredOutputs(
+        state,
+        makeShellNode({ payload: { type: 'json', requirement: 'required' } }),
+      ),
+    ).rejects.toBeInstanceOf(WorkflowStructuredOutputError);
+
+    expect(state.status).toBe('failed');
+    expect(state.error).toContain('Required structured output payload is invalid');
+    expect(state.outputs).toEqual({});
+    expect(state.metadata?.['structuredOutputs']).toMatchObject({
+      schema: 'viewport.structured_outputs/v1',
+      outputs: {
+        payload: {
+          requirement: 'required',
+          status: 'invalid',
+          reason: 'malformed_json',
+        },
+      },
+    });
+  });
+
+  it('records degraded receipts for unsupported optional structured outputs', async () => {
+    const state = makeState('plain text');
+    await captureNodeStructuredOutputs(
+      state,
+      makeShellNode({ payload: { type: 'json', requirement: 'unsupported' } }),
+    );
+
+    expect(state.outputs).toEqual({});
+    expect(state.metadata?.['structuredOutputs']).toMatchObject({
+      outputs: {
+        payload: {
+          requirement: 'unsupported',
+          status: 'degraded',
+          reason: 'structured_output_unsupported',
+        },
+      },
+    });
   });
 });

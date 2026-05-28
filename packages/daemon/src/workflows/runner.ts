@@ -13,12 +13,14 @@ import { WorkflowRunReconciler } from './runner-reconciler.js';
 import { WorkflowRunCanceler, type WorkflowCancelOptions } from './runner-canceler.js';
 import { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import { WorkflowRuntimeCommandApplier } from './platform-command-applier.js';
+import { runtimeCommands } from './platform-runtime-command.js';
 import { formatExecutionPolicy, workflowNodeMetadata, type RunnerOps } from './runner-shared.js';
 import { runApprovalOnRejectFollowUp } from './approval-on-reject.js';
 import { buildWorkflowContractBinding } from './contract-binding.js';
 import { recordWorkflowHookEvent } from './runner-hook-events.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { buildRunPreparation } from './run-preparation.js';
+import { resolveWorkflowSessionBudget, resolveWorkflowSessionPolicy } from './session-policy.js';
 import type {
   ParsedWorkflow,
   WorkflowApprovalDecision,
@@ -268,6 +270,11 @@ export class WorkflowRunner {
 
     const revisedAt = Date.now();
     const revisionPrompt = await renderTemplate(revision.prompt, run);
+    const revisionPolicy = resolveWorkflowSessionPolicy({
+      executionMode: 'plan',
+      timeoutSeconds: revision.timeoutSeconds,
+    });
+    const budget = resolveWorkflowSessionBudget(parsed.definition.policies?.budget);
     state.status = 'running';
 
     const result = await runWorkflowDaemonSession(
@@ -283,6 +290,12 @@ export class WorkflowRunner {
         prompt: revisionPrompt,
         ...(revision.agent ? { agent: revision.agent } : {}),
         ...(revision.model ? { model: revision.model } : {}),
+        executionMode: revisionPolicy.executionMode,
+        allowedTools: [],
+        timeoutSeconds: revisionPolicy.timeoutSeconds,
+        ...(budget ? { budget } : {}),
+        executionModeDefaulted: false,
+        timeoutDefaulted: revisionPolicy.timeoutDefaulted,
       },
     );
 
@@ -540,6 +553,23 @@ export class WorkflowRunner {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
+  }
+
+  async applyRuntimeCommandBody(runId: string, body: unknown): Promise<number> {
+    // Runtime commands are consumed by the worker's active execution loop.
+    // Use the durable store directly so command delivery cannot block on
+    // prompt-output reconciliation while a local run is awaiting approval.
+    const run = await this.store.get(runId);
+    if (!run) return 0;
+
+    let applied = 0;
+    for (const command of runtimeCommands(body)) {
+      if (await this.platformCommandApplier.apply(command, run.id)) {
+        applied += 1;
+      }
+    }
+
+    return applied;
   }
 
   async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {

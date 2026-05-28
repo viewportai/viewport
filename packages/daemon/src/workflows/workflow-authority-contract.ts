@@ -13,6 +13,9 @@ export interface WorkflowAuthorityDenial {
     | 'git_publish_run_scoped_grant_unavailable'
     | 'context_update_target_wrong_repository'
     | 'context_source_not_allowed'
+    | 'shell_policy_required'
+    | 'shell_disabled_by_policy'
+    | 'shell_legacy_command_not_allowed'
     | 'shell_cwd_outside_worktree'
     | 'shell_repository_not_allowed'
     | 'shell_provider_side_effect_not_allowed';
@@ -139,9 +142,42 @@ export function shellAuthorityDenial(
   nodeId: string,
   renderedCommand: string,
   cwd: string,
+  options: { executorKind?: string } = {},
 ): WorkflowAuthorityDenial | null {
   const contract = workflowAuthorityContract(run);
   if (!contract) return null;
+
+  const shellPolicy = shellExecutionPolicy(contract);
+  if (shellPolicy !== 'constrained') {
+    const reason =
+      shellPolicy === 'disabled' ? 'shell_disabled_by_policy' : 'shell_policy_required';
+
+    return {
+      schema: 'viewport.workflow_authority_denial/v1',
+      reason,
+      runId: run.id,
+      nodeId,
+      command: redactedCommand(renderedCommand),
+      detail:
+        reason === 'shell_disabled_by_policy'
+          ? 'Shell execution is disabled by the workflow authority contract.'
+          : 'Shell execution under a workflow authority contract requires an explicit constrained shell policy.',
+      contractDigest: workflowAuthorityContractDigest(run),
+    };
+  }
+
+  if (options.executorKind === 'shell' && !legacyShellCommandAllowed(contract)) {
+    return {
+      schema: 'viewport.workflow_authority_denial/v1',
+      reason: 'shell_legacy_command_not_allowed',
+      runId: run.id,
+      nodeId,
+      command: redactedCommand(renderedCommand),
+      detail:
+        'Legacy shell command execution uses sh -lc and must be explicitly allowed by shell.allow_legacy_command. Prefer argv for worker-managed shell/test primitives.',
+      contractDigest: workflowAuthorityContractDigest(run),
+    };
+  }
 
   if (!isPathWithin(cwd, run.directoryPath)) {
     return {
@@ -205,6 +241,26 @@ export function shellAuthorityDenial(
   }
 
   return null;
+}
+
+function shellExecutionPolicy(contract: Record<string, unknown>): string | null {
+  const nested = readPath(contract, ['shell', 'policy']);
+  if (typeof nested === 'string' && nested.trim() !== '') return normalizeToken(nested);
+
+  const flat = readPath(contract, ['shell_policy']);
+  if (typeof flat === 'string' && flat.trim() !== '') return normalizeToken(flat);
+
+  return null;
+}
+
+function legacyShellCommandAllowed(contract: Record<string, unknown>): boolean {
+  const nested = readPath(contract, ['shell', 'allow_legacy_command']);
+  if (typeof nested === 'boolean') return nested;
+
+  const flat = readPath(contract, ['shell_allow_legacy_command']);
+  if (typeof flat === 'boolean') return flat;
+
+  return false;
 }
 
 function allowedSideEffects(contract: Record<string, unknown>): AllowedSideEffect[] {

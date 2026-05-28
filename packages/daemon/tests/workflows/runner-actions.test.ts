@@ -476,6 +476,7 @@ nodes:
   it('executes native GitHub PR actions with runner-local credentials', async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -537,6 +538,16 @@ nodes:
       await waitForTerminalRun(daemon, run.id);
       const completed = await daemon.workflowRunner.getRun(run.id);
 
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('https://api.github.com/repos/acme/payments/pulls?'),
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer runner-token',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }),
+        }),
+      );
       expect(fetchMock).toHaveBeenCalledWith(
         'https://api.github.com/repos/acme/payments/pulls',
         expect.objectContaining({
@@ -887,6 +898,102 @@ nodes:
     }
   });
 
+  it('executes GitHub pull_request.create with repository shorthand and runner-local credentials', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 42,
+            html_url: 'https://github.com/acme/payments/pull/42',
+            url: 'https://api.github.com/repos/acme/payments/pulls/42',
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 42,
+            html_url: 'https://github.com/acme/payments/pull/42',
+            url: 'https://api.github.com/repos/acme/payments/pulls/42',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
+    process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'] = 'runner-token';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-pr-alias-proof
+nodes:
+  open_pr:
+    type: action
+    adapter: github
+    action: pull_request.create
+    idempotencyKey: pr-alias:PAY-1842
+    with:
+      repository: acme/payments
+      title: Viewport support fix
+      head: viewport/pay-1842
+      base: main
+      body: "Tests are passing."
+      credential_ref: github/pr-writer
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments/pulls',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer runner-token',
+            'Idempotency-Key': 'pr-alias:PAY-1842',
+          }),
+        }),
+      );
+      expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+        title: 'Viewport support fix',
+        head: 'viewport/pay-1842',
+        base: 'main',
+        body: 'Tests are passing.',
+      });
+      expect(completed?.status).toBe('completed');
+      expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
+        adapter: 'github',
+        action: 'pull_request.create',
+        status: 'executed',
+        response: {
+          status: 201,
+          htmlUrl: 'https://github.com/acme/payments/pull/42',
+          number: 42,
+        },
+      });
+    } finally {
+      if (originalCredentialRefToken === undefined)
+        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
+      else process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'] = originalCredentialRefToken;
+    }
+  });
+
   it('executes native Jira comments and transitions with runner-local credentials', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -1147,6 +1254,98 @@ nodes:
       if (originalCredentialRefToken === undefined)
         delete process.env['VIEWPORT_CREDENTIAL_SLACK_BOT_TOKEN'];
       else process.env['VIEWPORT_CREDENTIAL_SLACK_BOT_TOKEN'] = originalCredentialRefToken;
+    }
+  });
+
+  it('executes Slack messages to the source thread when channel is omitted', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, channel: 'C123', ts: '177000.0002' }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            permalink: 'https://acme.slack.com/archives/C123/p1770000002',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'];
+    process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'] = 'slack-token';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: slack-source-thread-proof
+nodes:
+  announce:
+    type: action
+    adapter: slack
+    action: post_message
+    idempotencyKey: slack-source-thread:PAY-1842
+    with:
+      text: "Viewport finished the approved support run."
+      credential_ref: slack/notifier
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        inputs: {
+          integration_event: {
+            payload: {
+              event: {
+                channel: 'C123',
+                ts: '177000.0001',
+              },
+            },
+          },
+        },
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://slack.com/api/chat.postMessage',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer slack-token',
+            'Idempotency-Key': 'slack-source-thread:PAY-1842',
+          }),
+        }),
+      );
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        channel: 'C123',
+        thread_ts: '177000.0001',
+        client_msg_id: 'slack-source-thread:PAY-1842',
+        text: 'Viewport finished the approved support run.',
+      });
+      expect(completed?.status).toBe('completed');
+      expect(completed?.nodes.announce?.metadata?.action).toMatchObject({
+        adapter: 'slack',
+        action: 'post_message',
+        idempotencyKey: 'slack-source-thread:PAY-1842',
+        status: 'executed',
+        response: { channel: 'C123', ts: '177000.0002' },
+      });
+    } finally {
+      if (originalCredentialRefToken === undefined)
+        delete process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'];
+      else process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'] = originalCredentialRefToken;
     }
   });
 });

@@ -78,6 +78,7 @@ nodes:
         schema_version: 'viewport.workflow_execution_authority/v1',
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -144,6 +145,7 @@ nodes:
         schema_version: 'viewport.workflow_execution_authority/v1',
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -198,6 +200,7 @@ nodes:
         schema_version: 'viewport.workflow_execution_authority/v1',
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -257,6 +260,7 @@ nodes:
         schema_version: 'viewport.workflow_execution_authority/v1',
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -318,6 +322,7 @@ nodes:
         schema_version: 'viewport.workflow_execution_authority/v1',
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 

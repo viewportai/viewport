@@ -45,6 +45,26 @@ describe('workflow prompt output recovery', () => {
       { role: 'assistant', text: 'recovered from parent repo transcript' },
     ]);
   });
+
+  it('can skip Codex transcript discovery for non-Codex workflow nodes', async () => {
+    const projectPath = await setupCodexHome();
+    const worktreePath = path.join(projectPath, '.viewport', 'worktrees', 'workflow-session');
+    await fs.mkdir(worktreePath, { recursive: true });
+    await writeCodexTranscript({
+      sessionId: 'native-session',
+      cwd: projectPath,
+      output: 'codex-only fallback output',
+      timestamp: '2026-04-24T10:00:00.000Z',
+    });
+
+    const run = workflowRun(projectPath, worktreePath);
+    const node = run.nodes['review']!;
+
+    await expect(readPromptNodeOutput(run, node, { allowCodexDiscovery: false })).resolves.toBe('');
+    await expect(
+      readPromptNodeTranscriptExcerpt(run, node, { allowCodexDiscovery: false }),
+    ).resolves.toEqual([]);
+  });
 });
 
 async function setupCodexHome(): Promise<string> {

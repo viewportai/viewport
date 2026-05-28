@@ -47,6 +47,14 @@ async function cleanup(): Promise<void> {
   await fs.rm(projectDir, { recursive: true, force: true });
 }
 
+async function waitForAdapterSessions(adapter: MockAdapter, count: number): Promise<void> {
+  for (let index = 0; index < 200; index += 1) {
+    if (adapter.sessions.length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${count} adapter session(s)`);
+}
+
 describe('workflow runner prompt sessions', () => {
   beforeEach(async () => {});
   afterEach(cleanup);
@@ -136,6 +144,11 @@ nodes:
     });
 
     await waitForNodeSession(daemon, run.id, 'review');
+    expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
+    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
+    adapter.lastSession?.emitToolCall('tool-1', 'Read');
+    adapter.lastSession?.emitToolCallUpdate('tool-1', 'Read', 'completed');
+    adapter.lastSession?.emitTokenUsage(42, 12, 0.0042);
     adapter.lastSession?.emitAgentMessage('done');
     adapter.lastSession?.simulateIdle();
     await waitForTerminalRun(daemon, run.id);
@@ -144,6 +157,34 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.review?.status).toBe('completed');
     expect(completed?.nodes.review?.output).toBe('done');
+    expect(completed?.nodes.review?.metadata?.['usage']).toMatchObject({
+      available: true,
+      inputTokens: 42,
+      outputTokens: 12,
+      totalTokens: 54,
+      totalCostUsd: 0.0042,
+    });
+    expect(completed?.nodes.review?.metadata?.['agentRun']).toMatchObject({
+      schema: 'viewport.agent_run_result/v1',
+      agentId: 'claude',
+      adapterVersion: 'test',
+      executionMode: 'implement',
+      stopReason: 'idle',
+      output: 'done',
+    });
+    expect(completed?.nodes.review?.metadata?.['executionPolicy']).toMatchObject({
+      executionMode: 'implement',
+      timeoutSeconds: 1800,
+      executionModeDefaulted: true,
+      timeoutDefaulted: true,
+    });
+    expect(completed?.nodes.review?.metadata?.['toolCalls']).toEqual([
+      expect.objectContaining({
+        id: 'tool-1',
+        name: 'Read',
+        status: 'completed',
+      }),
+    ]);
     expect(completed?.events.map((event) => event.type)).toContain('session-idle');
     expect(completed?.events).toContainEqual(
       expect.objectContaining({
@@ -152,6 +193,457 @@ nodes:
         data: { output: 'done' },
       }),
     );
+  });
+
+  it('passes prompt execution mode and allowed tools into the launched agent session', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-execution-mode-session-proof
+requires:
+  agents:
+    - claude
+nodes:
+  inspect:
+    type: prompt
+    agent: claude
+    executionMode: read_only
+    allowedTools:
+      - Read
+      - Grep
+    prompt: Inspect without changing files.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'inspect');
+    expect(adapter.lastOptions?.config?.executionMode).toBe('read_only');
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual(['Read', 'Grep']);
+    expect(adapter.lastOptions?.allowedTools).toEqual(['Read', 'Grep']);
+
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+  });
+
+  it('conservatively bounds inline agents that do not declare execution mode', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: inline-agent-mode-proof
+requires:
+  agents:
+    - claude
+nodes:
+  implement:
+    type: prompt
+    agent: claude
+    executionMode: implement
+    prompt: Use the inline reviewer before implementation.
+    agents:
+      reviewer:
+        title: Reviewer
+        prompt: Review the implementation approach.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForAdapterSessions(adapter, 1);
+    expect(adapter.sessions).toHaveLength(1);
+    expect(adapter.lastOptions?.config?.executionMode).toBe('review');
+
+    adapter.lastSession?.emitAgentMessage('Looks safe.');
+    adapter.lastSession?.simulateIdle();
+
+    await waitForNodeSession(daemon, run.id, 'implement');
+    expect(adapter.sessions).toHaveLength(2);
+    expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
+
+    adapter.lastSession?.emitAgentMessage('done');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.implement?.inlineAgents?.reviewer).toMatchObject({
+      status: 'completed',
+      executionMode: 'review',
+    });
+    expect(
+      completed?.nodes.implement?.inlineAgents?.reviewer?.metadata?.['executionPolicy'],
+    ).toMatchObject({
+      executionMode: 'review',
+      timeoutSeconds: 900,
+      timeoutDefaulted: true,
+    });
+  });
+
+  it('fails prompt nodes that emit malformed required structured outputs', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: required-output-denial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    outputSchema:
+      plan:
+        type: json
+        requirement: required
+    prompt: Return the plan as JSON.
+  after:
+    type: shell
+    needs: [plan]
+    command: printf should-not-run
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    adapter.lastSession?.emitAgentMessage('not json {lol}');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.plan?.status).toBe('failed');
+    expect(failed?.nodes.plan?.error).toContain('Required structured output plan is invalid');
+    expect(failed?.nodes.after?.status).toBe('queued');
+    expect(failed?.nodes.plan?.metadata?.['structuredOutputs']).toMatchObject({
+      outputs: {
+        plan: {
+          requirement: 'required',
+          status: 'invalid',
+          reason: 'malformed_json',
+        },
+      },
+    });
+  });
+
+  it('fails prompt nodes that exceed workflow budget before downstream side effects run', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-budget-denial-proof
+requires:
+  agents:
+    - claude
+policies:
+  budget:
+    maxTokens: 50
+    maxCostUsd: 0.01
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    prompt: Stay inside the budget.
+  after:
+    type: shell
+    needs: [plan]
+    command: printf should-not-run
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    expect(adapter.lastOptions?.config?.maxBudgetUsd).toBe(0.01);
+    adapter.lastSession?.emitTokenUsage(45, 10, 0.012);
+    adapter.lastSession?.emitAgentMessage('expensive plan');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.plan?.status).toBe('failed');
+    expect(failed?.nodes.plan?.error).toContain('budget_exceeded');
+    expect(failed?.nodes.plan?.metadata?.['agentRun']).toMatchObject({
+      stopReason: 'budget_exceeded',
+    });
+    expect(failed?.nodes.plan?.metadata?.['executionPolicy']).toMatchObject({
+      budget: {
+        maxTokens: 50,
+        maxCostUsd: 0.01,
+      },
+      budgetEvaluation: {
+        exceeded: true,
+      },
+    });
+    expect(failed?.nodes.after?.status).toBe('queued');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'budget-exceeded',
+        nodeId: 'plan',
+      }),
+    );
+  });
+
+  it('does not count cache-read input tokens against workflow token budget', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-cache-budget-proof
+requires:
+  agents:
+    - claude
+policies:
+  budget:
+    maxTokens: 10000
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    prompt: Reuse cached context without exhausting budget.
+  after:
+    type: shell
+    needs: [plan]
+    command: printf ok
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    adapter.lastSession?.emitTokenUsage(560_000, 4_000, undefined, {
+      cacheReadInputTokens: 556_000,
+      billableInputTokens: 4_000,
+      budgetedTotalTokens: 8_000,
+    });
+    adapter.lastSession?.emitAgentMessage('cached plan');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.plan?.status).toBe('completed');
+    expect(completed?.nodes.plan?.metadata?.['usage']).toMatchObject({
+      inputTokens: 560_000,
+      outputTokens: 4_000,
+      totalTokens: 564_000,
+      cacheReadInputTokens: 556_000,
+      billableInputTokens: 4_000,
+      budgetedTotalTokens: 8_000,
+    });
+    expect(completed?.nodes.plan?.metadata?.['executionPolicy']).toMatchObject({
+      budgetEvaluation: {
+        exceeded: false,
+        usage: {
+          totalTokens: 564_000,
+          budgetedTotalTokens: 8_000,
+        },
+      },
+    });
+    expect(completed?.events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'budget-exceeded',
+      }),
+    );
+  });
+
+  it('captures valid plan output schema before downstream nodes run', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: plan-output-schema-proof
+requires:
+  agents:
+    - claude
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    outputSchema:
+      plan:
+        type: json
+        requirement: required
+        extract: json.plan
+    prompt: Return the plan as JSON.
+  summarize:
+    type: shell
+    needs: [plan]
+    command: printf "{{ nodes.plan.outputs.plan.title }}"
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    adapter.lastSession?.emitAgentMessage('{"plan":{"title":"Ship bounded planning"}}');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.plan?.outputs?.plan).toEqual({ title: 'Ship bounded planning' });
+    expect(completed?.nodes.plan?.metadata?.['structuredOutputs']).toMatchObject({
+      outputs: {
+        plan: {
+          requirement: 'required',
+          status: 'captured',
+        },
+      },
+    });
+    expect(completed?.nodes.summarize?.output).toBe('Ship bounded planning');
+  });
+
+  it('fails before launching when an adapter cannot enforce read-only mode', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter({
+      capabilities: {
+        executionModes: {
+          plan: 'unsupported',
+          read_only: 'unsupported',
+          review: 'prompt_only',
+          implement: 'prompt_only',
+        },
+      },
+    });
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-capability-denial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  inspect:
+    type: prompt
+    agent: claude
+    executionMode: read_only
+    prompt: Inspect without changing files.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(adapter.sessions).toHaveLength(0);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('cannot enforce read_only execution mode');
+  });
+
+  it('fails before launching when an adapter cannot enforce an explicit tool allowlist', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter({
+      capabilities: {
+        toolAllowlist: 'unsupported',
+      },
+    });
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-tool-allowlist-denial-proof
+requires:
+  agents:
+    - claude
+nodes:
+  inspect:
+    type: prompt
+    agent: claude
+    executionMode: implement
+    allowedTools:
+      - Read
+    prompt: Use only the configured tool.
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(adapter.sessions).toHaveLength(0);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('cannot enforce workflow tool allowlists');
   });
 
   it('runs prompt nodes without explicit cwd in an isolated read-only node directory', async () => {

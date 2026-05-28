@@ -253,6 +253,111 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('syncs normalized aggregate usage from daemon agent ledgers', async () => {
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push({
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.nodes.inspect.metadata = {
+      ...(run.nodes.inspect.metadata ?? {}),
+      usage: {
+        available: true,
+        inputTokens: 120,
+        outputTokens: 30,
+        totalTokens: 150,
+        totalCostUsd: 0.0125,
+      },
+    };
+
+    await sync.sync(run);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body['usage']).toMatchObject({
+      schema: 'viewport.usage_ledger/v1',
+      available: true,
+      input_tokens: 120,
+      output_tokens: 30,
+      total_tokens: 150,
+      cost_usd: 0.0125,
+      cost_source: 'runner_local',
+      billable_to_workspace: false,
+    });
+    expect(calls[0]?.body['output_snapshot']).toMatchObject({
+      usage: expect.objectContaining({
+        total_tokens: 150,
+        cost_usd: 0.0125,
+      }),
+    });
+    expect(calls[0]?.body['nodes']).toEqual([
+      expect.objectContaining({
+        node_key: 'inspect',
+        usage: expect.objectContaining({
+          input_tokens: 120,
+          output_tokens: 30,
+          total_tokens: 150,
+          cost_usd: 0.0125,
+        }),
+        metadata: expect.objectContaining({
+          usage: expect.objectContaining({
+            input_tokens: 120,
+            output_tokens: 30,
+            total_tokens: 150,
+            cost_usd: 0.0125,
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it('syncs aggregate budgeted tokens separately from raw provider totals', async () => {
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push({
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.nodes.inspect.metadata = {
+      ...(run.nodes.inspect.metadata ?? {}),
+      usage: {
+        available: true,
+        inputTokens: 420000,
+        inputTokenScope: 'raw_provider',
+        outputTokens: 700,
+        totalTokens: 420700,
+        budgetedTotalTokens: 700,
+      },
+    };
+
+    await sync.sync(run);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body['usage']).toMatchObject({
+      input_tokens: 420000,
+      input_token_scope: 'raw_provider',
+      output_tokens: 700,
+      total_tokens: 420700,
+      billable_input_tokens: 0,
+      budgeted_total_tokens: 700,
+    });
+    expect(calls[0]?.body['nodes']).toEqual([
+      expect.objectContaining({
+        node_key: 'inspect',
+        usage: expect.objectContaining({
+          input_token_scope: 'raw_provider',
+          total_tokens: 420700,
+          billable_input_tokens: 0,
+          budgeted_total_tokens: 700,
+        }),
+      }),
+    ]);
+  });
+
   it('syncs workflow runs that only carry canonical resource runtime fields', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const sync = new WorkflowRunPlatformSync(configManager(), async (url, init) => {

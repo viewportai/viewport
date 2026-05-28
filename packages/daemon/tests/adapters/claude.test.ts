@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ClaudeAdapter, ClaudeSession } from '../../src/adapters/claude.js';
 import type { QueryFn } from '../../src/adapters/claude.js';
-import type { SessionMessage, PermissionDecision } from '../../src/core/types.js';
+import type { SessionConfig, SessionMessage, PermissionDecision } from '../../src/core/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — mock SDK query as a controlled async generator
@@ -23,6 +23,30 @@ function createMockQuery(messages: MockMessage[]): QueryFn {
     interrupt: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
   });
+}
+
+function automatedConfig(overrides: Partial<SessionConfig> = {}): SessionConfig {
+  return {
+    agent: 'claude',
+    approvalPolicy: 'never',
+    trust: 'automated',
+    gitTracker: {
+      enabled: false,
+      commitOn: [],
+      ignore: [],
+      autoSquashOnComplete: false,
+      branchPrefix: 'viewport/session-',
+      commitAuthor: 'Viewport Agent <noreply@example.test>',
+      maxCommitsPerSession: 500,
+      worktreeRoot: '.viewport/worktrees',
+    },
+    permissions: {
+      autoApprove: [],
+      requireApproval: ['Bash'],
+      deny: [],
+    },
+    ...overrides,
+  };
 }
 
 function createBlockingQuery(): {
@@ -122,6 +146,207 @@ describe('ClaudeAdapter', () => {
     );
   });
 
+  it('maps automated approvalPolicy never to Claude bypassPermissions mode', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'test-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Run without interactive permission prompts',
+      config: automatedConfig(),
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Run without interactive permission prompts',
+        options: expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+        }),
+      }),
+    );
+  });
+
+  it('maps plan execution mode to Claude plan permission mode', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'plan-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Draft a plan without implementing.',
+      config: automatedConfig({ executionMode: 'plan' }),
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Draft a plan without implementing.',
+        options: expect.objectContaining({
+          permissionMode: 'plan',
+          tools: [],
+        }),
+      }),
+    );
+  });
+
+  it('passes workflow budget caps to Claude provider options', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'budget-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Stay inside the workflow budget.',
+      config: automatedConfig({
+        maxTurns: 4,
+        maxBudgetUsd: 0.25,
+      }),
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Stay inside the workflow budget.',
+        options: expect.objectContaining({
+          maxTurns: 4,
+          maxBudgetUsd: 0.25,
+        }),
+      }),
+    );
+  });
+
+  it('maps read-only execution mode to Claude read/search tools', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'readonly-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Inspect files without changing them.',
+      config: {
+        agent: 'claude',
+        approvalPolicy: 'never',
+        executionMode: 'read_only',
+        trust: 'automated',
+        gitTracker: {
+          enabled: false,
+          commitOn: [],
+          ignore: [],
+          autoSquashOnComplete: false,
+          branchPrefix: 'viewport/session-',
+          commitAuthor: 'Viewport Agent <noreply@example.test>',
+          maxCommitsPerSession: 500,
+          worktreeRoot: '.viewport/worktrees',
+        },
+        permissions: {
+          autoApprove: [],
+          requireApproval: ['Bash'],
+          deny: [],
+        },
+      },
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Inspect files without changing them.',
+        options: expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+          tools: ['Read', 'Grep', 'Glob'],
+          allowedTools: ['Read', 'Grep', 'Glob'],
+        }),
+      }),
+    );
+  });
+
+  it('maps review execution mode to Claude read/search tools', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'review-id' },
+    ]);
+
+    const adapter = new ClaudeAdapter(queryFn);
+    await adapter.startSession('/test/dir', {
+      initialPrompt: 'Review the plan without changing files.',
+      config: {
+        agent: 'claude',
+        approvalPolicy: 'never',
+        executionMode: 'review',
+        trust: 'automated',
+        gitTracker: {
+          enabled: false,
+          commitOn: [],
+          ignore: [],
+          autoSquashOnComplete: false,
+          branchPrefix: 'viewport/session-',
+          commitAuthor: 'Viewport Agent <noreply@example.test>',
+          maxCommitsPerSession: 500,
+          worktreeRoot: '.viewport/worktrees',
+        },
+        permissions: {
+          autoApprove: [],
+          requireApproval: ['Bash'],
+          deny: [],
+        },
+      },
+    });
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Review the plan without changing files.',
+        options: expect.objectContaining({
+          permissionMode: 'bypassPermissions',
+          tools: ['Read', 'Grep', 'Glob'],
+          allowedTools: ['Read', 'Grep', 'Glob'],
+        }),
+      }),
+    );
+  });
+
+  it('preserves plan mode for deferred initial prompts', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'plan-id' },
+    ]);
+    const adapter = new ClaudeAdapter(queryFn);
+
+    const session = await adapter.startSession('/test/dir', {
+      initialPrompt: 'Draft a plan later.',
+      deferInitialPrompt: true,
+      config: {
+        agent: 'claude',
+        approvalPolicy: 'never',
+        executionMode: 'plan',
+        trust: 'automated',
+        gitTracker: {
+          enabled: false,
+          commitOn: [],
+          ignore: [],
+          autoSquashOnComplete: false,
+          branchPrefix: 'viewport/session-',
+          commitAuthor: 'Viewport Agent <noreply@example.test>',
+          maxCommitsPerSession: 500,
+          worktreeRoot: '.viewport/worktrees',
+        },
+        permissions: {
+          autoApprove: [],
+          requireApproval: ['Bash'],
+          deny: [],
+        },
+      },
+    });
+
+    expect(queryFn).not.toHaveBeenCalled();
+
+    await session.sendPrompt('Draft a plan later.');
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Draft a plan later.',
+        options: expect.objectContaining({
+          permissionMode: 'plan',
+          tools: [],
+        }),
+      }),
+    );
+  });
+
   it('resumes a session by ID', async () => {
     const queryFn = createMockQuery([
       { type: 'system', subtype: 'init', session_id: 'existing-id' },
@@ -177,6 +402,55 @@ describe('ClaudeAdapter', () => {
         options: expect.objectContaining({
           cwd: '/test/dir',
           resume: 'existing-id',
+        }),
+      }),
+    );
+  });
+
+  it('preserves model and automated permission mode for deferred initial prompts', async () => {
+    const queryFn = createMockQuery([
+      { type: 'result', subtype: 'success', session_id: 'deferred-id' },
+    ]);
+    const adapter = new ClaudeAdapter(queryFn);
+
+    const session = await adapter.startSession('/test/dir', {
+      initialPrompt: 'Run deferred',
+      deferInitialPrompt: true,
+      model: 'sonnet',
+      config: {
+        agent: 'claude',
+        approvalPolicy: 'never',
+        trust: 'automated',
+        gitTracker: {
+          enabled: false,
+          commitOn: [],
+          ignore: [],
+          autoSquashOnComplete: false,
+          branchPrefix: 'viewport/session-',
+          commitAuthor: 'Viewport Agent <noreply@example.test>',
+          maxCommitsPerSession: 500,
+          worktreeRoot: '.viewport/worktrees',
+        },
+        permissions: {
+          autoApprove: [],
+          requireApproval: ['Bash'],
+          deny: [],
+        },
+      },
+    });
+
+    expect(session.state).toBe('idle');
+    expect(queryFn).not.toHaveBeenCalled();
+
+    await session.sendPrompt('Run deferred');
+
+    expect(queryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Run deferred',
+        options: expect.objectContaining({
+          cwd: '/test/dir',
+          model: 'sonnet',
+          permissionMode: 'bypassPermissions',
         }),
       }),
     );

@@ -73,6 +73,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -80,15 +81,25 @@ nodes:
     const completed = await daemon.workflowRunner.getRun(run.id);
 
     expect(completed?.status).toBe('completed');
-    expect(completed?.nodes.repo?.worktreePath).toContain(path.join('.viewport', 'checkouts'));
+    expect(completed?.nodes.repo?.worktreePath).toContain(
+      path.join('.viewport', 'workspace', 'runs', run.id, 'repos', 'operating'),
+    );
     expect(completed?.nodes.repo?.outputs).toMatchObject({
       repository: 'acme/payments',
       branch: 'viewport/proof',
+      sourceCategory: 'operating_repo',
+      readWriteMode: 'read_write',
     });
     expect(completed?.nodes.repo?.metadata?.checkout).toMatchObject({
       schema: 'viewport.checkout_receipt/v1',
       repository: 'acme/payments',
+      path: completed?.nodes.repo?.worktreePath,
+      source_category: 'operating_repo',
+      read_write_mode: 'read_write',
+      requested_ref: null,
+      requested_branch: 'viewport/proof',
       branch: 'viewport/proof',
+      exact_commit: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
     expect(completed?.nodes.inspect?.output).toContain('checked-out');
     expect(completed?.events).toContainEqual(
@@ -134,6 +145,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
     const second = await daemon.workflowRunner.startRun({
@@ -145,6 +157,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -196,6 +209,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -208,6 +222,66 @@ nodes:
       branch: 'viewport/rendered',
     });
     expect(completed?.nodes.repo?.error).toBeUndefined();
+  });
+
+  it('keeps checkout pinned to an exact commit when the source branch moves', async () => {
+    const firstCommit = await gitOutput(['rev-parse', 'HEAD'], remoteDir);
+    await fs.writeFile(path.join(remoteDir, 'README.md'), 'checkout proof advanced\n', 'utf8');
+    await runGit(['add', 'README.md'], remoteDir);
+    await runGit(['commit', '-m', 'advance branch'], remoteDir);
+    const latestCommit = await gitOutput(['rev-parse', 'HEAD'], remoteDir);
+    expect(latestCommit).not.toBe(firstCommit);
+
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: checkout-pinned-commit-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+    ref: ${firstCommit}
+    branch: viewport/proof
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.repo?.outputs).toMatchObject({
+      ref: firstCommit,
+      branch: 'viewport/proof',
+      commit: firstCommit,
+    });
+    expect(completed?.nodes.repo?.metadata?.checkout).toMatchObject({
+      schema: 'viewport.checkout_receipt/v1',
+      requested_ref: firstCommit,
+      requested_branch: 'viewport/proof',
+      exact_commit: firstCommit,
+      commit: firstCommit,
+    });
+    expect(completed?.nodes.repo?.metadata?.checkout).not.toMatchObject({
+      exact_commit: latestCommit,
+    });
   });
 
   it('runs prompt implementation nodes inside the governed checkout cwd when configured', async () => {
@@ -244,6 +318,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -300,6 +375,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -500,6 +576,9 @@ nodes:
     expect(completed?.nodes.repo?.metadata?.checkout).toMatchObject({
       schema: 'viewport.checkout_receipt/v1',
       repository: 'acme/payments',
+      source_category: 'operating_repo',
+      read_write_mode: 'read_write',
+      exact_commit: expect.stringMatching(/^[0-9a-f]{40}$/),
       credentialMode: 'run_scoped_grant',
       credentialRef: 'repo/github/payments-api',
     });
@@ -550,6 +629,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -600,6 +680,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -648,6 +729,25 @@ async function runGit(args: string[], cwd: string): Promise<void> {
     child.once('close', (code) => {
       if (code === 0) resolve();
       else reject(new Error(`git ${args.join(' ')} failed with ${code}`));
+    });
+  });
+}
+
+async function gitOutput(args: string[], cwd: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8').trim());
+        return;
+      }
+      const detail = Buffer.concat(stderr).toString('utf8').trim();
+      reject(new Error(detail || `git ${args.join(' ')} failed with ${code}`));
     });
   });
 }

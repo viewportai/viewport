@@ -1,11 +1,6 @@
 import type { WorkflowInputValue } from './run-types.js';
 
-export type WorkflowExecutorTargetKind =
-  | 'local_private'
-  | 'local_sandbox'
-  | 'managed'
-  | 'self_hosted'
-  | 'ci';
+export type WorkflowExecutorTargetKind = string;
 
 export type WorkflowExecutorCapability =
   | 'agent.prompt'
@@ -69,6 +64,16 @@ export interface WorkflowPolicyDefinition {
   sideEffects?: {
     requireApproval?: boolean;
     allowedAdapters?: string[];
+  };
+  budget?: {
+    maxTokens?: number;
+    tokens?: number;
+    maxCostUsd?: number;
+    usd?: number;
+    approvalThresholds?: {
+      tokens?: number;
+      costUsd?: number;
+    };
   };
   maxDurationSeconds?: number;
 }

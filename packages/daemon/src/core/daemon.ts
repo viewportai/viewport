@@ -11,6 +11,7 @@
 
 import type {
   AgentAdapter,
+  AgentAdapterDescriptor,
   DiscoveredSession,
   RunTrackerFactory,
   SessionDiscovery,
@@ -190,6 +191,16 @@ export class Daemon extends TypedEventEmitter<DaemonEvents> {
   /** Get available agent IDs from registered adapters. */
   getAvailableAgents(): string[] {
     return [...this.adapters.keys()];
+  }
+
+  /** Get workflow-relevant capability descriptors for registered adapters. */
+  getAgentAdapterDescriptions(): AgentAdapterDescriptor[] {
+    return [...this.adapters.values()].map((adapter) => adapter.describe());
+  }
+
+  /** Get a single adapter capability descriptor. */
+  getAgentAdapterDescription(agentId: string): AgentAdapterDescriptor | undefined {
+    return this.adapters.get(agentId)?.describe();
   }
 
   /** Get available model IDs from the registered agent registry, when known. */

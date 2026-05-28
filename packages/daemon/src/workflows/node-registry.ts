@@ -1,14 +1,17 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { executeLoopNode } from './loop-executor.js';
 import { executeContextNode } from './context-node-resolver.js';
 import { executeActionAdapter, WorkflowActionError } from './action-adapters.js';
 import {
   addEvent,
   renderOptionalTemplate,
+  runArgvNode,
   renderShellCommandTemplate,
   renderTemplate,
   resolveNodeCwd,
   runShellNode,
+  ShellNodeError,
 } from './runtime-helpers.js';
 import { envNameForCredentialRef } from './action-provider-utils.js';
 import { executeSubflowNode } from './subflow-executor.js';
@@ -80,6 +83,13 @@ export interface BuiltinExecutorHelpers {
  */
 export const NODE_EXECUTORS = new Map<string, BuiltinNodeExecutor>();
 
+const SECRET_LIKE_ENV_NAME_PATTERN =
+  /(^|_)(AUTHORIZATION|CREDENTIAL|PASSWORD|PASSWD|PRIVATE_KEY|SECRET|TOKEN|API_KEY)(_|$)/i;
+
+function isSecretLikeEnvName(name: string): boolean {
+  return SECRET_LIKE_ENV_NAME_PATTERN.test(name);
+}
+
 export function registerNodeExecutor(type: string, executor: BuiltinNodeExecutor): void {
   NODE_EXECUTORS.set(type, executor);
 }
@@ -129,6 +139,8 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         ref: result.ref,
         branch: result.branch,
         commit: result.commit,
+        sourceCategory: result.sourceCategory,
+        readWriteMode: result.readWriteMode,
       };
       state.metadata = {
         ...(state.metadata ?? {}),
@@ -136,8 +148,14 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           schema: 'viewport.checkout_receipt/v1',
           repository: result.repository,
           remote: result.remote,
+          path: result.path,
+          source_category: result.sourceCategory,
+          read_write_mode: result.readWriteMode,
+          requested_ref: result.ref,
+          requested_branch: result.branch,
           ref: result.ref,
           branch: result.branch,
+          exact_commit: result.commit,
           commit: result.commit,
           credentialMode: result.credentialMode,
           credentialRef: result.credentialRef,
@@ -151,8 +169,12 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       {
         repository: result.repository,
         remote: result.remote,
+        path: result.path,
+        source_category: result.sourceCategory,
+        read_write_mode: result.readWriteMode,
         ref: result.ref,
         branch: result.branch,
+        exact_commit: result.commit,
         commit: result.commit,
       },
       nodeId,
@@ -240,22 +262,90 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   shell: async (context, run, nodeId, node) => {
     if (node.type !== 'shell') return { result: 'completed' };
     const state = run.nodes[nodeId];
+    const startedAt = Date.now();
     const artifactCwd = resolveNodeCwd(
       run.directoryPath,
       await renderOptionalTemplate(node.cwd, run),
     );
-    const command = await renderShellCommandTemplate(node.command, run);
-    const denial = shellAuthorityDenial(run, nodeId, command, artifactCwd);
+    const invocation = await renderShellInvocation(node, run);
+    const env = await resolveNodeEnv(context, run, node);
+    if (state) {
+      state.metadata = {
+        ...(state.metadata ?? {}),
+        shell_execution: buildShellExecutionReceipt({
+          run,
+          nodeId,
+          commandDigestMaterial: invocation.digestMaterial,
+          executor: invocation.executor,
+          cwd: artifactCwd,
+          env,
+          timeoutSeconds: node.timeoutSeconds,
+          startedAt,
+          status: 'preflight',
+        }),
+      };
+    }
+    const workspaceDenial = shellWorkspaceCwdDenial(run, nodeId, artifactCwd);
+    if (workspaceDenial) {
+      if (state) {
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          shell_execution: buildShellExecutionReceipt({
+            run,
+            nodeId,
+            commandDigestMaterial: invocation.digestMaterial,
+            executor: invocation.executor,
+            cwd: artifactCwd,
+            env,
+            timeoutSeconds: node.timeoutSeconds,
+            startedAt,
+            completedAt: Date.now(),
+            status: 'denied',
+            denial: workspaceDenial,
+          }),
+        };
+      }
+      addEvent(
+        run,
+        'shell-blocked',
+        workspaceDenial.detail,
+        { workflow_authority_denial: workspaceDenial },
+        nodeId,
+      );
+      throw new Error(workspaceDenial.detail);
+    }
+    const denial = shellAuthorityDenial(run, nodeId, invocation.authorityCommand, artifactCwd, {
+      executorKind:
+        typeof invocation.executor.kind === 'string' ? invocation.executor.kind : undefined,
+    });
     if (denial) {
+      if (state) {
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          shell_execution: buildShellExecutionReceipt({
+            run,
+            nodeId,
+            commandDigestMaterial: invocation.digestMaterial,
+            executor: invocation.executor,
+            cwd: artifactCwd,
+            env,
+            timeoutSeconds: node.timeoutSeconds,
+            startedAt,
+            completedAt: Date.now(),
+            status: 'denied',
+            denial,
+          }),
+        };
+      }
       addEvent(run, 'shell-blocked', denial.detail, { workflow_authority_denial: denial }, nodeId);
       throw new Error(denial.detail);
     }
     const abort = context.shellAbortRegistry.create(run.id, `node:${nodeId}`);
     let result;
     try {
-      result = await runShellNode(command, {
+      result = await invocation.run({
         cwd: artifactCwd,
-        env: await resolveNodeEnv(context, run, node),
+        env,
         timeoutSeconds: node.timeoutSeconds,
         signal: abort.signal,
         onOutput: ({ source, chunk, output }) => {
@@ -270,12 +360,55 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
           void context.saveAndEmit(run);
         },
       });
+    } catch (error) {
+      if (state) {
+        if (error instanceof ShellNodeError) {
+          state.output = error.output || state.output;
+          state.exitCode = error.exitCode ?? undefined;
+        }
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          shell_execution: buildShellExecutionReceipt({
+            run,
+            nodeId,
+            commandDigestMaterial: invocation.digestMaterial,
+            executor: invocation.executor,
+            cwd: artifactCwd,
+            env,
+            timeoutSeconds: node.timeoutSeconds,
+            startedAt,
+            completedAt: Date.now(),
+            status:
+              error instanceof ShellNodeError && error.message.includes('canceled')
+                ? 'canceled'
+                : 'failed',
+            exitCode: error instanceof ShellNodeError ? error.exitCode : null,
+          }),
+        };
+      }
+      throw error;
     } finally {
       abort.dispose();
     }
     if (state) {
       state.output = result.output;
       state.exitCode = result.exitCode;
+      state.metadata = {
+        ...(state.metadata ?? {}),
+        shell_execution: buildShellExecutionReceipt({
+          run,
+          nodeId,
+          commandDigestMaterial: invocation.digestMaterial,
+          executor: invocation.executor,
+          cwd: artifactCwd,
+          env,
+          timeoutSeconds: node.timeoutSeconds,
+          startedAt,
+          completedAt: Date.now(),
+          status: 'completed',
+          exitCode: result.exitCode,
+        }),
+      };
     }
     addEvent(
       run,
@@ -637,6 +770,11 @@ async function resolveNodeEnv(
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(node.env)) {
     if (value.value !== undefined) {
+      if (isSecretLikeEnvName(name)) {
+        throw new Error(
+          `Env ${name} looks secret-like and must use a credential secret handle instead of a literal value.`,
+        );
+      }
       env[name] = await renderTemplate(value.value, run);
       continue;
     }
@@ -724,6 +862,155 @@ function redactedContextUpdatePatch(
     ...(Array.isArray(patch.files) ? { files: patch.files } : {}),
     plaintext_patch_persisted: false,
   };
+}
+
+async function renderShellInvocation(
+  node: Extract<WorkflowNode, { type: 'shell' }>,
+  run: WorkflowRunRecord,
+): Promise<{
+  authorityCommand: string;
+  digestMaterial: string;
+  executor: Record<string, unknown>;
+  run: (options: {
+    cwd: string;
+    timeoutSeconds?: number;
+    env?: Record<string, string>;
+    signal?: AbortSignal;
+    onOutput?: (event: { source: 'stdout' | 'stderr'; chunk: string; output: string }) => void;
+  }) => Promise<{ output: string; exitCode: number }>;
+}> {
+  if (node.argv && node.argv.length > 0) {
+    const argv = await Promise.all(node.argv.map((entry) => renderTemplate(entry, run)));
+    return {
+      authorityCommand: argv.join(' '),
+      digestMaterial: JSON.stringify({ argv }),
+      executor: {
+        kind: 'argv',
+        command: argv[0] ?? null,
+        args_count: Math.max(0, argv.length - 1),
+        raw_args_persisted: false,
+      },
+      run: (options) => runArgvNode(argv, options),
+    };
+  }
+
+  if (!node.command) {
+    throw new Error(`Shell node must set command or argv.`);
+  }
+  const command = await renderShellCommandTemplate(node.command, run);
+  return {
+    authorityCommand: command,
+    digestMaterial: command,
+    executor: {
+      kind: 'shell',
+      command: 'sh',
+      args: ['-lc'],
+    },
+    run: (options) => runShellNode(command, options),
+  };
+}
+
+function buildShellExecutionReceipt(input: {
+  run: WorkflowRunRecord;
+  nodeId: string;
+  commandDigestMaterial: string;
+  executor: Record<string, unknown>;
+  cwd: string;
+  env: Record<string, string> | undefined;
+  timeoutSeconds: number | undefined;
+  startedAt: number;
+  completedAt?: number;
+  status: 'preflight' | 'denied' | 'completed' | 'failed' | 'canceled';
+  exitCode?: number | null;
+  denial?: { reason: string; detail: string };
+}): Record<string, unknown> {
+  const durationMs =
+    input.completedAt !== undefined ? Math.max(0, input.completedAt - input.startedAt) : null;
+  return {
+    schema: 'viewport.shell_execution_receipt/v1',
+    node_id: input.nodeId,
+    status: input.status,
+    executor: input.executor,
+    command_digest: digest(input.commandDigestMaterial),
+    command_persisted: false,
+    cwd: input.cwd,
+    cwd_digest: digest(input.cwd),
+    env_keys: Object.keys(input.env ?? {}).sort(),
+    env_values_persisted: false,
+    timeout_seconds: input.timeoutSeconds ?? null,
+    authority: shellAuthorityReceipt(input.run),
+    started_at: new Date(input.startedAt).toISOString(),
+    completed_at:
+      input.completedAt !== undefined ? new Date(input.completedAt).toISOString() : null,
+    duration_ms: durationMs,
+    exit_code: input.exitCode ?? null,
+    denial: input.denial
+      ? {
+          reason: input.denial.reason,
+          detail: input.denial.detail,
+        }
+      : null,
+  };
+}
+
+function shellWorkspaceCwdDenial(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  cwd: string,
+): { schema: string; reason: string; runId: string; nodeId: string; detail: string } | null {
+  if (isPathWithin(cwd, run.directoryPath)) return null;
+  return {
+    schema: 'viewport.workflow_authority_denial/v1',
+    reason: 'shell_cwd_outside_run_workspace',
+    runId: run.id,
+    nodeId,
+    detail: `Shell cwd ${cwd} is outside the run worktree.`,
+  };
+}
+
+function shellAuthorityReceipt(run: WorkflowRunRecord): Record<string, unknown> {
+  const contract = run.workflowAuthorityContract;
+  if (!contract || typeof contract !== 'object') {
+    return {
+      source: 'legacy_local',
+      shell_policy: 'legacy',
+      authority_contract_present: false,
+    };
+  }
+  const shellPolicy = authorityShellPolicy(contract);
+  return {
+    source: 'workflow_authority_contract',
+    shell_policy: shellPolicy ?? null,
+    legacy_command_allowed: authorityLegacyShellCommandAllowed(contract),
+    authority_contract_present: true,
+    authority_contract_digest: typeof contract.digest === 'string' ? contract.digest : null,
+  };
+}
+
+function authorityShellPolicy(contract: Record<string, unknown>): string | null {
+  const nested = contract['shell'];
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const policy = (nested as Record<string, unknown>)['policy'];
+    if (typeof policy === 'string' && policy.trim() !== '') return policy;
+  }
+  const flat = contract['shell_policy'];
+  if (typeof flat === 'string' && flat.trim() !== '') return flat;
+  return null;
+}
+
+function authorityLegacyShellCommandAllowed(contract: Record<string, unknown>): boolean {
+  const nested = contract['shell'];
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const allowed = (nested as Record<string, unknown>)['allow_legacy_command'];
+    if (typeof allowed === 'boolean') return allowed;
+  }
+  const flat = contract['shell_allow_legacy_command'];
+  return typeof flat === 'boolean' ? flat : false;
+}
+
+function isPathWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function digest(value: string): string {

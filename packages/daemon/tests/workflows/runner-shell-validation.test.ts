@@ -61,11 +61,28 @@ nodes:
 
     await waitForTerminalRun(daemon, run.id);
     const failed = await daemon.workflowRunner.getRun(run.id);
-
     expect(failed?.status).toBe('failed');
     expect(failed?.nodes.fail?.status).toBe('failed');
     expect(failed?.nodes.fail?.exitCode).toBe(7);
     expect(failed?.error).toMatch(/code 7/);
+    expect(failed?.nodes.fail?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'fail',
+      status: 'failed',
+      executor: {
+        kind: 'shell',
+        command: 'sh',
+        args: ['-lc'],
+      },
+      command_digest: expect.stringMatching(/^sha256:/),
+      command_persisted: false,
+      cwd: projectDir,
+      env_keys: [],
+      env_values_persisted: false,
+      timeout_seconds: null,
+      exit_code: 7,
+      denial: null,
+    });
   });
 
   it('blocks git workflows before shell execution when the target directory is not a git worktree', async () => {
@@ -101,6 +118,170 @@ nodes:
     expect(blocked?.preflight.issues[0]?.message).toMatch(/not a git repository/);
   });
 
+  it('requires explicit constrained shell policy when authority contract is present', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-policy-required-proof
+nodes:
+  inspect:
+    type: shell
+    command: printf no-policy
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('requires an explicit constrained shell policy');
+    expect(failed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'inspect',
+      status: 'denied',
+      command_persisted: false,
+      env_values_persisted: false,
+      authority: expect.objectContaining({
+        source: 'workflow_authority_contract',
+        shell_policy: null,
+        authority_contract_present: true,
+        authority_contract_digest: 'sha256:authority',
+      }),
+      denial: {
+        reason: 'shell_policy_required',
+        detail: expect.stringContaining('explicit constrained shell policy'),
+      },
+    });
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'shell-blocked',
+        nodeId: 'inspect',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'shell_policy_required',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('requires explicit legacy command opt-in when authority contract is present', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-legacy-opt-in-proof
+nodes:
+  inspect:
+    type: shell
+    command: printf legacy
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.inspect?.error).toContain('shell.allow_legacy_command');
+    expect(failed?.nodes.inspect?.output).not.toBe('legacy');
+    expect(failed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'inspect',
+      status: 'denied',
+      executor: expect.objectContaining({ kind: 'shell' }),
+      authority: expect.objectContaining({
+        source: 'workflow_authority_contract',
+        shell_policy: 'constrained',
+        legacy_command_allowed: false,
+      }),
+      denial: {
+        reason: 'shell_legacy_command_not_allowed',
+        detail: expect.stringContaining('shell.allow_legacy_command'),
+      },
+    });
+  });
+
+  it('allows authority-bound argv shell nodes without legacy command opt-in', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-argv-authority-proof
+nodes:
+  inspect:
+    type: shell
+    argv:
+      - printf
+      - argv-ok
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+        shell: { policy: 'constrained' },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.inspect?.output).toBe('argv-ok');
+    expect(completed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'inspect',
+      status: 'completed',
+      executor: expect.objectContaining({ kind: 'argv' }),
+      authority: expect.objectContaining({
+        source: 'workflow_authority_contract',
+        shell_policy: 'constrained',
+        legacy_command_allowed: false,
+      }),
+    });
+  });
+
   it('blocks shell commands that reference repositories outside the workflow authority contract', async () => {
     const daemon = await setup();
     await fs.writeFile(path.join(projectDir, 'README.md'), 'proof\n', 'utf8');
@@ -133,6 +314,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -188,6 +370,7 @@ nodes:
         digest: 'sha256:authority',
         repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
         side_effects: { allowed: [{ provider: 'github', actions: ['create_pr'] }] },
+        shell: { policy: 'constrained', allow_legacy_command: true },
       },
     });
 
@@ -196,6 +379,68 @@ nodes:
 
     expect(failed?.status).toBe('failed');
     expect(failed?.nodes.push?.error).toContain('github.push-branch');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'shell-blocked',
+        nodeId: 'push',
+        data: expect.objectContaining({
+          workflow_authority_denial: expect.objectContaining({
+            reason: 'shell_provider_side_effect_not_allowed',
+            provider: 'github',
+            action: 'push-branch',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('blocks argv side-effect commands outside first-class authority', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-argv-side-effect-proof
+nodes:
+  push:
+    type: shell
+    argv:
+      - git
+      - push
+      - git@github.com:acme/payments.git
+      - HEAD:viewport/proof
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [{ provider: 'github', actions: ['create_pr'] }] },
+        shell: { policy: 'constrained' },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.push?.error).toContain('github.push-branch');
+    expect(failed?.nodes.push?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      status: 'denied',
+      executor: expect.objectContaining({ kind: 'argv' }),
+      denial: {
+        reason: 'shell_provider_side_effect_not_allowed',
+        detail: expect.stringContaining('github.push-branch'),
+      },
+    });
     expect(failed?.events).toContainEqual(
       expect.objectContaining({
         type: 'shell-blocked',
@@ -239,6 +484,7 @@ nodes:
           digest: 'sha256:authority',
           repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
           side_effects: { allowed: [] },
+          shell: { policy: 'constrained', allow_legacy_command: true },
         },
       });
 
@@ -247,6 +493,63 @@ nodes:
 
       expect(failed?.status).toBe('failed');
       expect(failed?.nodes.inspect?.error).toContain('outside the run worktree');
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks shell cwd outside the run worktree without relying on authority contracts', async () => {
+    const daemon = await setup();
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-outside-worktree-'));
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-cwd-proof
+nodes:
+  inspect:
+    type: shell
+    cwd: ${JSON.stringify(outside)}
+    argv:
+      - printf
+      - outside
+`,
+      'utf-8',
+    );
+
+    try {
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const failed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(failed?.status).toBe('failed');
+      expect(failed?.nodes.inspect?.error).toContain('outside the run worktree');
+      expect(failed?.nodes.inspect?.metadata?.['shell_execution']).toMatchObject({
+        schema: 'viewport.shell_execution_receipt/v1',
+        status: 'denied',
+        executor: expect.objectContaining({ kind: 'argv' }),
+        denial: {
+          reason: 'shell_cwd_outside_run_workspace',
+          detail: expect.stringContaining('outside the run worktree'),
+        },
+      });
+      expect(failed?.events).toContainEqual(
+        expect.objectContaining({
+          type: 'shell-blocked',
+          nodeId: 'inspect',
+          data: expect.objectContaining({
+            workflow_authority_denial: expect.objectContaining({
+              reason: 'shell_cwd_outside_run_workspace',
+            }),
+          }),
+        }),
+      );
     } finally {
       await fs.rm(outside, { recursive: true, force: true });
     }

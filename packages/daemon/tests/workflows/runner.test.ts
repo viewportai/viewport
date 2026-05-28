@@ -68,6 +68,29 @@ nodes:
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.proof?.output).toBe('ok');
     expect(completed?.nodes.proof?.exitCode).toBe(0);
+    expect(completed?.nodes.proof?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'proof',
+      status: 'completed',
+      executor: {
+        kind: 'shell',
+        command: 'sh',
+        args: ['-lc'],
+      },
+      command_digest: expect.stringMatching(/^sha256:/),
+      command_persisted: false,
+      cwd: projectDir,
+      cwd_digest: expect.stringMatching(/^sha256:/),
+      env_keys: [],
+      env_values_persisted: false,
+      timeout_seconds: null,
+      exit_code: 0,
+      denial: null,
+      authority: expect.objectContaining({
+        source: 'legacy_local',
+        authority_contract_present: false,
+      }),
+    });
     expect(completed?.events).toContainEqual(
       expect.objectContaining({
         type: 'node-log',
@@ -83,6 +106,53 @@ nodes:
       }),
     );
     expect(runs.map((item) => item.id)).toContain(run.id);
+  });
+
+  it('runs a shell workflow through structured argv without sh -lc', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: argv-shell-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - "ok"
+`,
+      'utf-8',
+    );
+
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId,
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.proof?.output).toBe('ok');
+    expect(completed?.nodes.proof?.metadata?.['shell_execution']).toMatchObject({
+      schema: 'viewport.shell_execution_receipt/v1',
+      node_id: 'proof',
+      status: 'completed',
+      executor: {
+        kind: 'argv',
+        command: 'printf',
+        args_count: 1,
+        raw_args_persisted: false,
+      },
+      command_digest: expect.stringMatching(/^sha256:/),
+      command_persisted: false,
+      env_values_persisted: false,
+      exit_code: 0,
+    });
   });
 
   it('records node authority acknowledgement before executing a node', async () => {
@@ -215,6 +285,45 @@ nodes:
     expect(failed?.status).toBe('failed');
     expect(failed?.nodes.proof?.error).toContain('Secret binding repo/github/payments-api');
     expect(failed?.nodes.proof?.output).not.toBe('should-not-run');
+  });
+
+  it('fails closed when secret-like shell env names use literal values', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-literal-secret-env-proof
+nodes:
+  proof:
+    type: shell
+    env:
+      GITHUB_TOKEN:
+        value: ghp_literal_secret
+    argv: [printf, should-not-run]
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.proof?.error).toContain(
+      'Env GITHUB_TOKEN looks secret-like and must use a credential secret handle',
+    );
+    expect(failed?.nodes.proof?.output).not.toBe('should-not-run');
+    expect(JSON.stringify(failed?.inputs)).not.toContain('ghp_literal_secret');
+    expect(JSON.stringify(failed?.nodes.proof?.metadata)).not.toContain('ghp_literal_secret');
+    expect(JSON.stringify(workflowRunToSyncPayload(failed!).nodes)).not.toContain(
+      'ghp_literal_secret',
+    );
   });
 
   it('cancels a running shell workflow and preserves canceled state', async () => {

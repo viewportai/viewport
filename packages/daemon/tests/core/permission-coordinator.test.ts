@@ -7,7 +7,7 @@ describe('PermissionCoordinator', () => {
   let eventBus: TypedEventEmitter<DaemonEvents>;
   let coordinator: PermissionCoordinator;
 
-  const makeConfig = () => ({
+  const makeConfigBase = () => ({
     agent: 'claude' as const,
     gitTracker: {
       enabled: false,
@@ -25,6 +25,11 @@ describe('PermissionCoordinator', () => {
       deny: [] as string[],
     },
     trust: 'operator' as const,
+  });
+
+  const makeConfig = (overrides: Partial<ReturnType<typeof makeConfigBase>> = {}) => ({
+    ...makeConfigBase(),
+    ...overrides,
   });
 
   beforeEach(() => {
@@ -196,6 +201,29 @@ describe('PermissionCoordinator', () => {
     );
 
     expect(result.behavior).toBe('allow');
+    expect(coordinator.listPendingPermissions('session-1')).toHaveLength(0);
+  });
+
+  it('automated approvalPolicy never auto-allows permission-gated tools', async () => {
+    const handler = coordinator.createPermissionHandler(
+      'session-1',
+      makeConfig({ trust: 'automated', approvalPolicy: 'never' }),
+    );
+    const requested = vi.fn();
+    eventBus.on('permission:requested', requested);
+    const controller = new AbortController();
+
+    const result = await handler(
+      'Write',
+      { file_path: '/tmp/test' },
+      {
+        signal: controller.signal,
+        toolUseId: 'tool-8',
+      },
+    );
+
+    expect(result.behavior).toBe('allow');
+    expect(requested).not.toHaveBeenCalled();
     expect(coordinator.listPendingPermissions('session-1')).toHaveLength(0);
   });
 

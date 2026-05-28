@@ -10,6 +10,7 @@
 import { EventEmitter } from 'node:events';
 import type {
   AgentAdapter,
+  AgentAdapterDescriptor,
   Session,
   SessionOptions,
   PermissionHandler,
@@ -70,6 +71,7 @@ export type QueryFn = (params: {
     sessionId?: string;
     canUseTool?: SDKCanUseTool;
     allowedTools?: string[];
+    tools?: string[] | { type: 'preset'; preset: 'claude_code' };
     maxTurns?: number;
     maxBudgetUsd?: number;
     abortController?: AbortController;
@@ -92,6 +94,7 @@ export class ClaudeSession extends EventEmitter implements Session {
   private drainPromise: Promise<void> | null = null;
   private cwd: string = '';
   private resumedContext = false;
+  private sessionOptions: SessionOptions | undefined;
   private pendingMessages: SessionMessage[] = [];
   private pendingFlushScheduled = false;
   private endedForPoisonedHistory = false;
@@ -116,6 +119,7 @@ export class ClaudeSession extends EventEmitter implements Session {
     log.info({ sessionId: this.id, cwd, promptLen: prompt.length }, 'session.start');
     metrics.increment('sessions.launched');
     this.cwd = cwd;
+    this.sessionOptions = options;
     this.resumedContext = false;
     const initialPrompt = prompt.trim();
     if (initialPrompt.length === 0) {
@@ -130,9 +134,12 @@ export class ClaudeSession extends EventEmitter implements Session {
         cwd,
         model: options?.model,
         sessionId: this.id,
+        ...claudeToolOptions(options),
         canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
+        ...claudeBudgetOptions(options),
+        ...claudePermissionOptions(options),
       },
     });
 
@@ -147,6 +154,7 @@ export class ClaudeSession extends EventEmitter implements Session {
     log.info({ sessionId, cwd, hasPrompt: !!options?.initialPrompt }, 'session.resume');
     const explicitPrompt = options?.initialPrompt?.trim() ?? '';
     this.cwd = cwd;
+    this.sessionOptions = options;
     this.resumedContext = true;
 
     if (options?.deferInitialPrompt || explicitPrompt.length === 0) {
@@ -160,9 +168,12 @@ export class ClaudeSession extends EventEmitter implements Session {
         cwd,
         model: options?.model,
         resume: sessionId,
+        ...claudeToolOptions(options),
         canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
+        ...claudeBudgetOptions(options),
+        ...claudePermissionOptions(options),
       },
     });
 
@@ -186,14 +197,19 @@ export class ClaudeSession extends EventEmitter implements Session {
     if (!this.query) {
       this.emitLocalUserPrompt(trimmed);
       this.abortController = new AbortController();
+      const options = this.sessionOptions;
       this.query = this.queryFn({
         prompt: trimmed,
         options: {
           cwd: this.cwd,
+          model: options?.model,
           ...(this.resumedContext ? { resume: this.id } : { sessionId: this.id }),
+          ...claudeToolOptions(options),
           canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
           abortController: this.abortController,
           persistSession: true,
+          ...claudeBudgetOptions(options),
+          ...claudePermissionOptions(options),
         },
       });
       this.setState('running');
@@ -225,16 +241,21 @@ export class ClaudeSession extends EventEmitter implements Session {
 
     // Fresh AbortController for the new query — the old one may be aborted
     this.abortController = new AbortController();
+    const options = this.sessionOptions;
 
     log.info({ sessionId: this.id, cwd: this.cwd }, 'sendPrompt: creating new resumed query');
     this.query = this.queryFn({
       prompt: trimmed,
       options: {
         cwd: this.cwd,
+        model: options?.model,
         resume: this.id,
+        ...claudeToolOptions(options),
         canUseTool: this.canUseTool ? this.wrapCanUseTool(this.canUseTool) : undefined,
         abortController: this.abortController,
         persistSession: true,
+        ...claudeBudgetOptions(options),
+        ...claudePermissionOptions(options),
       },
     });
 
@@ -536,6 +557,31 @@ export class ClaudeAdapter implements AgentAdapter {
 
   constructor(private queryFn: QueryFn) {}
 
+  describe(): AgentAdapterDescriptor {
+    return {
+      schema: 'viewport.agent_adapter/v2',
+      agentId: this.agentId,
+      displayName: 'Claude',
+      adapterVersion: 'claude-agent-sdk',
+      capabilities: {
+        executionModes: {
+          plan: 'provider',
+          read_only: 'provider',
+          review: 'provider',
+          implement: 'provider',
+        },
+        toolAllowlist: 'provider',
+        structuredOutput: 'prompt_only',
+        permissionHooks: 'provider',
+        usageReporting: 'reported',
+        costReporting: 'reported',
+        maxTurns: 'provider',
+        maxBudget: 'provider',
+        hardTimeout: 'hard',
+      },
+    };
+  }
+
   async startSession(cwd: string, options?: SessionOptions): Promise<Session> {
     const sessionId = crypto.randomUUID();
     log.info({ sessionId, cwd }, 'ClaudeAdapter.startSession');
@@ -556,4 +602,47 @@ export class ClaudeAdapter implements AgentAdapter {
     await session.resume(sessionId, cwd, options);
     return session;
   }
+}
+
+function claudePermissionOptions(options: SessionOptions | undefined): { permissionMode?: string } {
+  if (options?.config?.executionMode === 'plan') {
+    return { permissionMode: 'plan' };
+  }
+
+  if (options?.config?.approvalPolicy === 'never') {
+    return { permissionMode: 'bypassPermissions' };
+  }
+
+  return {};
+}
+
+function claudeBudgetOptions(options: SessionOptions | undefined): {
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+} {
+  const maxTurns = options?.config?.maxTurns;
+  const maxBudgetUsd = options?.config?.maxBudgetUsd ?? options?.config?.costCapUsd;
+  return {
+    ...(typeof maxTurns === 'number' ? { maxTurns } : {}),
+    ...(typeof maxBudgetUsd === 'number' ? { maxBudgetUsd } : {}),
+  };
+}
+
+function claudeToolOptions(options: SessionOptions | undefined): {
+  tools?: string[] | { type: 'preset'; preset: 'claude_code' };
+  allowedTools?: string[];
+} {
+  if (options?.config?.executionMode === 'plan') {
+    return { tools: [] };
+  }
+
+  if (
+    options?.config?.executionMode === 'read_only' ||
+    options?.config?.executionMode === 'review'
+  ) {
+    const tools = options.config.allowedTools ?? ['Read', 'Grep', 'Glob'];
+    return { tools, allowedTools: tools };
+  }
+
+  return {};
 }

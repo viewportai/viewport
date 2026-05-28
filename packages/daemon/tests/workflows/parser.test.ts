@@ -49,6 +49,63 @@ describe('workflow parser', () => {
     expect(WORKFLOW_SCHEMA_VERSION).toBe('viewport.workflow/v1');
   });
 
+  it('accepts structured argv shell nodes', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: argv-shell
+nodes:
+  proof:
+    type: shell
+    argv:
+      - npm
+      - test
+      - "--"
+      - "{{ inputs.target }}"
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const proof = parsed.definition.nodes.proof;
+    expect(proof?.type).toBe('shell');
+    if (proof?.type === 'shell') {
+      expect(proof.argv).toEqual(['npm', 'test', '--', '{{ inputs.target }}']);
+      expect(proof.command).toBeUndefined();
+    }
+  });
+
+  it('requires shell nodes to set command or argv, but not both', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: missing-shell-command
+nodes:
+  proof:
+    type: shell
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/must set command or argv/);
+
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: duplicate-shell-command
+nodes:
+  proof:
+    type: shell
+    command: npm test
+    argv:
+      - npm
+      - test
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/must set command or argv, not both/);
+  });
+
   it('accepts Slack source-accepted and inbox notification config objects', () => {
     const parsed = parseWorkflow(
       `
@@ -347,6 +404,12 @@ policies:
     allowedAdapters:
       - github
       - jira
+  budget:
+    maxTokens: 100000
+    maxCostUsd: 25
+    approvalThresholds:
+      tokens: 75000
+      costUsd: 10
 notifications:
   inbox:
     - approval_requested
@@ -411,6 +474,8 @@ nodes:
     expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
     expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
     expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.policies?.budget?.maxTokens).toBe(100000);
+    expect(parsed.definition.policies?.budget?.approvalThresholds?.costUsd).toBe(10);
     expect(parsed.definition.notifications?.inbox).toContain('approval_requested');
     expect(parsed.definition.dataCapture?.approvalPackets).toBe(true);
     expect(parsed.definition.nodes.investigate?.type).toBe('agent');
@@ -445,6 +510,25 @@ nodes:
       'open_pr',
       'update_jira',
     ]);
+  });
+
+  it('accepts dynamic self-hosted runner target identifiers', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: runner/dynamic-target
+runner:
+  kind: self_hosted_runner
+  target: mehrs-macbook-pro-worker-2
+nodes:
+  inspect:
+    type: shell
+    command: npm test
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(parsed.definition.runner?.target).toBe('mehrs-macbook-pro-worker-2');
   });
 
   it('accepts mature workflow schema fields without losing deterministic parsing', () => {
@@ -707,6 +791,10 @@ nodes:
         title: Reviewer
         agent: codex
         model: gpt-5.4
+        executionMode: review
+        allowedTools:
+          - Read
+        timeoutSeconds: 120
         prompt: Review {{ nodes.inspect.outputs.summary }}.
       tester:
         prompt: Design tests for {{ nodes.inspect.output }}.
@@ -719,6 +807,9 @@ nodes:
     if (supervisor?.type === 'prompt') {
       expect(Object.keys(supervisor.agents ?? {})).toEqual(['reviewer', 'tester']);
       expect(supervisor.agents?.reviewer?.agent).toBe('codex');
+      expect(supervisor.agents?.reviewer?.executionMode).toBe('review');
+      expect(supervisor.agents?.reviewer?.allowedTools).toEqual(['Read']);
+      expect(supervisor.agents?.reviewer?.timeoutSeconds).toBe(120);
       expect(supervisor.inlineAgentFailurePolicy).toBe('continue');
     }
   });
@@ -835,6 +926,26 @@ nodes:
     ).toThrow(/undeclared output/);
   });
 
+  it('validates shell command template dataflow references before execution', () => {
+    expect(() =>
+      parseWorkflow(
+        `
+schema: viewport.workflow/v1
+name: shell-template-dataflow
+nodes:
+  collect:
+    type: shell
+    command: printf ok
+  publish:
+    type: shell
+    needs: [collect]
+    command: printf {{ nodes.collect.outputs.summary }}
+`,
+        '/tmp/workflow.yaml',
+      ),
+    ).toThrow(/undeclared output collect.summary/);
+  });
+
   it('allows nested reads from declared structured JSON outputs', () => {
     const parsed = parseWorkflow(
       `
@@ -896,6 +1007,81 @@ nodes:
 
     expect(parsed.definition.nodes.plan?.type).toBe('prompt');
     expect(parsed.definition.nodes.plan?.effort).toBe('high');
+  });
+
+  it('parses prompt execution mode and allowed tools as runtime config', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: prompt-execution-mode-proof
+nodes:
+  draft_plan:
+    type: prompt
+    agent: claude
+    model: sonnet
+    executionMode: plan
+    allowedTools: []
+    prompt: Draft a plan.
+  inspect:
+    type: prompt
+    needs: [draft_plan]
+    agent: claude
+    executionMode: read_only
+    allowedTools:
+      - Read
+      - Grep
+      - Glob
+    prompt: Inspect only.
+  execute:
+    type: agent
+    needs: [inspect]
+    agent: claude
+    executionMode: implement
+    allowedTools:
+      - Edit
+    prompt: Implement the change.
+  report:
+    type: prompt
+    needs: [execute]
+    agent: claude
+    executionMode: review
+    outputSchema:
+      findings:
+        type: json
+        requirement: required
+        extract: json.findings
+        outputSchema:
+          type: array
+    prompt: Return JSON findings.
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const draftPlan = parsed.definition.nodes.draft_plan;
+    const inspect = parsed.definition.nodes.inspect;
+    expect(draftPlan?.type).toBe('prompt');
+    expect(inspect?.type).toBe('prompt');
+    if (draftPlan?.type !== 'prompt' || inspect?.type !== 'prompt') return;
+    expect(draftPlan.executionMode).toBe('plan');
+    expect(draftPlan.allowedTools).toEqual([]);
+    expect(inspect.executionMode).toBe('read_only');
+    expect(inspect.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
+    const execute = parsed.definition.nodes.execute;
+    expect(execute?.type).toBe('agent');
+    if (execute?.type === 'agent') {
+      expect(execute.executionMode).toBe('implement');
+      expect(execute.allowedTools).toEqual(['Edit']);
+    }
+    const report = parsed.definition.nodes.report;
+    expect(report?.type).toBe('prompt');
+    if (report?.type === 'prompt') {
+      expect(report.outputSchema?.findings).toMatchObject({
+        type: 'json',
+        requirement: 'required',
+        extract: 'json.findings',
+        outputSchema: { type: 'array' },
+      });
+    }
   });
 
   it('parses workflows from disk with resolved source paths', async () => {

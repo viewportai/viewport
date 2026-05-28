@@ -85,9 +85,34 @@ export class WorkflowLayerScheduler {
 
         const ready = findReadyNodeIds(freshRun, parsed);
         if (ready.length === 0) {
-          // No more ready nodes. Either everything is terminal (run completes)
-          // or some nodes are blocked / orphaned (run pauses or fails).
-          break;
+          const incomplete = Object.values(freshRun.nodes).filter(
+            (node) => !isTerminalNodeStatus(node.status),
+          );
+          if (incomplete.length === 0) {
+            break;
+          }
+
+          if (incomplete.some((node) => node.status === 'running')) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            continue;
+          }
+
+          if (incomplete.some((node) => node.status === 'blocked')) {
+            return;
+          }
+
+          const orphanedNodeIds = incomplete.map((node) => node.id).sort();
+          freshRun.status = 'blocked';
+          freshRun.error = `Workflow scheduler found queued nodes with unmet dependencies: ${orphanedNodeIds.join(', ')}`;
+          freshRun.updatedAt = Date.now();
+          addEvent(
+            freshRun,
+            'run-blocked',
+            'Workflow blocked because queued nodes have unmet dependencies',
+            { nodeIds: orphanedNodeIds },
+          );
+          await this.ops.saveAndEmit(freshRun);
+          return;
         }
 
         const layer = await this.classifyLayer(freshRun, parsed, ready);
@@ -148,7 +173,20 @@ export class WorkflowLayerScheduler {
           const node = parsed.definition.nodes[nodeId];
           const state = updated.nodes[nodeId];
           if (state?.status === 'completed' && node) {
-            await captureNodeStructuredOutputs(state, node);
+            try {
+              await captureNodeStructuredOutputs(state, node);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              addEvent(
+                updated,
+                'structured-output-invalid',
+                `Node ${nodeId} produced invalid structured output: ${message}`,
+                { message },
+                nodeId,
+              );
+              await this.ops.saveAndEmit(updated);
+              throw error;
+            }
           }
         }
         await this.ops.saveAndEmit(updated);
@@ -266,4 +304,10 @@ export class WorkflowLayerScheduler {
     run.updatedAt = state.completedAt;
     addEvent(run, 'node-skipped', `Node ${nodeId} skipped: ${reason}`, { reason }, nodeId);
   }
+}
+
+function isTerminalNodeStatus(status: string): boolean {
+  return (
+    status === 'completed' || status === 'failed' || status === 'skipped' || status === 'canceled'
+  );
 }

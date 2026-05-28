@@ -159,7 +159,11 @@ export function extractToolCallUpdateEvent(value: unknown): SessionMessage | nul
 export function extractTokenUsageEvent(value: unknown): SessionMessage | null {
   if (!value || typeof value !== 'object') return null;
   const rec = value as Record<string, unknown>;
-  if (rec['type'] !== 'turn.completed' && rec['type'] !== 'response.completed') {
+  if (
+    rec['type'] !== 'turn.completed' &&
+    rec['type'] !== 'response.completed' &&
+    rec['type'] !== 'result'
+  ) {
     return null;
   }
   const usage =
@@ -169,13 +173,80 @@ export function extractTokenUsageEvent(value: unknown): SessionMessage | null {
   if (!usage) return null;
   const inputTokens = numberOrZero(usage['input_tokens'] ?? usage['inputTokens']);
   const outputTokens = numberOrZero(usage['output_tokens'] ?? usage['outputTokens']);
-  if (inputTokens <= 0 && outputTokens <= 0) return null;
+  const cacheReadInputTokens = numberOrZero(
+    usage['cache_read_input_tokens'] ?? usage['cacheReadInputTokens'],
+  );
+  const cacheCreationInputTokens = numberOrZero(
+    usage['cache_creation_input_tokens'] ?? usage['cacheCreationInputTokens'],
+  );
+  const hasCacheAccounting = cacheReadInputTokens > 0 || cacheCreationInputTokens > 0;
+  const billableInputTokens = hasCacheAccounting
+    ? Math.max(0, inputTokens - cacheReadInputTokens)
+    : 0;
+  const budgetedTotalTokens = billableInputTokens + outputTokens;
+  const totalCostUsd = numberOrUndefined(
+    rec['total_cost_usd'] ??
+      rec['totalCostUsd'] ??
+      usage['total_cost_usd'] ??
+      usage['totalCostUsd'] ??
+      usage['cost_usd'] ??
+      usage['costUsd'],
+  );
+  const durationMs = numberOrUndefined(rec['duration_ms'] ?? rec['durationMs']);
+  const numTurns = numberOrUndefined(rec['num_turns'] ?? rec['numTurns']);
+  if (inputTokens <= 0 && outputTokens <= 0 && cacheReadInputTokens <= 0) return null;
   return {
     type: 'token_usage',
     inputTokens,
+    inputTokenScope: hasCacheAccounting ? 'billable' : 'raw_provider',
     outputTokens,
+    ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
+    ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
+    ...(hasCacheAccounting ? { billableInputTokens } : {}),
+    budgetedTotalTokens,
+    ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
+    ...(readModelUsage(rec['modelUsage']) ? { modelUsage: readModelUsage(rec['modelUsage']) } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(numTurns !== undefined ? { numTurns } : {}),
     timestamp: Date.now(),
   };
+}
+
+function readModelUsage(
+  value: unknown,
+): Extract<SessionMessage, { type: 'token_usage' }>['modelUsage'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const result: Record<
+    string,
+    {
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
+    }
+  > = {};
+  for (const [model, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const rec = raw as Record<string, unknown>;
+    const inputTokens = numberOrZero(rec['inputTokens'] ?? rec['input_tokens']);
+    const outputTokens = numberOrZero(rec['outputTokens'] ?? rec['output_tokens']);
+    const costUsd = numberOrZero(rec['costUSD'] ?? rec['costUsd'] ?? rec['cost_usd']);
+    const cacheReadInputTokens = numberOrZero(
+      rec['cacheReadInputTokens'] ?? rec['cache_read_input_tokens'],
+    );
+    const cacheCreationInputTokens = numberOrZero(
+      rec['cacheCreationInputTokens'] ?? rec['cache_creation_input_tokens'],
+    );
+    result[model] = {
+      inputTokens,
+      outputTokens,
+      costUsd,
+      ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
+      ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
+    };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function numberOrZero(value: unknown): number {
@@ -185,6 +256,11 @@ function numberOrZero(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  const parsed = numberOrZero(value);
+  return parsed > 0 ? parsed : undefined;
 }
 
 export function shouldFallbackToLegacyRun(err: unknown): boolean {

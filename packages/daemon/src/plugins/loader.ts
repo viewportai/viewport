@@ -38,6 +38,8 @@ export interface LoadedPlugin {
   path: string;
 }
 
+const SAFE_PLUGIN_AGENT_ID = /^[A-Za-z0-9._-]+$/;
+
 function isPathWithin(parentDir: string, targetPath: string): boolean {
   const parent = path.resolve(parentDir);
   const target = path.resolve(targetPath);
@@ -120,13 +122,17 @@ async function readPluginManifest(pkgDir: string): Promise<PluginManifest | null
     if (!viewport || viewport['type'] !== 'agent' || typeof viewport['agentId'] !== 'string') {
       return null;
     }
+    const agentId = viewport['agentId'].trim();
+    if (!SAFE_PLUGIN_AGENT_ID.test(agentId)) {
+      return null;
+    }
 
     return {
       name: typeof pkg['name'] === 'string' ? pkg['name'] : 'unknown',
       version: typeof pkg['version'] === 'string' ? pkg['version'] : '0.0.0',
       viewport: {
         type: 'agent',
-        agentId: viewport['agentId'] as string,
+        agentId,
       },
     };
   } catch {
@@ -164,6 +170,13 @@ async function loadPlugin(manifest: PluginManifest, pkgDir: string): Promise<Loa
 
     if (!definition || typeof definition.id !== 'string') {
       logger.warn(`Plugin ${manifest.name}: no valid AgentDefinition exported`);
+      return null;
+    }
+
+    if (definition.id !== manifest.viewport.agentId) {
+      logger.warn(
+        `Plugin ${manifest.name}: AgentDefinition id '${definition.id}' does not match manifest agentId '${manifest.viewport.agentId}'`,
+      );
       return null;
     }
 

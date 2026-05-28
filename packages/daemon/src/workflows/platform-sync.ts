@@ -77,6 +77,10 @@ export class WorkflowRunPlatformSync {
       events: newEvents,
       enforceDataCapturePolicy: true,
     });
+    const outputSnapshot = {
+      ...recordValue(payload['output_snapshot']),
+      ...collectOutputs(run),
+    };
     const res = await this.fetcher(target.url, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
@@ -84,7 +88,7 @@ export class WorkflowRunPlatformSync {
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
         ...payload,
-        output_snapshot: collectOutputs(run),
+        output_snapshot: outputSnapshot,
         ...(reviewPacket ? { review_packet: reviewPacket } : {}),
       }),
       timeoutMs: 5_000,
@@ -262,4 +266,9 @@ function collectOutputs(run: WorkflowRunRecord): Record<string, string> {
           : (node.output as string),
       ]),
   );
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }

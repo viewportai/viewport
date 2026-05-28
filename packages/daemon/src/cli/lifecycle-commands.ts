@@ -321,13 +321,17 @@ export function showHelp(): void {
   console.log(
     '  daemon <subcommand>          Lifecycle ops (start, doctor, status, stop, restart, pair, update, service, setup)',
   );
-  console.log('  setup [--yes|--choose]       First-run guided setup (recommended or custom)');
+  console.log(
+    '  setup [--yes|--choose]       First-run setup; safe default writes profile/config only',
+  );
   console.log('  profile <cmd>                Manage local/prod daemon profiles');
   console.log('  use <profile>                Set the machine-default daemon profile');
   console.log('  upgrade [--restart|--yes]    Upgrade the global vpd package');
   console.log('  uninstall [--yes] [--purge-home] [--no-package]');
   console.log('                               Stop daemons, remove service, and uninstall vpd');
-  console.log('  install [--json]             Detect available agents and install hooks');
+  console.log(
+    '  install [--hooks] [--json]   Install vpd config and detect agents; hooks are opt-in',
+  );
   console.log('  bind [path] [--org <organization-id>] [--yes] [--json]');
   console.log(
     '                               Authorize a local directory tree to stream to a paired organization',
@@ -464,6 +468,11 @@ export function showHelp(): void {
   console.log('  update [--json] [--yes]      Update daemon package, optionally restart');
   console.log('  service <install|uninstall|status> [--json]');
   console.log('                               Manage OS user service (launchd/systemd)');
+  console.log('  watch <start|doctor|status>  Personal/local monitor commands');
+  console.log('  worker <start|run-once|doctor>');
+  console.log(
+    '                               Workflow worker commands; pair with `vpd pair --worker`',
+  );
   console.log(
     '  remote <login|status|enable|disable|logout> [--server <url>] [--workspace <id>] [--token <issue-token>]',
   );

@@ -251,8 +251,22 @@ describe('CodexAdapter', () => {
         yield {
           type: 'turn.completed',
           usage: {
-            input_tokens: 10,
+            input_tokens: 110,
             output_tokens: 20,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 5,
+          },
+          total_cost_usd: 0.0012,
+          duration_ms: 1200,
+          num_turns: 1,
+          modelUsage: {
+            'gpt-5-codex': {
+              inputTokens: 110,
+              outputTokens: 20,
+              cacheReadInputTokens: 100,
+              cacheCreationInputTokens: 5,
+              costUSD: 0.0012,
+            },
           },
         };
       })(),
@@ -275,7 +289,102 @@ describe('CodexAdapter', () => {
 
     expect(messages.some((m) => m.type === 'tool_call')).toBe(true);
     expect(messages.some((m) => m.type === 'tool_call_update')).toBe(true);
-    expect(messages.some((m) => m.type === 'token_usage')).toBe(true);
+    expect(messages.find((m) => m.type === 'token_usage')).toMatchObject({
+      type: 'token_usage',
+      inputTokens: 110,
+      inputTokenScope: 'billable',
+      outputTokens: 20,
+      cacheReadInputTokens: 100,
+      cacheCreationInputTokens: 5,
+      billableInputTokens: 10,
+      budgetedTotalTokens: 30,
+      totalCostUsd: 0.0012,
+      durationMs: 1200,
+      numTurns: 1,
+      modelUsage: {
+        'gpt-5-codex': {
+          inputTokens: 110,
+          outputTokens: 20,
+          cacheReadInputTokens: 100,
+          cacheCreationInputTokens: 5,
+          costUsd: 0.0012,
+        },
+      },
+    });
+  });
+
+  it('emits token usage from non-streamed Codex result envelopes', async () => {
+    const run = vi.fn().mockResolvedValue({
+      type: 'result',
+      result: 'done',
+      usage: {
+        input_tokens: 210,
+        output_tokens: 15,
+        cache_read_input_tokens: 200,
+      },
+      total_cost_usd: 0.002,
+    });
+    const createClient = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockReturnValue({
+        id: 'codex-result-usage',
+        run,
+      }),
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    const session = await adapter.startSession('/tmp/project');
+    const messages: SessionMessage[] = [];
+    session.on('message', (m: SessionMessage) => messages.push(m));
+
+    await session.sendPrompt('summarize');
+
+    expect(messages.find((m) => m.type === 'token_usage')).toMatchObject({
+      type: 'token_usage',
+      inputTokens: 210,
+      inputTokenScope: 'billable',
+      outputTokens: 15,
+      cacheReadInputTokens: 200,
+      billableInputTokens: 10,
+      budgetedTotalTokens: 25,
+      totalCostUsd: 0.002,
+    });
+  });
+
+  it('marks Codex usage without cache accounting as raw provider input', async () => {
+    const runStreamed = vi.fn().mockResolvedValue({
+      events: (async function* () {
+        yield {
+          type: 'turn.completed',
+          usage: {
+            input_tokens: 880000,
+            output_tokens: 7000,
+          },
+        };
+      })(),
+    });
+    const createClient = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockReturnValue({
+        id: 'codex-raw-provider-usage',
+        runStreamed,
+      }),
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    const session = await adapter.startSession('/tmp/project');
+    const messages: SessionMessage[] = [];
+    session.on('message', (m: SessionMessage) => messages.push(m));
+
+    await session.sendPrompt('plan');
+
+    expect(messages.find((m) => m.type === 'token_usage')).toMatchObject({
+      type: 'token_usage',
+      inputTokens: 880000,
+      inputTokenScope: 'raw_provider',
+      outputTokens: 7000,
+      budgetedTotalTokens: 7000,
+    });
   });
 
   it('passes canUseTool and trust mode into thread creation options', async () => {

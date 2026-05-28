@@ -27,6 +27,8 @@ const PartialSessionConfigSchema = z
     model: z.string().min(1).max(256).optional(),
     sandboxMode: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
     approvalPolicy: z.enum(['never', 'on-request', 'on-failure', 'untrusted']).optional(),
+    executionMode: z.enum(['plan', 'read_only', 'implement', 'review']).optional(),
+    allowedTools: z.array(z.string().trim().min(1)).optional(),
     resourceId: z.string().min(1).max(256).optional(),
     gitTracker: PartialGitTrackerSchema.optional(),
     permissions: PartialPermissionsSchema.optional(),
@@ -54,6 +56,37 @@ const PartialRelayBindingSchema = z
     tokenJwksUrl: z.string().optional(),
     signingKeys: z.record(z.string(), z.string()).optional(),
     tokenClockSkewSec: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const WorkerCapabilityAgentSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    displayName: z.string().max(256).optional(),
+    tier: z.enum(['sdk', 'pty']).optional(),
+    available: z.boolean(),
+    models: z.array(z.string().min(1).max(255)).optional(),
+    default_model: z.string().min(1).max(255).optional(),
+    tools: z.array(z.string().min(1).max(128)).optional(),
+    supports_plan_mode: z.boolean().optional(),
+  })
+  .strict();
+
+const WorkerCapabilitiesSchema = z
+  .object({
+    agents: z
+      .union([
+        z.array(WorkerCapabilityAgentSchema),
+        z.record(z.string(), WorkerCapabilityAgentSchema),
+      ])
+      .optional(),
+    models: z.array(z.string().min(1).max(255)).optional(),
+    tools: z.array(z.string().min(1).max(128)).optional(),
+    integrations: z.array(z.string().min(1).max(255)).optional(),
+    secrets: z.array(z.string().min(1).max(255)).optional(),
+    tags: z.array(z.string().min(1).max(255)).optional(),
+    runner_pool: z.string().min(1).max(128).optional(),
+    runnerPool: z.string().min(1).max(128).optional(),
   })
   .strict();
 
@@ -111,6 +144,26 @@ export const ViewportConfigSchema = z
             tokenJwksUrl: z.string().optional(),
             signingKeys: z.record(z.string(), z.string()).optional(),
             tokenClockSkewSec: z.number().int().nonnegative().optional(),
+          })
+          .strict()
+          .optional(),
+        worker: z
+          .object({
+            lifecycle: z.enum(['persistent', 'ephemeral']).optional(),
+            transport: z.enum(['polling', 'relay', 'inbound']).optional(),
+            serverUrl: z.string().optional(),
+            appUrl: z.string().optional(),
+            workspaceId: z.string().optional(),
+            managedExecutorId: z.string().optional(),
+            credential: z.string().optional(),
+            workspaceRoot: z.string().optional(),
+            logsDir: z.string().optional(),
+            cacheDir: z.string().optional(),
+            stateDir: z.string().optional(),
+            identityKeyPath: z.string().optional(),
+            publicKeyFingerprint: z.string().optional(),
+            runnerPool: z.string().min(1).max(128).optional(),
+            capabilities: WorkerCapabilitiesSchema.optional(),
           })
           .strict()
           .optional(),

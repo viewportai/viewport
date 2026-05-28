@@ -30,8 +30,10 @@ export const identifierSchema = z
 export const OutputDefinitionSchema = z
   .object({
     type: z.enum(['string', 'number', 'boolean', 'json', 'file', 'artifact']),
+    requirement: z.enum(['required', 'optional', 'unsupported']).optional(),
     description: z.string().optional(),
     extract: z.string().trim().min(1).optional(),
+    outputSchema: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 

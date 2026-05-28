@@ -70,8 +70,10 @@ async function executeGitHubAction(
   actionInput: Record<string, WorkflowInputValue>,
   options: { idempotencyKey?: string },
 ): Promise<ActionResult> {
-  const owner = stringValue(actionInput['owner']);
-  const repo = stringValue(actionInput['repo']);
+  const repository = stringValue(actionInput['repository']);
+  const [repositoryOwner, repositoryName] = splitRepository(repository);
+  const owner = stringValue(actionInput['owner']) ?? repositoryOwner;
+  const repo = stringValue(actionInput['repo']) ?? repositoryName;
   const token = providerCredentialValue(actionInput, {
     defaultRef: 'github/token',
     defaultEnv: 'GITHUB_TOKEN',
@@ -80,17 +82,37 @@ async function executeGitHubAction(
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
 
-  if (node.action === 'create_pr' || node.action === 'create_pull_request') {
+  if (isGitHubPullRequestCreateAction(node.action)) {
+    const title = stringValue(actionInput['title']) ?? 'Viewport workflow change';
+    const head = stringValue(actionInput['head']) ?? stringValue(actionInput['branch']);
+    const base = stringValue(actionInput['base']) ?? 'main';
+    const body = stringValue(actionInput['body']);
+    const existing = await existingGitHubPullRequest(
+      run,
+      nodeId,
+      node,
+      actionInput,
+      {
+        owner,
+        repo,
+        token,
+        head,
+        base,
+      },
+      options.idempotencyKey,
+    );
+    if (existing) return existing;
+
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
       headers: withIdempotencyHeader(githubHeaders(token), options.idempotencyKey),
       proposalInput: actionInput,
       body: {
-        title: stringValue(actionInput['title']) ?? 'Viewport workflow change',
-        head: stringValue(actionInput['head']) ?? stringValue(actionInput['branch']),
-        base: stringValue(actionInput['base']) ?? 'main',
-        body: stringValue(actionInput['body']),
+        title,
+        head,
+        base,
+        body,
         draft: booleanValue(actionInput['draft']),
       },
       reconcile: (parsed) =>
@@ -117,6 +139,103 @@ async function executeGitHubAction(
   }
 
   return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
+}
+
+async function existingGitHubPullRequest(
+  run: WorkflowRunRecord,
+  nodeId: string,
+  node: WorkflowActionNode,
+  actionInput: Record<string, WorkflowInputValue>,
+  request: {
+    owner: string;
+    repo: string;
+    token: string;
+    head: string | undefined;
+    base: string;
+  },
+  idempotencyKey: string | undefined,
+): Promise<ActionResult | null> {
+  if (!request.head) return null;
+
+  const params = new URLSearchParams({
+    state: 'open',
+    head: request.head.includes(':') ? request.head : `${request.owner}:${request.head}`,
+    base: request.base,
+    per_page: '1',
+  });
+  const response = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(request.owner)}/${encodeURIComponent(request.repo)}/pulls?${params.toString()}`,
+    {
+      method: 'GET',
+      headers: githubHeaders(request.token),
+    },
+  );
+  if (!response.ok) return null;
+
+  const parsed = parseJson(await safeResponseText(response));
+  const pullRequest = Array.isArray(parsed) ? parsed[0] : null;
+  if (!pullRequest || typeof pullRequest !== 'object') return null;
+
+  const providerReconciliation = await reconcileProviderAction(
+    githubReconciliationRequest(githubHeaders(request.token), pullRequest, 'pull_request'),
+    undefined,
+    pullRequest,
+  );
+  const metadata = {
+    action: {
+      adapter: node.adapter,
+      action: node.action,
+      proposalKey: node.proposalKey ?? null,
+      idempotencyKey: idempotencyKey ?? null,
+      requiresApproval: node.requiresApproval === true,
+      policyReason: actionPolicyReason(node),
+      status: 'executed',
+      idempotentReplay: true,
+      idempotent_replay: true,
+      digest: workflowActionProposalDigest(node, {
+        idempotencyKey,
+        input: actionInput,
+      }),
+      input: sanitizeActionInput(actionInput),
+      request: {
+        method: 'GET',
+        url: `https://api.github.com/repos/${encodeURIComponent(request.owner)}/${encodeURIComponent(request.repo)}/pulls`,
+      },
+      response: {
+        status: 200,
+        ok: true,
+        bodyExcerpt: 'Existing open pull request matched by head/base.',
+        htmlUrl: objectString(pullRequest, 'html_url'),
+        apiUrl: objectString(pullRequest, 'url'),
+        number: objectNumber(pullRequest, 'number'),
+      },
+      ...(providerReconciliation
+        ? {
+            providerReconciliation,
+            provider_reconciliation: providerReconciliation,
+          }
+        : {}),
+      ...approvedExecutionGrant(run, nodeId, node.requiresApproval === true),
+    },
+  };
+
+  addEvent(
+    run,
+    'action-executed',
+    `Action node ${nodeId} reused existing ${node.adapter}.${node.action}`,
+    metadata,
+    nodeId,
+  );
+  rememberExecutedAction(run, nodeId, node, idempotencyKey, actionInput, {
+    output: `${node.adapter}.${node.action} 200`,
+    response: metadata.action.response,
+    ...(providerReconciliation ? { providerReconciliation } : {}),
+  });
+
+  return {
+    output: `${node.adapter}.${node.action} 200`,
+    metadata,
+  };
 }
 
 async function executeJiraAction(
@@ -193,7 +312,7 @@ async function executeSlackAction(
     defaultRef: 'slack/bot-token',
     defaultEnv: 'SLACK_BOT_TOKEN',
   });
-  const channel = stringValue(actionInput['channel']);
+  const channel = stringValue(actionInput['channel']) ?? sourceSlackChannel(run);
   const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
   if (!token || !channel || !text) {
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
@@ -213,7 +332,10 @@ async function executeSlackAction(
         channel,
         text,
         client_msg_id: options.idempotencyKey,
-        thread_ts: stringValue(actionInput['thread_ts']) ?? stringValue(actionInput['threadTs']),
+        thread_ts:
+          stringValue(actionInput['thread_ts']) ??
+          stringValue(actionInput['threadTs']) ??
+          sourceSlackThreadTs(run),
       },
       okFromBody: true,
       reconcile: (parsed) =>
@@ -222,6 +344,59 @@ async function executeSlackAction(
   }
 
   return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
+}
+
+function splitRepository(repository: string | undefined): [string | undefined, string | undefined] {
+  if (!repository) return [undefined, undefined];
+  const [owner, repo, extra] = repository.split('/');
+  if (!owner || !repo || extra) return [undefined, undefined];
+  return [owner, repo];
+}
+
+function isGitHubPullRequestCreateAction(action: string): boolean {
+  return [
+    'create_pr',
+    'create_pull_request',
+    'pull_request.create',
+    'pull-request.create',
+    'pr.create',
+    'open_pr',
+  ].includes(action);
+}
+
+function sourceSlackChannel(run: WorkflowRunRecord): string | undefined {
+  return (
+    stringAt(run.inputs, ['integration_event', 'payload', 'event', 'channel']) ??
+    stringAt(run.inputs, ['integration_event', 'event', 'channel']) ??
+    stringAt(run.inputs, ['issue', 'payload', 'event', 'channel']) ??
+    stringAt(run.inputs, ['issue', 'event', 'channel'])
+  );
+}
+
+function sourceSlackThreadTs(run: WorkflowRunRecord): string | undefined {
+  return (
+    stringAt(run.inputs, ['integration_event', 'payload', 'event', 'thread_ts']) ??
+    stringAt(run.inputs, ['integration_event', 'payload', 'event', 'threadTs']) ??
+    stringAt(run.inputs, ['integration_event', 'payload', 'event', 'ts']) ??
+    stringAt(run.inputs, ['integration_event', 'event', 'thread_ts']) ??
+    stringAt(run.inputs, ['integration_event', 'event', 'threadTs']) ??
+    stringAt(run.inputs, ['integration_event', 'event', 'ts']) ??
+    stringAt(run.inputs, ['issue', 'payload', 'event', 'thread_ts']) ??
+    stringAt(run.inputs, ['issue', 'payload', 'event', 'threadTs']) ??
+    stringAt(run.inputs, ['issue', 'payload', 'event', 'ts']) ??
+    stringAt(run.inputs, ['issue', 'event', 'thread_ts']) ??
+    stringAt(run.inputs, ['issue', 'event', 'threadTs']) ??
+    stringAt(run.inputs, ['issue', 'event', 'ts'])
+  );
+}
+
+function stringAt(value: unknown, path: string[]): string | undefined {
+  let cursor = value;
+  for (const segment of path) {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return typeof cursor === 'string' && cursor.trim() !== '' ? cursor : undefined;
 }
 
 async function executeJsonApiAction(

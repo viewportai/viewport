@@ -66,6 +66,9 @@ const InlineAgentDefinitionSchema = z
     agent: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
     effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+    executionMode: z.enum(['plan', 'read_only', 'implement', 'review']).optional(),
+    allowedTools: z.array(z.string().trim().min(1)).optional(),
+    timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   })
   .strict();
 
@@ -120,6 +123,7 @@ const PlanRevisionSchema = z
     prompt: z.string().trim().min(1).optional(),
     agent: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
+    timeoutSeconds: z.number().int().positive().max(86_400).optional(),
   })
   .strict();
 
@@ -132,6 +136,7 @@ const NodeBaseSchema = z.object({
   retry: RetryPolicySchema.optional(),
   policy: NodePolicySchema.optional(),
   outputs: z.record(identifierSchema, OutputDefinitionSchema).optional(),
+  outputSchema: z.record(identifierSchema, OutputDefinitionSchema).optional(),
   artifacts: z.record(identifierSchema, ArtifactDefinitionSchema).optional(),
   env: z.record(identifierSchema, EnvValueSchema).optional(),
   context: NodeContextEnvelopeSchema.optional(),
@@ -146,6 +151,8 @@ const PromptNodeSchema = NodeBaseSchema.extend({
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+  executionMode: z.enum(['plan', 'read_only', 'implement', 'review']).optional(),
+  allowedTools: z.array(z.string().trim().min(1)).optional(),
   hooks: HookRulesSchema.optional(),
   agents: z.record(identifierSchema, InlineAgentDefinitionSchema).optional(),
   inlineAgentFailurePolicy: z.enum(['fail', 'continue']).optional(),
@@ -158,6 +165,8 @@ const AgentNodeSchema = NodeBaseSchema.extend({
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+  executionMode: z.enum(['plan', 'read_only', 'implement', 'review']).optional(),
+  allowedTools: z.array(z.string().trim().min(1)).optional(),
   session: z
     .object({
       resume: z.boolean().optional(),
@@ -177,7 +186,8 @@ const AgentNodeSchema = NodeBaseSchema.extend({
 
 const ShellNodeSchema = NodeBaseSchema.extend({
   type: z.literal('shell'),
-  command: z.string().trim().min(1),
+  command: z.string().trim().min(1).optional(),
+  argv: z.array(z.string().trim().min(1)).min(1).optional(),
   cwd: z.string().trim().min(1).optional(),
 }).strict();
 

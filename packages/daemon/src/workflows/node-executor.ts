@@ -15,6 +15,7 @@ import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
+import { resolveWorkflowSessionBudget, resolveWorkflowSessionPolicy } from './session-policy.js';
 import { resolvePromptNodeContext } from './context-node-resolver.js';
 import { parseWorkflow } from './parser.js';
 import type { WorkflowPlatformContextClient } from './platform-context-client.js';
@@ -336,13 +337,18 @@ async function executePromptNode(
 ): Promise<void> {
   const state = run.nodes[nodeId];
   if (!state) return;
-  const inlineAgents = await runInlineAgents(context, run, nodeId, node);
+  const sessionPolicy = resolveWorkflowSessionPolicy({
+    executionMode: node.executionMode,
+    timeoutSeconds: node.timeoutSeconds,
+  });
+  const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
+  const budget = resolveWorkflowSessionBudget(parsed.definition.policies?.budget);
+  const inlineAgents = await runInlineAgents(context, run, nodeId, node, { budget });
   const renderedPrompt = appendInlineAgentResults(
     await renderTemplate(node.prompt, run),
     inlineAgents,
   );
   const renderedCwd = await renderOptionalTemplate(node.cwd, run);
-  const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
   const selectedContext = await resolvePromptNodeContext({
     run,
     nodeId,
@@ -377,11 +383,19 @@ async function executePromptNode(
     ...(node.agent ? { agent: node.agent } : {}),
     ...(node.model ? { model: node.model } : {}),
     ...(node.effort ? { effort: node.effort } : {}),
+    executionMode: sessionPolicy.executionMode,
+    ...(node.allowedTools ? { allowedTools: node.allowedTools } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
-    ...(node.timeoutSeconds ? { timeoutSeconds: node.timeoutSeconds } : {}),
-    outputFallback: () => readPromptNodeOutput(run, state),
+    timeoutSeconds: sessionPolicy.timeoutSeconds,
+    ...(budget ? { budget } : {}),
+    executionModeDefaulted: sessionPolicy.executionModeDefaulted,
+    timeoutDefaulted: sessionPolicy.timeoutDefaulted,
+    outputFallback: () =>
+      readPromptNodeOutput(run, state, { allowCodexDiscovery: node.agent === 'codex' }),
     outputData: async () => {
-      const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state);
+      const transcriptExcerpt = await readPromptNodeTranscriptExcerpt(run, state, {
+        allowCodexDiscovery: node.agent === 'codex',
+      });
       return transcriptExcerpt.length > 0 ? { transcriptExcerpt } : {};
     },
   });

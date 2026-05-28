@@ -10,7 +10,12 @@
 
 import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
-import type { AgentAdapter, Session, SessionOptions } from '../core/interfaces.js';
+import type {
+  AgentAdapter,
+  AgentAdapterDescriptor,
+  Session,
+  SessionOptions,
+} from '../core/interfaces.js';
 import type { SessionState } from '../core/types.js';
 import { metrics } from '../core/metrics.js';
 import { cleanChildProcessEnv } from '../security/child-env.js';
@@ -206,6 +211,31 @@ export class PtyAdapter implements AgentAdapter {
     this.agentId = agentId;
     this.command = command;
     this.options = options ?? {};
+  }
+
+  describe(): AgentAdapterDescriptor {
+    return {
+      schema: 'viewport.agent_adapter/v2',
+      agentId: this.agentId,
+      displayName: `Custom command (${this.agentId})`,
+      adapterVersion: 'pty',
+      capabilities: {
+        executionModes: {
+          plan: 'prompt_only',
+          read_only: 'unsupported',
+          review: 'prompt_only',
+          implement: 'prompt_only',
+        },
+        toolAllowlist: 'unsupported',
+        structuredOutput: 'prompt_only',
+        permissionHooks: 'unsupported',
+        usageReporting: 'unavailable',
+        costReporting: 'unavailable',
+        maxTurns: 'unsupported',
+        maxBudget: 'unsupported',
+        hardTimeout: 'hard',
+      },
+    };
   }
 
   async startSession(cwd: string, options?: SessionOptions): Promise<Session> {
