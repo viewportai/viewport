@@ -1,3 +1,10 @@
+## [0.25.4](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.3...@viewportai/daemon@0.25.4) (2026-05-28)
+
+
+### Bug Fixes
+
+* constrain hosted worker credentials and prompt tools ([#141](https://github.com/viewportai/viewport/issues/141)) ([2788899](https://github.com/viewportai/viewport/commit/27888992d847ed86d4cb0c3869461f25bf31b65c))
+
 ## [0.25.3](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.2...@viewportai/daemon@0.25.3) (2026-05-28)
 
 
