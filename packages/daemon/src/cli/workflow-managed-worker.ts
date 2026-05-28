@@ -311,6 +311,11 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     getFlag('resource') ??
     process.env['VIEWPORT_WORKSPACE_ID'] ??
     registrationProfile?.workspaceId;
+  const serverId =
+    getFlag('server-id') ??
+    process.env['VIEWPORT_SERVER_ID'] ??
+    process.env['VPD_SERVER_ID'] ??
+    registrationProfile?.serverId;
   const executorId =
     getFlag('executor') ??
     process.env['VIEWPORT_MANAGED_EXECUTOR_ID'] ??
@@ -336,6 +341,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
 
   return {
     server: server.replace(/\/+$/, ''),
+    serverId,
     workspaceId,
     executorId,
     credential,
@@ -405,6 +411,7 @@ function workflowWorkerUsage(): string {
 
 interface RegistrationProfile {
   serverUrl?: string;
+  serverId?: string;
   workspaceId?: string;
   executorId?: string;
   credential?: string;
@@ -439,6 +446,13 @@ function readRegistrationProfile(): RegistrationProfile | null {
       stringValue(record['serverUrl']) ??
       stringValue(worker?.['serverUrl']) ??
       stringValue(worker?.['server_url']),
+    serverId:
+      stringValue(record['server_id']) ??
+      stringValue(record['serverId']) ??
+      stringValue(record['control_plane_id']) ??
+      stringValue(worker?.['serverId']) ??
+      stringValue(worker?.['server_id']) ??
+      stringValue(worker?.['control_plane_id']),
     workspaceId:
       stringValue(record['workspace_id']) ??
       stringValue(record['workspaceId']) ??
@@ -592,6 +606,11 @@ function loadSigningIdentity(
     publicKeyPem,
     privateKeyPem,
     fingerprint: fingerprint.toLowerCase(),
+    serverId:
+      stringValue(record['server_id']) ??
+      stringValue(record['serverId']) ??
+      stringValue(record['control_plane_id']) ??
+      registrationProfile?.serverId,
     path: resolved,
   };
 }
@@ -1122,6 +1141,15 @@ async function runAssignmentLocally(
   await heartbeat(options, 'online', 'busy');
   const existingRun = await readExistingLocalRun(assignment.runtime_run_id);
   if (existingRun) {
+    if (existingRun.status === 'running' || existingRun.status === 'queued') {
+      return pollLocalRun(
+        existingRun.id,
+        async (run) => {
+          await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+        },
+        progressSyncEveryMs(options.leaseSeconds),
+      );
+    }
     return existingRun;
   }
 
@@ -1505,17 +1533,60 @@ async function approvedNodeForAssignment(
   localRunId?: string | null,
 ): Promise<NonNullable<ManagedAssignment['nodes']>[number] | null> {
   const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-  const approvedNodes = assignment.nodes?.filter(isResolvedManagedGateNode) ?? [];
-  if (approvedNodes.length === 0) return null;
-  if (!localRunId) return approvedNodes[0] ?? null;
+  if (!localRunId) {
+    return (
+      managedApprovalNodeFromRuntimeCommands(assignment, new Set()) ??
+      assignment.nodes?.find(isResolvedManagedGateNode) ??
+      null
+    );
+  }
 
   const localRun = await readExistingLocalRun(localRunId);
   const blockedIds = blockedNodeIds(localRun);
+  const commandNode = managedApprovalNodeFromRuntimeCommands(assignment, blockedIds);
+  if (commandNode) return commandNode;
+
+  const approvedNodes = assignment.nodes?.filter(isResolvedManagedGateNode) ?? [];
+  if (approvedNodes.length === 0) return null;
+
   if (blockedIds.size > 0) {
     return approvedNodes.find((node) => blockedIds.has(node.node_key)) ?? null;
   }
 
   return approvedNodes[0] ?? null;
+}
+
+function managedApprovalNodeFromRuntimeCommands(
+  assignment: ManagedAssignment,
+  blockedIds: Set<string>,
+): NonNullable<ManagedAssignment['nodes']>[number] | null {
+  for (const command of assignment.runtime_commands ?? []) {
+    if (command['type'] !== 'workflow.approval_decision') continue;
+    const nodeKey = stringValue(command['workflow_node_id']);
+    if (!nodeKey || (blockedIds.size > 0 && !blockedIds.has(nodeKey))) continue;
+
+    const approved = command['approved'] === true;
+    const decision = stringValue(command['decision']);
+    return {
+      node_key: nodeKey,
+      type: 'plan',
+      status: 'blocked',
+      metadata: {
+        approval: {
+          approved,
+          decision: approved ? 'approve' : decision === 'request_changes' ? 'request_changes' : 'reject',
+          message: stringValue(command['message']),
+          actor: recordValue(command['actor']),
+          feedback: recordValue(command['feedback']),
+          approval_decision_key: stringValue(command['approval_decision_key']),
+          expected_action_digest: stringValue(command['expected_action_digest']),
+          execution_grant: recordValue(command['execution_grant']),
+        },
+      },
+    };
+  }
+
+  return null;
 }
 
 function blockedNodeIds(run?: WorkflowRunRecord | null): Set<string> {
@@ -1759,7 +1830,15 @@ function workerSignatureHeaders(
     .update(bodyText ?? '')
     .digest('hex');
   const pathName = new URL(url).pathname;
-  const canonical = [method.toUpperCase(), pathName, bodySha256, nonce, timestamp].join('\n');
+  const serverId = identity.serverId ?? options.serverId;
+  const canonical = [
+    method.toUpperCase(),
+    pathName,
+    bodySha256,
+    nonce,
+    timestamp,
+    ...(serverId ? [serverId] : []),
+  ].join('\n');
   const signature = sign(null, Buffer.from(canonical), identity.privateKeyPem).toString('base64');
 
   return {
@@ -1768,6 +1847,7 @@ function workerSignatureHeaders(
     'X-Viewport-Worker-Nonce': nonce,
     'X-Viewport-Worker-Body-SHA256': bodySha256,
     'X-Viewport-Worker-Signature': signature,
+    ...(serverId ? { 'X-Viewport-Server-Id': serverId } : {}),
   };
 }
 
