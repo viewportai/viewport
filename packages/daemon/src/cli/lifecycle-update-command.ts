@@ -31,6 +31,28 @@ function runCommand(command: string, args: string[]): Promise<number> {
 export async function update(): Promise<void> {
   const asJson = isJsonMode();
   const packageName = resolvePackageName();
+  const shouldRestart = hasFlag('yes') || hasFlag('restart');
+  if (hasFlag('dry-run')) {
+    const payload = {
+      command: 'update',
+      ok: true,
+      dryRun: true,
+      package: packageName,
+      upgradePolicy: 'manual-package-manager',
+      signedReleaseManifest: false,
+      restartRequested: shouldRestart,
+      commandPlan: ['npm', 'install', '-g', `${packageName}@latest`],
+      note: 'vpd update currently delegates to the package manager. Signed release manifests are not available yet.',
+    };
+    if (asJson) {
+      printJson(payload);
+      return;
+    }
+    console.log(`Update plan: ${payload.commandPlan.join(' ')}`);
+    console.log(`Restart: ${shouldRestart ? 'requested after update' : 'skipped'}`);
+    console.log(payload.note);
+    return;
+  }
   const state = await readDaemonRuntimeState();
   const resolvedNode = resolvePreferredNodePath({
     daemonPid: state?.ownerPid ?? null,
@@ -56,7 +78,6 @@ export async function update(): Promise<void> {
     throw new Error(`Update command failed with exit code ${exitCode}`);
   }
 
-  const shouldRestart = hasFlag('yes') || hasFlag('restart');
   if (shouldRestart) {
     await restartDaemon();
   }
