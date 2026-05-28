@@ -1574,7 +1574,11 @@ function managedApprovalNodeFromRuntimeCommands(
       metadata: {
         approval: {
           approved,
-          decision: approved ? 'approve' : decision === 'request_changes' ? 'request_changes' : 'reject',
+          decision: approved
+            ? 'approve'
+            : decision === 'request_changes'
+              ? 'request_changes'
+              : 'reject',
           message: stringValue(command['message']),
           actor: recordValue(command['actor']),
           feedback: recordValue(command['feedback']),
