@@ -38,6 +38,32 @@ async function cleanup(): Promise<void> {
 describe('workflow runner shell execution', () => {
   beforeEach(async () => {});
   afterEach(cleanup);
+  it('fails before queuing when the registered run directory is unavailable', async () => {
+    const daemon = await setup();
+    const directoryId = DirectoryManager.idFromPath(projectDir);
+    await fs.rm(projectDir, { recursive: true, force: true });
+
+    await expect(
+      daemon.workflowRunner.startRun({
+        workflowYaml: `
+schema: viewport.workflow/v1
+name: missing-run-directory-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - printf
+      - never
+`,
+        workflowSourceRef: 'viewport://test/missing-run-directory-proof',
+        directoryId,
+        initiation: 'cli',
+      }),
+    ).rejects.toThrow(/Workflow run directory is not available/);
+
+    await expect(daemon.workflowRunner.listRuns()).resolves.toHaveLength(0);
+  });
+
   it('runs a shell workflow and persists run history', async () => {
     const daemon = await setup();
     const workflowPath = path.join(projectDir, 'workflow.yaml');

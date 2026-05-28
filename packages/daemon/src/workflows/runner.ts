@@ -1,5 +1,7 @@
 import type { Daemon } from '../core/daemon.js';
 import { createHash } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
+import fs from 'node:fs/promises';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
 import { addEvent, normalizeInputs, renderTemplate } from './runtime-helpers.js';
@@ -118,6 +120,7 @@ export class WorkflowRunner {
     if (!directory) {
       throw new Error(`Directory not registered: ${request.directoryId}`);
     }
+    await assertRunnableWorkflowDirectory(directory.path);
 
     const parsed = await resolveWorkflowSource(request, directory.path);
     const now = Date.now();
@@ -616,6 +619,25 @@ export class WorkflowRunner {
       scheduled += 1;
     }
     return scheduled;
+  }
+}
+
+async function assertRunnableWorkflowDirectory(directoryPath: string): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.stat(directoryPath);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Workflow run directory is not available: ${directoryPath}. ${detail}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Workflow run directory is not a directory: ${directoryPath}`);
+  }
+  try {
+    await fs.access(directoryPath, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Workflow run directory is not readable/writable: ${directoryPath}. ${detail}`);
   }
 }
 
