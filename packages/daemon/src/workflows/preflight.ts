@@ -125,6 +125,7 @@ export async function preflightWorkflow(
   if (
     definition.requires?.tools?.includes('git') &&
     capabilities.directoryPath &&
+    usesRunDirectoryGitShell(definition) &&
     !usesStructuredGitWorkspace(definition)
   ) {
     if (!(await isGitWorkTree(capabilities.directoryPath))) {
@@ -143,6 +144,15 @@ function usesStructuredGitWorkspace(definition: WorkflowDefinition): boolean {
   return Object.values(definition.nodes).some(
     (node) => node.type === 'checkout' || node.type === 'git_publish',
   );
+}
+
+function usesRunDirectoryGitShell(definition: WorkflowDefinition): boolean {
+  return Object.values(definition.nodes).some((node) => {
+    if (node.type !== 'shell') return false;
+    if (node.cwd) return false;
+    if (Array.isArray(node.argv)) return node.argv[0] === 'git';
+    return typeof node.command === 'string' && /\bgit(?:\s|$)/.test(node.command);
+  });
 }
 
 function addModelIssue(

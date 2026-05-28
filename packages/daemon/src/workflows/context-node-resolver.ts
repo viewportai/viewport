@@ -766,6 +766,25 @@ function workflowProducedContextRef(
 
 function matchesProviderRef(provider: SessionContextProviderManifest, ref: string): boolean {
   const normalized = ref.trim();
+  const gitRef = parseGitSourceRef(normalized);
+  if (gitRef && provider.provider === 'github-repo') {
+    const repo = provider.repo?.replace(/\.git$/, '');
+    const remote = provider.remote?.replace(/\.git$/, '');
+    const repoMatches = repo === gitRef.repo || remote?.includes(gitRef.repo) === true;
+    if (!repoMatches) return false;
+    if (!provider.paths || provider.paths.length === 0) return true;
+    return provider.paths.some((path) => providerPathMatchesGitRefPath(path, gitRef.path));
+  }
+
+  if (gitRef && provider.provider === 'repo-docs') {
+    if (!provider.paths || provider.paths.length === 0) return true;
+    return provider.paths.some((path) => providerPathMatchesGitRefPath(path, gitRef.path));
+  }
+
+  if (gitRef && provider.paths?.some((path) => providerPathMatchesGitRefPath(path, gitRef.path))) {
+    return true;
+  }
+
   return (
     normalized === provider.id ||
     normalized === provider.vault ||
@@ -779,6 +798,21 @@ function matchesProviderRef(provider: SessionContextProviderManifest, ref: strin
     normalized === `provider://${provider.id}` ||
     normalized === `provider://${provider.vault}`
   );
+}
+
+function providerPathMatchesGitRefPath(pattern: string, gitPath: string): boolean {
+  const normalizedPattern = pattern.replaceAll('\\', '/').replace(/^\.\//, '');
+  const normalizedPath = gitPath.replaceAll('\\', '/').replace(/^\.\//, '');
+  if (normalizedPattern === normalizedPath) return true;
+
+  const wildcardIndex = normalizedPattern.search(/[*]/);
+  if (wildcardIndex === -1) {
+    return normalizedPath.startsWith(normalizedPattern.replace(/\/+$/, '') + '/');
+  }
+
+  const literalPrefix = normalizedPattern.slice(0, wildcardIndex);
+  const directoryPrefix = literalPrefix.slice(0, literalPrefix.lastIndexOf('/') + 1);
+  return directoryPrefix === '' || normalizedPath.startsWith(directoryPrefix);
 }
 
 function refMaxItemsForProvider(
