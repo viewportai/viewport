@@ -1,3 +1,10 @@
+# [0.24.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.23.0...@viewportai/daemon@0.24.0) (2026-05-28)
+
+
+### Features
+
+* close runner phase 7 update posture ([#136](https://github.com/viewportai/viewport/issues/136)) ([d3bc09e](https://github.com/viewportai/viewport/commit/d3bc09efc620e17042d401dc9ea2ed9c9bff3442))
+
 # [0.23.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.22.7...@viewportai/daemon@0.23.0) (2026-05-28)
 
 
