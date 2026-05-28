@@ -1,3 +1,10 @@
+# [0.25.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.24.0...@viewportai/daemon@0.25.0) (2026-05-28)
+
+
+### Features
+
+* gate inbound worker transport ([#137](https://github.com/viewportai/viewport/issues/137)) ([c93624e](https://github.com/viewportai/viewport/commit/c93624e592aac0cdabf5816c3f8e520b229bf3e6))
+
 # [0.24.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.23.0...@viewportai/daemon@0.24.0) (2026-05-28)
 
 
