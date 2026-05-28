@@ -66,7 +66,7 @@ describe('worker command', () => {
       serverUrl: string;
       workspaceRoot: string;
       publicKeyFingerprint: string;
-      capabilities: { agents: unknown[] };
+      capabilities: { agents: Record<string, unknown> };
       missing: string[];
     };
     expect(payload.ok).toBe(true);
@@ -75,7 +75,7 @@ describe('worker command', () => {
     expect(payload.serverUrl).toBe('https://api.getviewport.com');
     expect(payload.workspaceRoot).toBe(path.join(homeDir, 'workspace'));
     expect(payload.publicKeyFingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(payload.capabilities.agents).toEqual([]);
+    expect(payload.capabilities.agents).toEqual({});
     expect(payload.missing).toEqual([]);
   });
 });

@@ -622,6 +622,13 @@ nodes:
 
         if (url.startsWith('https://api.github.com/')) {
           expect(headerValue(init?.headers, 'Authorization')).toBe('Bearer ghs_test');
+          if (
+            url ===
+            'https://api.github.com/repos/acme/payments/pulls?state=open&head=acme%3Afix%2Fpay-1842&base=main&per_page=1'
+          ) {
+            expect(init?.method).toBe('GET');
+            return jsonResponse([], 200);
+          }
           if (url === 'https://api.github.com/repos/acme/payments/pulls') {
             expect(init?.method).toBe('POST');
             expect(headerValue(init?.headers, 'Idempotency-Key')).toBe('pr:PAY-1842');
