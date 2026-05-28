@@ -474,6 +474,77 @@ nodes:
     );
   });
 
+  it('enforces claim-returned authority contract budget over looser workflow YAML', async () => {
+    const daemon = await setup();
+    const adapter = new MockAdapter();
+    daemon.registerAdapter(adapter);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: prompt-contract-budget-denial-proof
+requires:
+  agents:
+    - claude
+policies:
+  budget:
+    maxTokens: 100000
+    maxCostUsd: 25
+nodes:
+  plan:
+    type: prompt
+    agent: claude
+    executionMode: plan
+    prompt: Follow the claim-returned contract budget.
+  after:
+    type: shell
+    needs: [plan]
+    argv:
+      - printf
+      - should-not-run
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:contract-budget-proof',
+        budget: {
+          max_input_tokens: 30,
+          max_output_tokens: 20,
+          max_cost_usd: 0.01,
+        },
+      },
+    });
+
+    await waitForNodeSession(daemon, run.id, 'plan');
+    expect(adapter.lastOptions?.config?.maxBudgetUsd).toBe(0.01);
+    adapter.lastSession?.emitTokenUsage(45, 10, 0.012);
+    adapter.lastSession?.emitAgentMessage('expensive contract plan');
+    adapter.lastSession?.simulateIdle();
+    await waitForTerminalRun(daemon, run.id);
+
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.plan?.status).toBe('failed');
+    expect(failed?.nodes.plan?.error).toContain('budget_exceeded');
+    expect(failed?.nodes.plan?.metadata?.['executionPolicy']).toMatchObject({
+      budget: {
+        maxTokens: 50,
+        maxCostUsd: 0.01,
+      },
+      budgetEvaluation: {
+        exceeded: true,
+      },
+    });
+    expect(failed?.nodes.after?.status).toBe('queued');
+  });
+
   it('does not count cache-read input tokens against workflow token budget', async () => {
     const daemon = await setup();
     const adapter = new MockAdapter();

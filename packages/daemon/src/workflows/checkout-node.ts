@@ -105,7 +105,13 @@ export async function executeCheckoutNode(
   const credentialEnv = credential?.secret
     ? await checkoutCredentialEnv(run.directoryPath, credential.secret)
     : nonInteractiveGitEnv();
-  await git(['clone', remote, destination], run.directoryPath, credentialEnv, 45_000);
+  if (await existingGitWorktree(destination)) {
+    await git(['remote', 'set-url', 'origin', remote], destination, credentialEnv).catch(
+      () => undefined,
+    );
+  } else {
+    await git(['clone', remote, destination], run.directoryPath, credentialEnv, 45_000);
+  }
 
   if (node.ref) {
     await git(['checkout', node.ref], destination);
@@ -128,6 +134,16 @@ export async function executeCheckoutNode(
     credentialMode,
     credentialRef: node.credentialRef ?? null,
   };
+}
+
+async function existingGitWorktree(destination: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(destination, '.git'));
+    await git(['rev-parse', '--is-inside-work-tree'], destination);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function checkoutDestination(

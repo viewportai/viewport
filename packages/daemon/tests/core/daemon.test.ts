@@ -136,6 +136,45 @@ class EagerPromptAdapter implements AgentAdapter {
   }
 }
 
+class FailingPromptSession extends EventEmitter implements Session {
+  readonly id = crypto.randomUUID();
+  state: SessionState = 'idle';
+
+  async sendPrompt(): Promise<void> {
+    this.state = 'running';
+    this.emit('state-change', 'running');
+    throw new Error('adapter quota exhausted');
+  }
+
+  async kill(): Promise<void> {
+    this.state = 'completed';
+    this.emit('ended', 'killed');
+  }
+}
+
+class FailingPromptAdapter implements AgentAdapter {
+  readonly agentId = 'claude';
+  deferInitialPromptSeen = false;
+
+  describe(): AgentAdapterDescriptor {
+    return testAdapterDescriptor(this.agentId);
+  }
+
+  async startSession(_cwd: string, options?: SessionOptions): Promise<Session> {
+    this.deferInitialPromptSeen = options?.deferInitialPrompt === true;
+    return new FailingPromptSession();
+  }
+
+  async resumeSession(
+    _sessionId: string,
+    _cwd: string,
+    options?: SessionOptions,
+  ): Promise<Session> {
+    this.deferInitialPromptSeen = options?.deferInitialPrompt === true;
+    return new FailingPromptSession();
+  }
+}
+
 function testAdapterDescriptor(agentId: string): AgentAdapterDescriptor {
   return {
     schema: 'viewport.agent_adapter/v2',
@@ -456,6 +495,30 @@ describe('Daemon', () => {
         text: 'response: Hello',
       },
     });
+  });
+
+  it('marks initial prompt dispatch failures as ended sessions', async () => {
+    const daemon = new Daemon();
+    const adapter = new FailingPromptAdapter();
+    daemon.registerAdapter(adapter);
+    await daemon.initialize();
+    await daemon.directoryManager.register(testDir);
+
+    const ended: Array<{ sessionId: string; reason: string }> = [];
+    daemon.on('session:ended', (data) => ended.push(data));
+
+    const sessionId = await daemon.launchSession(getDirectoryId(), 'Hello');
+
+    await vi.waitFor(() => {
+      expect(ended).toHaveLength(1);
+    });
+
+    expect(adapter.deferInitialPromptSeen).toBe(true);
+    expect(ended[0]).toMatchObject({
+      sessionId,
+      reason: 'error: adapter quota exhausted',
+    });
+    expect(daemon.getSessionEndReason(sessionId)).toBe('error: adapter quota exhausted');
   });
 
   it('forwards messages to tracker', async () => {

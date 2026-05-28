@@ -10,6 +10,8 @@ import {
 } from './support/workflow-runner-support.js';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { executeCheckoutNode } from '../../src/workflows/checkout-node.js';
+import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
 describe('workflow runner checkout node', () => {
   let root: string;
@@ -112,6 +114,25 @@ nodes:
         }),
       }),
     );
+  });
+
+  it('reuses an existing run-scoped checkout worktree when a worker retries the same run', async () => {
+    const run = checkoutRunRecord(projectDir, 'retry-run-1');
+    const node = {
+      id: 'repo',
+      type: 'checkout' as const,
+      title: 'Checkout',
+      repository: 'acme/payments',
+      remote: remoteDir,
+      branch: 'viewport/retry-proof',
+    };
+
+    const first = await executeCheckoutNode(run, node);
+    const second = await executeCheckoutNode(run, node);
+
+    expect(second.path).toBe(first.path);
+    expect(second.commit).toBe(first.commit);
+    await expect(fs.access(path.join(second.path, 'README.md'))).resolves.toBeUndefined();
   });
 
   it('uses a run-scoped default checkout path so repeated runs do not collide', async () => {
@@ -710,6 +731,35 @@ async function setup(projectDir: string) {
   await daemon.initialize();
   await daemon.directoryManager.register(projectDir);
   return daemon;
+}
+
+function checkoutRunRecord(projectDir: string, runId: string): WorkflowRunRecord {
+  return {
+    id: runId,
+    workflowName: 'checkout-retry-proof',
+    workflowTitle: 'Checkout retry proof',
+    sourceType: 'viewport_snapshot',
+    digest: 'sha256:run',
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: 'schema: viewport.workflow/v1\nname: checkout-retry-proof\nnodes: {}\n',
+    directoryId: DirectoryManager.idFromPath(projectDir),
+    directoryPath: projectDir,
+    machineId: 'machine-1',
+    initiation: 'cli',
+    status: 'running',
+    inputs: {},
+    preflight: { ok: true, issues: [] },
+    workflowAuthorityContract: {
+      schema_version: 'viewport.workflow_execution_authority/v1',
+      digest: 'sha256:authority',
+      repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+    },
+    nodes: {},
+    artifacts: [],
+    events: [],
+    createdAt: 1_000,
+    updatedAt: 1_000,
+  };
 }
 
 async function createGitRepository(dir: string): Promise<void> {

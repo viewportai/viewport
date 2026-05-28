@@ -22,6 +22,7 @@ export interface StandaloneWorkerOptions {
   transport: WorkerTransport;
   once: boolean;
   leaseToken?: string;
+  leaseSeconds?: number;
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
 }
@@ -37,6 +38,7 @@ export interface StandaloneWorkerResult {
 
 interface WorkerRuntimeProfile {
   serverUrl: string;
+  serverId?: string;
   lifecycle: WorkerLifecycle;
   transport: WorkerTransport;
   inbound?: {
@@ -91,6 +93,8 @@ interface HostedWorkerFailure {
   retrySafe: boolean;
 }
 
+const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
+
 export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
@@ -132,6 +136,7 @@ export async function runStandaloneWorker(
       const lease = await claimLease(profile, {
         lifecycle: options.lifecycle,
         transport,
+        leaseSeconds: options.leaseSeconds,
       });
       if (!lease) {
         if (options.once || options.lifecycle !== 'persistent') break;
@@ -229,6 +234,7 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
   }
   return {
     serverUrl: worker!.serverUrl!,
+    serverId: worker!.serverId,
     lifecycle: worker!.lifecycle ?? 'persistent',
     transport: worker!.transport ?? 'polling',
     inbound: recordValue(worker!.inbound),
@@ -271,10 +277,11 @@ async function claimLease(
   profile: WorkerRuntimeProfile,
   body: Record<string, unknown>,
 ): Promise<ClaimedLease | null> {
+  const leaseSeconds = positiveInteger(body['leaseSeconds']) ?? DEFAULT_HOSTED_LEASE_SECONDS;
   const response = isHostedManagedExecutorProfile(profile)
     ? await hostedManagedExecutorFetch(profile, 'POST', 'claim', {
         credential: profile.credential,
-        lease_seconds: 300,
+        lease_seconds: leaseSeconds,
       })
     : await workerFetch(profile, 'workers/claim', body);
   if (response.status === 204) return null;
@@ -426,6 +433,7 @@ async function syncLease(
         ],
       },
       lease.assignmentClaimToken,
+      lease.leaseToken,
     );
     return;
   }
@@ -442,6 +450,13 @@ async function executeHostedWorkflowClaim(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
 ): Promise<HostedClaimExecutionResult> {
+  if (!lease.leaseToken) {
+    return {
+      status: 'failed',
+      failure: hostedWorkerMissingLeaseTokenFailure(),
+    };
+  }
+
   if (!lease.yamlSnapshot) {
     return {
       status: 'failed',
@@ -453,6 +468,21 @@ async function executeHostedWorkflowClaim(
     const daemon = await createStandaloneWorkerDaemon();
     const existing = await existingHostedRuntimeRun(lease);
     if (existing) {
+      if (existing.status === 'blocked') {
+        const body = await fetchHostedAssignment(profile, lease);
+        const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body);
+        if (applied > 0) {
+          const completed = await waitForWorkflowRun(daemon, existing.id);
+          return {
+            status: normalizeWorkflowStatus(completed.status),
+            run: completed,
+            daemon,
+            ...(completed.status === 'failed' || completed.status === 'canceled'
+              ? { failure: workflowRunFailure(completed) }
+              : {}),
+          };
+        }
+      }
       return {
         status: normalizeWorkflowStatus(existing.status),
         run: existing,
@@ -565,6 +595,7 @@ async function fetchHostedAssignment(
     `workflow-runs/${encodeURIComponent(lease.runId)}`,
     {},
     lease.assignmentClaimToken,
+    lease.leaseToken,
     [429],
   );
   if (response.status === 429) {
@@ -580,6 +611,7 @@ async function createStandaloneWorkerDaemon(): Promise<Daemon> {
   const registry = await loadAgents(daemon);
   daemon.setModelProvider(() => registry.fetchAllModels());
   daemon.setTrackerFactory((trackerConfig, sessionId) => new GitTracker(trackerConfig, sessionId));
+  daemon.resumePendingWorkflowRuns();
   return daemon;
 }
 
@@ -612,6 +644,16 @@ function hostedWorkerExecutionUnavailableFailure(): HostedWorkerFailure {
     summary:
       'Standalone hosted worker claimed the run but no workflow execution engine is wired yet.',
     nextCheck: 'Wire the in-process workflow executor before enabling hosted worker completion.',
+    retrySafe: false,
+  };
+}
+
+function hostedWorkerMissingLeaseTokenFailure(): HostedWorkerFailure {
+  return {
+    errorCode: 'RUNNER_LEASE_TOKEN_MISSING',
+    failureClass: 'authorization_denied',
+    summary: 'Hosted worker claim did not include a server-issued run lease token.',
+    nextCheck: 'Re-pair the worker or upgrade the control plane to return run_lease.lease_token.',
     retrySafe: false,
   };
 }
@@ -663,6 +705,7 @@ async function workerFetch(
       'X-Viewport-Worker-Nonce': signed.nonce,
       'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
       'X-Viewport-Worker-Signature': signed.signature,
+      ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
     },
     body: serialized,
   });
@@ -703,6 +746,7 @@ async function hostedManagedExecutorFetch(
   path: string,
   body: Record<string, unknown>,
   assignmentClaimToken?: string,
+  runLeaseToken?: string,
   allowedStatuses: number[] = [],
 ): Promise<Response> {
   if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
@@ -726,12 +770,17 @@ async function hostedManagedExecutorFetch(
         Authorization: `Bearer ${profile.credential}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        ...(assignmentClaimToken ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken } : {}),
+        ...(runLeaseToken
+          ? { 'X-Viewport-Run-Lease': runLeaseToken }
+          : assignmentClaimToken
+            ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken }
+            : {}),
         'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
         'X-Viewport-Worker-Timestamp': signed.timestamp,
         'X-Viewport-Worker-Nonce': signed.nonce,
         'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
         'X-Viewport-Worker-Signature': signed.signature,
+        ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
       },
       ...(method === 'GET' ? {} : { body: serialized }),
     });
@@ -805,6 +854,13 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
+}
+
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
@@ -836,6 +892,7 @@ async function signWorkerRequest(
   nonce: string;
   bodySha256: string;
   signature: string;
+  serverId?: string;
 }> {
   const identity = JSON.parse(
     await fs.readFile(profile.identityKeyPath, 'utf8'),
@@ -846,9 +903,16 @@ async function signWorkerRequest(
   const timestamp = new Date().toISOString();
   const nonce = crypto.randomBytes(16).toString('hex');
   const bodySha256 = crypto.createHash('sha256').update(body).digest('hex');
-  const canonical = [method.toUpperCase(), requestPath, bodySha256, nonce, timestamp].join('\n');
+  const canonical = [
+    method.toUpperCase(),
+    requestPath,
+    bodySha256,
+    nonce,
+    timestamp,
+    ...(profile.serverId ? [profile.serverId] : []),
+  ].join('\n');
   const signature = crypto
     .sign(null, Buffer.from(canonical), identity.privateKey)
     .toString('base64');
-  return { timestamp, nonce, bodySha256, signature };
+  return { timestamp, nonce, bodySha256, signature, serverId: profile.serverId };
 }

@@ -26,7 +26,7 @@ export async function readPromptNodeOutput(
   const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
     Boolean(id),
   );
-  if (options.allowCodexDiscovery === false) {
+  if (options.allowCodexDiscovery === false || !nodeUsesCodexDiscovery(node)) {
     return '';
   }
   for (const candidatePath of outputCandidatePaths(run, node)) {
@@ -59,7 +59,7 @@ export async function readPromptNodeTranscriptExcerpt(
   const sessionIds = [node.sessionId, node.nativeSessionId].filter((id): id is string =>
     Boolean(id),
   );
-  if (options.allowCodexDiscovery === false) {
+  if (options.allowCodexDiscovery === false || !nodeUsesCodexDiscovery(node)) {
     return [];
   }
   for (const candidatePath of outputCandidatePaths(run, node)) {
@@ -97,4 +97,14 @@ function uniquePaths(paths: Array<string | undefined>): string[] {
     out.push(resolvedPath);
   }
   return out;
+}
+
+function nodeUsesCodexDiscovery(node: WorkflowNodeRunState): boolean {
+  const agent = node.metadata?.['agent'];
+  if (typeof agent === 'string') return agent === 'codex';
+
+  const provider = node.metadata?.['provider'];
+  if (typeof provider === 'string') return provider === 'codex';
+
+  return false;
 }

@@ -196,6 +196,7 @@ describe('worker profile defaults', () => {
         managed_executor_id: 'executor_123',
         managed_executor_credential: 'vpexec_secret',
         server_url: 'https://api.getviewport.test',
+        server_id: 'sha256:server_123',
         token: 'install_daemon_issue_secret',
       },
       profile,
@@ -207,12 +208,14 @@ describe('worker profile defaults', () => {
           workspaceId: string;
           managedExecutorId: string;
           credential: string;
+          serverId: string;
         };
       };
     };
     expect(config.daemon.worker.workspaceId).toBe('workspace_123');
     expect(config.daemon.worker.managedExecutorId).toBe('executor_123');
     expect(config.daemon.worker.credential).toBe('vpexec_secret');
+    expect(config.daemon.worker.serverId).toBe('sha256:server_123');
 
     const pairing = JSON.parse(
       await fs.readFile(path.join(homeDir, 'worker', 'pairing.json'), 'utf8'),
@@ -220,10 +223,12 @@ describe('worker profile defaults', () => {
       managedExecutorId: string;
       runtimeTargetId: string;
       serverUrl: string;
+      serverId: string;
     };
     expect(pairing.runtimeTargetId).toBe('runtime_123');
     expect(pairing.managedExecutorId).toBe('executor_123');
     expect(pairing.serverUrl).toBe(profile.serverUrl);
+    expect(pairing.serverId).toBe('sha256:server_123');
   });
 
   it('uses the active profile home for worker state instead of the monitor default home', async () => {

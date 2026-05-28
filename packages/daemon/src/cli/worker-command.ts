@@ -9,6 +9,8 @@ import {
   resetWorkerProfile,
 } from './worker-profile.js';
 
+const DEFAULT_WORKER_LEASE_SECONDS = 1_800;
+
 export async function worker(): Promise<void> {
   const args = getArgs();
   const subcommand = args[1] ?? 'help';
@@ -45,7 +47,7 @@ function workerHelpText(): string {
     'Usage: vpd worker <command>',
     '',
     'Commands:',
-    '  start --mode persistent --transport polling|relay|inbound',
+    '  start --mode persistent --transport polling|relay|inbound [--lease <seconds>]',
     '  run-once --lease <lease-token> --transport polling|relay|inbound',
     '  doctor [--json]',
     '  reset [--json]',
@@ -57,6 +59,7 @@ function workerHelpText(): string {
     '',
     'Defaults:',
     `  workspace root: ${defaultWorkerWorkspaceRoot()}`,
+    `  hosted worker lease: ${DEFAULT_WORKER_LEASE_SECONDS} seconds`,
     '  server: hosted Viewport unless --server or config overrides it',
   ].join('\n');
 }
@@ -132,6 +135,7 @@ async function workerStart(): Promise<void> {
     lifecycle,
     transport: normalizeWorkerTransport(getFlag('transport')),
     once: getArgs().includes('--once'),
+    leaseSeconds: positiveIntFlag(getFlag('lease')) ?? DEFAULT_WORKER_LEASE_SECONDS,
   });
   if (asJson) {
     printJson({ command: 'worker start', ok: true, ...result });
@@ -140,6 +144,17 @@ async function workerStart(): Promise<void> {
   console.log(
     `Worker stopped. Claimed ${result.claimed}, completed ${result.completed}, failed ${result.failed}, cleanup ${result.cleanup}.`,
   );
+}
+
+function positiveIntFlag(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error('--lease must be a positive integer number of seconds.');
+  }
+  return parsed;
 }
 
 async function workerRunOnce(): Promise<void> {

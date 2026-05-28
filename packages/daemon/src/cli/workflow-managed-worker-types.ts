@@ -3,6 +3,7 @@ import type { WorkflowInputValue } from '../workflows/types.js';
 
 export interface ManagedWorkerOptions {
   server: string;
+  serverId?: string;
   workspaceId: string;
   executorId: string;
   credential: string;
@@ -35,6 +36,7 @@ export interface ManagedWorkerSigningIdentity {
   publicKeyPem: string;
   privateKeyPem: string;
   fingerprint: string;
+  serverId?: string;
   path: string;
 }
 
@@ -56,6 +58,7 @@ export interface ManagedWorkerCapabilities {
 export interface ManagedAssignment {
   id: string;
   assignment_claim_token?: string | null;
+  runtime_commands?: Array<Record<string, unknown>> | null;
   schema_versions?: Record<string, unknown> | null;
   route_snapshot?: Record<string, unknown> | null;
   execution_profile_snapshot?: Record<string, unknown> | null;

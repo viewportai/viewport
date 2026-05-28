@@ -345,6 +345,7 @@ describe('workflow managed worker CLI', () => {
       JSON.stringify({
         schema: 'viewport.managed_executor_registration/v1',
         serverUrl: 'https://api.getviewport.com',
+        serverId: 'vp-hosted-local-dev',
         workspaceId: 'workspace_1',
         executorId: 'executor_1',
         credential: 'vpexec_secret',
@@ -381,6 +382,7 @@ describe('workflow managed worker CLI', () => {
         headers: init?.headers,
         publicKeyPem: keyPair.publicKey,
         fingerprint,
+        serverId: 'vp-hosted-local-dev',
       });
       signedMethods.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -1802,6 +1804,30 @@ nodes:
           data: {
             id: 'run_platform_request_changes',
             status: 'blocked',
+            runtime_commands: requestChangesApplied
+              ? []
+              : [
+                  {
+                    id: 'plan-review:runtime-command-request-changes',
+                    type: 'workflow.approval_decision',
+                    workflow_run_id: 'local_run_request_changes',
+                    workflow_node_id: 'review_plan',
+                    approved: false,
+                    decision: 'request_changes',
+                    message: 'Tighten scope before implementation.',
+                    actor: { name: 'PM Reviewer', source: 'viewport-web' },
+                    feedback: {
+                      annotations: [
+                        {
+                          section: 'Scope',
+                          body: 'Stay docs-only.',
+                          severity: 'blocking',
+                        },
+                      ],
+                    },
+                    decided_at: '2026-05-28T17:05:21.303395Z',
+                  },
+                ],
             nodes: [
               {
                 node_key: 'review_plan',
@@ -1815,12 +1841,7 @@ nodes:
                         message: 'Approved revised plan.',
                         actor: { name: 'PM Reviewer', source: 'viewport-web' },
                       }
-                    : {
-                        approved: false,
-                        decision: 'changes_requested',
-                        message: 'Tighten scope before implementation.',
-                        actor: { name: 'PM Reviewer', source: 'viewport-web' },
-                      },
+                    : null,
                 },
               },
             ],
@@ -3539,6 +3560,7 @@ function expectSignedWorkerRequest({
   headers,
   publicKeyPem,
   fingerprint,
+  serverId,
 }: {
   url: string;
   method: string;
@@ -3546,12 +3568,16 @@ function expectSignedWorkerRequest({
   headers: HeadersInit | undefined;
   publicKeyPem: string;
   fingerprint: string;
+  serverId?: string;
 }): void {
   const nonce = headerValue(headers, 'X-Viewport-Worker-Nonce');
   const timestamp = headerValue(headers, 'X-Viewport-Worker-Timestamp');
   const bodySha256 = headerValue(headers, 'X-Viewport-Worker-Body-SHA256');
   const signature = headerValue(headers, 'X-Viewport-Worker-Signature');
   expect(headerValue(headers, 'X-Viewport-Worker-Fingerprint')).toBe(fingerprint);
+  if (serverId) {
+    expect(headerValue(headers, 'X-Viewport-Server-Id')).toBe(serverId);
+  }
   expect(nonce).toBeTruthy();
   expect(timestamp).toBeTruthy();
   expect(bodySha256).toBe(createHash('sha256').update(body).digest('hex'));
@@ -3563,6 +3589,7 @@ function expectSignedWorkerRequest({
     bodySha256,
     nonce,
     timestamp,
+    ...(serverId ? [serverId] : []),
   ].join('\n');
   expect(
     verify(null, Buffer.from(canonical), publicKeyPem, Buffer.from(signature!, 'base64')),

@@ -463,8 +463,24 @@ export class SessionManager {
     setImmediate(() => {
       void this.sendInitialPrompt(sessionId, text).catch((err) => {
         log.warn({ sessionId, err }, 'Initial prompt dispatch failed');
+        this.failInitialPromptDispatch(sessionId, err);
       });
     });
+  }
+
+  private failInitialPromptDispatch(sessionId: string, err: unknown): void {
+    const reason = `error: ${err instanceof Error ? err.message : String(err)}`;
+    if (this.sessionEndReasons.has(sessionId)) return;
+
+    const active = this.sessions.get(sessionId);
+    if (active) {
+      active.session.emit('ended', reason);
+      return;
+    }
+
+    this.sessionEndReasons.set(sessionId, reason);
+    this.eventBus.emit('session:state-changed', { sessionId, state: 'errored' });
+    this.eventBus.emit('session:ended', { sessionId, reason });
   }
 
   private async sendInitialPrompt(sessionId: string, text: string): Promise<void> {

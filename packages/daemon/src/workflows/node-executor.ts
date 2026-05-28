@@ -15,7 +15,7 @@ import { classifyRetry } from './retry-classifier.js';
 import { NODE_EXECUTORS } from './node-registry.js';
 import { runWorkflowDaemonSession } from './daemon-session.js';
 import { appendInlineAgentResults, runInlineAgents } from './inline-agents.js';
-import { resolveWorkflowSessionBudget, resolveWorkflowSessionPolicy } from './session-policy.js';
+import { resolveWorkflowRunSessionBudget, resolveWorkflowSessionPolicy } from './session-policy.js';
 import { resolvePromptNodeContext } from './context-node-resolver.js';
 import { parseWorkflow } from './parser.js';
 import type { WorkflowPlatformContextClient } from './platform-context-client.js';
@@ -342,7 +342,10 @@ async function executePromptNode(
     timeoutSeconds: node.timeoutSeconds,
   });
   const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
-  const budget = resolveWorkflowSessionBudget(parsed.definition.policies?.budget);
+  const budget = resolveWorkflowRunSessionBudget(
+    parsed.definition.policies?.budget,
+    run.workflowAuthorityContract,
+  );
   const inlineAgents = await runInlineAgents(context, run, nodeId, node, { budget });
   const renderedPrompt = appendInlineAgentResults(
     await renderTemplate(node.prompt, run),

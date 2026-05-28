@@ -107,13 +107,15 @@ export class MockSession extends EventEmitter implements Session {
 }
 
 export class MockAdapter implements AgentAdapter {
-  readonly agentId = 'claude';
+  readonly agentId: string;
   lastSession: MockSession | null = null;
   lastOptions: SessionOptions | undefined;
   readonly sessions: MockSession[] = [];
   readonly cwdBySession = new Map<MockSession, string>();
 
-  constructor(private readonly descriptorOverrides: MockAdapterDescriptorOverrides = {}) {}
+  constructor(private readonly descriptorOverrides: MockAdapterDescriptorOverrides = {}) {
+    this.agentId = descriptorOverrides.agentId ?? 'claude';
+  }
 
   describe(): AgentAdapterDescriptor {
     const base: AgentAdapterDescriptor = {
