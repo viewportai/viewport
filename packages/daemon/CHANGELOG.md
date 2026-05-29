@@ -1,3 +1,10 @@
+## [0.25.8](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.7...@viewportai/daemon@0.25.8) (2026-05-29)
+
+
+### Bug Fixes
+
+* preserve runner pool on worker heartbeat ([477ec6b](https://github.com/viewportai/viewport/commit/477ec6b41d2acc94e9e36b918e460d00d9a359f8))
+
 ## [0.25.7](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.6...@viewportai/daemon@0.25.7) (2026-05-29)
 
 
