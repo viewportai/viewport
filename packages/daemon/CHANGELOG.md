@@ -1,3 +1,10 @@
+## [0.25.7](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.6...@viewportai/daemon@0.25.7) (2026-05-29)
+
+
+### Bug Fixes
+
+* fail closed on missing managed worker state ([03cc0a8](https://github.com/viewportai/viewport/commit/03cc0a87d8b1e6117dab585ae73d59826a88ab7c))
+
 ## [0.25.6](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.5...@viewportai/daemon@0.25.6) (2026-05-29)
 
 
