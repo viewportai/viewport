@@ -2828,26 +2828,6 @@ nodes:
           data: {
             id: 'run_platform_action_reclaimed',
             status: 'running',
-            runtime_commands:
-              assignmentPolls >= 2
-                ? [
-                    {
-                      id: 'action-completed:receipt-action-reclaimed',
-                      type: 'workflow.action_completed',
-                      workflow_run_id: 'local_run_action_reclaimed',
-                      workflow_node_id: 'post_to_jira',
-                      proposal_key: 'action:post_to_jira',
-                      receipt_key: 'broker:proposal-action-reclaimed',
-                      receipt_digest: 'sha256:broker-receipt',
-                      provider_reference: 'JIRA-1',
-                      provider_url: 'https://jira.example.test/browse/JIRA-1',
-                      adapter: 'jira',
-                      action: 'comment',
-                      status: 'succeeded',
-                      executed_at: '2026-05-29T08:00:00.000Z',
-                    },
-                  ]
-                : [],
             nodes: [
               {
                 node_key: 'post_to_jira',
@@ -2867,6 +2847,26 @@ nodes:
               },
             ],
           },
+          runtime_commands:
+            assignmentPolls >= 2
+              ? [
+                  {
+                    id: 'action-completed:receipt-action-reclaimed',
+                    type: 'workflow.action_completed',
+                    workflow_run_id: 'local_run_action_reclaimed',
+                    workflow_node_id: 'post_to_jira',
+                    proposal_key: 'action:post_to_jira',
+                    receipt_key: 'broker:proposal-action-reclaimed',
+                    receipt_digest: 'sha256:broker-receipt',
+                    provider_reference: 'JIRA-1',
+                    provider_url: 'https://jira.example.test/browse/JIRA-1',
+                    adapter: 'jira',
+                    action: 'comment',
+                    status: 'succeeded',
+                    executed_at: '2026-05-29T08:00:00.000Z',
+                  },
+                ]
+              : [],
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_action_reclaimed/sync')) {

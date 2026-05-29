@@ -786,7 +786,7 @@ async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAs
   });
   if (response.status === 204) return null;
   const body = await responseJson(response);
-  return dataFrom(body) as ManagedAssignment;
+  return assignmentFrom(body);
 }
 
 async function claimActionReplay(
@@ -1736,6 +1736,10 @@ async function waitForApprovalAndResume(
       await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
+    const current = await readExistingLocalRun(localRunId);
+    if (current) {
+      await syncLocalRun(options, platformRunId, current, assignmentClaimToken);
+    }
     await delay(options.commandSleepSeconds * 1000);
   }
 }
@@ -1747,8 +1751,11 @@ async function applyBrokerActionCompletedCommands(
   localRunId: string,
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord | null> {
+  const localRun = await readExistingLocalRun(localRunId);
   const commands = (assignment.runtime_commands ?? []).filter(
-    (command) => command['type'] === 'workflow.action_completed',
+    (command) =>
+      command['type'] === 'workflow.action_completed' &&
+      !brokerActionCommandAlreadyApplied(localRun, command),
   );
   if (commands.length === 0) return null;
 
@@ -1763,6 +1770,23 @@ async function applyBrokerActionCompletedCommands(
     clearRunCredentialMaterial(platformRunId);
   }
   return run;
+}
+
+function brokerActionCommandAlreadyApplied(
+  run: WorkflowRunRecord | null,
+  command: Record<string, unknown>,
+): boolean {
+  const nodeKey = stringValue(command['workflow_node_id']);
+  if (!nodeKey) return false;
+
+  const node = run?.nodes?.[nodeKey];
+  if (!node || node.status !== 'completed') return false;
+
+  const receipt = recordValue(node.metadata?.['executionReceipt']);
+  const receiptKey = stringValue(receipt?.['receipt_key']);
+  const commandReceiptKey = stringValue(command['receipt_key']);
+
+  return Boolean(receiptKey && commandReceiptKey && receiptKey === commandReceiptKey);
 }
 
 const alreadyResolvedApprovalRuns = new WeakSet<WorkflowRunRecord>();
@@ -2053,7 +2077,7 @@ async function getAssignment(
     undefined,
     assignmentClaimToken,
   );
-  return dataFrom(body) as ManagedAssignment;
+  return assignmentFrom(body);
 }
 
 async function syncLocalRun(
@@ -2069,7 +2093,21 @@ async function syncLocalRun(
     localRunToSyncPayload(run, { includeApprovalDecisions: false }),
     assignmentClaimToken,
   );
-  return dataFrom(body) as ManagedAssignment;
+  return assignmentFrom(body);
+}
+
+function assignmentFrom(body: unknown): ManagedAssignment {
+  const data = dataFrom(body);
+  if (!isRecord(data)) return data as ManagedAssignment;
+
+  if (isRecord(body) && Array.isArray(body['runtime_commands'])) {
+    return {
+      ...data,
+      runtime_commands: body['runtime_commands'],
+    } as unknown as ManagedAssignment;
+  }
+
+  return data as unknown as ManagedAssignment;
 }
 
 async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
