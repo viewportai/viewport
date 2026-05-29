@@ -1,4 +1,7 @@
 import { Buffer } from 'node:buffer';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { WorkflowInputValue } from './types.js';
 
 export function withIdempotencyHeader(
@@ -103,6 +106,8 @@ export function providerCredentialValue(
     defaultRef: string;
     defaultEnv: string;
     runtimeSecretEnv?: Record<string, string>;
+    runtimeSecretFiles?: Record<string, string>;
+    runId?: string;
   },
 ): string | undefined {
   const explicitRef = explicitCredentialRefValue(input);
@@ -111,6 +116,24 @@ export function providerCredentialValue(
   const envName = envNameForCredentialRef(explicitRef);
   const refEnvValue = options.runtimeSecretEnv?.[envName] ?? process.env[envName];
   if (refEnvValue) return refEnvValue;
+  const secretFile = options.runtimeSecretFiles?.[envName];
+  const conventionalSecretFile = options.runId
+    ? path.join(
+        process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+        'run-secrets',
+        options.runId,
+        envName,
+      )
+    : undefined;
+  for (const candidate of [secretFile, conventionalSecretFile]) {
+    if (!candidate) continue;
+    try {
+      const value = fs.readFileSync(candidate, 'utf8').trim();
+      if (value) return value;
+    } catch {
+      continue;
+    }
+  }
   return undefined;
 }
 

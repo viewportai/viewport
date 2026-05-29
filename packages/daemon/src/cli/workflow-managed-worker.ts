@@ -23,6 +23,7 @@ import {
   safeText,
 } from './workflow-managed-worker-util.js';
 import type { WorkflowRunRecord } from '../workflows/types.js';
+import type { SessionResourceManifest } from '../config-resolution/index.js';
 import {
   executeProviderAction,
   WorkflowActionError,
@@ -1151,12 +1152,12 @@ async function runAssignmentLocally(
         progressSyncEveryMs(options.leaseSeconds),
       );
       if (terminalRunStatus(completed.status)) {
-        runCredentialMaterialCache.delete(assignment.id);
+        clearRunCredentialMaterial(assignment.id);
       }
       return completed;
     }
     if (terminalRunStatus(existingRun.status)) {
-      runCredentialMaterialCache.delete(assignment.id);
+      clearRunCredentialMaterial(assignment.id);
     }
     return existingRun;
   }
@@ -1169,18 +1170,15 @@ async function runAssignmentLocally(
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignmentInputs(assignment, material.metadata),
+    inputs: assignmentInputs(assignment, material),
     runtimeSecretEnv: material.runtimeSecretEnv,
+    runtimeSecretFiles: material.runtimeSecretFiles,
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
-    resourceManifest: assignment.resource_manifest ?? undefined,
+    resourceManifest: assignmentResourceManifest(assignment) ?? undefined,
     workflowAuthorityContract:
-      assignment.workflow_authority_contract ??
-      recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ??
+      assignmentWorkflowAuthorityContract(assignment) ??
       recordChildValue(
         recordChildValue(assignment.input_snapshot, 'viewport'),
         'workflowAuthorityContract',
@@ -1198,7 +1196,7 @@ async function runAssignmentLocally(
     progressSyncEveryMs(options.leaseSeconds),
   );
   if (terminalRunStatus(completed.status)) {
-    runCredentialMaterialCache.delete(assignment.id);
+    clearRunCredentialMaterial(assignment.id);
   }
   return completed;
 }
@@ -1212,19 +1210,20 @@ function recordChildValue(value: unknown, key: string): Record<string, unknown> 
 
 function assignmentInputs(
   assignment: ManagedAssignment,
-  credentialMetadata: CredentialMaterialMetadata[] = [],
+  material: CredentialMaterialResult = { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] },
 ): Record<string, unknown> {
   const inputs = { ...(assignment.input_snapshot ?? {}) } as Record<string, unknown>;
   inputs['viewport'] = {
     ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
     platformRunId: assignment.id,
     schemaVersions: assignment.schema_versions ?? null,
-    route: assignment.route_snapshot ?? null,
-    executionProfile: assignment.execution_profile_snapshot ?? null,
-    workflow: assignment.workflow_snapshot ?? null,
-    runnerWorkspace: assignment.runner_workspace_snapshot ?? null,
-    contextReceipts: assignment.context_receipts_snapshot ?? null,
-    credentials: credentialMetadata,
+    target: assignmentTargetSnapshot(assignment) ?? null,
+    route: assignmentRouteSnapshot(assignment) ?? null,
+    executionProfile: assignmentExecutionProfileSnapshot(assignment) ?? null,
+    workflow: assignmentWorkflowSnapshot(assignment) ?? null,
+    runnerWorkspace: assignmentRunnerWorkspaceSnapshot(assignment) ?? null,
+    contextReceipts: assignmentContextReceiptsSnapshot(assignment) ?? null,
+    credentials: material.metadata,
   };
 
   return inputs;
@@ -1232,10 +1231,12 @@ function assignmentInputs(
 
 interface CredentialMaterialResult {
   runtimeSecretEnv: Record<string, string>;
+  runtimeSecretFiles: Record<string, string>;
   metadata: CredentialMaterialMetadata[];
 }
 
 const runCredentialMaterialCache = new Map<string, CredentialMaterialResult>();
+const runCredentialProcessEnvCache = new Map<string, Record<string, string | undefined>>();
 
 function terminalRunStatus(status: string | undefined): boolean {
   return status === 'completed' || status === 'failed' || status === 'canceled';
@@ -1247,7 +1248,58 @@ async function materializeAndCacheRunCredentials(
 ): Promise<CredentialMaterialResult> {
   const material = await materializeRunCredentials(options, assignment);
   runCredentialMaterialCache.set(assignment.id, material);
+  installRunCredentialProcessEnv(assignment.id, material.runtimeSecretEnv);
   return material;
+}
+
+function installRunCredentialProcessEnv(
+  runId: string,
+  runtimeSecretEnv: Record<string, string>,
+): void {
+  const entries = Object.entries(runtimeSecretEnv);
+  if (entries.length === 0) return;
+
+  const previous = runCredentialProcessEnvCache.get(runId) ?? {};
+  for (const [key, value] of entries) {
+    if (!(key in previous)) {
+      previous[key] = process.env[key];
+    }
+    process.env[key] = value;
+  }
+  runCredentialProcessEnvCache.set(runId, previous);
+}
+
+function clearRunCredentialMaterial(runId: string): void {
+  const material = runCredentialMaterialCache.get(runId);
+  runCredentialMaterialCache.delete(runId);
+  if (material) {
+    for (const filePath of Object.values(material.runtimeSecretFiles)) {
+      try {
+        fs.rmSync(filePath, { force: true });
+      } catch {
+        // Best-effort cleanup; the run-scoped directory is removed next.
+      }
+    }
+  }
+  try {
+    fs.rmSync(
+      path.join(process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'), 'run-secrets', runId),
+      { recursive: true, force: true },
+    );
+  } catch {
+    // Best-effort cleanup.
+  }
+
+  const previous = runCredentialProcessEnvCache.get(runId);
+  if (!previous) return;
+  for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  runCredentialProcessEnvCache.delete(runId);
 }
 
 interface CredentialMaterialMetadata {
@@ -1256,6 +1308,7 @@ interface CredentialMaterialMetadata {
   kind?: string | null;
   storagePosture?: string | null;
   materialAvailable: boolean;
+  runtimeSecretAvailable: boolean;
   runnerLocalRequired: boolean;
   provider?: string | null;
   credentialId?: string | number | null;
@@ -1267,9 +1320,10 @@ async function materializeRunCredentials(
   assignment: ManagedAssignment,
 ): Promise<CredentialMaterialResult> {
   const handles = collectCredentialHandles(assignment);
-  if (handles.length === 0) return { runtimeSecretEnv: {}, metadata: [] };
+  if (handles.length === 0) return { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] };
 
   const runtimeSecretEnv: Record<string, string> = {};
+  const runtimeSecretFiles: Record<string, string> = {};
   const metadata: CredentialMaterialMetadata[] = [];
   for (const handle of handles) {
     const response = await materializeCredential(options, assignment, handle);
@@ -1277,10 +1331,17 @@ async function materializeRunCredentials(
     const secret = stringField(response, 'secret');
     if (secret) {
       runtimeSecretEnv[envName] = secret;
+      runtimeSecretFiles[envName] = await writeRunCredentialSecretFile(assignment.id, envName, secret);
     }
     const wrappedSecret = recordField(response, 'wrapped_secret');
     if (wrappedSecret) {
-      runtimeSecretEnv[envName] = decryptRunnerWrappedSecret(options.runnerKeyPair, wrappedSecret);
+      const decrypted = decryptRunnerWrappedSecret(options.runnerKeyPair, wrappedSecret);
+      runtimeSecretEnv[envName] = decrypted;
+      runtimeSecretFiles[envName] = await writeRunCredentialSecretFile(
+        assignment.id,
+        envName,
+        decrypted,
+      );
     }
     metadata.push({
       handle,
@@ -1288,6 +1349,7 @@ async function materializeRunCredentials(
       kind: stringField(response, 'kind') ?? null,
       storagePosture: stringField(response, 'storage_posture') ?? null,
       materialAvailable: response['material_available'] === true,
+      runtimeSecretAvailable: typeof runtimeSecretEnv[envName] === 'string',
       runnerLocalRequired: response['runner_local_required'] === true,
       provider: stringField(response, 'provider') ?? null,
       credentialId:
@@ -1296,7 +1358,34 @@ async function materializeRunCredentials(
     });
   }
 
-  return { runtimeSecretEnv, metadata };
+  const missingRuntimeSecrets = metadata.filter(
+    (entry) =>
+      entry.materialAvailable && !entry.runnerLocalRequired && !entry.runtimeSecretAvailable,
+  );
+  if (missingRuntimeSecrets.length > 0) {
+    const handles = missingRuntimeSecrets.map((entry) => entry.handle).join(', ');
+    throw new Error(
+      `Credential materialization for ${assignment.id} returned material_available without runtime secret material for: ${handles}`,
+    );
+  }
+
+  return { runtimeSecretEnv, runtimeSecretFiles, metadata };
+}
+
+async function writeRunCredentialSecretFile(
+  runId: string,
+  envName: string,
+  secret: string,
+): Promise<string> {
+  const root = path.join(
+    process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+    'run-secrets',
+    runId,
+  );
+  await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const filePath = path.join(root, envName);
+  await fs.promises.writeFile(filePath, secret, { mode: 0o600 });
+  return filePath;
 }
 
 async function materializeCredential(
@@ -1359,25 +1448,9 @@ function repositoryForCredentialMaterialization(
 }
 
 function allowedRepositoriesFromAssignment(assignment: ManagedAssignment): string[] {
-  const candidates = [
-    pathValue(assignment.workflow_authority_contract ?? {}, ['repos', 'allowed']),
-    pathValue(recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ?? {}, [
-      'repos',
-      'allowed',
-    ]),
-    pathValue(
-      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ?? {},
-      ['repos', 'allowed'],
-    ),
-    pathValue(recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ?? {}, [
-      'repos',
-      'allowed',
-    ]),
-    pathValue(
-      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ?? {},
-      ['repos', 'allowed'],
-    ),
-  ];
+  const candidates = assignmentWorkflowAuthorityContracts(assignment).map((contract) =>
+    pathValue(contract, ['repos', 'allowed']),
+  );
 
   return [
     ...new Set(
@@ -1423,8 +1496,9 @@ function decryptRunnerWrappedSecret(
 
 function collectCredentialHandles(assignment: ManagedAssignment): string[] {
   const snapshots = [
-    assignment.execution_profile_snapshot,
-    assignment.workflow_snapshot,
+    assignmentTargetSnapshot(assignment),
+    assignmentExecutionProfileSnapshot(assignment),
+    assignmentWorkflowSnapshot(assignment),
     yamlSnapshotDocument(assignment),
   ].filter(isRecord);
   const handles = new Set<string>();
@@ -1440,13 +1514,7 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
       handles.add(handle);
     }
   }
-  for (const contract of [
-    assignment.workflow_authority_contract,
-    recordChildValue(assignment.route_snapshot, 'workflow_authority_contract'),
-    recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract'),
-    recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract'),
-    recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract'),
-  ]) {
+  for (const contract of assignmentWorkflowAuthorityContracts(assignment)) {
     for (const handle of credentialRefsFrom(
       pathValue(asRecord(contract), ['credentials', 'provider_actions']),
     )) {
@@ -1759,6 +1827,7 @@ async function resumeApprovedLocalRun(
         executionGrant: approvalExecutionGrant(approved),
         feedback: approvalFeedback(approved),
         runtimeSecretEnv: material.runtimeSecretEnv,
+        runtimeSecretFiles: material.runtimeSecretFiles,
       },
     );
   } catch (error) {
@@ -1781,7 +1850,7 @@ async function resumeApprovedLocalRun(
   );
   await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
   if (terminalRunStatus(resumed.status)) {
-    runCredentialMaterialCache.delete(platformRunId);
+    clearRunCredentialMaterial(platformRunId);
   }
   return resumed;
 }
@@ -1801,10 +1870,83 @@ function assignmentWithLocalRunSnapshot(
     yaml_snapshot: localRun.yamlSnapshot || assignment.yaml_snapshot,
     directory_path: localRun.directoryPath || assignment.directory_path,
     input_snapshot: localRun.inputs ?? assignment.input_snapshot,
-    resource_manifest: localRun.resourceManifest ?? assignment.resource_manifest,
+    resource_manifest: localRun.resourceManifest ?? assignmentResourceManifest(assignment),
     workflow_authority_contract:
-      localRun.workflowAuthorityContract ?? assignment.workflow_authority_contract,
+      localRun.workflowAuthorityContract ??
+      assignmentWorkflowAuthorityContract(assignment) ??
+      undefined,
   };
+}
+
+function assignmentTargetSnapshot(assignment: ManagedAssignment): Record<string, unknown> | null {
+  return assignment.target_snapshot ?? assignment.targetSnapshot ?? null;
+}
+
+function assignmentRouteSnapshot(assignment: ManagedAssignment): Record<string, unknown> | null {
+  return assignment.route_snapshot ?? assignment.routeSnapshot ?? null;
+}
+
+function assignmentExecutionProfileSnapshot(
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  return assignment.execution_profile_snapshot ?? assignment.executionProfileSnapshot ?? null;
+}
+
+function assignmentWorkflowSnapshot(assignment: ManagedAssignment): Record<string, unknown> | null {
+  return assignment.workflow_snapshot ?? assignment.workflowSnapshot ?? null;
+}
+
+function assignmentRunnerWorkspaceSnapshot(
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  return assignment.runner_workspace_snapshot ?? assignment.runnerWorkspaceSnapshot ?? null;
+}
+
+function assignmentResourceManifest(assignment: ManagedAssignment): SessionResourceManifest | null {
+  return assignment.resource_manifest ?? assignment.resourceManifest ?? null;
+}
+
+function assignmentContextReceiptsSnapshot(
+  assignment: ManagedAssignment,
+): unknown[] | Record<string, unknown> | null {
+  return assignment.context_receipts_snapshot ?? assignment.contextReceiptsSnapshot ?? null;
+}
+
+function assignmentWorkflowAuthorityContract(
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  return assignmentWorkflowAuthorityContracts(assignment)[0] ?? null;
+}
+
+function assignmentWorkflowAuthorityContracts(
+  assignment: ManagedAssignment,
+): Record<string, unknown>[] {
+  return [
+    assignment.workflow_authority_contract ??
+      null,
+    assignment.workflowAuthorityContract ?? null,
+    recordChildValue(assignmentTargetSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentTargetSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentRouteSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentRouteSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(
+      assignmentExecutionProfileSnapshot(assignment),
+      'workflow_authority_contract',
+    ),
+    recordChildValue(assignmentExecutionProfileSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentWorkflowSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentWorkflowSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentRunnerWorkspaceSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentRunnerWorkspaceSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(
+      recordChildValue(asRecord(assignment.input_snapshot), 'viewport'),
+      'workflow_authority_contract',
+    ),
+    recordChildValue(
+      recordChildValue(asRecord(assignment.input_snapshot), 'viewport'),
+      'workflowAuthorityContract',
+    ),
+  ].filter(isRecord);
 }
 
 function isAlreadyResolvedApprovalError(error: unknown): boolean {

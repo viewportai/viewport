@@ -38,6 +38,8 @@ export class WorkflowRunner {
   private readonly platformSync: WorkflowRunPlatformSync;
   private readonly activeRunIds = new Set<string>();
   private readonly shellAbortRegistry = new WorkflowShellAbortRegistry();
+  private readonly runtimeSecretEnvByRunId = new Map<string, Record<string, string>>();
+  private readonly runtimeSecretFilesByRunId = new Map<string, Record<string, string>>();
   private readonly scheduler: WorkflowLayerScheduler;
   private readonly resumer: WorkflowRunResumer;
   private readonly reconciler: WorkflowRunReconciler;
@@ -50,7 +52,10 @@ export class WorkflowRunner {
       (runId, nodeId, decision) => this.decideApproval(runId, nodeId, decision),
     );
     this.platformSync = new WorkflowRunPlatformSync(daemon.configManager, undefined, {
-      onRuntimeCommand: (command, run) => this.platformCommandApplier.apply(command, run.id),
+      onRuntimeCommand: (command, run) => {
+        if (isManagedWorkerLocalRun(run)) return false;
+        return this.platformCommandApplier.apply(command, run.id);
+      },
     });
 
     const ops: RunnerOps = {
@@ -232,7 +237,8 @@ export class WorkflowRunner {
     }
     await this.store.save(run);
     void this.runSchedulerWithRunTimeout(run.id, parsed, {
-      runtimeSecretEnv: sanitizeRuntimeSecretEnv(request.runtimeSecretEnv),
+      runtimeSecretEnv: request.runtimeSecretEnv,
+      runtimeSecretFiles: request.runtimeSecretFiles,
     }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
@@ -509,7 +515,8 @@ export class WorkflowRunner {
 
       void this.runSchedulerWithRunTimeout(run.id, parsed, {
         resumed: true,
-        runtimeSecretEnv: sanitizeRuntimeSecretEnv(decision.runtimeSecretEnv),
+        runtimeSecretEnv: decision.runtimeSecretEnv,
+        runtimeSecretFiles: decision.runtimeSecretFiles,
       }).catch((error) => {
         void this.failRun(run.id, error instanceof Error ? error.message : String(error));
       });
@@ -558,7 +565,8 @@ export class WorkflowRunner {
 
     void this.runSchedulerWithRunTimeout(run.id, parsed, {
       resumed: true,
-      runtimeSecretEnv: sanitizeRuntimeSecretEnv(decision.runtimeSecretEnv),
+      runtimeSecretEnv: decision.runtimeSecretEnv,
+      runtimeSecretFiles: decision.runtimeSecretFiles,
     }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
@@ -583,7 +591,10 @@ export class WorkflowRunner {
   }
 
   async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {
-    return this.canceler.cancelRun(runId, options);
+    const run = await this.canceler.cancelRun(runId, options);
+    this.runtimeSecretEnvByRunId.delete(runId);
+    this.runtimeSecretFilesByRunId.delete(runId);
+    return run;
   }
 
   private async failRun(runId: string, message: string): Promise<void> {
@@ -602,6 +613,8 @@ export class WorkflowRunner {
     run.updatedAt = run.completedAt;
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await this.saveAndEmit(run);
+    this.runtimeSecretEnvByRunId.delete(runId);
+    this.runtimeSecretFilesByRunId.delete(runId);
   }
 
   private async requireRun(runId: string): Promise<WorkflowRunRecord> {
@@ -631,13 +644,58 @@ export class WorkflowRunner {
   private async runSchedulerWithRunTimeout(
     runId: string,
     parsed: ParsedWorkflow,
-    options: { resumed?: boolean; runtimeSecretEnv?: Record<string, string> } = {},
+    options: {
+      resumed?: boolean;
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
+    } = {},
   ): Promise<void> {
     const clearRunTimeout = await this.armRunTimeout(runId, parsed);
     try {
-      await this.scheduler.run(runId, parsed, options);
+      await this.scheduler.run(runId, parsed, {
+        ...options,
+        runtimeSecretEnv: this.runtimeSecretEnvForRun(runId, options.runtimeSecretEnv),
+        runtimeSecretFiles: this.runtimeSecretFilesForRun(runId, options.runtimeSecretFiles),
+      });
     } finally {
       clearRunTimeout();
+      await this.clearRuntimeSecretsIfTerminal(runId);
+    }
+  }
+
+  private runtimeSecretEnvForRun(
+    runId: string,
+    value: Record<string, string> | undefined,
+  ): Record<string, string> {
+    const incoming = sanitizeRuntimeSecretEnv(value);
+    const existing = this.runtimeSecretEnvByRunId.get(runId) ?? {};
+    const merged = { ...existing, ...incoming };
+    if (Object.keys(merged).length > 0) {
+      this.runtimeSecretEnvByRunId.set(runId, merged);
+    }
+
+    return { ...merged };
+  }
+
+  private runtimeSecretFilesForRun(
+    runId: string,
+    value: Record<string, string> | undefined,
+  ): Record<string, string> {
+    const incoming = sanitizeRuntimeSecretFiles(value);
+    const existing = this.runtimeSecretFilesByRunId.get(runId) ?? {};
+    const merged = { ...existing, ...incoming };
+    if (Object.keys(merged).length > 0) {
+      this.runtimeSecretFilesByRunId.set(runId, merged);
+    }
+
+    return { ...merged };
+  }
+
+  private async clearRuntimeSecretsIfTerminal(runId: string): Promise<void> {
+    const run = await this.store.get(runId);
+    if (!run || ['completed', 'failed', 'canceled'].includes(run.status)) {
+      this.runtimeSecretEnvByRunId.delete(runId);
+      this.runtimeSecretFilesByRunId.delete(runId);
     }
   }
 
@@ -698,10 +756,26 @@ function sanitizeRuntimeSecretEnv(
   );
 }
 
+function sanitizeRuntimeSecretFiles(
+  value: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!value) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, filePath]) =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof filePath === 'string' && filePath.length > 0,
+    ),
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function hashString(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function isManagedWorkerLocalRun(run: WorkflowRunRecord): boolean {
+  return Boolean(run.platformRunId && run.runtimeTargetId);
 }

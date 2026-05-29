@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { executeLoopNode } from './loop-executor.js';
 import { executeContextNode } from './context-node-resolver.js';
@@ -124,9 +125,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       credentialRef && credentialRef.trim() !== ''
         ? {
             envName: envNameForCredentialRef(credentialRef),
-            secret:
-              context.runtimeSecretEnv?.[envNameForCredentialRef(credentialRef)] ??
-              process.env[envNameForCredentialRef(credentialRef)],
+            secret: runtimeSecretMaterial(context, envNameForCredentialRef(credentialRef)),
           }
         : undefined;
     const result = await executeCheckoutNode(run, renderedNode, credential);
@@ -219,9 +218,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       credentialRef && credentialRef.trim() !== ''
         ? {
             envName: envNameForCredentialRef(credentialRef),
-            secret:
-              context.runtimeSecretEnv?.[envNameForCredentialRef(credentialRef)] ??
-              process.env[envNameForCredentialRef(credentialRef)],
+            secret: runtimeSecretMaterial(context, envNameForCredentialRef(credentialRef)),
           }
         : undefined;
     const result = await executeGitPublishNode(renderedNode, input, credential);
@@ -628,6 +625,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     if (node.requiresApproval === true && state?.approval?.approved !== true) {
       const action = await executeActionAdapter(run, nodeId, node, {
         runtimeSecretEnv: context.runtimeSecretEnv,
+        runtimeSecretFiles: context.runtimeSecretFiles,
       });
       if (state) {
         state.output = action.output;
@@ -650,6 +648,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       action = await executeActionAdapter(run, nodeId, node, {
         approved: state?.approval?.approved === true,
         runtimeSecretEnv: context.runtimeSecretEnv,
+        runtimeSecretFiles: context.runtimeSecretFiles,
       });
     } catch (error) {
       if (error instanceof WorkflowActionError && state) {
@@ -786,7 +785,7 @@ async function resolveNodeEnv(
     if (!value.secret) continue;
 
     const envName = envNameForCredentialRef(value.secret);
-    const material = context.runtimeSecretEnv?.[envName] ?? process.env[envName];
+    const material = runtimeSecretMaterial(context, envName);
     if (!material) {
       throw new Error(
         `Secret binding ${value.secret} was not materialized for env ${name}. Select it in the workflow/profile and keep runner-local material in ${envName} when using BYO secrets.`,
@@ -796,6 +795,22 @@ async function resolveNodeEnv(
   }
 
   return env;
+}
+
+function runtimeSecretMaterial(
+  context: WorkflowNodeExecutorContext,
+  envName: string,
+): string | undefined {
+  const material = context.runtimeSecretEnv?.[envName] ?? process.env[envName];
+  if (material) return material;
+  const filePath = context.runtimeSecretFiles?.[envName];
+  if (!filePath) return undefined;
+  try {
+    const value = fs.readFileSync(filePath, 'utf8').trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function renderContextUpdatePatch(

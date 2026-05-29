@@ -309,8 +309,14 @@ describe('workflow managed worker CLI', () => {
       daemonFetch,
     }));
 
+    delete process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
+    delete process.env['VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API'];
+
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
+
+    expect(process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER']).toBeUndefined();
+    expect(process.env['VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API']).toBeUndefined();
 
     expect(platformRequests.map((request) => request.url)).toEqual([
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
@@ -474,7 +480,6 @@ nodes:
     adapter: github
     action: pull_request.comment
     with:
-      credential_ref: github/pr-writer
       repository: "{{ inputs.repo }}"
       body: ok
   tests:
@@ -483,6 +488,13 @@ nodes:
 `,
             input_snapshot: {
               repo: 'viewportai/vp-example-repo',
+              viewport: {
+                workflowAuthorityContract: {
+                  credentials: {
+                    provider_actions: ['github/pr-writer'],
+                  },
+                },
+              },
             },
             source_ref: 'viewport://workflow/proof',
             directory_path: '/repo',
@@ -500,7 +512,7 @@ nodes:
             },
             workflow_snapshot: {
               requires: {
-                secrets: ['slack/notifier', 'github/pr-writer'],
+                secrets: ['slack/notifier'],
               },
             },
           },
@@ -585,8 +597,16 @@ nodes:
           VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer',
           VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
         });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+          VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: expect.any(String),
+        });
+        expect(body.runtimeSecretFiles.VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER).toContain(
+          'run-secrets/run_platform_credential_material/VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER',
+        );
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_checkout');
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_pr_writer');
+        expect(JSON.stringify(body.inputs)).not.toContain('run-secrets');
         expect(body.inputs.viewport.credentials).toEqual([
           expect.objectContaining({
             handle: 'agent/anthropic/claude-code',
@@ -609,6 +629,9 @@ nodes:
             scopes: ['repo:viewportai/vp-example-repo'],
           }),
         ]);
+        expect(body.inputs.viewport.workflowAuthorityContract.credentials).toEqual({
+          provider_actions: ['github/pr-writer'],
+        });
         return jsonResponse({ run: { id: 'local_run_credential_material' } });
       }
       if (urlPath === '/api/workflows/runs/local_run_credential_material') {
@@ -1981,6 +2004,9 @@ nodes:
         const body = JSON.parse(String(init?.body));
         expect(body.runtimeSecretEnv).toEqual({
           VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_local_snapshot_pr_writer',
+        });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
         });
         localApproved = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_local_snapshot' }) });
