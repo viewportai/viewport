@@ -339,6 +339,119 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
 
+  it('fails closed instead of re-running when claimed platform progress has no local runtime state', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--agents',
+      'codex',
+      '--models',
+      'gpt-5.5',
+      '--agent-command',
+      'cat',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        return jsonResponse({ data: { id: 'executor_1' } });
+      }
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_partial',
+            assignment_claim_token: 'vpclaim_partial',
+            runtime_run_id: 'local_missing',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: partial\nnodes: {}\n',
+            source_ref: 'viewport://workflow/partial',
+            directory_path: '/repo',
+            input_snapshot: { issue: 'PAY-1842' },
+            data_capture_policy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
+            nodes: [
+              {
+                node_key: 'draft_plan',
+                type: 'prompt',
+                status: 'completed',
+                output: 'Existing platform plan.',
+              },
+              {
+                node_key: 'review_plan',
+                type: 'approval',
+                status: 'blocked',
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_partial/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_partial');
+        expect(body).toMatchObject({
+          runtime_run_id: 'local_missing',
+          status: 'failed',
+          error_summary: expect.stringContaining('local runtime state is missing'),
+          events: [
+            expect.objectContaining({
+              runtime_event_id: 'managed-assignment-recovery-local-state-missing',
+              type: 'run-failed',
+              payload: expect.objectContaining({
+                platform_run_id: 'run_platform_partial',
+                runtime_run_id: 'local_missing',
+                recovery_policy: 'fail_closed_missing_local_state',
+              }),
+            }),
+          ],
+        });
+        return jsonResponse({ data: { id: 'run_platform_partial', status: 'failed' } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      if (urlPath === '/api/workflows/runs/local_missing') {
+        return jsonResponse({ message: 'missing' }, 404);
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
+    expect(
+      platformRequests.some((request) =>
+        request.url.endsWith('/workflow-runs/run_platform_partial/sync'),
+      ),
+    ).toBe(true);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+  });
+
   it('signs runtime platform requests when a worker identity profile is present', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-signature-'));
     const keyPair = generateKeyPairSync('ed25519', {

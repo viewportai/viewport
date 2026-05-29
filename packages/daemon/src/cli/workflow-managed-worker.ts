@@ -1167,6 +1167,9 @@ async function runAssignmentLocally(
     }
     return existingRun;
   }
+  if (assignmentHasPlatformProgress(assignment)) {
+    return missingLocalStateRun(assignment);
+  }
 
   const directory = await ensureDirectory(
     options.workdir ?? assignment.directory_path ?? process.cwd(),
@@ -1191,7 +1194,11 @@ async function runAssignmentLocally(
       ) ??
       undefined,
     initiation: 'cli',
-    dataCapturePolicy: assignment.data_capture_policy ?? undefined,
+    dataCapturePolicy: {
+      transcripts: assignment.data_capture_policy?.transcripts ?? 'none',
+      logs: assignment.data_capture_policy?.logs ?? 'metadata',
+      artifacts: assignment.data_capture_policy?.artifacts ?? 'metadata',
+    },
   });
   const runId = readRun(started).id;
   const completed = await pollLocalRun(
@@ -1205,6 +1212,90 @@ async function runAssignmentLocally(
     clearRunCredentialMaterial(assignment.id);
   }
   return completed;
+}
+
+function assignmentHasPlatformProgress(assignment: ManagedAssignment): boolean {
+  if (typeof assignment.runtime_run_id === 'string' && assignment.runtime_run_id.trim() !== '') {
+    return true;
+  }
+  return (assignment.nodes ?? []).some((node) => {
+    const status = node.status;
+    return (
+      status === 'running' ||
+      status === 'blocked' ||
+      status === 'completed' ||
+      status === 'failed' ||
+      status === 'canceled'
+    );
+  });
+}
+
+function missingLocalStateRun(assignment: ManagedAssignment): WorkflowRunRecord {
+  const now = Date.now();
+  const runtimeRunId =
+    typeof assignment.runtime_run_id === 'string' && assignment.runtime_run_id.trim() !== ''
+      ? assignment.runtime_run_id
+      : `missing-local-state-${assignment.id}`;
+  const message =
+    'Worker cannot safely resume this assignment because the local runtime state is missing. Start the original worker profile or rerun the workflow from the platform to avoid duplicate side effects.';
+
+  return {
+    id: runtimeRunId,
+    workflowName: 'managed-assignment-recovery',
+    sourceType: 'viewport_snapshot',
+    sourcePath: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
+    digest: `managed-assignment-recovery:${assignment.id}`,
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: assignment.yaml_snapshot ?? '',
+    directoryId: 'managed-assignment-recovery',
+    directoryPath: assignment.directory_path ?? process.cwd(),
+    resourceId: undefined,
+    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    platformRunId: assignment.id,
+    machineId: 'managed-executor',
+    dataCapturePolicy: {
+      transcripts: assignment.data_capture_policy?.transcripts ?? 'none',
+      logs: assignment.data_capture_policy?.logs ?? 'metadata',
+      artifacts: assignment.data_capture_policy?.artifacts ?? 'metadata',
+    },
+    initiation: 'cli',
+    status: 'failed',
+    inputs: assignment.input_snapshot ?? {},
+    preflight: {
+      ok: false,
+      issues: [
+        {
+          kind: 'node',
+          name: 'managed-assignment-recovery',
+          message,
+        },
+      ],
+    },
+    nodes: {},
+    artifacts: [],
+    events: [
+      {
+        id: 'managed-assignment-recovery-local-state-missing',
+        runId: runtimeRunId,
+        timestamp: now,
+        type: 'run-failed',
+        message,
+        data: {
+          platform_run_id: assignment.id,
+          runtime_run_id: assignment.runtime_run_id ?? null,
+          existing_node_statuses: Object.fromEntries(
+            (assignment.nodes ?? []).map((node) => [node.node_key, node.status ?? 'unknown']),
+          ),
+          recovery_policy: 'fail_closed_missing_local_state',
+        },
+      },
+    ],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+    completedAt: now,
+    error: message,
+  };
 }
 
 function recordChildValue(value: unknown, key: string): Record<string, unknown> | undefined {
