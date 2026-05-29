@@ -704,7 +704,7 @@ async function heartbeat(
     status,
     health_status: healthStatus,
     access_mode: options.accessMode,
-    runner_profile: options.runnerProfile ?? null,
+    runner_profile: options.runnerProfile ?? options.runnerPool ?? null,
     runner_posture: {
       ...(options.runnerPosture ?? {}),
       transport: {

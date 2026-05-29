@@ -214,6 +214,48 @@ describe('standalone worker runtime', () => {
     });
   });
 
+  it('uses persisted runner pool as hosted managed executor runner profile', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    await writeHostedWorkerProfile(serverUrl(server));
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const existing = manager.getDaemonConfig() ?? {};
+    await manager.setDaemonConfig({
+      ...existing,
+      worker: {
+        ...existing.worker,
+        capabilities: {
+          ...(existing.worker?.capabilities ?? {}),
+          runner_pool: 'payments-prod',
+        },
+      },
+    });
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    expect(requests[0]?.body).toMatchObject({
+      credential: 'vpexec_hosted',
+      runner_profile: 'payments-prod',
+      capabilities: { runner_pool: 'payments-prod' },
+    });
+  });
+
   it('fails before control-plane contact when the worker workspace root is missing', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
@@ -394,6 +436,7 @@ describe('standalone worker runtime', () => {
       access_mode: 'polling',
       runner_mode: 'self_hosted',
       runner_provider: 'local',
+      runner_profile: null,
       capabilities: {
         agents: {
           codex: { id: 'codex', available: true, tier: 'sdk' },
