@@ -7,6 +7,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
+import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 import {
   approvalFeedback,
   capabilityPayload,
@@ -15,6 +16,10 @@ import {
 import { commandPollSeconds } from '../../src/cli/workflow-managed-worker-util.js';
 
 const exec = promisify(execFile);
+const anthropicClaudeEnv = envNameForCredentialRef('agent/anthropic/claude-code');
+const githubPrWriterEnv = envNameForCredentialRef('github/pr-writer');
+const githubTokenEnv = envNameForCredentialRef('github/token');
+const repoPaymentsEnv = envNameForCredentialRef('repo/github/payments-api');
 
 describe('workflow managed worker CLI', () => {
   const originalArgv = process.argv.slice();
@@ -315,14 +320,14 @@ describe('workflow managed worker CLI', () => {
       daemonFetch,
     }));
 
-    delete process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
-    delete process.env['VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API'];
+    delete process.env[githubPrWriterEnv];
+    delete process.env[repoPaymentsEnv];
 
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
 
-    expect(process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER']).toBeUndefined();
-    expect(process.env['VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API']).toBeUndefined();
+    expect(process.env[githubPrWriterEnv]).toBeUndefined();
+    expect(process.env[repoPaymentsEnv]).toBeUndefined();
 
     expect(platformRequests.map((request) => request.url)).toEqual([
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
@@ -600,15 +605,15 @@ nodes:
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
         const body = JSON.parse(String(init.body));
         expect(body.runtimeSecretEnv).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer',
-          VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
+          [githubPrWriterEnv]: 'ghs_run_scoped_pr_writer',
+          [repoPaymentsEnv]: 'ghs_run_scoped_checkout',
         });
         expect(body.runtimeSecretFiles).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
-          VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: expect.any(String),
+          [githubPrWriterEnv]: expect.any(String),
+          [repoPaymentsEnv]: expect.any(String),
         });
-        expect(body.runtimeSecretFiles.VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER).toContain(
-          'run-secrets/run_platform_credential_material/VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER',
+        expect(body.runtimeSecretFiles[githubPrWriterEnv]).toContain(
+          `run-secrets/run_platform_credential_material/${githubPrWriterEnv}`,
         );
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_checkout');
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_pr_writer');
@@ -616,20 +621,20 @@ nodes:
         expect(body.inputs.viewport.credentials).toEqual([
           expect.objectContaining({
             handle: 'agent/anthropic/claude-code',
-            envName: 'VIEWPORT_CREDENTIAL_AGENT_ANTHROPIC_CLAUDE_CODE',
+            envName: anthropicClaudeEnv,
             materialAvailable: false,
             runnerLocalRequired: true,
           }),
           expect.objectContaining({
             handle: 'github/pr-writer',
-            envName: 'VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER',
+            envName: githubPrWriterEnv,
             materialAvailable: true,
             runnerLocalRequired: false,
             kind: 'provider_action_secret',
           }),
           expect.objectContaining({
             handle: 'repo/github/payments-api',
-            envName: 'VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API',
+            envName: repoPaymentsEnv,
             materialAvailable: true,
             runnerLocalRequired: false,
             scopes: ['repo:viewportai/vp-example-repo'],
@@ -800,9 +805,9 @@ nodes:
       '--json',
     ];
     const originalGitHubToken = process.env['GITHUB_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    const originalCredentialRefToken = process.env[githubTokenEnv];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_test';
+    process.env[githubTokenEnv] = 'ghs_test';
 
     const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
     try {
@@ -956,9 +961,9 @@ nodes:
         process.env['GITHUB_TOKEN'] = originalGitHubToken;
       }
       if (originalCredentialRefToken === undefined) {
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+        delete process.env[githubTokenEnv];
       } else {
-        process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+        process.env[githubTokenEnv] = originalCredentialRefToken;
       }
     }
   });
@@ -1847,7 +1852,7 @@ nodes:
             issued_at: '2026-05-17T10:00:00.000Z',
           },
           runtimeSecretEnv: {
-            VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer_after_approval',
+            [githubPrWriterEnv]: 'ghs_run_scoped_pr_writer_after_approval',
           },
         });
         expect(body.actor).toEqual({
@@ -2009,10 +2014,10 @@ nodes:
       if (urlPath === '/api/workflows/runs/local_run_local_snapshot/approvals/approve') {
         const body = JSON.parse(String(init?.body));
         expect(body.runtimeSecretEnv).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_local_snapshot_pr_writer',
+          [githubPrWriterEnv]: 'ghs_local_snapshot_pr_writer',
         });
         expect(body.runtimeSecretFiles).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+          [githubPrWriterEnv]: expect.any(String),
         });
         localApproved = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_local_snapshot' }) });
@@ -2320,10 +2325,10 @@ nodes:
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'PM approval' });
         expect(body.runtimeSecretEnv).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_two_gate_pr_writer',
+          [githubPrWriterEnv]: 'ghs_two_gate_pr_writer',
         });
         expect(body.runtimeSecretFiles).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+          [githubPrWriterEnv]: expect.any(String),
         });
         firstApprovedLocally = true;
         return jsonResponse({
@@ -2334,10 +2339,10 @@ nodes:
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
         expect(body.runtimeSecretEnv).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_two_gate_pr_writer',
+          [githubPrWriterEnv]: 'ghs_two_gate_pr_writer',
         });
         expect(body.runtimeSecretFiles).toEqual({
-          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+          [githubPrWriterEnv]: expect.any(String),
         });
         secondApprovedLocally = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });

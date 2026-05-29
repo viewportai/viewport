@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { waitForTerminalRun } from './support/workflow-runner-support.js';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 
 describe('workflow runner git publish node', () => {
   let root: string;
@@ -316,7 +317,7 @@ nodes:
       directoryId: DirectoryManager.idFromPath(projectDir),
       initiation: 'cli',
       runtimeSecretEnv: {
-        VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_push',
+        [envNameForCredentialRef('repo/github/payments-api')]: 'ghs_run_scoped_push',
       },
       workflowAuthorityContract: {
         schema_version: 'viewport.workflow_execution_authority/v1',
