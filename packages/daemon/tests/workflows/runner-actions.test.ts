@@ -660,10 +660,12 @@ nodes:
     const originalGitHubCredentialRefToken = process.env[githubTokenEnv];
     const originalSlackToken = process.env['SLACK_BOT_TOKEN'];
     const originalSlackCredentialRefToken = process.env[slackBotTokenEnv];
+    const originalAppUrl = process.env['VPD_APP_URL'];
     delete process.env['GITHUB_TOKEN'];
     delete process.env['SLACK_BOT_TOKEN'];
     process.env[githubTokenEnv] = 'ghs_runner_token';
     process.env[slackBotTokenEnv] = 'slack-token';
+    process.env['VPD_APP_URL'] = 'https://app.getviewport.test';
 
     try {
       const daemon = await setup();
@@ -711,13 +713,20 @@ nodes:
       const completed = await daemon.workflowRunner.getRun(run.id);
 
       expect(completed?.status).toBe('completed');
-      expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
+      const slackBody = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+      expect(slackBody).toMatchObject({
         channel: 'C123',
         text:
           `GitHub PR -> <https://github.com/acme/payments/pull/4821|PR #4821>\n` +
-          `Audit packet -> </workflows/runs/${run.id}#audit|Open audit packet>\n` +
-          `Run -> </workflows/runs/${run.id}|Open run>`,
+          `Audit packet -> <https://app.getviewport.test/workflows/runs/${run.id}#audit|Open audit packet>\n` +
+          `Run -> <https://app.getviewport.test/workflows/runs/${run.id}|Open run>`,
       });
+      expect(slackBody.text).not.toContain('\\n');
+      expect(slackBody.text.match(/<([^|>]+)\|/g)).toEqual([
+        '<https://github.com/acme/payments/pull/4821|',
+        `<https://app.getviewport.test/workflows/runs/${run.id}#audit|`,
+        `<https://app.getviewport.test/workflows/runs/${run.id}|`,
+      ]);
     } finally {
       if (originalGitHubToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalGitHubToken;
@@ -727,6 +736,8 @@ nodes:
       else process.env['SLACK_BOT_TOKEN'] = originalSlackToken;
       if (originalSlackCredentialRefToken === undefined) delete process.env[slackBotTokenEnv];
       else process.env[slackBotTokenEnv] = originalSlackCredentialRefToken;
+      if (originalAppUrl === undefined) delete process.env['VPD_APP_URL'];
+      else process.env['VPD_APP_URL'] = originalAppUrl;
     }
   });
 

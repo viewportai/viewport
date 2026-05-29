@@ -1212,7 +1212,7 @@ async function runAssignmentLocally(
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignmentInputs(assignment, material),
+    inputs: assignmentInputs(options, assignment, material),
     runtimeSecretEnv: material.runtimeSecretEnv,
     runtimeSecretFiles: material.runtimeSecretFiles,
     resourceId: options.workspaceId,
@@ -1339,6 +1339,7 @@ function recordChildValue(value: unknown, key: string): Record<string, unknown> 
 }
 
 function assignmentInputs(
+  options: ManagedWorkerOptions,
   assignment: ManagedAssignment,
   material: CredentialMaterialResult = {
     runtimeSecretEnv: {},
@@ -1350,6 +1351,8 @@ function assignmentInputs(
   inputs['viewport'] = {
     ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
     platformRunId: assignment.id,
+    serverUrl: options.server,
+    appUrl: appUrlFromServer(options.server),
     schemaVersions: assignment.schema_versions ?? null,
     target: assignmentTargetSnapshot(assignment) ?? null,
     route: assignmentRouteSnapshot(assignment) ?? null,
@@ -1361,6 +1364,27 @@ function assignmentInputs(
   };
 
   return inputs;
+}
+
+function appUrlFromServer(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl);
+    if (url.hostname.startsWith('api.')) {
+      url.hostname = `app.${url.hostname.slice('api.'.length)}`;
+    } else if (url.hostname === 'getviewport.com') {
+      url.hostname = 'app.getviewport.com';
+    } else if (url.hostname === 'getviewport.test') {
+      url.hostname = 'app.getviewport.test';
+    } else {
+      return 'https://app.getviewport.com';
+    }
+    url.pathname = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return 'https://app.getviewport.com';
+  }
 }
 
 interface CredentialMaterialResult {
