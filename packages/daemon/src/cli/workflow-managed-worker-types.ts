@@ -10,6 +10,7 @@ export interface ManagedWorkerOptions {
   accessMode: ManagedWorkerAccessMode;
   runnerProfile?: string;
   runnerPosture?: Record<string, unknown>;
+  workerSessionId: string;
   runnerKeyPair: ManagedWorkerRunnerKeyPair;
   signingIdentity?: ManagedWorkerSigningIdentity;
   runnerPool?: string;

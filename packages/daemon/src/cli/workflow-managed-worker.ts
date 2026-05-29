@@ -358,6 +358,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       registrationProfile?.runnerProfile ??
       undefined,
     runnerPosture: registrationProfile?.runnerPosture,
+    workerSessionId: randomUUID(),
     runnerKeyPair,
     signingIdentity,
     runnerPool:
@@ -710,7 +711,10 @@ async function heartbeat(
         ...recordValue(options.runnerPosture?.['transport']),
         mode: options.accessMode,
       },
-      execution: recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' },
+      execution: {
+        ...(recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' }),
+        worker_session_id: options.workerSessionId,
+      },
       secrets: {
         ...recordValue(options.runnerPosture?.['secrets']),
         modes: [
@@ -783,6 +787,7 @@ function managedWorkerAccessMode(value: string | undefined): ManagedWorkerAccess
 async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAssignment | null> {
   const response = await platformFetch(options, 'POST', 'claim', {
     lease_seconds: options.leaseSeconds,
+    worker_session_id: options.workerSessionId,
   });
   if (response.status === 204) return null;
   const body = await responseJson(response);

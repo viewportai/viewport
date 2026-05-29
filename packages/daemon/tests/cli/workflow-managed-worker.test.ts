@@ -132,11 +132,17 @@ describe('workflow managed worker CLI', () => {
             models: expect.arrayContaining(['gpt-5.5']),
           },
           access_mode: 'polling',
-          runner_posture: { transport: { mode: 'polling' } },
+          runner_posture: {
+            transport: { mode: 'polling' },
+            execution: { worker_session_id: expect.any(String) },
+          },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
       }
       if (url.endsWith('/claim')) {
+        expect(body).toMatchObject({
+          worker_session_id: expect.any(String),
+        });
         return jsonResponse({
           data: {
             id: 'run_platform_1',
