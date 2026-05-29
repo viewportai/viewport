@@ -114,6 +114,57 @@ nodes:
     );
   }, 60_000);
 
+  it('fails clearly when a branch publish has no changes and empty commits are not allowed', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-no-change-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  publish:
+    type: git_publish
+    needs: [repo]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: Publish proof update
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.publish?.status).toBe('failed');
+    expect(failed?.nodes.publish?.error).toContain('no changes to publish');
+    expect(failed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'node-failed',
+        nodeId: 'publish',
+        message: expect.stringContaining('no changes to publish'),
+      }),
+    );
+  }, 60_000);
+
   it('blocks branch publish before commit or push when the repository is outside authority', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');

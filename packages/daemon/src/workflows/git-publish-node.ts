@@ -136,17 +136,21 @@ export async function executeGitPublishNode(
   await git(['add', ...(node.paths && node.paths.length > 0 ? node.paths : ['-A'])], input.cwd);
 
   const changed = (await git(['status', '--porcelain'], input.cwd)).trim().length > 0;
-  if (changed || node.allowEmpty === true) {
-    await git(
-      [
-        'commit',
-        ...(node.allowEmpty === true && !changed ? ['--allow-empty'] : []),
-        '-m',
-        input.message,
-      ],
-      input.cwd,
+  if (!changed && node.allowEmpty !== true) {
+    throw new Error(
+      'Git publish node has no changes to publish. Ensure the implementation step writes a diff, or set allowEmpty: true for an intentional empty commit.',
     );
   }
+
+  await git(
+    [
+      'commit',
+      ...(node.allowEmpty === true && !changed ? ['--allow-empty'] : []),
+      '-m',
+      input.message,
+    ],
+    input.cwd,
+  );
   const commit = (await git(['rev-parse', 'HEAD'], input.cwd)).trim();
   const shouldPush = node.push !== false;
   if (shouldPush) {

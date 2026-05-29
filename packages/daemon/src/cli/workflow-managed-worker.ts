@@ -326,6 +326,12 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
     getFlag('credential') ??
     process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
     process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ??
+    credentialFromFile(
+      getFlag('credential-file') ??
+        process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN_FILE'] ??
+        process.env['VPD_MANAGED_EXECUTOR_TOKEN_FILE'] ??
+        registrationProfile?.credentialFile,
+    ) ??
     registrationProfile?.credential;
 
   if (!server || !workspaceId || !executorId || !credential) {
@@ -409,7 +415,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
 }
 
 function workflowWorkerUsage(): string {
-  return 'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> --credential <token> [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--sleep <seconds>] [--command-sleep <seconds>] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--sleep <seconds>] [--command-sleep <seconds>] [--doctor|--preflight|--once]';
+  return 'Usage: vpd workflow worker --server <url> --workspace <id> --executor <id> (--credential-file <path>|--credential <token>) [--workdir <path>] [--runner-pool <pool>] [--agent-command <command>] [--action-command <command>] [--provider-actions] [--sleep <seconds>] [--command-sleep <seconds>] [--doctor|--preflight|--once]\n       vpd workflow worker --registration-profile <path> [--sleep <seconds>] [--command-sleep <seconds>] [--doctor|--preflight|--once]';
 }
 
 interface RegistrationProfile {
@@ -418,6 +424,7 @@ interface RegistrationProfile {
   workspaceId?: string;
   executorId?: string;
   credential?: string;
+  credentialFile?: string;
   accessMode?: string;
   runnerProfile?: string;
   runnerPosture?: Record<string, unknown>;
@@ -468,6 +475,11 @@ function readRegistrationProfile(): RegistrationProfile | null {
       stringValue(worker?.['managedExecutorId']) ??
       stringValue(worker?.['managed_executor_id']),
     credential: stringValue(record['credential']) ?? stringValue(worker?.['credential']),
+    credentialFile:
+      stringValue(record['credential_file']) ??
+      stringValue(record['credentialFile']) ??
+      stringValue(worker?.['credentialFile']) ??
+      stringValue(worker?.['credential_file']),
     accessMode:
       stringValue(record['access_mode']) ??
       stringValue(record['accessMode']) ??
@@ -496,6 +508,23 @@ function readRegistrationProfile(): RegistrationProfile | null {
         ? (record['capabilities'] as Record<string, unknown>)
         : (recordValue(worker?.['capabilities']) ?? undefined),
   };
+}
+
+function credentialFromFile(filePath: string | undefined): string | undefined {
+  if (!filePath) return undefined;
+  const resolved = path.resolve(filePath);
+  let value: string;
+  try {
+    value = fs.readFileSync(resolved, 'utf8').trim();
+  } catch (error) {
+    throw new Error(
+      `Unable to read managed executor credential file ${resolved}: ${errorMessage(error)}`,
+    );
+  }
+  if (!value) {
+    throw new Error(`Managed executor credential file is empty: ${resolved}`);
+  }
+  return value;
 }
 
 function resolveProfilePath(profilePath: string): string {
@@ -693,6 +722,10 @@ function agentModelsFromProfile(agents: unknown): Record<string, string[]> | und
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function heartbeat(
@@ -1179,7 +1212,7 @@ async function runAssignmentLocally(
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignmentInputs(assignment, material),
+    inputs: assignmentInputs(options, assignment, material),
     runtimeSecretEnv: material.runtimeSecretEnv,
     runtimeSecretFiles: material.runtimeSecretFiles,
     resourceId: options.workspaceId,
@@ -1306,6 +1339,7 @@ function recordChildValue(value: unknown, key: string): Record<string, unknown> 
 }
 
 function assignmentInputs(
+  options: ManagedWorkerOptions,
   assignment: ManagedAssignment,
   material: CredentialMaterialResult = {
     runtimeSecretEnv: {},
@@ -1317,6 +1351,8 @@ function assignmentInputs(
   inputs['viewport'] = {
     ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
     platformRunId: assignment.id,
+    serverUrl: options.server,
+    appUrl: appUrlFromServer(options.server),
     schemaVersions: assignment.schema_versions ?? null,
     target: assignmentTargetSnapshot(assignment) ?? null,
     route: assignmentRouteSnapshot(assignment) ?? null,
@@ -1328,6 +1364,27 @@ function assignmentInputs(
   };
 
   return inputs;
+}
+
+function appUrlFromServer(serverUrl: string): string {
+  try {
+    const url = new URL(serverUrl);
+    if (url.hostname.startsWith('api.')) {
+      url.hostname = `app.${url.hostname.slice('api.'.length)}`;
+    } else if (url.hostname === 'getviewport.com') {
+      url.hostname = 'app.getviewport.com';
+    } else if (url.hostname === 'getviewport.test') {
+      url.hostname = 'app.getviewport.test';
+    } else {
+      return 'https://app.getviewport.com';
+    }
+    url.pathname = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return 'https://app.getviewport.com';
+  }
 }
 
 interface CredentialMaterialResult {

@@ -481,11 +481,62 @@ function renderRuntimeMessage(run: WorkflowRunRecord, template: string): string 
 
 function runtimeRunUrl(run: WorkflowRunRecord): string {
   const runId = encodeURIComponent(run.platformRunId ?? run.id);
-  if (run.platformRunId && run.resourceId) {
-    const resource = encodeURIComponent(run.resourceId);
-    return `/workflows/runs/${runId}?resource=${resource}&platformRun=${runId}`;
+  const appUrl = runtimeAppUrl(run);
+  const path =
+    run.platformRunId && run.resourceId
+      ? `/workflows/runs/${runId}?resource=${encodeURIComponent(run.resourceId)}&platformRun=${runId}`
+      : `/workflows/runs/${runId}`;
+
+  return `${appUrl}${path}`;
+}
+
+function runtimeAppUrl(run: WorkflowRunRecord): string {
+  const configured =
+    nestedString(run.inputs, ['viewport', 'appUrl']) ??
+    nestedString(run.inputs, ['viewport', 'app_url']) ??
+    process.env['VIEWPORT_APP_URL'] ??
+    process.env['VPD_APP_URL'];
+  if (configured) return configured.replace(/\/+$/, '');
+
+  const serverUrl =
+    nestedString(run.inputs, ['viewport', 'serverUrl']) ??
+    nestedString(run.inputs, ['viewport', 'server_url']) ??
+    process.env['VIEWPORT_SERVER_URL'] ??
+    process.env['VPD_SERVER_URL'];
+  const inferred = inferAppUrlFromServer(serverUrl);
+  return inferred.replace(/\/+$/, '');
+}
+
+function inferAppUrlFromServer(serverUrl: string | undefined): string {
+  if (!serverUrl) return 'https://app.getviewport.com';
+  try {
+    const url = new URL(serverUrl);
+    if (url.hostname.startsWith('api.')) {
+      url.hostname = `app.${url.hostname.slice('api.'.length)}`;
+      url.pathname = '';
+      url.search = '';
+      url.hash = '';
+      return url.toString().replace(/\/+$/, '');
+    }
+    if (url.hostname === 'getviewport.com') {
+      url.hostname = 'app.getviewport.com';
+      url.pathname = '';
+      url.search = '';
+      url.hash = '';
+      return url.toString().replace(/\/+$/, '');
+    }
+    if (url.hostname === 'getviewport.test') {
+      url.hostname = 'app.getviewport.test';
+      url.pathname = '';
+      url.search = '';
+      url.hash = '';
+      return url.toString().replace(/\/+$/, '');
+    }
+  } catch {
+    return 'https://app.getviewport.com';
   }
-  return `/workflows/runs/${runId}`;
+
+  return 'https://app.getviewport.com';
 }
 
 function latestGithubAction(run: WorkflowRunRecord): Record<string, unknown> | null {
