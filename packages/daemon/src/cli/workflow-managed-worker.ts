@@ -1433,6 +1433,7 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'include'])),
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'repo_checkout'])),
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'mcp_api'])),
+      ...credentialRefsFromCredentialMap(snapshot['credentials']),
       ...credentialRefsFrom(snapshot['credential_refs']),
       ...actionCredentialRefs(snapshot['nodes']),
     ]) {
@@ -1453,6 +1454,20 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
     }
   }
   return [...handles].sort();
+}
+
+function credentialRefsFromCredentialMap(entries: unknown): string[] {
+  if (!isRecord(entries)) return [];
+  return Object.values(entries).flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const mode = stringField(entry, 'mode') ?? stringField(entry, 'storage_posture');
+    if (mode && !['viewport_brokered', 'viewport_managed'].includes(mode)) return [];
+    const handle =
+      stringField(entry, 'handle') ??
+      stringField(entry, 'ref') ??
+      stringField(entry, 'credential_ref');
+    return handle ? [handle] : [];
+  });
 }
 
 function credentialRefsFrom(entries: unknown): string[] {
@@ -1717,12 +1732,18 @@ async function resumeApprovedLocalRun(
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
   const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+  const localRun = await readExistingLocalRun(localRunId);
+  const materialAssignment = localRun
+    ? assignmentWithLocalRunSnapshot(assignment, localRun, assignmentClaimToken)
+    : {
+        ...assignment,
+        assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
+      };
+  const cachedMaterial = runCredentialMaterialCache.get(platformRunId);
   const material =
-    runCredentialMaterialCache.get(platformRunId) ??
-    (await materializeAndCacheRunCredentials(options, {
-      ...assignment,
-      assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
-    }));
+    cachedMaterial && hasRuntimeSecrets(cachedMaterial)
+      ? cachedMaterial
+      : await materializeAndCacheRunCredentials(options, materialAssignment);
   try {
     await daemonJson(
       'POST',
@@ -1763,6 +1784,27 @@ async function resumeApprovedLocalRun(
     runCredentialMaterialCache.delete(platformRunId);
   }
   return resumed;
+}
+
+function hasRuntimeSecrets(material: CredentialMaterialResult): boolean {
+  return Object.keys(material.runtimeSecretEnv).length > 0;
+}
+
+function assignmentWithLocalRunSnapshot(
+  assignment: ManagedAssignment,
+  localRun: WorkflowRunRecord,
+  assignmentClaimToken?: string | null,
+): ManagedAssignment {
+  return {
+    ...assignment,
+    assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
+    yaml_snapshot: localRun.yamlSnapshot || assignment.yaml_snapshot,
+    directory_path: localRun.directoryPath || assignment.directory_path,
+    input_snapshot: localRun.inputs ?? assignment.input_snapshot,
+    resource_manifest: localRun.resourceManifest ?? assignment.resource_manifest,
+    workflow_authority_contract:
+      localRun.workflowAuthorityContract ?? assignment.workflow_authority_contract,
+  };
 }
 
 function isAlreadyResolvedApprovalError(error: unknown): boolean {

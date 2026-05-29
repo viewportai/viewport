@@ -1845,6 +1845,160 @@ nodes:
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
   });
 
+  it('uses the local workflow snapshot to rematerialize provider credentials after approval', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--runner-profile',
+      'payments-vps',
+      '--workdir',
+      '/repo',
+      '--poll-seconds',
+      '0',
+      '--command-poll-seconds',
+      '0',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_local_snapshot',
+            assignment_claim_token: 'vpclaim_local_snapshot',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: existing\nnodes: {}\n',
+            runtime_run_id: 'local_run_local_snapshot',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_local_snapshot') && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_local_snapshot',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'approve',
+                type: 'approval',
+                status: 'blocked',
+                output: 'Approved',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    decision: 'approve',
+                    message: 'Ship it',
+                    actor: { id: '1', name: 'Mehr', email: 'mehr@getviewport.test' },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_local_snapshot/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_local_snapshot',
+        );
+        expect(body).toMatchObject({
+          credential: 'vpexec_secret',
+          handle: 'github/pr-writer',
+          repository: 'viewportai/vp-example-repo',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_github_pr_writer',
+            handle: 'github/pr-writer',
+            kind: 'provider_action_secret',
+            provider: 'github',
+            storage_posture: 'viewport_managed',
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_local_snapshot_pr_writer',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_local_snapshot/sync')) {
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({
+          data: { id: 'run_platform_local_snapshot', status: body.status },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const localWorkflowYaml = `
+schema: viewport.workflow/v1
+name: local-snapshot-provider-action
+nodes:
+  approve:
+    type: approval
+  open_pr:
+    type: action
+    adapter: github
+    action: pull_request.create
+    needs: [approve]
+    with:
+      credential_ref: github/pr-writer
+      repository: '{{ inputs.repo }}'
+      title: Viewport support fix
+      head: viewport/support-fix
+      base: main
+`;
+
+    let localApproved = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/workflows/runs/local_run_local_snapshot') {
+        return jsonResponse({
+          run: localApproved
+            ? completedLocalRun({ id: 'local_run_local_snapshot' })
+            : {
+                ...blockedLocalRun('local_run_local_snapshot'),
+                yamlSnapshot: localWorkflowYaml,
+                inputs: { repo: 'viewportai/vp-example-repo' },
+              },
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_local_snapshot/approvals/approve') {
+        const body = JSON.parse(String(init?.body));
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_local_snapshot_pr_writer',
+        });
+        localApproved = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_local_snapshot' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['completed']);
+  });
+
   it('keeps polling a revised plan after sending request-changes back to the local runner', async () => {
     process.argv = [
       'node',
