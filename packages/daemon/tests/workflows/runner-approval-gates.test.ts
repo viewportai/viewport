@@ -210,9 +210,10 @@ nodes:
       message: 'missing tests',
     });
     const followUp = await waitForAdapterSessionCount(adapter, 1);
-    expect(followUp.sendPrompt).toHaveBeenCalledWith(
-      'Write a rejection summary for: missing tests',
-    );
+    const sentPrompt = String(followUp.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(sentPrompt).toContain('<runtime_constraints>');
+    expect(sentPrompt).toContain('No agent tools are available for this workflow node.');
+    expect(sentPrompt).toContain('Write a rejection summary for: missing tests');
     followUp.emitAgentMessage('Rejected because tests are missing.');
     followUp.simulateIdle();
     await decision;

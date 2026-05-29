@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WorkflowRunPlatformSync } from '../../src/workflows/platform-sync.js';
+import { payloadDigest } from '../../src/workflows/platform-sync-format.js';
 import type { ConfigManager } from '../../src/core/config.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
@@ -208,6 +209,7 @@ describe('WorkflowRunPlatformSync', () => {
         approval_decision_key: 'approve-open-pr',
         provider_reference: '4821',
         provider_url: 'https://github.com/acme/payments-api/pull/4821',
+        provider_response_digest: expect.stringMatching(/^sha256:/),
         provider_reconciliation: expect.objectContaining({
           status: 'verified',
           method: 'read_after_write',
@@ -220,6 +222,9 @@ describe('WorkflowRunPlatformSync', () => {
         }),
       }),
     ]);
+    const receipt = (calls[0]?.body['execution_receipts'] as Array<Record<string, unknown>>)[0];
+    const payload = receipt?.['payload'] as Record<string, unknown>;
+    expect(receipt?.['provider_response_digest']).toBe(payloadDigest(payload['response']));
     expect(calls[0]?.body['audit_receipts']).toEqual([
       expect.objectContaining({
         receipt_key: 'audit:event-action-executed',
