@@ -1143,13 +1143,20 @@ async function runAssignmentLocally(
   const existingRun = await readExistingLocalRun(assignment.runtime_run_id);
   if (existingRun) {
     if (existingRun.status === 'running' || existingRun.status === 'queued') {
-      return pollLocalRun(
+      const completed = await pollLocalRun(
         existingRun.id,
         async (run) => {
           await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
         },
         progressSyncEveryMs(options.leaseSeconds),
       );
+      if (terminalRunStatus(completed.status)) {
+        runCredentialMaterialCache.delete(assignment.id);
+      }
+      return completed;
+    }
+    if (terminalRunStatus(existingRun.status)) {
+      runCredentialMaterialCache.delete(assignment.id);
     }
     return existingRun;
   }
@@ -1157,7 +1164,7 @@ async function runAssignmentLocally(
   const directory = await ensureDirectory(
     options.workdir ?? assignment.directory_path ?? process.cwd(),
   );
-  const material = await materializeRunCredentials(options, assignment);
+  const material = await materializeAndCacheRunCredentials(options, assignment);
   const started = await daemonJson('POST', '/api/workflows/runs', {
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
@@ -1183,13 +1190,17 @@ async function runAssignmentLocally(
     dataCapturePolicy: assignment.data_capture_policy ?? undefined,
   });
   const runId = readRun(started).id;
-  return pollLocalRun(
+  const completed = await pollLocalRun(
     runId,
     async (run) => {
       await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
+  if (terminalRunStatus(completed.status)) {
+    runCredentialMaterialCache.delete(assignment.id);
+  }
+  return completed;
 }
 
 function recordChildValue(value: unknown, key: string): Record<string, unknown> | undefined {
@@ -1222,6 +1233,21 @@ function assignmentInputs(
 interface CredentialMaterialResult {
   runtimeSecretEnv: Record<string, string>;
   metadata: CredentialMaterialMetadata[];
+}
+
+const runCredentialMaterialCache = new Map<string, CredentialMaterialResult>();
+
+function terminalRunStatus(status: string | undefined): boolean {
+  return status === 'completed' || status === 'failed' || status === 'canceled';
+}
+
+async function materializeAndCacheRunCredentials(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+): Promise<CredentialMaterialResult> {
+  const material = await materializeRunCredentials(options, assignment);
+  runCredentialMaterialCache.set(assignment.id, material);
+  return material;
 }
 
 interface CredentialMaterialMetadata {
@@ -1691,10 +1717,12 @@ async function resumeApprovedLocalRun(
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
   const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
-  const material = await materializeRunCredentials(options, {
-    ...assignment,
-    assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
-  });
+  const material =
+    runCredentialMaterialCache.get(platformRunId) ??
+    (await materializeAndCacheRunCredentials(options, {
+      ...assignment,
+      assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
+    }));
   try {
     await daemonJson(
       'POST',
@@ -1731,6 +1759,9 @@ async function resumeApprovedLocalRun(
     progressSyncEveryMs(options.leaseSeconds),
   );
   await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
+  if (terminalRunStatus(resumed.status)) {
+    runCredentialMaterialCache.delete(platformRunId);
+  }
   return resumed;
 }
 
