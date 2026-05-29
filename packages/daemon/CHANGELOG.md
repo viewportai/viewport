@@ -1,3 +1,10 @@
+## [0.25.10](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.9...@viewportai/daemon@0.25.10) (2026-05-29)
+
+
+### Bug Fixes
+
+* harden hosted prompt and receipt sync ([d95b5c0](https://github.com/viewportai/viewport/commit/d95b5c0734234e095e3d451e79dbe1e1ffdf2bf2))
+
 ## [0.25.9](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.8...@viewportai/daemon@0.25.9) (2026-05-29)
 
 
