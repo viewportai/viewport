@@ -946,12 +946,13 @@ function replayProviderReference(
   response: Record<string, unknown> | undefined,
 ): string | undefined {
   return (
+    numberField(response ?? null, 'number')?.toString() ??
+    stringField(response ?? null, 'ts') ??
+    stringField(response ?? null, 'id') ??
+    stringField(response ?? null, 'channel') ??
     stringField(response ?? null, 'htmlUrl') ??
     stringField(response ?? null, 'apiUrl') ??
-    stringField(response ?? null, 'url') ??
-    stringField(response ?? null, 'channel') ??
-    stringField(response ?? null, 'ts') ??
-    numberField(response ?? null, 'number')?.toString()
+    stringField(response ?? null, 'url')
   );
 }
 

@@ -892,7 +892,7 @@ nodes:
           );
           expect(body).toMatchObject({
             status: 'succeeded',
-            provider_reference: 'https://github.com/acme/payments/pull/4821',
+            provider_reference: '4821',
             provider_url: 'https://github.com/acme/payments/pull/4821',
             idempotency_key: 'pr:PAY-1842',
             payload_digest: 'sha256:approved-pr-payload',
