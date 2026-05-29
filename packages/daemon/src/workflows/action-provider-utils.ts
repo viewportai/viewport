@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -94,10 +95,13 @@ function explicitCredentialRefValue(input: Record<string, WorkflowInputValue>): 
 }
 
 export function envNameForCredentialRef(ref: string): string {
-  return `VIEWPORT_CREDENTIAL_${ref
-    .replace(/[^A-Za-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase()}`;
+  const trimmed = ref.trim();
+  if (/^[A-Za-z0-9_]+$/.test(trimmed)) {
+    return `VIEWPORT_CREDENTIAL_${trimmed.toUpperCase()}`;
+  }
+
+  const digest = createHash('sha256').update(trimmed).digest('hex').slice(0, 24).toUpperCase();
+  return `VIEWPORT_CREDENTIAL_REF_${digest}`;
 }
 
 export function providerCredentialValue(

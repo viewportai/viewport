@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 import { workflowRunToSyncPayload } from '../../src/workflows/platform-sync-payload.js';
 import {
   waitForCompletedRun,
@@ -17,6 +18,11 @@ let projectDir: string;
 let originalHome: string | undefined;
 let originalCodexHome: string | undefined;
 const originalFetch = global.fetch;
+const githubTokenEnv = envNameForCredentialRef('github/token');
+const githubPrWriterEnv = envNameForCredentialRef('github/pr-writer');
+const jiraTokenEnv = envNameForCredentialRef('jira/token');
+const slackBotTokenEnv = envNameForCredentialRef('slack/bot-token');
+const slackNotifierEnv = envNameForCredentialRef('slack/notifier');
 
 async function setup(): Promise<Daemon> {
   tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-workflow-actions-home-'));
@@ -499,9 +505,9 @@ nodes:
       );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['GITHUB_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    const originalCredentialRefToken = process.env[githubTokenEnv];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
+    process.env[githubTokenEnv] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -606,17 +612,16 @@ nodes:
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
     }
   });
 
   it('blocks GitHub provider actions against repositories outside the workflow authority contract', async () => {
     const fetchMock = vi.fn(async () => new Response('should not be called', { status: 500 }));
     global.fetch = fetchMock as typeof fetch;
-    const originalToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
+    const originalToken = process.env[githubTokenEnv];
+    process.env[githubTokenEnv] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -689,8 +694,8 @@ nodes:
         }),
       );
     } finally {
-      if (originalToken === undefined) delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalToken;
+      if (originalToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalToken;
     }
   });
 
@@ -698,9 +703,9 @@ nodes:
     const fetchMock = vi.fn(async () => new Response('should not be called', { status: 500 }));
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['GITHUB_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    const originalCredentialRefToken = process.env[githubTokenEnv];
     process.env['GITHUB_TOKEN'] = 'ambient-token';
-    delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    delete process.env[githubTokenEnv];
 
     try {
       const daemon = await setup();
@@ -759,9 +764,8 @@ nodes:
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
     }
   });
 
@@ -822,8 +826,8 @@ nodes:
   it('rejects user GitHub tokens for brokered provider actions', async () => {
     const fetchMock = vi.fn(async () => new Response('should not be called', { status: 500 }));
     global.fetch = fetchMock as typeof fetch;
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'gho_user_personal_token';
+    const originalCredentialRefToken = process.env[githubTokenEnv];
+    process.env[githubTokenEnv] = 'gho_user_personal_token';
 
     try {
       const daemon = await setup();
@@ -874,9 +878,8 @@ nodes:
         },
       });
     } finally {
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
     }
   });
 
@@ -903,9 +906,9 @@ nodes:
       );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['GITHUB_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    const originalCredentialRefToken = process.env[githubTokenEnv];
     delete process.env['GITHUB_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = 'ghs_runner_token';
+    process.env[githubTokenEnv] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -971,9 +974,8 @@ nodes:
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
     }
   });
 
@@ -1000,9 +1002,9 @@ nodes:
       );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['GITHUB_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    const originalCredentialRefToken = process.env[githubTokenEnv];
     delete process.env['GITHUB_TOKEN'];
-    delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
+    delete process.env[githubTokenEnv];
 
     try {
       const daemon = await setup();
@@ -1030,7 +1032,7 @@ nodes:
         directoryId: DirectoryManager.idFromPath(projectDir),
         initiation: 'cli',
         runtimeSecretEnv: {
-          VIEWPORT_CREDENTIAL_GITHUB_TOKEN: 'ghs_runner_token',
+          [githubTokenEnv]: 'ghs_runner_token',
         },
         inputs: {
           integration_event: {
@@ -1072,9 +1074,8 @@ nodes:
     } finally {
       if (originalToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalToken;
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
     }
   });
 
@@ -1103,8 +1104,8 @@ nodes:
         ),
       );
     global.fetch = fetchMock as typeof fetch;
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
-    process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'] = 'ghs_runner_token';
+    const originalCredentialRefToken = process.env[githubPrWriterEnv];
+    process.env[githubPrWriterEnv] = 'ghs_runner_token';
 
     try {
       const daemon = await setup();
@@ -1168,9 +1169,8 @@ nodes:
         },
       });
     } finally {
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
-      else process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[githubPrWriterEnv];
+      else process.env[githubPrWriterEnv] = originalCredentialRefToken;
     }
   });
 
@@ -1245,7 +1245,7 @@ nodes:
       decision: 'approve',
       message: 'Approved by test',
       runtimeSecretEnv: {
-        VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer_after_approval',
+        [githubPrWriterEnv]: 'ghs_run_scoped_pr_writer_after_approval',
       },
     });
 
@@ -1334,7 +1334,7 @@ nodes:
       directoryId: DirectoryManager.idFromPath(projectDir),
       initiation: 'cli',
       runtimeSecretEnv: {
-        VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_initial_run_scoped_pr_writer',
+        [githubPrWriterEnv]: 'ghs_initial_run_scoped_pr_writer',
       },
     });
 
@@ -1437,7 +1437,7 @@ nodes:
       directoryId: DirectoryManager.idFromPath(projectDir),
       initiation: 'cli',
       runtimeSecretFiles: {
-        VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: secretPath,
+        [githubPrWriterEnv]: secretPath,
       },
     });
 
@@ -1508,11 +1508,11 @@ nodes:
     global.fetch = fetchMock as typeof fetch;
     const originalBaseUrl = process.env['JIRA_BASE_URL'];
     const originalToken = process.env['JIRA_API_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_JIRA_TOKEN'];
+    const originalCredentialRefToken = process.env[jiraTokenEnv];
     const originalEmail = process.env['JIRA_EMAIL'];
     process.env['JIRA_BASE_URL'] = 'https://acme.atlassian.net';
     delete process.env['JIRA_API_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_JIRA_TOKEN'] = 'jira-token';
+    process.env[jiraTokenEnv] = 'jira-token';
     process.env['JIRA_EMAIL'] = 'bot@example.test';
 
     try {
@@ -1605,9 +1605,8 @@ nodes:
       else process.env['JIRA_BASE_URL'] = originalBaseUrl;
       if (originalToken === undefined) delete process.env['JIRA_API_TOKEN'];
       else process.env['JIRA_API_TOKEN'] = originalToken;
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_JIRA_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_JIRA_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[jiraTokenEnv];
+      else process.env[jiraTokenEnv] = originalCredentialRefToken;
       if (originalEmail === undefined) delete process.env['JIRA_EMAIL'];
       else process.env['JIRA_EMAIL'] = originalEmail;
     }
@@ -1638,9 +1637,9 @@ nodes:
       );
     global.fetch = fetchMock as typeof fetch;
     const originalToken = process.env['SLACK_BOT_TOKEN'];
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_SLACK_BOT_TOKEN'];
+    const originalCredentialRefToken = process.env[slackBotTokenEnv];
     delete process.env['SLACK_BOT_TOKEN'];
-    process.env['VIEWPORT_CREDENTIAL_SLACK_BOT_TOKEN'] = 'slack-token';
+    process.env[slackBotTokenEnv] = 'slack-token';
 
     try {
       const daemon = await setup();
@@ -1737,9 +1736,8 @@ nodes:
     } finally {
       if (originalToken === undefined) delete process.env['SLACK_BOT_TOKEN'];
       else process.env['SLACK_BOT_TOKEN'] = originalToken;
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_SLACK_BOT_TOKEN'];
-      else process.env['VIEWPORT_CREDENTIAL_SLACK_BOT_TOKEN'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[slackBotTokenEnv];
+      else process.env[slackBotTokenEnv] = originalCredentialRefToken;
     }
   });
 
@@ -1761,8 +1759,8 @@ nodes:
         ),
       );
     global.fetch = fetchMock as typeof fetch;
-    const originalCredentialRefToken = process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'];
-    process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'] = 'slack-token';
+    const originalCredentialRefToken = process.env[slackNotifierEnv];
+    process.env[slackNotifierEnv] = 'slack-token';
 
     try {
       const daemon = await setup();
@@ -1829,9 +1827,8 @@ nodes:
         response: { channel: 'C123', ts: '177000.0002' },
       });
     } finally {
-      if (originalCredentialRefToken === undefined)
-        delete process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'];
-      else process.env['VIEWPORT_CREDENTIAL_SLACK_NOTIFIER'] = originalCredentialRefToken;
+      if (originalCredentialRefToken === undefined) delete process.env[slackNotifierEnv];
+      else process.env[slackNotifierEnv] = originalCredentialRefToken;
     }
   });
 });

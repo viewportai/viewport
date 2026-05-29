@@ -10,6 +10,7 @@ import {
 } from './support/workflow-runner-support.js';
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
+import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 import { executeCheckoutNode } from '../../src/workflows/checkout-node.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
@@ -581,7 +582,7 @@ nodes:
       directoryId: DirectoryManager.idFromPath(projectDir),
       initiation: 'cli',
       runtimeSecretEnv: {
-        VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
+        [envNameForCredentialRef('repo/github/payments-api')]: 'ghs_run_scoped_checkout',
       },
       workflowAuthorityContract: {
         schema_version: 'viewport.workflow_execution_authority/v1',
