@@ -1390,6 +1390,63 @@ nodes:
     });
   });
 
+  it('uses the runner pool as the heartbeat runner profile when no profile is provided', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--runner-pool',
+      'payments-prod',
+      '--doctor',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, body });
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          access_mode: 'polling',
+          runner_profile: 'payments-prod',
+          capabilities: { runner_pool: 'payments-prod' },
+        });
+        return jsonResponse({ data: { id: 'executor_1' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch: vi.fn(async (urlPath: string) => {
+        if (urlPath === '/api/agents') return jsonResponse({ agents: [] });
+        if (urlPath === '/api/models') return jsonResponse({ models: [] });
+
+        return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+      }),
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformRequests.map((request) => request.url)).toEqual([
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+  });
+
   it('loads managed executor registration profiles for doctor checks', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-'));
     const profilePath = path.join(dir, 'runner.json');

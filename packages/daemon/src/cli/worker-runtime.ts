@@ -353,6 +353,10 @@ async function heartbeat(
       context_execution_mode:
         options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'customer_managed_context_worker',
       credential_mode: options.lifecycle === 'ephemeral' ? 'run_scoped_grant' : 'runner_local',
+      runner_profile:
+        stringValue(capabilityPayload['runner_pool']) ??
+        stringValue(capabilityPayload['runnerPool']) ??
+        null,
       runner_posture: {
         transport: { mode: options.transport },
         execution: {
