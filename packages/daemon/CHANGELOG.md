@@ -1,3 +1,10 @@
+## [0.25.9](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.8...@viewportai/daemon@0.25.9) (2026-05-29)
+
+
+### Bug Fixes
+
+* render Slack completion runtime links ([65a4e82](https://github.com/viewportai/viewport/commit/65a4e82a58cbe86f6889a13e49fad7faacc1aa53))
+
 ## [0.25.8](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.7...@viewportai/daemon@0.25.8) (2026-05-29)
 
 
