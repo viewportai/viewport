@@ -65,6 +65,16 @@ const RuntimeSecretEnvSchema = z.record(
   z.string().min(1).max(128_000),
 );
 
+const RuntimeSecretFilesSchema = z.record(
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  z.string().min(1).max(4096),
+);
+
 const WorkflowResourceManifestBodySchema = z
   .object({
     schema: z.literal('viewport.session_resource_manifest/v1'),
@@ -90,9 +100,11 @@ export const WorkflowRunBodySchema = z
       })
       .strict()
       .optional(),
+    workflowAuthorityContract: z.record(z.string(), z.unknown()).optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
     runtimeSecretEnv: RuntimeSecretEnvSchema.optional(),
+    runtimeSecretFiles: RuntimeSecretFilesSchema.optional(),
     resourceId: z.string().trim().min(1).optional(),
     runtimeTargetId: z.string().trim().min(1).optional(),
     platformRunId: z.string().trim().min(1).optional(),
@@ -136,6 +148,8 @@ export const WorkflowApprovalBodySchema = z
       })
       .strict()
       .optional(),
+    runtimeSecretEnv: RuntimeSecretEnvSchema.optional(),
+    runtimeSecretFiles: RuntimeSecretFilesSchema.optional(),
     message: z.string().trim().min(1).max(2_000).optional(),
     feedback: z.record(z.string(), z.unknown()).optional(),
     actor: z

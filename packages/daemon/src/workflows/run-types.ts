@@ -233,6 +233,13 @@ export interface WorkflowRunRequest {
    * WorkflowRunRecord, synced to the control plane, or written to run inputs.
    */
   runtimeSecretEnv?: Record<string, string>;
+  /**
+   * Transient, run-scoped secret file paths keyed by environment variable
+   * name. These paths are process-local handoff references for worker/daemon
+   * boundaries and must never be copied to WorkflowRunRecord, synced to the
+   * control plane, or written to run inputs.
+   */
+  runtimeSecretFiles?: Record<string, string>;
   resourceId?: string;
   runtimeTargetId?: string;
   platformRunId?: string;
@@ -267,6 +274,8 @@ export interface WorkflowApprovalDecision {
   decision?: 'approve' | 'request_changes' | 'reject';
   message?: string;
   expectedActionDigest?: string;
+  runtimeSecretEnv?: Record<string, string>;
+  runtimeSecretFiles?: Record<string, string>;
   actor?: WorkflowApprovalActor;
   feedback?: Record<string, unknown>;
   executionGrant?: WorkflowExecutionGrant;

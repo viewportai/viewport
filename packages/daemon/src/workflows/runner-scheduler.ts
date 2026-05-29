@@ -41,7 +41,11 @@ export class WorkflowLayerScheduler {
   async run(
     runId: string,
     parsed: ParsedWorkflow,
-    options: { resumed?: boolean; runtimeSecretEnv?: Record<string, string> } = {},
+    options: {
+      resumed?: boolean;
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
+    } = {},
   ): Promise<void> {
     this.activeRunIds.add(runId);
     try {
@@ -142,6 +146,7 @@ export class WorkflowLayerScheduler {
                 sessionLinks: this.sessionLinks,
                 shellAbortRegistry: this.shellAbortRegistry,
                 runtimeSecretEnv: options.runtimeSecretEnv ?? {},
+                runtimeSecretFiles: options.runtimeSecretFiles ?? {},
                 platformContextClient: this.platformContextClient,
                 saveAndEmit: (nextRun) => this.ops.saveAndEmit(nextRun),
               },

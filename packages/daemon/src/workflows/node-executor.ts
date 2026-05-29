@@ -31,6 +31,12 @@ export interface WorkflowNodeExecutorContext {
    * map is transient process memory only and is never persisted with the run.
    */
   runtimeSecretEnv?: Record<string, string>;
+  /**
+   * Run-scoped secret file paths fetched through the Viewport lease path.
+   * These are transient process handoff references only and are never
+   * persisted with the run.
+   */
+  runtimeSecretFiles?: Record<string, string>;
   platformContextClient?: WorkflowPlatformContextClient;
   saveAndEmit: (run: WorkflowRunRecord) => Promise<void>;
 }
@@ -399,7 +405,7 @@ async function executePromptNode(
     ...(node.model ? { model: node.model } : {}),
     ...(node.effort ? { effort: node.effort } : {}),
     executionMode: sessionPolicy.executionMode,
-    allowedTools: node.allowedTools ?? [],
+    ...(node.allowedTools ? { allowedTools: node.allowedTools } : {}),
     ...(node.hooks ? { hooks: node.hooks } : {}),
     timeoutSeconds: sessionPolicy.timeoutSeconds,
     ...(budget ? { budget } : {}),

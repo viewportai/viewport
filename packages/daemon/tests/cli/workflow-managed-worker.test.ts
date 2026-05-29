@@ -132,11 +132,17 @@ describe('workflow managed worker CLI', () => {
             models: expect.arrayContaining(['gpt-5.5']),
           },
           access_mode: 'polling',
-          runner_posture: { transport: { mode: 'polling' } },
+          runner_posture: {
+            transport: { mode: 'polling' },
+            execution: { worker_session_id: expect.any(String) },
+          },
         });
         return jsonResponse({ data: { id: 'executor_1' } });
       }
       if (url.endsWith('/claim')) {
+        expect(body).toMatchObject({
+          worker_session_id: expect.any(String),
+        });
         return jsonResponse({
           data: {
             id: 'run_platform_1',
@@ -309,8 +315,14 @@ describe('workflow managed worker CLI', () => {
       daemonFetch,
     }));
 
+    delete process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER'];
+    delete process.env['VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API'];
+
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
+
+    expect(process.env['VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER']).toBeUndefined();
+    expect(process.env['VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API']).toBeUndefined();
 
     expect(platformRequests.map((request) => request.url)).toEqual([
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
@@ -474,7 +486,6 @@ nodes:
     adapter: github
     action: pull_request.comment
     with:
-      credential_ref: github/pr-writer
       repository: "{{ inputs.repo }}"
       body: ok
   tests:
@@ -483,6 +494,13 @@ nodes:
 `,
             input_snapshot: {
               repo: 'viewportai/vp-example-repo',
+              viewport: {
+                workflowAuthorityContract: {
+                  credentials: {
+                    provider_actions: ['github/pr-writer'],
+                  },
+                },
+              },
             },
             source_ref: 'viewport://workflow/proof',
             directory_path: '/repo',
@@ -500,7 +518,7 @@ nodes:
             },
             workflow_snapshot: {
               requires: {
-                secrets: ['slack/notifier', 'github/pr-writer'],
+                secrets: ['slack/notifier'],
               },
             },
           },
@@ -585,8 +603,16 @@ nodes:
           VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer',
           VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: 'ghs_run_scoped_checkout',
         });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+          VIEWPORT_CREDENTIAL_REPO_GITHUB_PAYMENTS_API: expect.any(String),
+        });
+        expect(body.runtimeSecretFiles.VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER).toContain(
+          'run-secrets/run_platform_credential_material/VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER',
+        );
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_checkout');
         expect(JSON.stringify(body.inputs)).not.toContain('ghs_run_scoped_pr_writer');
+        expect(JSON.stringify(body.inputs)).not.toContain('run-secrets');
         expect(body.inputs.viewport.credentials).toEqual([
           expect.objectContaining({
             handle: 'agent/anthropic/claude-code',
@@ -609,6 +635,9 @@ nodes:
             scopes: ['repo:viewportai/vp-example-repo'],
           }),
         ]);
+        expect(body.inputs.viewport.workflowAuthorityContract.credentials).toEqual({
+          provider_actions: ['github/pr-writer'],
+        });
         return jsonResponse({ run: { id: 'local_run_credential_material' } });
       }
       if (urlPath === '/api/workflows/runs/local_run_credential_material') {
@@ -869,7 +898,7 @@ nodes:
           );
           expect(body).toMatchObject({
             status: 'succeeded',
-            provider_reference: 'https://github.com/acme/payments/pull/4821',
+            provider_reference: '4821',
             provider_url: 'https://github.com/acme/payments/pull/4821',
             idempotency_key: 'pr:PAY-1842',
             payload_digest: 'sha256:approved-pr-payload',
@@ -1695,6 +1724,35 @@ nodes:
             assignment_claim_token: 'vpclaim_run_platform_2',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: gated\nnodes: {}\n',
             directory_path: '/repo',
+            workflow_authority_contract: {
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+              },
+              credentials: {
+                provider_actions: ['github/pr-writer'],
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_2/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_2',
+        );
+        expect(body).toMatchObject({
+          handle: 'github/pr-writer',
+          repository: 'viewportai/vp-example-repo',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_github_pr_writer',
+            handle: 'github/pr-writer',
+            kind: 'provider_action_secret',
+            provider: 'github',
+            storage_posture: 'viewport_managed',
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_run_scoped_pr_writer_after_approval',
           },
         });
       }
@@ -1706,11 +1764,19 @@ nodes:
           data: {
             id: 'run_platform_2',
             status: 'running',
+            workflow_authority_contract: {
+              repos: {
+                allowed: ['viewportai/vp-example-repo'],
+              },
+              credentials: {
+                provider_actions: ['github/pr-writer'],
+              },
+            },
             nodes: [
               {
                 node_key: 'approve',
-                type: 'action',
-                status: 'queued',
+                type: 'plan',
+                status: 'blocked',
                 output: 'Approved',
                 metadata: {
                   approval: {
@@ -1780,6 +1846,9 @@ nodes:
             approval_decision_key: 'approve-open-pr',
             issued_at: '2026-05-17T10:00:00.000Z',
           },
+          runtimeSecretEnv: {
+            VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_run_scoped_pr_writer_after_approval',
+          },
         });
         expect(body.actor).toEqual({
           id: '1',
@@ -1803,6 +1872,163 @@ nodes:
 
     expect(platformSyncStatuses).toEqual(['completed']);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
+  });
+
+  it('uses the local workflow snapshot to rematerialize provider credentials after approval', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--runner-profile',
+      'payments-vps',
+      '--workdir',
+      '/repo',
+      '--poll-seconds',
+      '0',
+      '--command-poll-seconds',
+      '0',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_local_snapshot',
+            assignment_claim_token: 'vpclaim_local_snapshot',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: existing\nnodes: {}\n',
+            runtime_run_id: 'local_run_local_snapshot',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_local_snapshot') && init?.method === 'GET') {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_local_snapshot',
+            status: 'running',
+            nodes: [
+              {
+                node_key: 'approve',
+                type: 'approval',
+                status: 'blocked',
+                output: 'Approved',
+                metadata: {
+                  approval: {
+                    approved: true,
+                    decision: 'approve',
+                    message: 'Ship it',
+                    actor: { id: '1', name: 'Mehr', email: 'mehr@getviewport.test' },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_local_snapshot/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_local_snapshot',
+        );
+        expect(body).toMatchObject({
+          credential: 'vpexec_secret',
+          handle: 'github/pr-writer',
+          repository: 'viewportai/vp-example-repo',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_github_pr_writer',
+            handle: 'github/pr-writer',
+            kind: 'provider_action_secret',
+            provider: 'github',
+            storage_posture: 'viewport_managed',
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_local_snapshot_pr_writer',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_local_snapshot/sync')) {
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({
+          data: { id: 'run_platform_local_snapshot', status: body.status },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const localWorkflowYaml = `
+schema: viewport.workflow/v1
+name: local-snapshot-provider-action
+nodes:
+  approve:
+    type: approval
+  open_pr:
+    type: action
+    adapter: github
+    action: pull_request.create
+    needs: [approve]
+    with:
+      credential_ref: github/pr-writer
+      repository: '{{ inputs.repo }}'
+      title: Viewport support fix
+      head: viewport/support-fix
+      base: main
+`;
+
+    let localApproved = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/workflows/runs/local_run_local_snapshot') {
+        return jsonResponse({
+          run: localApproved
+            ? completedLocalRun({ id: 'local_run_local_snapshot' })
+            : {
+                ...blockedLocalRun('local_run_local_snapshot'),
+                yamlSnapshot: localWorkflowYaml,
+                inputs: { repo: 'viewportai/vp-example-repo' },
+              },
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_local_snapshot/approvals/approve') {
+        const body = JSON.parse(String(init?.body));
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_local_snapshot_pr_writer',
+        });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+        });
+        localApproved = true;
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_local_snapshot' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(platformSyncStatuses).toEqual(['completed']);
   });
 
   it('keeps polling a revised plan after sending request-changes back to the local runner', async () => {
@@ -2025,6 +2251,32 @@ nodes:
             assignment_claim_token: 'vpclaim_two_gates',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: two-gates\nnodes: {}\n',
             directory_path: '/repo',
+            target_snapshot: {
+              workflow_authority_contract: {
+                credentials: {
+                  provider_actions: ['github/pr-writer'],
+                },
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_two_gates/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_two_gates');
+        expect(body).toMatchObject({
+          credential: 'vpexec_secret',
+          handle: 'github/pr-writer',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_github_pr_writer_two_gates',
+            handle: 'github/pr-writer',
+            kind: 'provider_action_secret',
+            provider: 'github',
+            storage_posture: 'viewport_managed',
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_two_gate_pr_writer',
           },
         });
       }
@@ -2067,6 +2319,12 @@ nodes:
       if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_plan') {
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'PM approval' });
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_two_gate_pr_writer',
+        });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+        });
         firstApprovedLocally = true;
         return jsonResponse({
           run: twoGateBlockedLocalRun('local_run_two_gates', 'review_engineering'),
@@ -2075,6 +2333,12 @@ nodes:
       if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_engineering') {
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_two_gate_pr_writer',
+        });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+        });
         secondApprovedLocally = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });
       }
@@ -2501,7 +2765,7 @@ nodes:
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
-  it('resumes a reclaimed approved action before syncing stale local blocked state', async () => {
+  it('waits for broker action completion instead of locally approving reclaimed actions', async () => {
     process.argv = [
       'node',
       'vpd',
@@ -2525,6 +2789,7 @@ nodes:
     ];
 
     const platformSyncStatuses: string[] = [];
+    let assignmentPolls = 0;
     global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -2564,6 +2829,7 @@ nodes:
         expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
           'vpclaim_action_reclaimed',
         );
+        assignmentPolls += 1;
         return jsonResponse({
           data: {
             id: 'run_platform_action_reclaimed',
@@ -2587,6 +2853,26 @@ nodes:
               },
             ],
           },
+          runtime_commands:
+            assignmentPolls >= 2
+              ? [
+                  {
+                    id: 'action-completed:receipt-action-reclaimed',
+                    type: 'workflow.action_completed',
+                    workflow_run_id: 'local_run_action_reclaimed',
+                    workflow_node_id: 'post_to_jira',
+                    proposal_key: 'action:post_to_jira',
+                    receipt_key: 'broker:proposal-action-reclaimed',
+                    receipt_digest: 'sha256:broker-receipt',
+                    provider_reference: 'JIRA-1',
+                    provider_url: 'https://jira.example.test/browse/JIRA-1',
+                    adapter: 'jira',
+                    action: 'comment',
+                    status: 'succeeded',
+                    executed_at: '2026-05-29T08:00:00.000Z',
+                  },
+                ]
+              : [],
         });
       }
       if (url.endsWith('/workflow-runs/run_platform_action_reclaimed/sync')) {
@@ -2600,7 +2886,6 @@ nodes:
       return jsonResponse({ message: 'not found' }, 404);
     }) as typeof fetch;
 
-    let localApproved = false;
     const now = Date.now();
     const staleBlockedActionRun: WorkflowRunRecord = {
       ...blockedLocalRun('local_run_action_reclaimed'),
@@ -2624,21 +2909,23 @@ nodes:
     };
     const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
       if (urlPath === '/api/workflows/runs/local_run_action_reclaimed' && init?.method === 'GET') {
-        return jsonResponse({
-          run: localApproved
-            ? completedLocalRun({ id: 'local_run_action_reclaimed' })
-            : staleBlockedActionRun,
-        });
+        return jsonResponse({ run: staleBlockedActionRun });
       }
       if (urlPath === '/api/workflows/runs/local_run_action_reclaimed/approvals/post_to_jira') {
+        throw new Error('Managed workers must not locally approve brokered action nodes.');
+      }
+      if (
+        urlPath === '/api/workflows/runs/local_run_action_reclaimed/runtime-commands' &&
+        init?.method === 'POST'
+      ) {
         const body = JSON.parse(String(init?.body));
-        expect(body).toMatchObject({
-          approved: true,
-          message: 'Approved while worker was down',
-          actor: { name: 'Alice', source: 'viewport-web' },
-          expectedActionDigest: 'sha256:approved-action',
-        });
-        localApproved = true;
+        expect(body.runtime_commands).toEqual([
+          expect.objectContaining({
+            type: 'workflow.action_completed',
+            workflow_node_id: 'post_to_jira',
+            receipt_key: 'broker:proposal-action-reclaimed',
+          }),
+        ]);
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_action_reclaimed' }) });
       }
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
@@ -2657,7 +2944,12 @@ nodes:
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
 
-    expect(platformSyncStatuses).toEqual(['completed']);
+    expect(assignmentPolls).toBeGreaterThanOrEqual(2);
+    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_action_reclaimed/runtime-commands',
+      expect.anything(),
+    );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
@@ -2685,7 +2977,6 @@ nodes:
     ];
 
     let assignmentPolls = 0;
-    let approvedActionLocally = false;
     global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -2713,6 +3004,26 @@ nodes:
           data: {
             id: 'run_platform_stale_plan',
             status: 'running',
+            runtime_commands:
+              assignmentPolls >= 2
+                ? [
+                    {
+                      id: 'action-completed:receipt-stale-plan',
+                      type: 'workflow.action_completed',
+                      workflow_run_id: 'local_run_stale_plan',
+                      workflow_node_id: 'propose_pr',
+                      proposal_key: 'action:propose_pr',
+                      receipt_key: 'broker:proposal-stale-plan',
+                      receipt_digest: 'sha256:broker-stale-plan',
+                      provider_reference: '32',
+                      provider_url: 'https://github.com/viewportai/vp-example-repo/pull/32',
+                      adapter: 'github',
+                      action: 'pull_request.create',
+                      status: 'succeeded',
+                      executed_at: '2026-05-29T08:05:00.000Z',
+                    },
+                  ]
+                : [],
             nodes: [
               {
                 node_key: 'create_plan',
@@ -2774,19 +3085,26 @@ nodes:
     };
     const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
       if (urlPath === '/api/workflows/runs/local_run_stale_plan' && init?.method === 'GET') {
-        return jsonResponse({
-          run: approvedActionLocally
-            ? completedLocalRun({ id: 'local_run_stale_plan' })
-            : staleBlockedOtherGateRun,
-        });
+        return jsonResponse({ run: staleBlockedOtherGateRun });
       }
       if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/create_plan') {
         throw new Error('Worker must not replay stale plan approval while propose_pr is blocked.');
       }
       if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr') {
+        throw new Error('Worker must not locally approve brokered action nodes.');
+      }
+      if (
+        urlPath === '/api/workflows/runs/local_run_stale_plan/runtime-commands' &&
+        init?.method === 'POST'
+      ) {
         const body = JSON.parse(String(init?.body));
-        expect(body).toMatchObject({ approved: true, message: 'Approve PR' });
-        approvedActionLocally = true;
+        expect(body.runtime_commands).toEqual([
+          expect.objectContaining({
+            type: 'workflow.action_completed',
+            workflow_node_id: 'propose_pr',
+            receipt_key: 'broker:proposal-stale-plan',
+          }),
+        ]);
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_plan' }) });
       }
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
@@ -2804,9 +3122,8 @@ nodes:
     await workflow();
 
     expect(assignmentPolls).toBeGreaterThanOrEqual(2);
-    expect(approvedActionLocally).toBe(true);
     expect(daemonFetch).toHaveBeenCalledWith(
-      '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr',
+      '/api/workflows/runs/local_run_stale_plan/runtime-commands',
       expect.anything(),
     );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());

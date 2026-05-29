@@ -17,6 +17,7 @@ import {
   providerCredentialValue,
   safeResponseText,
   stringValue,
+  envNameForCredentialRef,
   withIdempotencyHeader,
 } from './action-provider-utils.js';
 import {
@@ -44,12 +45,18 @@ export class WorkflowActionError extends Error {
   }
 }
 
+interface ProviderActionOptions {
+  idempotencyKey?: string;
+  runtimeSecretEnv?: Record<string, string>;
+  runtimeSecretFiles?: Record<string, string>;
+}
+
 export async function executeProviderAction(
   run: WorkflowRunRecord,
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
-  options: { idempotencyKey?: string; runtimeSecretEnv?: Record<string, string> } = {},
+  options: ProviderActionOptions = {},
 ): Promise<ActionResult | null> {
   if (node.adapter === 'github') {
     return executeGitHubAction(run, nodeId, node, actionInput, options);
@@ -68,7 +75,7 @@ async function executeGitHubAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
-  options: { idempotencyKey?: string; runtimeSecretEnv?: Record<string, string> },
+  options: ProviderActionOptions,
 ): Promise<ActionResult> {
   const repository = stringValue(actionInput['repository']);
   const [repositoryOwner, repositoryName] = splitRepository(repository);
@@ -78,11 +85,24 @@ async function executeGitHubAction(
     defaultRef: 'github/token',
     defaultEnv: 'GITHUB_TOKEN',
     runtimeSecretEnv: options.runtimeSecretEnv,
+    runtimeSecretFiles: {
+      ...runtimeSecretFilesForRun(run),
+      ...(options.runtimeSecretFiles ?? {}),
+    },
+    runId: run.platformRunId ?? run.id,
   });
   if (!owner || !repo) {
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
-  assertGitHubBrokeredCredential(run, nodeId, node, actionInput, token, options.idempotencyKey);
+  assertGitHubBrokeredCredential(
+    run,
+    nodeId,
+    node,
+    actionInput,
+    token,
+    options.idempotencyKey,
+    Object.keys(options.runtimeSecretEnv ?? {}).sort(),
+  );
 
   if (isGitHubPullRequestCreateAction(node.action)) {
     const title = stringValue(actionInput['title']) ?? 'Viewport workflow change';
@@ -152,12 +172,20 @@ function assertGitHubBrokeredCredential(
   actionInput: Record<string, WorkflowInputValue>,
   token: string | undefined,
   idempotencyKey: string | undefined,
+  runtimeSecretEnvKeys: string[],
 ): asserts token is string {
   if (token && token.startsWith('ghs_')) return;
 
   const reason = token
     ? 'github_credential_must_be_installation_token'
     : 'github_brokered_credential_missing';
+  const credentialRef =
+    typeof actionInput['credential_ref'] === 'string'
+      ? actionInput['credential_ref']
+      : typeof actionInput['credentialRef'] === 'string'
+        ? actionInput['credentialRef']
+        : null;
+  const expectedEnvName = credentialRef ? envNameForCredentialRef(credentialRef) : null;
   const metadata = {
     action: {
       adapter: node.adapter,
@@ -176,6 +204,9 @@ function assertGitHubBrokeredCredential(
         reason,
         required: 'github_app_installation_token',
         acceptedPrefix: 'ghs_',
+        credentialRef,
+        expectedEnvName,
+        runtimeSecretEnvKeys,
       },
       workflow_authority_denial: {
         reason,
@@ -301,7 +332,7 @@ async function executeJiraAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
-  options: { idempotencyKey?: string },
+  options: ProviderActionOptions,
 ): Promise<ActionResult> {
   const baseUrl = normalizedBaseUrl(
     stringValue(actionInput['base_url']) ??
@@ -311,6 +342,12 @@ async function executeJiraAction(
   const token = providerCredentialValue(actionInput, {
     defaultRef: 'jira/token',
     defaultEnv: 'JIRA_API_TOKEN',
+    runtimeSecretEnv: options.runtimeSecretEnv,
+    runtimeSecretFiles: {
+      ...runtimeSecretFilesForRun(run),
+      ...(options.runtimeSecretFiles ?? {}),
+    },
+    runId: run.platformRunId ?? run.id,
   });
   const email = stringValue(actionInput['email']) ?? process.env['JIRA_EMAIL'];
   const issueKey =
@@ -364,11 +401,17 @@ async function executeSlackAction(
   nodeId: string,
   node: WorkflowActionNode,
   actionInput: Record<string, WorkflowInputValue>,
-  options: { idempotencyKey?: string },
+  options: ProviderActionOptions,
 ): Promise<ActionResult> {
   const token = providerCredentialValue(actionInput, {
     defaultRef: 'slack/bot-token',
     defaultEnv: 'SLACK_BOT_TOKEN',
+    runtimeSecretEnv: options.runtimeSecretEnv,
+    runtimeSecretFiles: {
+      ...runtimeSecretFilesForRun(run),
+      ...(options.runtimeSecretFiles ?? {}),
+    },
+    runId: run.platformRunId ?? run.id,
   });
   const channel = stringValue(actionInput['channel']) ?? sourceSlackChannel(run);
   const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
@@ -402,6 +445,23 @@ async function executeSlackAction(
   }
 
   return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
+}
+
+function runtimeSecretFilesForRun(run: WorkflowRunRecord): Record<string, string> {
+  const viewport = run.inputs?.['viewport'];
+  if (!viewport || typeof viewport !== 'object' || Array.isArray(viewport)) return {};
+  const files = (viewport as Record<string, unknown>)['credentialSecretFiles'];
+  if (!Array.isArray(files)) return {};
+  const mapped: Record<string, string> = {};
+  for (const file of files) {
+    if (!file || typeof file !== 'object' || Array.isArray(file)) continue;
+    const envName = (file as Record<string, unknown>)['envName'];
+    const path = (file as Record<string, unknown>)['path'];
+    if (typeof envName === 'string' && typeof path === 'string') {
+      mapped[envName] = path;
+    }
+  }
+  return mapped;
 }
 
 function splitRepository(repository: string | undefined): [string | undefined, string | undefined] {

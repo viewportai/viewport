@@ -160,6 +160,71 @@ describe('WorkflowRuntimeCommandApplier', () => {
     expect(applied).toBe(true);
     expect(decider).not.toHaveBeenCalled();
   });
+
+  it('marks broker-completed action commands as local node completions without approval replay', async () => {
+    const run = blockedRun();
+    run.nodes.review = {
+      id: 'review',
+      type: 'action',
+      title: 'Open PR',
+      status: 'blocked',
+      metadata: {
+        action: {
+          adapter: 'github',
+          action: 'pull_request.create',
+          status: 'awaiting_approval',
+        },
+      },
+    };
+    const saved: WorkflowRunRecord[] = [];
+    const decider = vi.fn(async () => run);
+    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), decider, async (value) => {
+      saved.push(JSON.parse(JSON.stringify(value)) as WorkflowRunRecord);
+    });
+
+    const applied = await applier.apply({
+      id: 'action-completed:receipt-1',
+      type: 'workflow.action_completed',
+      workflow_run_id: run.id,
+      workflow_node_id: 'review',
+      proposal_key: 'action:review',
+      receipt_key: 'broker:proposal-1',
+      receipt_digest: 'sha256:receipt',
+      provider_reference: '28',
+      provider_url: 'https://github.com/viewportai/vp-example-repo/pull/28',
+      adapter: 'github',
+      action: 'pull_request.create',
+      status: 'succeeded',
+      executed_at: '2026-05-29T02:00:00.000Z',
+      message: 'Broker completed the PR.',
+    });
+
+    expect(applied).toBe(true);
+    expect(decider).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.status).toBe('completed');
+    expect(saved[0]?.nodes.review.status).toBe('completed');
+    expect(saved[0]?.nodes.review.output).toBe('github.pull_request.create');
+    expect(saved[0]?.nodes.review.metadata?.['action']).toMatchObject({
+      adapter: 'github',
+      action: 'pull_request.create',
+      status: 'executed',
+      receiptKey: 'broker:proposal-1',
+      providerReference: '28',
+      completedBy: 'viewport_broker',
+    });
+    expect(saved[0]?.events).toEqual([
+      expect.objectContaining({
+        type: 'node-completed',
+        nodeId: 'review',
+        data: expect.objectContaining({
+          source: 'viewport_broker',
+          receipt_key: 'broker:proposal-1',
+          provider_reference: '28',
+        }),
+      }),
+    ]);
+  });
 });
 
 function storeWith(runs: WorkflowRunRecord[]): WorkflowRunStore {

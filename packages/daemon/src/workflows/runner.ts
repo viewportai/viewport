@@ -2,6 +2,8 @@ import type { Daemon } from '../core/daemon.js';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
 import { addEvent, normalizeInputs, renderTemplate } from './runtime-helpers.js';
@@ -38,6 +40,8 @@ export class WorkflowRunner {
   private readonly platformSync: WorkflowRunPlatformSync;
   private readonly activeRunIds = new Set<string>();
   private readonly shellAbortRegistry = new WorkflowShellAbortRegistry();
+  private readonly runtimeSecretEnvByRunId = new Map<string, Record<string, string>>();
+  private readonly runtimeSecretFilesByRunId = new Map<string, Record<string, string>>();
   private readonly scheduler: WorkflowLayerScheduler;
   private readonly resumer: WorkflowRunResumer;
   private readonly reconciler: WorkflowRunReconciler;
@@ -48,9 +52,13 @@ export class WorkflowRunner {
     this.platformCommandApplier = new WorkflowRuntimeCommandApplier(
       this.store,
       (runId, nodeId, decision) => this.decideApproval(runId, nodeId, decision),
+      (run) => this.saveAndEmit(run),
     );
     this.platformSync = new WorkflowRunPlatformSync(daemon.configManager, undefined, {
-      onRuntimeCommand: (command, run) => this.platformCommandApplier.apply(command, run.id),
+      onRuntimeCommand: (command, run) => {
+        if (isManagedWorkerLocalRun(run)) return false;
+        return this.platformCommandApplier.apply(command, run.id);
+      },
     });
 
     const ops: RunnerOps = {
@@ -232,7 +240,8 @@ export class WorkflowRunner {
     }
     await this.store.save(run);
     void this.runSchedulerWithRunTimeout(run.id, parsed, {
-      runtimeSecretEnv: sanitizeRuntimeSecretEnv(request.runtimeSecretEnv),
+      runtimeSecretEnv: request.runtimeSecretEnv,
+      runtimeSecretFiles: request.runtimeSecretFiles,
     }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
@@ -507,7 +516,11 @@ export class WorkflowRunner {
       );
       await this.saveAndEmit(run);
 
-      void this.runSchedulerWithRunTimeout(run.id, parsed, { resumed: true }).catch((error) => {
+      void this.runSchedulerWithRunTimeout(run.id, parsed, {
+        resumed: true,
+        runtimeSecretEnv: decision.runtimeSecretEnv,
+        runtimeSecretFiles: decision.runtimeSecretFiles,
+      }).catch((error) => {
         void this.failRun(run.id, error instanceof Error ? error.message : String(error));
       });
       return run;
@@ -553,7 +566,11 @@ export class WorkflowRunner {
     addEvent(run, 'node-completed', `Node ${nodeId} completed`, undefined, nodeId);
     await this.saveAndEmit(run);
 
-    void this.runSchedulerWithRunTimeout(run.id, parsed, { resumed: true }).catch((error) => {
+    void this.runSchedulerWithRunTimeout(run.id, parsed, {
+      resumed: true,
+      runtimeSecretEnv: decision.runtimeSecretEnv,
+      runtimeSecretFiles: decision.runtimeSecretFiles,
+    }).catch((error) => {
       void this.failRun(run.id, error instanceof Error ? error.message : String(error));
     });
     return run;
@@ -567,9 +584,25 @@ export class WorkflowRunner {
     if (!run) return 0;
 
     let applied = 0;
+    let shouldResume = false;
     for (const command of runtimeCommands(body)) {
       if (await this.platformCommandApplier.apply(command, run.id)) {
         applied += 1;
+        if (command.type === 'workflow.action_completed') {
+          shouldResume = true;
+        }
+      }
+    }
+
+    if (shouldResume) {
+      const current = await this.store.get(run.id);
+      if (current?.status === 'running' && !this.activeRunIds.has(run.id)) {
+        const parsed = parseWorkflow(current.yamlSnapshot, `viewport://workflow/run/${current.id}`);
+        void this.runSchedulerWithRunTimeout(current.id, parsed, { resumed: true }).catch(
+          (error) => {
+            void this.failRun(current.id, error instanceof Error ? error.message : String(error));
+          },
+        );
       }
     }
 
@@ -577,7 +610,10 @@ export class WorkflowRunner {
   }
 
   async cancelRun(runId: string, options: WorkflowCancelOptions = {}): Promise<WorkflowRunRecord> {
-    return this.canceler.cancelRun(runId, options);
+    const run = await this.canceler.cancelRun(runId, options);
+    this.runtimeSecretEnvByRunId.delete(runId);
+    this.runtimeSecretFilesByRunId.delete(runId);
+    return run;
   }
 
   private async failRun(runId: string, message: string): Promise<void> {
@@ -596,6 +632,8 @@ export class WorkflowRunner {
     run.updatedAt = run.completedAt;
     addEvent(run, 'run-failed', `Workflow run failed: ${message}`);
     await this.saveAndEmit(run);
+    this.runtimeSecretEnvByRunId.delete(runId);
+    this.runtimeSecretFilesByRunId.delete(runId);
   }
 
   private async requireRun(runId: string): Promise<WorkflowRunRecord> {
@@ -625,13 +663,106 @@ export class WorkflowRunner {
   private async runSchedulerWithRunTimeout(
     runId: string,
     parsed: ParsedWorkflow,
-    options: { resumed?: boolean; runtimeSecretEnv?: Record<string, string> } = {},
+    options: {
+      resumed?: boolean;
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
+    } = {},
   ): Promise<void> {
     const clearRunTimeout = await this.armRunTimeout(runId, parsed);
+    const run = await this.store.get(runId);
+    const generatedSecretFiles = await this.writeRuntimeSecretEnvFiles(
+      runId,
+      run?.platformRunId,
+      options.runtimeSecretEnv,
+    );
     try {
-      await this.scheduler.run(runId, parsed, options);
+      await this.scheduler.run(runId, parsed, {
+        ...options,
+        runtimeSecretEnv: this.runtimeSecretEnvForRun(runId, options.runtimeSecretEnv),
+        runtimeSecretFiles: this.runtimeSecretFilesForRun(runId, {
+          ...generatedSecretFiles,
+          ...(options.runtimeSecretFiles ?? {}),
+        }),
+      });
     } finally {
       clearRunTimeout();
+      await this.clearRuntimeSecretsIfTerminal(runId);
+    }
+  }
+
+  private runtimeSecretEnvForRun(
+    runId: string,
+    value: Record<string, string> | undefined,
+  ): Record<string, string> {
+    const incoming = sanitizeRuntimeSecretEnv(value);
+    const existing = this.runtimeSecretEnvByRunId.get(runId) ?? {};
+    const merged = { ...existing, ...incoming };
+    if (Object.keys(merged).length > 0) {
+      this.runtimeSecretEnvByRunId.set(runId, merged);
+    }
+
+    return { ...merged };
+  }
+
+  private runtimeSecretFilesForRun(
+    runId: string,
+    value: Record<string, string> | undefined,
+  ): Record<string, string> {
+    const incoming = sanitizeRuntimeSecretFiles(value);
+    const existing = this.runtimeSecretFilesByRunId.get(runId) ?? {};
+    const merged = { ...existing, ...incoming };
+    if (Object.keys(merged).length > 0) {
+      this.runtimeSecretFilesByRunId.set(runId, merged);
+    }
+
+    return { ...merged };
+  }
+
+  private async clearRuntimeSecretsIfTerminal(runId: string): Promise<void> {
+    const run = await this.store.get(runId);
+    if (!run || ['completed', 'failed', 'canceled'].includes(run.status)) {
+      this.runtimeSecretEnvByRunId.delete(runId);
+      this.runtimeSecretFilesByRunId.delete(runId);
+      await this.removeRuntimeSecretFileRoots(runId, run?.platformRunId);
+    }
+  }
+
+  private async writeRuntimeSecretEnvFiles(
+    runId: string,
+    platformRunId: string | undefined,
+    value: Record<string, string> | undefined,
+  ): Promise<Record<string, string>> {
+    const secrets = sanitizeRuntimeSecretEnv(value);
+    const entries = Object.entries(secrets);
+    if (entries.length === 0) return {};
+
+    const mapped: Record<string, string> = {};
+    for (const targetRunId of [runId, platformRunId].filter(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '',
+    )) {
+      const root = runtimeSecretRoot(targetRunId);
+      await fs.mkdir(root, { recursive: true, mode: 0o700 });
+      for (const [envName, secret] of entries) {
+        const filePath = path.join(root, envName);
+        await fs.writeFile(filePath, secret, { mode: 0o600 });
+        mapped[envName] = filePath;
+      }
+    }
+
+    return mapped;
+  }
+
+  private async removeRuntimeSecretFileRoots(
+    runId: string,
+    platformRunId: string | undefined,
+  ): Promise<void> {
+    for (const targetRunId of [runId, platformRunId].filter(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '',
+    )) {
+      await fs.rm(runtimeSecretRoot(targetRunId), { recursive: true, force: true }).catch(() => {
+        // Best-effort cleanup; missing files should not affect terminal sync.
+      });
     }
   }
 
@@ -692,10 +823,34 @@ function sanitizeRuntimeSecretEnv(
   );
 }
 
+function sanitizeRuntimeSecretFiles(
+  value: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!value) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, filePath]) =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof filePath === 'string' && filePath.length > 0,
+    ),
+  );
+}
+
+function runtimeSecretRoot(runId: string): string {
+  return path.join(
+    process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+    'run-secrets',
+    runId,
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function hashString(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function isManagedWorkerLocalRun(run: WorkflowRunRecord): boolean {
+  return Boolean(run.platformRunId && run.runtimeTargetId);
 }

@@ -89,6 +89,15 @@ export const WorkflowPolicyDefinitionSchema = z
       })
       .strict()
       .optional(),
+    shell: z
+      .object({
+        policy: z.enum(['constrained', 'disabled']).optional(),
+        mode: z.enum(['constrained', 'disabled']).optional(),
+        allowLegacyCommand: z.boolean().optional(),
+        allow_legacy_command: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     budget: z
       .object({
         maxTokens: z.number().int().positive().optional(),

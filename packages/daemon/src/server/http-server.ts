@@ -243,6 +243,8 @@ export function registerHttpRoutes(
       workflowSourceRef?: string;
       directoryId?: string;
       inputs?: Record<string, WorkflowInputValue>;
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
       resourceId?: string;
       runtimeTargetId?: string;
       executionPolicy?: {
@@ -268,9 +270,11 @@ export function registerHttpRoutes(
         workflowYaml: parsedBody.data.workflowYaml,
         workflowSourceRef: parsedBody.data.workflowSourceRef,
         workflowContract: parsedBody.data.workflowContract,
+        workflowAuthorityContract: parsedBody.data.workflowAuthorityContract,
         directoryId: parsedBody.data.directoryId,
         inputs: parsedBody.data.inputs,
         runtimeSecretEnv: parsedBody.data.runtimeSecretEnv,
+        runtimeSecretFiles: parsedBody.data.runtimeSecretFiles,
         resourceId: parsedBody.data.resourceId,
         runtimeTargetId: parsedBody.data.runtimeTargetId,
         platformRunId: parsedBody.data.platformRunId,
@@ -313,6 +317,8 @@ export function registerHttpRoutes(
       approved?: boolean;
       decision?: 'approve' | 'request_changes' | 'reject';
       expectedActionDigest?: string;
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
       message?: string;
     };
   }>('/api/workflows/runs/:id/approvals/:nodeId', async (request, reply) => {
@@ -331,6 +337,27 @@ export function registerHttpRoutes(
     } catch (error) {
       return reply.status(400).send({
         error: error instanceof Error ? error.message : 'Failed to resolve workflow approval',
+      });
+    }
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: { runtime_commands?: unknown };
+  }>('/api/workflows/runs/:id/runtime-commands', async (request, reply) => {
+    try {
+      const applied = await daemon.workflowRunner.applyRuntimeCommandBody(
+        request.params.id,
+        request.body,
+      );
+      const run = await daemon.workflowRunner.getRun(request.params.id);
+      if (!run) {
+        return reply.status(404).send({ error: 'Workflow run not found' });
+      }
+      return { applied, run };
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to apply workflow runtime commands',
       });
     }
   });

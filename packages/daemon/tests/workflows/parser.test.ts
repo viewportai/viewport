@@ -404,6 +404,9 @@ policies:
     allowedAdapters:
       - github
       - jira
+  shell:
+    policy: constrained
+    allowLegacyCommand: false
   budget:
     maxTokens: 100000
     maxCostUsd: 25
@@ -474,6 +477,8 @@ nodes:
     expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
     expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
     expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.policies?.shell?.policy).toBe('constrained');
+    expect(parsed.definition.policies?.shell?.allowLegacyCommand).toBe(false);
     expect(parsed.definition.policies?.budget?.maxTokens).toBe(100000);
     expect(parsed.definition.policies?.budget?.approvalThresholds?.costUsd).toBe(10);
     expect(parsed.definition.notifications?.inbox).toContain('approval_requested');

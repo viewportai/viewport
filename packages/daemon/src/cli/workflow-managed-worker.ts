@@ -23,6 +23,7 @@ import {
   safeText,
 } from './workflow-managed-worker-util.js';
 import type { WorkflowRunRecord } from '../workflows/types.js';
+import type { SessionResourceManifest } from '../config-resolution/index.js';
 import {
   executeProviderAction,
   WorkflowActionError,
@@ -357,6 +358,7 @@ function resolveWorkerOptions(): ManagedWorkerOptions {
       registrationProfile?.runnerProfile ??
       undefined,
     runnerPosture: registrationProfile?.runnerPosture,
+    workerSessionId: randomUUID(),
     runnerKeyPair,
     signingIdentity,
     runnerPool:
@@ -709,7 +711,10 @@ async function heartbeat(
         ...recordValue(options.runnerPosture?.['transport']),
         mode: options.accessMode,
       },
-      execution: recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' },
+      execution: {
+        ...(recordValue(options.runnerPosture?.['execution']) ?? { kind: 'customer-managed' }),
+        worker_session_id: options.workerSessionId,
+      },
       secrets: {
         ...recordValue(options.runnerPosture?.['secrets']),
         modes: [
@@ -782,10 +787,11 @@ function managedWorkerAccessMode(value: string | undefined): ManagedWorkerAccess
 async function claimAssignment(options: ManagedWorkerOptions): Promise<ManagedAssignment | null> {
   const response = await platformFetch(options, 'POST', 'claim', {
     lease_seconds: options.leaseSeconds,
+    worker_session_id: options.workerSessionId,
   });
   if (response.status === 204) return null;
   const body = await responseJson(response);
-  return dataFrom(body) as ManagedAssignment;
+  return assignmentFrom(body);
 }
 
 async function claimActionReplay(
@@ -945,12 +951,13 @@ function replayProviderReference(
   response: Record<string, unknown> | undefined,
 ): string | undefined {
   return (
+    numberField(response ?? null, 'number')?.toString() ??
+    stringField(response ?? null, 'ts') ??
+    stringField(response ?? null, 'id') ??
+    stringField(response ?? null, 'channel') ??
     stringField(response ?? null, 'htmlUrl') ??
     stringField(response ?? null, 'apiUrl') ??
-    stringField(response ?? null, 'url') ??
-    stringField(response ?? null, 'channel') ??
-    stringField(response ?? null, 'ts') ??
-    numberField(response ?? null, 'number')?.toString()
+    stringField(response ?? null, 'url')
   );
 }
 
@@ -1143,13 +1150,20 @@ async function runAssignmentLocally(
   const existingRun = await readExistingLocalRun(assignment.runtime_run_id);
   if (existingRun) {
     if (existingRun.status === 'running' || existingRun.status === 'queued') {
-      return pollLocalRun(
+      const completed = await pollLocalRun(
         existingRun.id,
         async (run) => {
           await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
         },
         progressSyncEveryMs(options.leaseSeconds),
       );
+      if (terminalRunStatus(completed.status)) {
+        clearRunCredentialMaterial(assignment.id);
+      }
+      return completed;
+    }
+    if (terminalRunStatus(existingRun.status)) {
+      clearRunCredentialMaterial(assignment.id);
     }
     return existingRun;
   }
@@ -1157,23 +1171,20 @@ async function runAssignmentLocally(
   const directory = await ensureDirectory(
     options.workdir ?? assignment.directory_path ?? process.cwd(),
   );
-  const material = await materializeRunCredentials(options, assignment);
+  const material = await materializeAndCacheRunCredentials(options, assignment);
   const started = await daemonJson('POST', '/api/workflows/runs', {
     workflowYaml: assignment.yaml_snapshot,
     workflowSourceRef: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
     directoryId: directory.id,
-    inputs: assignmentInputs(assignment, material.metadata),
+    inputs: assignmentInputs(assignment, material),
     runtimeSecretEnv: material.runtimeSecretEnv,
+    runtimeSecretFiles: material.runtimeSecretFiles,
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
-    resourceManifest: assignment.resource_manifest ?? undefined,
+    resourceManifest: assignmentResourceManifest(assignment) ?? undefined,
     workflowAuthorityContract:
-      assignment.workflow_authority_contract ??
-      recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ??
-      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ??
+      assignmentWorkflowAuthorityContract(assignment) ??
       recordChildValue(
         recordChildValue(assignment.input_snapshot, 'viewport'),
         'workflowAuthorityContract',
@@ -1183,13 +1194,17 @@ async function runAssignmentLocally(
     dataCapturePolicy: assignment.data_capture_policy ?? undefined,
   });
   const runId = readRun(started).id;
-  return pollLocalRun(
+  const completed = await pollLocalRun(
     runId,
     async (run) => {
       await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
+  if (terminalRunStatus(completed.status)) {
+    clearRunCredentialMaterial(assignment.id);
+  }
+  return completed;
 }
 
 function recordChildValue(value: unknown, key: string): Record<string, unknown> | undefined {
@@ -1201,19 +1216,24 @@ function recordChildValue(value: unknown, key: string): Record<string, unknown> 
 
 function assignmentInputs(
   assignment: ManagedAssignment,
-  credentialMetadata: CredentialMaterialMetadata[] = [],
+  material: CredentialMaterialResult = {
+    runtimeSecretEnv: {},
+    runtimeSecretFiles: {},
+    metadata: [],
+  },
 ): Record<string, unknown> {
   const inputs = { ...(assignment.input_snapshot ?? {}) } as Record<string, unknown>;
   inputs['viewport'] = {
     ...(isRecord(inputs['viewport']) ? inputs['viewport'] : {}),
     platformRunId: assignment.id,
     schemaVersions: assignment.schema_versions ?? null,
-    route: assignment.route_snapshot ?? null,
-    executionProfile: assignment.execution_profile_snapshot ?? null,
-    workflow: assignment.workflow_snapshot ?? null,
-    runnerWorkspace: assignment.runner_workspace_snapshot ?? null,
-    contextReceipts: assignment.context_receipts_snapshot ?? null,
-    credentials: credentialMetadata,
+    target: assignmentTargetSnapshot(assignment) ?? null,
+    route: assignmentRouteSnapshot(assignment) ?? null,
+    executionProfile: assignmentExecutionProfileSnapshot(assignment) ?? null,
+    workflow: assignmentWorkflowSnapshot(assignment) ?? null,
+    runnerWorkspace: assignmentRunnerWorkspaceSnapshot(assignment) ?? null,
+    contextReceipts: assignmentContextReceiptsSnapshot(assignment) ?? null,
+    credentials: material.metadata,
   };
 
   return inputs;
@@ -1221,7 +1241,79 @@ function assignmentInputs(
 
 interface CredentialMaterialResult {
   runtimeSecretEnv: Record<string, string>;
+  runtimeSecretFiles: Record<string, string>;
   metadata: CredentialMaterialMetadata[];
+}
+
+const runCredentialMaterialCache = new Map<string, CredentialMaterialResult>();
+const runCredentialProcessEnvCache = new Map<string, Record<string, string | undefined>>();
+
+function terminalRunStatus(status: string | undefined): boolean {
+  return status === 'completed' || status === 'failed' || status === 'canceled';
+}
+
+async function materializeAndCacheRunCredentials(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+): Promise<CredentialMaterialResult> {
+  const material = await materializeRunCredentials(options, assignment);
+  runCredentialMaterialCache.set(assignment.id, material);
+  installRunCredentialProcessEnv(assignment.id, material.runtimeSecretEnv);
+  return material;
+}
+
+function installRunCredentialProcessEnv(
+  runId: string,
+  runtimeSecretEnv: Record<string, string>,
+): void {
+  const entries = Object.entries(runtimeSecretEnv);
+  if (entries.length === 0) return;
+
+  const previous = runCredentialProcessEnvCache.get(runId) ?? {};
+  for (const [key, value] of entries) {
+    if (!(key in previous)) {
+      previous[key] = process.env[key];
+    }
+    process.env[key] = value;
+  }
+  runCredentialProcessEnvCache.set(runId, previous);
+}
+
+function clearRunCredentialMaterial(runId: string): void {
+  const material = runCredentialMaterialCache.get(runId);
+  runCredentialMaterialCache.delete(runId);
+  if (material) {
+    for (const filePath of Object.values(material.runtimeSecretFiles)) {
+      try {
+        fs.rmSync(filePath, { force: true });
+      } catch {
+        // Best-effort cleanup; the run-scoped directory is removed next.
+      }
+    }
+  }
+  try {
+    fs.rmSync(
+      path.join(
+        process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+        'run-secrets',
+        runId,
+      ),
+      { recursive: true, force: true },
+    );
+  } catch {
+    // Best-effort cleanup.
+  }
+
+  const previous = runCredentialProcessEnvCache.get(runId);
+  if (!previous) return;
+  for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  runCredentialProcessEnvCache.delete(runId);
 }
 
 interface CredentialMaterialMetadata {
@@ -1230,6 +1322,7 @@ interface CredentialMaterialMetadata {
   kind?: string | null;
   storagePosture?: string | null;
   materialAvailable: boolean;
+  runtimeSecretAvailable: boolean;
   runnerLocalRequired: boolean;
   provider?: string | null;
   credentialId?: string | number | null;
@@ -1241,9 +1334,10 @@ async function materializeRunCredentials(
   assignment: ManagedAssignment,
 ): Promise<CredentialMaterialResult> {
   const handles = collectCredentialHandles(assignment);
-  if (handles.length === 0) return { runtimeSecretEnv: {}, metadata: [] };
+  if (handles.length === 0) return { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] };
 
   const runtimeSecretEnv: Record<string, string> = {};
+  const runtimeSecretFiles: Record<string, string> = {};
   const metadata: CredentialMaterialMetadata[] = [];
   for (const handle of handles) {
     const response = await materializeCredential(options, assignment, handle);
@@ -1251,10 +1345,21 @@ async function materializeRunCredentials(
     const secret = stringField(response, 'secret');
     if (secret) {
       runtimeSecretEnv[envName] = secret;
+      runtimeSecretFiles[envName] = await writeRunCredentialSecretFile(
+        assignment.id,
+        envName,
+        secret,
+      );
     }
     const wrappedSecret = recordField(response, 'wrapped_secret');
     if (wrappedSecret) {
-      runtimeSecretEnv[envName] = decryptRunnerWrappedSecret(options.runnerKeyPair, wrappedSecret);
+      const decrypted = decryptRunnerWrappedSecret(options.runnerKeyPair, wrappedSecret);
+      runtimeSecretEnv[envName] = decrypted;
+      runtimeSecretFiles[envName] = await writeRunCredentialSecretFile(
+        assignment.id,
+        envName,
+        decrypted,
+      );
     }
     metadata.push({
       handle,
@@ -1262,6 +1367,7 @@ async function materializeRunCredentials(
       kind: stringField(response, 'kind') ?? null,
       storagePosture: stringField(response, 'storage_posture') ?? null,
       materialAvailable: response['material_available'] === true,
+      runtimeSecretAvailable: typeof runtimeSecretEnv[envName] === 'string',
       runnerLocalRequired: response['runner_local_required'] === true,
       provider: stringField(response, 'provider') ?? null,
       credentialId:
@@ -1270,7 +1376,34 @@ async function materializeRunCredentials(
     });
   }
 
-  return { runtimeSecretEnv, metadata };
+  const missingRuntimeSecrets = metadata.filter(
+    (entry) =>
+      entry.materialAvailable && !entry.runnerLocalRequired && !entry.runtimeSecretAvailable,
+  );
+  if (missingRuntimeSecrets.length > 0) {
+    const handles = missingRuntimeSecrets.map((entry) => entry.handle).join(', ');
+    throw new Error(
+      `Credential materialization for ${assignment.id} returned material_available without runtime secret material for: ${handles}`,
+    );
+  }
+
+  return { runtimeSecretEnv, runtimeSecretFiles, metadata };
+}
+
+async function writeRunCredentialSecretFile(
+  runId: string,
+  envName: string,
+  secret: string,
+): Promise<string> {
+  const root = path.join(
+    process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+    'run-secrets',
+    runId,
+  );
+  await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const filePath = path.join(root, envName);
+  await fs.promises.writeFile(filePath, secret, { mode: 0o600 });
+  return filePath;
 }
 
 async function materializeCredential(
@@ -1333,25 +1466,9 @@ function repositoryForCredentialMaterialization(
 }
 
 function allowedRepositoriesFromAssignment(assignment: ManagedAssignment): string[] {
-  const candidates = [
-    pathValue(assignment.workflow_authority_contract ?? {}, ['repos', 'allowed']),
-    pathValue(recordChildValue(assignment.route_snapshot, 'workflow_authority_contract') ?? {}, [
-      'repos',
-      'allowed',
-    ]),
-    pathValue(
-      recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract') ?? {},
-      ['repos', 'allowed'],
-    ),
-    pathValue(recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract') ?? {}, [
-      'repos',
-      'allowed',
-    ]),
-    pathValue(
-      recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract') ?? {},
-      ['repos', 'allowed'],
-    ),
-  ];
+  const candidates = assignmentWorkflowAuthorityContracts(assignment).map((contract) =>
+    pathValue(contract, ['repos', 'allowed']),
+  );
 
   return [
     ...new Set(
@@ -1397,8 +1514,9 @@ function decryptRunnerWrappedSecret(
 
 function collectCredentialHandles(assignment: ManagedAssignment): string[] {
   const snapshots = [
-    assignment.execution_profile_snapshot,
-    assignment.workflow_snapshot,
+    assignmentTargetSnapshot(assignment),
+    assignmentExecutionProfileSnapshot(assignment),
+    assignmentWorkflowSnapshot(assignment),
     yamlSnapshotDocument(assignment),
   ].filter(isRecord);
   const handles = new Set<string>();
@@ -1407,19 +1525,14 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'include'])),
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'repo_checkout'])),
       ...credentialRefsFrom(pathValue(snapshot, ['credentials', 'mcp_api'])),
+      ...credentialRefsFromCredentialMap(snapshot['credentials']),
       ...credentialRefsFrom(snapshot['credential_refs']),
       ...actionCredentialRefs(snapshot['nodes']),
     ]) {
       handles.add(handle);
     }
   }
-  for (const contract of [
-    assignment.workflow_authority_contract,
-    recordChildValue(assignment.route_snapshot, 'workflow_authority_contract'),
-    recordChildValue(assignment.execution_profile_snapshot, 'workflow_authority_contract'),
-    recordChildValue(assignment.workflow_snapshot, 'workflow_authority_contract'),
-    recordChildValue(assignment.runner_workspace_snapshot, 'workflow_authority_contract'),
-  ]) {
+  for (const contract of assignmentWorkflowAuthorityContracts(assignment)) {
     for (const handle of credentialRefsFrom(
       pathValue(asRecord(contract), ['credentials', 'provider_actions']),
     )) {
@@ -1427,6 +1540,20 @@ function collectCredentialHandles(assignment: ManagedAssignment): string[] {
     }
   }
   return [...handles].sort();
+}
+
+function credentialRefsFromCredentialMap(entries: unknown): string[] {
+  if (!isRecord(entries)) return [];
+  return Object.values(entries).flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const mode = stringField(entry, 'mode') ?? stringField(entry, 'storage_posture');
+    if (mode && !['viewport_brokered', 'viewport_managed'].includes(mode)) return [];
+    const handle =
+      stringField(entry, 'handle') ??
+      stringField(entry, 'ref') ??
+      stringField(entry, 'credential_ref');
+    return handle ? [handle] : [];
+  });
 }
 
 function credentialRefsFrom(entries: unknown): string[] {
@@ -1548,6 +1675,18 @@ async function waitForApprovalAndResume(
   while (true) {
     await heartbeat(options, 'online', 'busy');
     const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+    const commandRun = await applyBrokerActionCompletedCommands(
+      options,
+      platformRunId,
+      assignment,
+      localRunId,
+      assignmentClaimToken,
+    );
+    if (commandRun) {
+      if (commandRun.status !== 'blocked') return commandRun;
+      await delay(options.commandSleepSeconds * 1000);
+      continue;
+    }
     const approved = await approvedNodeForAssignment(
       options,
       platformRunId,
@@ -1602,8 +1741,57 @@ async function waitForApprovalAndResume(
       await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
+    const current = await readExistingLocalRun(localRunId);
+    if (current) {
+      await syncLocalRun(options, platformRunId, current, assignmentClaimToken);
+    }
     await delay(options.commandSleepSeconds * 1000);
   }
+}
+
+async function applyBrokerActionCompletedCommands(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  assignment: ManagedAssignment,
+  localRunId: string,
+  assignmentClaimToken?: string | null,
+): Promise<WorkflowRunRecord | null> {
+  const localRun = await readExistingLocalRun(localRunId);
+  const commands = (assignment.runtime_commands ?? []).filter(
+    (command) =>
+      command['type'] === 'workflow.action_completed' &&
+      !brokerActionCommandAlreadyApplied(localRun, command),
+  );
+  if (commands.length === 0) return null;
+
+  const response = await daemonJson(
+    'POST',
+    `/api/workflows/runs/${encodeURIComponent(localRunId)}/runtime-commands`,
+    { runtime_commands: commands },
+  );
+  const run = readRun(response);
+  await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
+  if (terminalRunStatus(run.status)) {
+    clearRunCredentialMaterial(platformRunId);
+  }
+  return run;
+}
+
+function brokerActionCommandAlreadyApplied(
+  run: WorkflowRunRecord | null,
+  command: Record<string, unknown>,
+): boolean {
+  const nodeKey = stringValue(command['workflow_node_id']);
+  if (!nodeKey) return false;
+
+  const node = run?.nodes?.[nodeKey];
+  if (!node || node.status !== 'completed') return false;
+
+  const receipt = recordValue(node.metadata?.['executionReceipt']);
+  const receiptKey = stringValue(receipt?.['receipt_key']);
+  const commandReceiptKey = stringValue(command['receipt_key']);
+
+  return Boolean(receiptKey && commandReceiptKey && receiptKey === commandReceiptKey);
 }
 
 const alreadyResolvedApprovalRuns = new WeakSet<WorkflowRunRecord>();
@@ -1690,6 +1878,19 @@ async function resumeApprovedLocalRun(
   approved: NonNullable<ManagedAssignment['nodes']>[number],
   assignmentClaimToken?: string | null,
 ): Promise<WorkflowRunRecord> {
+  const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+  const localRun = await readExistingLocalRun(localRunId);
+  const materialAssignment = localRun
+    ? assignmentWithLocalRunSnapshot(assignment, localRun, assignmentClaimToken)
+    : {
+        ...assignment,
+        assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
+      };
+  const cachedMaterial = runCredentialMaterialCache.get(platformRunId);
+  const material =
+    cachedMaterial && hasRuntimeSecrets(cachedMaterial)
+      ? cachedMaterial
+      : await materializeAndCacheRunCredentials(options, materialAssignment);
   try {
     await daemonJson(
       'POST',
@@ -1704,6 +1905,8 @@ async function resumeApprovedLocalRun(
         expectedActionDigest: approvalExpectedActionDigest(approved),
         executionGrant: approvalExecutionGrant(approved),
         feedback: approvalFeedback(approved),
+        runtimeSecretEnv: material.runtimeSecretEnv,
+        runtimeSecretFiles: material.runtimeSecretFiles,
       },
     );
   } catch (error) {
@@ -1725,7 +1928,100 @@ async function resumeApprovedLocalRun(
     progressSyncEveryMs(options.leaseSeconds),
   );
   await syncLocalRun(options, platformRunId, resumed, assignmentClaimToken);
+  if (terminalRunStatus(resumed.status)) {
+    clearRunCredentialMaterial(platformRunId);
+  }
   return resumed;
+}
+
+function hasRuntimeSecrets(material: CredentialMaterialResult): boolean {
+  return Object.keys(material.runtimeSecretEnv).length > 0;
+}
+
+function assignmentWithLocalRunSnapshot(
+  assignment: ManagedAssignment,
+  localRun: WorkflowRunRecord,
+  assignmentClaimToken?: string | null,
+): ManagedAssignment {
+  return {
+    ...assignment,
+    assignment_claim_token: assignment.assignment_claim_token ?? assignmentClaimToken ?? null,
+    yaml_snapshot: localRun.yamlSnapshot || assignment.yaml_snapshot,
+    directory_path: localRun.directoryPath || assignment.directory_path,
+    input_snapshot: localRun.inputs ?? assignment.input_snapshot,
+    resource_manifest: localRun.resourceManifest ?? assignmentResourceManifest(assignment),
+    workflow_authority_contract:
+      localRun.workflowAuthorityContract ??
+      assignmentWorkflowAuthorityContract(assignment) ??
+      undefined,
+  };
+}
+
+function assignmentTargetSnapshot(assignment: ManagedAssignment): Record<string, unknown> | null {
+  return assignment.target_snapshot ?? assignment.targetSnapshot ?? null;
+}
+
+function assignmentRouteSnapshot(assignment: ManagedAssignment): Record<string, unknown> | null {
+  return assignment.route_snapshot ?? assignment.routeSnapshot ?? null;
+}
+
+function assignmentExecutionProfileSnapshot(
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  return assignment.execution_profile_snapshot ?? assignment.executionProfileSnapshot ?? null;
+}
+
+function assignmentWorkflowSnapshot(assignment: ManagedAssignment): Record<string, unknown> | null {
+  return assignment.workflow_snapshot ?? assignment.workflowSnapshot ?? null;
+}
+
+function assignmentRunnerWorkspaceSnapshot(
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  return assignment.runner_workspace_snapshot ?? assignment.runnerWorkspaceSnapshot ?? null;
+}
+
+function assignmentResourceManifest(assignment: ManagedAssignment): SessionResourceManifest | null {
+  return assignment.resource_manifest ?? assignment.resourceManifest ?? null;
+}
+
+function assignmentContextReceiptsSnapshot(
+  assignment: ManagedAssignment,
+): unknown[] | Record<string, unknown> | null {
+  return assignment.context_receipts_snapshot ?? assignment.contextReceiptsSnapshot ?? null;
+}
+
+function assignmentWorkflowAuthorityContract(
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  return assignmentWorkflowAuthorityContracts(assignment)[0] ?? null;
+}
+
+function assignmentWorkflowAuthorityContracts(
+  assignment: ManagedAssignment,
+): Record<string, unknown>[] {
+  return [
+    assignment.workflow_authority_contract ?? null,
+    assignment.workflowAuthorityContract ?? null,
+    recordChildValue(assignmentTargetSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentTargetSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentRouteSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentRouteSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentExecutionProfileSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentExecutionProfileSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentWorkflowSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentWorkflowSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(assignmentRunnerWorkspaceSnapshot(assignment), 'workflow_authority_contract'),
+    recordChildValue(assignmentRunnerWorkspaceSnapshot(assignment), 'workflowAuthorityContract'),
+    recordChildValue(
+      recordChildValue(asRecord(assignment.input_snapshot), 'viewport'),
+      'workflow_authority_contract',
+    ),
+    recordChildValue(
+      recordChildValue(asRecord(assignment.input_snapshot), 'viewport'),
+      'workflowAuthorityContract',
+    ),
+  ].filter(isRecord);
 }
 
 function isAlreadyResolvedApprovalError(error: unknown): boolean {
@@ -1735,7 +2031,7 @@ function isAlreadyResolvedApprovalError(error: unknown): boolean {
 }
 
 function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
-  if (!['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? ''))) return false;
+  if (!['approval', 'gate', 'plan'].includes(String(node.type ?? ''))) return false;
   if (node.status === 'completed') return true;
   const approval = node.metadata?.['approval'];
   if (
@@ -1747,12 +2043,7 @@ function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>
   ) {
     return true;
   }
-  if (node.type !== 'action' || node.status !== 'queued') return false;
-  return (
-    !!approval &&
-    typeof approval === 'object' &&
-    (approval as { approved?: unknown }).approved === true
-  );
+  return false;
 }
 
 function managedApprovalApproved(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
@@ -1791,7 +2082,7 @@ async function getAssignment(
     undefined,
     assignmentClaimToken,
   );
-  return dataFrom(body) as ManagedAssignment;
+  return assignmentFrom(body);
 }
 
 async function syncLocalRun(
@@ -1807,7 +2098,21 @@ async function syncLocalRun(
     localRunToSyncPayload(run, { includeApprovalDecisions: false }),
     assignmentClaimToken,
   );
-  return dataFrom(body) as ManagedAssignment;
+  return assignmentFrom(body);
+}
+
+function assignmentFrom(body: unknown): ManagedAssignment {
+  const data = dataFrom(body);
+  if (!isRecord(data)) return data as ManagedAssignment;
+
+  if (isRecord(body) && Array.isArray(body['runtime_commands'])) {
+    return {
+      ...data,
+      runtime_commands: body['runtime_commands'],
+    } as unknown as ManagedAssignment;
+  }
+
+  return data as unknown as ManagedAssignment;
 }
 
 async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {

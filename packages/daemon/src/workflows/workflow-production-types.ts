@@ -65,6 +65,12 @@ export interface WorkflowPolicyDefinition {
     requireApproval?: boolean;
     allowedAdapters?: string[];
   };
+  shell?: {
+    policy?: 'constrained' | 'disabled';
+    mode?: 'constrained' | 'disabled';
+    allowLegacyCommand?: boolean;
+    allow_legacy_command?: boolean;
+  };
   budget?: {
     maxTokens?: number;
     tokens?: number;
