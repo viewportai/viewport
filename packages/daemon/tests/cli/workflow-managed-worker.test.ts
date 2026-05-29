@@ -1863,6 +1863,71 @@ nodes:
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');
   });
 
+  it('reads managed executor credentials from a file instead of requiring argv secrets', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-credential-file-'));
+    const credentialPath = path.join(dir, 'credential.txt');
+    const profilePath = path.join(dir, 'runner.json');
+    await fs.writeFile(credentialPath, 'vpexec_from_file\n');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify({
+        schema: 'viewport.managed_executor_registration/v1',
+        server_url: 'https://api.getviewport.com',
+        workspace_id: 'workspace_profile',
+        managed_executor_id: 'executor_profile',
+        credential_file: credentialPath,
+        access_mode: 'polling',
+        capabilities: {
+          agents: ['codex'],
+          models: ['gpt-5.5'],
+        },
+      }),
+    );
+
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--registration-profile',
+      profilePath,
+      '--doctor',
+      '--json',
+    ];
+
+    const authorizations: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/heartbeat')) {
+        authorizations.push(headerValue(init?.headers, 'Authorization') ?? '');
+        return jsonResponse({ data: { id: 'executor_profile' } });
+      }
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(process.argv).not.toContain('vpexec_from_file');
+    expect(authorizations).toEqual(['Bearer vpexec_from_file', 'Bearer vpexec_from_file']);
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '{}'))).toMatchObject({
+      command: 'workflow worker doctor',
+      ok: true,
+    });
+  });
+
   it('waits for platform approval, approves the local gate, and syncs the resumed run', async () => {
     process.argv = [
       'node',
