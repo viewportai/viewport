@@ -100,6 +100,7 @@ export const WorkflowRunBodySchema = z
       })
       .strict()
       .optional(),
+    workflowAuthorityContract: z.record(z.string(), z.unknown()).optional(),
     directoryId: z.string().trim().min(1),
     inputs: z.record(z.string(), WorkflowInputValueSchema).optional(),
     runtimeSecretEnv: RuntimeSecretEnvSchema.optional(),
