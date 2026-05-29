@@ -1,3 +1,10 @@
+## [0.25.5](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.4...@viewportai/daemon@0.25.5) (2026-05-29)
+
+
+### Bug Fixes
+
+* daemon brokered action resume flow ([#142](https://github.com/viewportai/viewport/issues/142)) ([6a140aa](https://github.com/viewportai/viewport/commit/6a140aab9af042dc48ccc9fe28185a5a20fba567))
+
 ## [0.25.4](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.3...@viewportai/daemon@0.25.4) (2026-05-28)
 
 
