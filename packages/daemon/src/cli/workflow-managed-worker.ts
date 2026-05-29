@@ -1658,6 +1658,18 @@ async function waitForApprovalAndResume(
   while (true) {
     await heartbeat(options, 'online', 'busy');
     const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+    const commandRun = await applyBrokerActionCompletedCommands(
+      options,
+      platformRunId,
+      assignment,
+      localRunId,
+      assignmentClaimToken,
+    );
+    if (commandRun) {
+      if (commandRun.status !== 'blocked') return commandRun;
+      await delay(options.commandSleepSeconds * 1000);
+      continue;
+    }
     const approved = await approvedNodeForAssignment(
       options,
       platformRunId,
@@ -1714,6 +1726,31 @@ async function waitForApprovalAndResume(
     }
     await delay(options.commandSleepSeconds * 1000);
   }
+}
+
+async function applyBrokerActionCompletedCommands(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  assignment: ManagedAssignment,
+  localRunId: string,
+  assignmentClaimToken?: string | null,
+): Promise<WorkflowRunRecord | null> {
+  const commands = (assignment.runtime_commands ?? []).filter(
+    (command) => command['type'] === 'workflow.action_completed',
+  );
+  if (commands.length === 0) return null;
+
+  const response = await daemonJson(
+    'POST',
+    `/api/workflows/runs/${encodeURIComponent(localRunId)}/runtime-commands`,
+    { runtime_commands: commands },
+  );
+  const run = readRun(response);
+  await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
+  if (terminalRunStatus(run.status)) {
+    clearRunCredentialMaterial(platformRunId);
+  }
+  return run;
 }
 
 const alreadyResolvedApprovalRuns = new WeakSet<WorkflowRunRecord>();

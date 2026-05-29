@@ -342,6 +342,27 @@ export function registerHttpRoutes(
 
   app.post<{
     Params: { id: string };
+    Body: { runtime_commands?: unknown };
+  }>('/api/workflows/runs/:id/runtime-commands', async (request, reply) => {
+    try {
+      const applied = await daemon.workflowRunner.applyRuntimeCommandBody(
+        request.params.id,
+        request.body,
+      );
+      const run = await daemon.workflowRunner.getRun(request.params.id);
+      if (!run) {
+        return reply.status(404).send({ error: 'Workflow run not found' });
+      }
+      return { applied, run };
+    } catch (error) {
+      return reply.status(400).send({
+        error: error instanceof Error ? error.message : 'Failed to apply workflow runtime commands',
+      });
+    }
+  });
+
+  app.post<{
+    Params: { id: string };
     Body: { message?: string; actor?: { name?: string; source?: string } };
   }>('/api/workflows/runs/:id/cancel', async (request, reply) => {
     const parsedBody = WorkflowCancelBodySchema.safeParse(request.body);

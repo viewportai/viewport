@@ -52,6 +52,7 @@ export class WorkflowRunner {
     this.platformCommandApplier = new WorkflowRuntimeCommandApplier(
       this.store,
       (runId, nodeId, decision) => this.decideApproval(runId, nodeId, decision),
+      (run) => this.saveAndEmit(run),
     );
     this.platformSync = new WorkflowRunPlatformSync(daemon.configManager, undefined, {
       onRuntimeCommand: (command, run) => {
@@ -583,9 +584,23 @@ export class WorkflowRunner {
     if (!run) return 0;
 
     let applied = 0;
+    let shouldResume = false;
     for (const command of runtimeCommands(body)) {
       if (await this.platformCommandApplier.apply(command, run.id)) {
         applied += 1;
+        if (command.type === 'workflow.action_completed') {
+          shouldResume = true;
+        }
+      }
+    }
+
+    if (shouldResume) {
+      const current = await this.store.get(run.id);
+      if (current?.status === 'running' && !this.activeRunIds.has(run.id)) {
+        const parsed = parseWorkflow(current.yamlSnapshot, `viewport://workflow/run/${current.id}`);
+        void this.runSchedulerWithRunTimeout(current.id, parsed, { resumed: true }).catch((error) => {
+          void this.failRun(current.id, error instanceof Error ? error.message : String(error));
+        });
       }
     }
 
