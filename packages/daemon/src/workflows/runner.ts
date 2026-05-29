@@ -598,9 +598,11 @@ export class WorkflowRunner {
       const current = await this.store.get(run.id);
       if (current?.status === 'running' && !this.activeRunIds.has(run.id)) {
         const parsed = parseWorkflow(current.yamlSnapshot, `viewport://workflow/run/${current.id}`);
-        void this.runSchedulerWithRunTimeout(current.id, parsed, { resumed: true }).catch((error) => {
-          void this.failRun(current.id, error instanceof Error ? error.message : String(error));
-        });
+        void this.runSchedulerWithRunTimeout(current.id, parsed, { resumed: true }).catch(
+          (error) => {
+            void this.failRun(current.id, error instanceof Error ? error.message : String(error));
+          },
+        );
       }
     }
 

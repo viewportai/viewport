@@ -1,4 +1,6 @@
-export type WorkflowRuntimeCommand = WorkflowApprovalDecisionCommand | WorkflowActionCompletedCommand;
+export type WorkflowRuntimeCommand =
+  | WorkflowApprovalDecisionCommand
+  | WorkflowActionCompletedCommand;
 
 export interface WorkflowApprovalDecisionCommand {
   id: string;
