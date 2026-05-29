@@ -1211,7 +1211,11 @@ function recordChildValue(value: unknown, key: string): Record<string, unknown> 
 
 function assignmentInputs(
   assignment: ManagedAssignment,
-  material: CredentialMaterialResult = { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] },
+  material: CredentialMaterialResult = {
+    runtimeSecretEnv: {},
+    runtimeSecretFiles: {},
+    metadata: [],
+  },
 ): Record<string, unknown> {
   const inputs = { ...(assignment.input_snapshot ?? {}) } as Record<string, unknown>;
   inputs['viewport'] = {
@@ -1284,7 +1288,11 @@ function clearRunCredentialMaterial(runId: string): void {
   }
   try {
     fs.rmSync(
-      path.join(process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'), 'run-secrets', runId),
+      path.join(
+        process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+        'run-secrets',
+        runId,
+      ),
       { recursive: true, force: true },
     );
   } catch {
@@ -1332,7 +1340,11 @@ async function materializeRunCredentials(
     const secret = stringField(response, 'secret');
     if (secret) {
       runtimeSecretEnv[envName] = secret;
-      runtimeSecretFiles[envName] = await writeRunCredentialSecretFile(assignment.id, envName, secret);
+      runtimeSecretFiles[envName] = await writeRunCredentialSecretFile(
+        assignment.id,
+        envName,
+        secret,
+      );
     }
     const wrappedSecret = recordField(response, 'wrapped_secret');
     if (wrappedSecret) {
@@ -1960,17 +1972,13 @@ function assignmentWorkflowAuthorityContracts(
   assignment: ManagedAssignment,
 ): Record<string, unknown>[] {
   return [
-    assignment.workflow_authority_contract ??
-      null,
+    assignment.workflow_authority_contract ?? null,
     assignment.workflowAuthorityContract ?? null,
     recordChildValue(assignmentTargetSnapshot(assignment), 'workflow_authority_contract'),
     recordChildValue(assignmentTargetSnapshot(assignment), 'workflowAuthorityContract'),
     recordChildValue(assignmentRouteSnapshot(assignment), 'workflow_authority_contract'),
     recordChildValue(assignmentRouteSnapshot(assignment), 'workflowAuthorityContract'),
-    recordChildValue(
-      assignmentExecutionProfileSnapshot(assignment),
-      'workflow_authority_contract',
-    ),
+    recordChildValue(assignmentExecutionProfileSnapshot(assignment), 'workflow_authority_contract'),
     recordChildValue(assignmentExecutionProfileSnapshot(assignment), 'workflowAuthorityContract'),
     recordChildValue(assignmentWorkflowSnapshot(assignment), 'workflow_authority_contract'),
     recordChildValue(assignmentWorkflowSnapshot(assignment), 'workflowAuthorityContract'),
@@ -1994,7 +2002,7 @@ function isAlreadyResolvedApprovalError(error: unknown): boolean {
 }
 
 function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
-  if (!['approval', 'gate', 'plan', 'action'].includes(String(node.type ?? ''))) return false;
+  if (!['approval', 'gate', 'plan'].includes(String(node.type ?? ''))) return false;
   if (node.status === 'completed') return true;
   const approval = node.metadata?.['approval'];
   if (
@@ -2006,12 +2014,7 @@ function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>
   ) {
     return true;
   }
-  if (node.type !== 'action' || node.status !== 'queued') return false;
-  return (
-    !!approval &&
-    typeof approval === 'object' &&
-    (approval as { approved?: unknown }).approved === true
-  );
+  return false;
 }
 
 function managedApprovalApproved(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {

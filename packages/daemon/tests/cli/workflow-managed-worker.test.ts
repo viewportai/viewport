@@ -1769,8 +1769,8 @@ nodes:
             nodes: [
               {
                 node_key: 'approve',
-                type: 'action',
-                status: 'queued',
+                type: 'plan',
+                status: 'blocked',
                 output: 'Approved',
                 metadata: {
                   approval: {
@@ -2759,7 +2759,7 @@ nodes:
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
-  it('resumes a reclaimed approved action before syncing stale local blocked state', async () => {
+  it('waits for broker action completion instead of locally approving reclaimed actions', async () => {
     process.argv = [
       'node',
       'vpd',
@@ -2783,6 +2783,7 @@ nodes:
     ];
 
     const platformSyncStatuses: string[] = [];
+    let assignmentPolls = 0;
     global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -2822,10 +2823,31 @@ nodes:
         expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
           'vpclaim_action_reclaimed',
         );
+        assignmentPolls += 1;
         return jsonResponse({
           data: {
             id: 'run_platform_action_reclaimed',
             status: 'running',
+            runtime_commands:
+              assignmentPolls >= 2
+                ? [
+                    {
+                      id: 'action-completed:receipt-action-reclaimed',
+                      type: 'workflow.action_completed',
+                      workflow_run_id: 'local_run_action_reclaimed',
+                      workflow_node_id: 'post_to_jira',
+                      proposal_key: 'action:post_to_jira',
+                      receipt_key: 'broker:proposal-action-reclaimed',
+                      receipt_digest: 'sha256:broker-receipt',
+                      provider_reference: 'JIRA-1',
+                      provider_url: 'https://jira.example.test/browse/JIRA-1',
+                      adapter: 'jira',
+                      action: 'comment',
+                      status: 'succeeded',
+                      executed_at: '2026-05-29T08:00:00.000Z',
+                    },
+                  ]
+                : [],
             nodes: [
               {
                 node_key: 'post_to_jira',
@@ -2858,7 +2880,6 @@ nodes:
       return jsonResponse({ message: 'not found' }, 404);
     }) as typeof fetch;
 
-    let localApproved = false;
     const now = Date.now();
     const staleBlockedActionRun: WorkflowRunRecord = {
       ...blockedLocalRun('local_run_action_reclaimed'),
@@ -2882,21 +2903,23 @@ nodes:
     };
     const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
       if (urlPath === '/api/workflows/runs/local_run_action_reclaimed' && init?.method === 'GET') {
-        return jsonResponse({
-          run: localApproved
-            ? completedLocalRun({ id: 'local_run_action_reclaimed' })
-            : staleBlockedActionRun,
-        });
+        return jsonResponse({ run: staleBlockedActionRun });
       }
       if (urlPath === '/api/workflows/runs/local_run_action_reclaimed/approvals/post_to_jira') {
+        throw new Error('Managed workers must not locally approve brokered action nodes.');
+      }
+      if (
+        urlPath === '/api/workflows/runs/local_run_action_reclaimed/runtime-commands' &&
+        init?.method === 'POST'
+      ) {
         const body = JSON.parse(String(init?.body));
-        expect(body).toMatchObject({
-          approved: true,
-          message: 'Approved while worker was down',
-          actor: { name: 'Alice', source: 'viewport-web' },
-          expectedActionDigest: 'sha256:approved-action',
-        });
-        localApproved = true;
+        expect(body.runtime_commands).toEqual([
+          expect.objectContaining({
+            type: 'workflow.action_completed',
+            workflow_node_id: 'post_to_jira',
+            receipt_key: 'broker:proposal-action-reclaimed',
+          }),
+        ]);
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_action_reclaimed' }) });
       }
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
@@ -2915,7 +2938,12 @@ nodes:
     const { workflow } = await import('../../src/cli/workflow-commands.js');
     await workflow();
 
-    expect(platformSyncStatuses).toEqual(['completed']);
+    expect(assignmentPolls).toBeGreaterThanOrEqual(2);
+    expect(platformSyncStatuses).toEqual(['blocked', 'completed']);
+    expect(daemonFetch).toHaveBeenCalledWith(
+      '/api/workflows/runs/local_run_action_reclaimed/runtime-commands',
+      expect.anything(),
+    );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
   });
 
@@ -2943,7 +2971,6 @@ nodes:
     ];
 
     let assignmentPolls = 0;
-    let approvedActionLocally = false;
     global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -2971,6 +2998,26 @@ nodes:
           data: {
             id: 'run_platform_stale_plan',
             status: 'running',
+            runtime_commands:
+              assignmentPolls >= 2
+                ? [
+                    {
+                      id: 'action-completed:receipt-stale-plan',
+                      type: 'workflow.action_completed',
+                      workflow_run_id: 'local_run_stale_plan',
+                      workflow_node_id: 'propose_pr',
+                      proposal_key: 'action:propose_pr',
+                      receipt_key: 'broker:proposal-stale-plan',
+                      receipt_digest: 'sha256:broker-stale-plan',
+                      provider_reference: '32',
+                      provider_url: 'https://github.com/viewportai/vp-example-repo/pull/32',
+                      adapter: 'github',
+                      action: 'pull_request.create',
+                      status: 'succeeded',
+                      executed_at: '2026-05-29T08:05:00.000Z',
+                    },
+                  ]
+                : [],
             nodes: [
               {
                 node_key: 'create_plan',
@@ -3032,19 +3079,26 @@ nodes:
     };
     const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
       if (urlPath === '/api/workflows/runs/local_run_stale_plan' && init?.method === 'GET') {
-        return jsonResponse({
-          run: approvedActionLocally
-            ? completedLocalRun({ id: 'local_run_stale_plan' })
-            : staleBlockedOtherGateRun,
-        });
+        return jsonResponse({ run: staleBlockedOtherGateRun });
       }
       if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/create_plan') {
         throw new Error('Worker must not replay stale plan approval while propose_pr is blocked.');
       }
       if (urlPath === '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr') {
+        throw new Error('Worker must not locally approve brokered action nodes.');
+      }
+      if (
+        urlPath === '/api/workflows/runs/local_run_stale_plan/runtime-commands' &&
+        init?.method === 'POST'
+      ) {
         const body = JSON.parse(String(init?.body));
-        expect(body).toMatchObject({ approved: true, message: 'Approve PR' });
-        approvedActionLocally = true;
+        expect(body.runtime_commands).toEqual([
+          expect.objectContaining({
+            type: 'workflow.action_completed',
+            workflow_node_id: 'propose_pr',
+            receipt_key: 'broker:proposal-stale-plan',
+          }),
+        ]);
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_stale_plan' }) });
       }
       if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
@@ -3062,9 +3116,8 @@ nodes:
     await workflow();
 
     expect(assignmentPolls).toBeGreaterThanOrEqual(2);
-    expect(approvedActionLocally).toBe(true);
     expect(daemonFetch).toHaveBeenCalledWith(
-      '/api/workflows/runs/local_run_stale_plan/approvals/propose_pr',
+      '/api/workflows/runs/local_run_stale_plan/runtime-commands',
       expect.anything(),
     );
     expect(daemonFetch).not.toHaveBeenCalledWith('/api/workflows/runs', expect.anything());
