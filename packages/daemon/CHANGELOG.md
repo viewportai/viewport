@@ -1,3 +1,12 @@
+## [0.25.11](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.10...@viewportai/daemon@0.25.11) (2026-05-29)
+
+
+### Bug Fixes
+
+* fail git publish without changes ([14151d2](https://github.com/viewportai/viewport/commit/14151d279d83903fd6a4c25388af1006af1b1e6d))
+* load workflow worker credentials from file ([49f9717](https://github.com/viewportai/viewport/commit/49f97173311223214ec23952e024aa764c07f106))
+* render absolute Slack completion links ([f788006](https://github.com/viewportai/viewport/commit/f788006204ea3c50053b575f1d06c22b424b42d3))
+
 ## [0.25.10](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.9...@viewportai/daemon@0.25.10) (2026-05-29)
 
 
