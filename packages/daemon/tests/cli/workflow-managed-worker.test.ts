@@ -2245,6 +2245,32 @@ nodes:
             assignment_claim_token: 'vpclaim_two_gates',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: two-gates\nnodes: {}\n',
             directory_path: '/repo',
+            target_snapshot: {
+              workflow_authority_contract: {
+                credentials: {
+                  provider_actions: ['github/pr-writer'],
+                },
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_two_gates/credential-material')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe('vpclaim_two_gates');
+        expect(body).toMatchObject({
+          credential: 'vpexec_secret',
+          handle: 'github/pr-writer',
+        });
+        return jsonResponse({
+          data: {
+            credential_id: 'cred_github_pr_writer_two_gates',
+            handle: 'github/pr-writer',
+            kind: 'provider_action_secret',
+            provider: 'github',
+            storage_posture: 'viewport_managed',
+            material_available: true,
+            runner_local_required: false,
+            secret: 'ghs_two_gate_pr_writer',
           },
         });
       }
@@ -2287,6 +2313,12 @@ nodes:
       if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_plan') {
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'PM approval' });
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_two_gate_pr_writer',
+        });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+        });
         firstApprovedLocally = true;
         return jsonResponse({
           run: twoGateBlockedLocalRun('local_run_two_gates', 'review_engineering'),
@@ -2295,6 +2327,12 @@ nodes:
       if (urlPath === '/api/workflows/runs/local_run_two_gates/approvals/review_engineering') {
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({ approved: true, message: 'Engineering approval' });
+        expect(body.runtimeSecretEnv).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: 'ghs_two_gate_pr_writer',
+        });
+        expect(body.runtimeSecretFiles).toEqual({
+          VIEWPORT_CREDENTIAL_GITHUB_PR_WRITER: expect.any(String),
+        });
         secondApprovedLocally = true;
         return jsonResponse({ run: completedLocalRun({ id: 'local_run_two_gates' }) });
       }

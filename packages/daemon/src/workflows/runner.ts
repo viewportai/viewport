@@ -2,6 +2,8 @@ import type { Daemon } from '../core/daemon.js';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
 import { addEvent, normalizeInputs, renderTemplate } from './runtime-helpers.js';
@@ -651,11 +653,20 @@ export class WorkflowRunner {
     } = {},
   ): Promise<void> {
     const clearRunTimeout = await this.armRunTimeout(runId, parsed);
+    const run = await this.store.get(runId);
+    const generatedSecretFiles = await this.writeRuntimeSecretEnvFiles(
+      runId,
+      run?.platformRunId,
+      options.runtimeSecretEnv,
+    );
     try {
       await this.scheduler.run(runId, parsed, {
         ...options,
         runtimeSecretEnv: this.runtimeSecretEnvForRun(runId, options.runtimeSecretEnv),
-        runtimeSecretFiles: this.runtimeSecretFilesForRun(runId, options.runtimeSecretFiles),
+        runtimeSecretFiles: this.runtimeSecretFilesForRun(runId, {
+          ...generatedSecretFiles,
+          ...(options.runtimeSecretFiles ?? {}),
+        }),
       });
     } finally {
       clearRunTimeout();
@@ -696,6 +707,45 @@ export class WorkflowRunner {
     if (!run || ['completed', 'failed', 'canceled'].includes(run.status)) {
       this.runtimeSecretEnvByRunId.delete(runId);
       this.runtimeSecretFilesByRunId.delete(runId);
+      await this.removeRuntimeSecretFileRoots(runId, run?.platformRunId);
+    }
+  }
+
+  private async writeRuntimeSecretEnvFiles(
+    runId: string,
+    platformRunId: string | undefined,
+    value: Record<string, string> | undefined,
+  ): Promise<Record<string, string>> {
+    const secrets = sanitizeRuntimeSecretEnv(value);
+    const entries = Object.entries(secrets);
+    if (entries.length === 0) return {};
+
+    const mapped: Record<string, string> = {};
+    for (const targetRunId of [runId, platformRunId].filter(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '',
+    )) {
+      const root = runtimeSecretRoot(targetRunId);
+      await fs.mkdir(root, { recursive: true, mode: 0o700 });
+      for (const [envName, secret] of entries) {
+        const filePath = path.join(root, envName);
+        await fs.writeFile(filePath, secret, { mode: 0o600 });
+        mapped[envName] = filePath;
+      }
+    }
+
+    return mapped;
+  }
+
+  private async removeRuntimeSecretFileRoots(
+    runId: string,
+    platformRunId: string | undefined,
+  ): Promise<void> {
+    for (const targetRunId of [runId, platformRunId].filter(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.trim() !== '',
+    )) {
+      await fs.rm(runtimeSecretRoot(targetRunId), { recursive: true, force: true }).catch(() => {
+        // Best-effort cleanup; missing files should not affect terminal sync.
+      });
     }
   }
 
@@ -765,6 +815,14 @@ function sanitizeRuntimeSecretFiles(
       ([key, filePath]) =>
         /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof filePath === 'string' && filePath.length > 0,
     ),
+  );
+}
+
+function runtimeSecretRoot(runId: string): string {
+  return path.join(
+    process.env['VIEWPORT_HOME'] ?? path.join(os.homedir(), '.viewport'),
+    'run-secrets',
+    runId,
   );
 }
 
