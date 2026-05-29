@@ -1,3 +1,10 @@
+## [0.25.6](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.5...@viewportai/daemon@0.25.6) (2026-05-29)
+
+
+### Bug Fixes
+
+* avoid credential env name collisions ([#143](https://github.com/viewportai/viewport/issues/143)) ([5c2e832](https://github.com/viewportai/viewport/commit/5c2e832e676c29d9250974ca024ecd2a9a76269a))
+
 ## [0.25.5](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.4...@viewportai/daemon@0.25.5) (2026-05-29)
 
 
