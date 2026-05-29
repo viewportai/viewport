@@ -488,9 +488,12 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
   const action = recordValue(event.data?.['action']);
   const adapter = stringValue(action?.['adapter']);
   const actionName = stringValue(action?.['action']);
+  const providerResponse = recordValue(action?.['response']);
+  const receiptProviderResponse = compactProviderResponse(providerResponse);
   const executionGrant =
     recordValue(action?.['execution_grant']) ?? recordValue(action?.['executionGrant']);
-  if (!adapter || !actionName) return [];
+  if (!action || !adapter || !actionName) return [];
+  const receiptPayload = executionReceiptPayload(action, receiptProviderResponse);
 
   return [
     {
@@ -508,21 +511,63 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
               ? 'dead_letter'
               : 'duplicate_suppressed',
       provider_reference:
-        stringValue(recordValue(action?.['response'])?.['number']) ??
-        stringValue(recordValue(action?.['response'])?.['ts']) ??
-        stringValue(recordValue(action?.['response'])?.['id']),
+        stringValue(providerResponse?.['number']) ??
+        stringValue(providerResponse?.['ts']) ??
+        stringValue(providerResponse?.['id']),
       provider_url:
-        stringValue(recordValue(action?.['response'])?.['htmlUrl']) ??
-        stringValue(recordValue(action?.['response'])?.['apiUrl']),
+        stringValue(providerResponse?.['htmlUrl']) ?? stringValue(providerResponse?.['apiUrl']),
       idempotency_key: stringValue(action?.['idempotencyKey']),
       payload_digest: stringValue(action?.['digest']) ?? payloadDigest(action),
-      payload: sanitizeSyncPayload(action),
+      provider_response_digest: receiptProviderResponse
+        ? payloadDigest(receiptProviderResponse)
+        : null,
+      payload: receiptPayload,
       provider_reconciliation:
         recordValue(action?.['provider_reconciliation']) ??
         recordValue(action?.['providerReconciliation']),
       executed_at: iso(event.timestamp),
     },
   ];
+}
+
+function compactProviderResponse(
+  value: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const response = recordValue(sanitizeSyncPayload(value));
+  if (!response) return null;
+
+  const compact: Record<string, unknown> = {};
+  for (const key of [
+    'status',
+    'ok',
+    'htmlUrl',
+    'apiUrl',
+    'number',
+    'channel',
+    'ts',
+    'id',
+    'error',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(response, key)) {
+      compact[key] = response[key];
+    }
+  }
+
+  return Object.keys(compact).length > 0 ? compact : response;
+}
+
+function executionReceiptPayload(
+  action: Record<string, unknown>,
+  providerResponse: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const payload = recordValue(sanitizeSyncPayload(action));
+  if (!payload || !providerResponse) return payload;
+
+  return {
+    ...payload,
+    response: providerResponse,
+    provider_response: providerResponse,
+  };
 }
 
 function formatAuditReceipt(event: WorkflowRunEvent): Array<Record<string, unknown>> {

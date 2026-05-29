@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { contextProviderAdapterFor } from '../context-providers/registry.js';
 import type { ContextProviderResult } from '../context-providers/types.js';
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
@@ -191,11 +193,16 @@ export async function resolvePromptNodeContext(input: {
   const providerRefs = effective.refs.filter((ref) => !workflowProducedContextRef(ref, input.run));
   const providers =
     platformPolicies.length > 0
-      ? selectProvidersForPolicies(
+      ? platformPolicyProviders(
           input.run.resourceManifest?.contract.contextProviders ?? [],
           platformPolicies,
+          input.run,
         )
-      : selectProviders(input.run.resourceManifest?.contract.contextProviders ?? [], providerRefs);
+      : contextRefProviders(
+          input.run.resourceManifest?.contract.contextProviders ?? [],
+          providerRefs,
+          input.run,
+        );
   const denied = providers
     .map(({ provider }) => contextAuthorityDenial(input.run, input.nodeId, provider))
     .find((entry) => entry !== null);
@@ -640,6 +647,23 @@ function selectProviders(
   return selected;
 }
 
+function contextRefProviders(
+  providers: SessionContextProviderManifest[],
+  refs: NormalizedContextRef[],
+  run: WorkflowRunRecord,
+): Array<{ provider: SessionContextProviderManifest; alias?: string }> {
+  const selected = selectProviders(providers, refs);
+  const seen = new Set(selected.map(({ provider }) => provider.id));
+  for (const ref of refs) {
+    if (selectedProviderMatches(ref.ref, seen, selected)) continue;
+    const provider = providerFromGitRef(ref.ref, run, ref.required);
+    if (!provider || seen.has(provider.id)) continue;
+    seen.add(provider.id);
+    selected.push({ provider, alias: ref.as });
+  }
+  return selected;
+}
+
 function selectProvidersForPolicies(
   providers: SessionContextProviderManifest[],
   policies: PlatformContextSourcePolicy[],
@@ -655,6 +679,56 @@ function selectProvidersForPolicies(
     selected.push({ provider, alias: policy.context_source_name });
   }
   return selected;
+}
+
+function platformPolicyProviders(
+  providers: SessionContextProviderManifest[],
+  policies: PlatformContextSourcePolicy[],
+  run: WorkflowRunRecord,
+): Array<{ provider: SessionContextProviderManifest; alias?: string }> {
+  const selected = selectProvidersForPolicies(providers, policies);
+  const seen = new Set(selected.map(({ provider }) => provider.id));
+  for (const policy of policies) {
+    if (seen.has(policy.context_source_id)) continue;
+    const provider = providerFromPlatformPolicy(policy, run);
+    if (!provider) continue;
+    seen.add(provider.id);
+    selected.push({ provider, alias: policy.context_source_name });
+  }
+  return selected;
+}
+
+function providerFromPlatformPolicy(
+  policy: PlatformContextSourcePolicy,
+  run: WorkflowRunRecord,
+): SessionContextProviderManifest | null {
+  if (policy.provider_type !== 'git') return null;
+  return providerFromGitRef(policy.external_ref, run, false, policy.context_source_id);
+}
+
+function providerFromGitRef(
+  ref: string,
+  run: WorkflowRunRecord,
+  required: boolean,
+  id?: string,
+): SessionContextProviderManifest | null {
+  const gitRef = parseGitSourceRef(ref);
+  if (!gitRef) return null;
+
+  const localPath = path.resolve(run.directoryPath, gitRef.path);
+  const localFileExists = isSafeChild(run.directoryPath, localPath) && existsSync(localPath);
+  return {
+    id: id ?? ref,
+    provider: localFileExists ? 'repo-docs' : 'github-repo',
+    required,
+    privacy: localFileExists ? 'local_only' : 'third_party_terms',
+    capabilities: ['search', 'get'],
+    sourceConfigPath: path.join(run.directoryPath, '.viewport', 'platform-context.yaml'),
+    repo: gitRef.repo,
+    ...(localFileExists ? { ref } : { branch: 'main' }),
+    paths: [gitRef.path],
+    resolution: 'requested_unverified',
+  };
 }
 
 function itemProviderForItem(
@@ -700,6 +774,11 @@ function parseGitSourceRef(ref: string): { repo: string; path: string } | null {
   const match = /^git:\/\/([^/]+\/[^/]+)\/(.+)$/.exec(ref.trim());
   if (!match) return null;
   return { repo: match[1] ?? '', path: match[2] ?? '' };
+}
+
+function isSafeChild(baseDirectory: string, candidate: string): boolean {
+  const relative = path.relative(baseDirectory, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function missingRequiredRefs(

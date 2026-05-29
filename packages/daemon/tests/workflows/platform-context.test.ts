@@ -83,6 +83,7 @@ describe('platform-governed customer-managed context', () => {
       } as unknown as WorkflowPlatformContextClient;
 
       const run = workflowRun(projectDir);
+      run.resourceManifest!.contract.contextProviders = [];
       const selected = await resolvePromptNodeContext({
         run,
         nodeId: 'draft_plan',
@@ -184,6 +185,45 @@ describe('platform-governed customer-managed context', () => {
             nodeId: 'draft_plan',
             alias: 'Support runbook',
           }),
+        }),
+      ]);
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes direct Git context refs even when the local manifest has no provider entry', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-direct-git-context-'));
+    try {
+      await fs.mkdir(path.join(projectDir, '.viewport'), { recursive: true });
+      await fs.mkdir(path.join(projectDir, 'docs', 'runbooks'), { recursive: true });
+      await fs.writeFile(
+        path.join(projectDir, 'docs', 'runbooks', 'support.md'),
+        'DIRECT_GIT_CONTEXT: direct workflow refs should materialize without a local manifest provider.',
+        'utf8',
+      );
+
+      const run = workflowRun(projectDir);
+      run.resourceManifest!.contract.contextProviders = [];
+      const selected = await resolvePromptNodeContext({
+        run,
+        nodeId: 'draft_plan',
+        workflowContext: [
+          {
+            ref: 'git://viewportai/vp-example-docs/docs/runbooks/support.md',
+            required: true,
+          },
+        ],
+        prompt: 'Draft a plan using direct Git context.',
+      });
+
+      expect(selected.promptBlock).toContain('DIRECT_GIT_CONTEXT');
+      expect(selected.basis.selectedItems).toHaveLength(1);
+      expect(run.contextReceipts).toEqual([
+        expect.objectContaining({
+          provider: 'repo-docs',
+          requested: 'git://viewportai/vp-example-docs/docs/runbooks/support.md',
+          digest: expect.stringMatching(/^sha256:/),
         }),
       ]);
     } finally {

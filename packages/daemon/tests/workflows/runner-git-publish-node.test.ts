@@ -27,7 +27,7 @@ describe('workflow runner git publish node', () => {
     remoteDir = path.join(root, 'remote.git');
     await fs.mkdir(projectDir, { recursive: true });
     await createBareRemote(remoteDir, path.join(root, 'seed'));
-  });
+  }, 30_000);
 
   afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];

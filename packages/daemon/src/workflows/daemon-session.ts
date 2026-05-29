@@ -115,7 +115,7 @@ export async function runWorkflowDaemonSession(
     validateWorkflowSessionAdapterCapabilities(context, directoryId, sessionOverrides);
     const sessionId = await context.daemon.launchSession(
       directoryId,
-      request.prompt,
+      workflowSessionPrompt(request.prompt, sessionOverrides),
       sessionOverrides,
     );
     activeSessionId = sessionId;
@@ -377,6 +377,23 @@ function fallbackAgentDescriptor(agentId: string) {
       hardTimeout: 'hard' as const,
     },
   };
+}
+
+function workflowSessionPrompt(
+  prompt: string,
+  config: Pick<SessionConfig, 'allowedTools'>,
+): string {
+  if (!Array.isArray(config.allowedTools) || config.allowedTools.length > 0) return prompt;
+  return [
+    '<runtime_constraints>',
+    'No agent tools are available for this workflow node.',
+    'Do not emit tool_call/tool_response blocks, XML-like tool tags, or synthetic transcripts.',
+    'Do not claim to fetch external data, read files, run commands, post comments, update context, or perform any side effect unless that information is explicitly present in this prompt.',
+    'Produce only the node result from the provided workflow inputs and context. Later workflow action nodes handle side effects.',
+    '</runtime_constraints>',
+    '',
+    prompt,
+  ].join('\n');
 }
 
 function validateWorkflowSessionAdapterCapabilities(

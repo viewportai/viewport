@@ -150,9 +150,12 @@ nodes:
 
     await waitForNodeSession(daemon, run.id, 'review');
     expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
-    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
-    expect(adapter.lastOptions?.allowedTools).toBeUndefined();
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
+    expect(adapter.lastOptions?.allowedTools).toEqual([]);
     const sentPrompt = String(adapter.lastSession?.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(sentPrompt).toContain('<runtime_constraints>');
+    expect(sentPrompt).toContain('No agent tools are available for this workflow node.');
+    expect(sentPrompt).toContain('Later workflow action nodes handle side effects.');
     expect(sentPrompt).toContain('<workflow_inputs>');
     expect(sentPrompt).toContain('PAY-1842 broken webhook retry');
     adapter.lastSession?.emitToolCall('tool-1', 'Read');
@@ -337,7 +340,8 @@ nodes:
     await waitForNodeSession(daemon, run.id, 'implement');
     expect(adapter.sessions).toHaveLength(2);
     expect(adapter.lastOptions?.config?.executionMode).toBe('implement');
-    expect(adapter.lastOptions?.config?.allowedTools).toBeUndefined();
+    expect(adapter.lastOptions?.config?.allowedTools).toEqual([]);
+    expect(adapter.lastOptions?.allowedTools).toEqual([]);
 
     adapter.lastSession?.emitAgentMessage('done');
     adapter.lastSession?.simulateIdle();

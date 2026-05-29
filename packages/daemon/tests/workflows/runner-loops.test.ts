@@ -126,12 +126,18 @@ nodes:
     });
 
     const first = await waitForAdapterSessionCount(adapter, 1);
-    expect(first.sendPrompt).toHaveBeenCalledWith('Review alpha at index 0');
+    const firstPrompt = String(first.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(firstPrompt).toContain('<runtime_constraints>');
+    expect(firstPrompt).toContain('No agent tools are available for this workflow node.');
+    expect(firstPrompt).toContain('Review alpha at index 0');
     first.emitAgentMessage('alpha done');
     first.simulateIdle();
 
     const second = await waitForAdapterSessionCount(adapter, 2);
-    expect(second.sendPrompt).toHaveBeenCalledWith('Review beta at index 1');
+    const secondPrompt = String(second.sendPrompt.mock.calls.at(-1)?.[0] ?? '');
+    expect(secondPrompt).toContain('<runtime_constraints>');
+    expect(secondPrompt).toContain('No agent tools are available for this workflow node.');
+    expect(secondPrompt).toContain('Review beta at index 1');
     second.emitAgentMessage('beta done');
     second.simulateIdle();
 
