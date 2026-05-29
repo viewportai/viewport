@@ -414,7 +414,8 @@ async function executeSlackAction(
     runId: run.platformRunId ?? run.id,
   });
   const channel = stringValue(actionInput['channel']) ?? sourceSlackChannel(run);
-  const text = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
+  const rawText = stringValue(actionInput['text']) ?? stringValue(actionInput['body']);
+  const text = rawText ? renderRuntimeMessage(run, rawText) : undefined;
   if (!token || !channel || !text) {
     return declaredProviderAction(node, 'missing_url', options.idempotencyKey, actionInput);
   }
@@ -445,6 +446,100 @@ async function executeSlackAction(
   }
 
   return declaredProviderAction(node, 'declared', options.idempotencyKey, actionInput);
+}
+
+function renderRuntimeMessage(run: WorkflowRunRecord, template: string): string {
+  const runUrl = runtimeRunUrl(run);
+  const githubAction = latestGithubAction(run);
+  const githubUrl =
+    nestedString(githubAction, ['providerReconciliation', 'providerUrl']) ??
+    nestedString(githubAction, ['provider_reconciliation', 'providerUrl']) ??
+    nestedString(githubAction, ['provider_reconciliation', 'provider_url']) ??
+    nestedString(githubAction, ['response', 'htmlUrl']) ??
+    nestedString(githubAction, ['response', 'html_url']) ??
+    runUrl;
+  const variables: Record<string, string> = {
+    'run.id': run.platformRunId ?? run.id,
+    'run.url': runUrl,
+    'audit.url': `${runUrl}#audit`,
+    'audit_packet.url': `${runUrl}#audit`,
+    'github.url': githubUrl,
+    'github_pr.url': githubUrl,
+    'github_pr.label': githubReceiptLabel(githubAction),
+  };
+
+  const doubleRendered = template.replace(
+    /{{\s*([A-Za-z0-9_.-]+)\s*}}/g,
+    (match, key: string) => variables[key] ?? match,
+  );
+
+  return doubleRendered.replace(
+    /(?<!{){\s*([A-Za-z0-9_.-]+)\s*}(?!})/g,
+    (match, key: string) => variables[key] ?? match,
+  );
+}
+
+function runtimeRunUrl(run: WorkflowRunRecord): string {
+  const runId = encodeURIComponent(run.platformRunId ?? run.id);
+  if (run.platformRunId && run.resourceId) {
+    const resource = encodeURIComponent(run.resourceId);
+    return `/workflows/runs/${runId}?resource=${resource}&platformRun=${runId}`;
+  }
+  return `/workflows/runs/${runId}`;
+}
+
+function latestGithubAction(run: WorkflowRunRecord): Record<string, unknown> | null {
+  const actions = Object.values(run.nodes)
+    .map((node) => recordValue(recordValue(node.metadata)?.['action']))
+    .filter((action): action is Record<string, unknown> => {
+      if (!action) return false;
+      const adapter = runtimeString(action['adapter']);
+      const status = runtimeString(action['status']);
+      return (
+        adapter === 'github' &&
+        ['executed', 'completed', 'success', 'succeeded'].includes(status ?? '')
+      );
+    });
+  return actions.at(-1) ?? null;
+}
+
+function githubReceiptLabel(action: Record<string, unknown> | null): string {
+  const reference =
+    nestedString(action, ['response', 'number']) ??
+    nestedString(action, ['providerReconciliation', 'providerReference']) ??
+    nestedString(action, ['provider_reconciliation', 'providerReference']) ??
+    nestedString(action, ['provider_reconciliation', 'provider_reference']);
+  if (reference) return /^pr\s*#/i.test(reference) ? reference : `PR #${reference}`;
+
+  const url =
+    nestedString(action, ['response', 'htmlUrl']) ??
+    nestedString(action, ['response', 'html_url']) ??
+    nestedString(action, ['providerReconciliation', 'providerUrl']) ??
+    nestedString(action, ['provider_reconciliation', 'providerUrl']) ??
+    nestedString(action, ['provider_reconciliation', 'provider_url']);
+  const match = url?.match(/\/pull\/([0-9]+)/);
+  return match ? `PR #${match[1]}` : 'GitHub PR';
+}
+
+function nestedString(value: Record<string, unknown> | null, path: string[]): string | undefined {
+  let current: unknown = value;
+  for (const segment of path) {
+    const record = recordValue(current);
+    if (!record) return undefined;
+    current = record[segment];
+  }
+  if (typeof current === 'number') return String(current);
+  return runtimeString(current);
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function runtimeString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function runtimeSecretFilesForRun(run: WorkflowRunRecord): Record<string, string> {
