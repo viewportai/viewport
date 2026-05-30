@@ -33,7 +33,7 @@ const PolicyRepoSchema = z
       })
       .strict()
       .optional(),
-    credential: z.enum(['runner-local', 'brokered']).default('runner-local'),
+    credential: z.enum(['runner-local', 'brokered']).default('brokered'),
   })
   .strict();
 
