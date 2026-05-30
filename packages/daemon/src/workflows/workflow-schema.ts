@@ -213,6 +213,8 @@ const GitPublishNodeSchema = NodeBaseSchema.extend({
   push: z.boolean().optional(),
   credentialMode: z.enum(['runner_local', 'run_scoped_grant']).optional(),
   credentialRef: z.string().trim().min(1).optional(),
+  restrictedBranches: z.array(z.string().trim().min(1)).optional(),
+  restrictedPaths: z.array(z.string().trim().min(1)).optional(),
 }).strict();
 
 const ApprovalOnRejectSchema = z.union([
@@ -411,6 +413,12 @@ export const WorkflowDefinitionSchema = z
     name: identifierSchema,
     title: z.string().trim().min(1).optional(),
     description: z.string().optional(),
+    scope: z
+      .object({
+        repos: z.array(z.string().trim().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
     triggers: z.array(WorkflowTriggerDefinitionSchema).optional(),
     context: WorkflowContextDefinitionSchema.optional(),

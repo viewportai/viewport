@@ -457,6 +457,9 @@ export interface WorkflowDefinition {
   name: string;
   title?: string;
   description?: string;
+  scope?: {
+    repos?: string[];
+  };
   inputs?: Record<string, WorkflowInputDefinition>;
   triggers?: WorkflowTriggerDefinition[];
   context?: WorkflowContext | WorkflowContextDefaults;

@@ -74,6 +74,59 @@ nodes:
     }
   });
 
+  it('accepts policy-composed checkout and publish constraints', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: policy-composed
+scope:
+  repos:
+    - acme/backend
+requires:
+  agents:
+    - claude
+nodes:
+  checkout:
+    type: checkout
+    repository: acme/backend
+    ref: main
+    credentialMode: runner_local
+  implement:
+    type: prompt
+    needs: [checkout]
+    agent: claude
+    executionMode: implement
+    allowedTools: [Read, Grep]
+    prompt: Make the smallest governed change.
+  publish:
+    type: git_publish
+    needs: [implement]
+    repository: acme/backend
+    cwd: "{{ nodes.checkout.outputs.path }}"
+    branch: "agent/{{ run.id }}"
+    message: "Viewport policy run {{ run.id }}"
+    paths:
+      - src
+    restrictedBranches:
+      - main
+      - "release/*"
+    restrictedPaths:
+      - "src/security/**"
+    allowEmpty: false
+    push: true
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const publish = parsed.definition.nodes.publish;
+    expect(parsed.definition.scope?.repos).toEqual(['acme/backend']);
+    expect(publish?.type).toBe('git_publish');
+    if (publish?.type === 'git_publish') {
+      expect(publish.restrictedBranches).toEqual(['main', 'release/*']);
+      expect(publish.restrictedPaths).toEqual(['src/security/**']);
+    }
+  });
+
   it('requires shell nodes to set command or argv, but not both', () => {
     expect(() =>
       parseWorkflow(
