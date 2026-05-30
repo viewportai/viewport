@@ -92,12 +92,13 @@ nodes:
     ref: main
     credentialMode: runner_local
   implement:
-    type: prompt
+    type: agent
     needs: [checkout]
+    cwd: "{{ nodes.checkout.outputs.path }}"
     agent: claude
+    prompt: Make the smallest governed change.
     executionMode: implement
     allowedTools: [Read, Grep]
-    prompt: Make the smallest governed change.
   publish:
     type: git_publish
     needs: [implement]
@@ -121,6 +122,11 @@ nodes:
     const publish = parsed.definition.nodes.publish;
     expect(parsed.definition.scope?.repos).toEqual(['acme/backend']);
     expect(publish?.type).toBe('git_publish');
+    const implement = parsed.definition.nodes.implement;
+    expect(implement?.type).toBe('agent');
+    if (implement?.type === 'agent') {
+      expect(implement.cwd).toBe('{{ nodes.checkout.outputs.path }}');
+    }
     if (publish?.type === 'git_publish') {
       expect(publish.restrictedBranches).toEqual(['main', 'release/*']);
       expect(publish.restrictedPaths).toEqual(['src/security/**']);

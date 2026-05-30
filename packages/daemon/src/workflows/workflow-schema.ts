@@ -161,6 +161,7 @@ const PromptNodeSchema = NodeBaseSchema.extend({
 const AgentNodeSchema = NodeBaseSchema.extend({
   type: z.literal('agent'),
   prompt: z.string().trim().min(1),
+  cwd: z.string().trim().min(1).optional(),
   agent: z.string().trim().min(1),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),

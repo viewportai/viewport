@@ -202,6 +202,7 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
 export interface WorkflowAgentNode extends WorkflowNodeBase {
   type: 'agent';
   prompt: string;
+  cwd?: string;
   agent: string;
   provider?: string;
   model?: string;
