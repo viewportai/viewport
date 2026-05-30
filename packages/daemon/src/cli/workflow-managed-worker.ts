@@ -135,7 +135,30 @@ export async function workflowWorker(): Promise<void> {
       }
 
       stats.claimed += 1;
-      const localRun = await runAssignmentLocally(options, assignment);
+      let localRun: WorkflowRunRecord;
+      try {
+        localRun = await runAssignmentLocally(options, assignment);
+      } catch (error) {
+        stats.failed += 1;
+        const failureRun = assignmentExecutionFailureRun(assignment, error);
+        clearRunCredentialMaterial(assignment.id);
+        try {
+          await syncLocalRun(options, assignment.id, failureRun, assignment.assignment_claim_token);
+        } catch (syncError) {
+          throw new Error(
+            `Worker failed assignment ${assignment.id} before local run start (${errorMessage(
+              error,
+            )}) and could not sync the failure (${errorMessage(syncError)}).`,
+          );
+        }
+        if (
+          options.once ||
+          (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+        ) {
+          break;
+        }
+        continue;
+      }
       if (localRun.status === 'blocked' && !options.once) {
         const approved = await approvedNodeForAssignment(
           options,
@@ -1320,6 +1343,72 @@ function missingLocalStateRun(assignment: ManagedAssignment): WorkflowRunRecord 
             (assignment.nodes ?? []).map((node) => [node.node_key, node.status ?? 'unknown']),
           ),
           recovery_policy: 'fail_closed_missing_local_state',
+        },
+      },
+    ],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+    completedAt: now,
+    error: message,
+  };
+}
+
+function assignmentExecutionFailureRun(
+  assignment: ManagedAssignment,
+  error: unknown,
+): WorkflowRunRecord {
+  const now = Date.now();
+  const runtimeRunId = `assignment-start-failed-${assignment.id}`;
+  const message = `Worker failed before it could start or resume the local workflow run: ${errorMessage(
+    error,
+  )}`;
+
+  return {
+    id: runtimeRunId,
+    workflowName: 'managed-assignment-start-failure',
+    sourceType: 'viewport_snapshot',
+    sourcePath: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
+    digest: `managed-assignment-start-failure:${assignment.id}`,
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: assignment.yaml_snapshot ?? '',
+    directoryId: 'managed-assignment-start-failure',
+    directoryPath: assignment.directory_path ?? process.cwd(),
+    resourceId: undefined,
+    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    platformRunId: assignment.id,
+    machineId: 'managed-executor',
+    dataCapturePolicy: {
+      transcripts: assignment.data_capture_policy?.transcripts ?? 'none',
+      logs: assignment.data_capture_policy?.logs ?? 'metadata',
+      artifacts: assignment.data_capture_policy?.artifacts ?? 'metadata',
+    },
+    initiation: 'cli',
+    status: 'failed',
+    inputs: assignment.input_snapshot ?? {},
+    preflight: {
+      ok: false,
+      issues: [
+        {
+          kind: 'node',
+          name: 'managed-assignment-start-failure',
+          message,
+        },
+      ],
+    },
+    nodes: {},
+    artifacts: [],
+    events: [
+      {
+        id: 'managed-assignment-start-failure',
+        runId: runtimeRunId,
+        timestamp: now,
+        type: 'run-failed',
+        message,
+        data: {
+          platform_run_id: assignment.id,
+          runtime_run_id: runtimeRunId,
+          recovery_policy: 'sync_failed_assignment_start',
         },
       },
     ],
