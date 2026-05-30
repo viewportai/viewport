@@ -22,6 +22,7 @@
  *   vpd skills ...            Install agent skills that call vpd
  *   vpd watch ...             Personal/local monitor commands
  *   vpd worker ...            Workflow worker commands
+ *   vpd check [path]          Validate .viewport/ directory (no account required)
  */
 
 import { getCommand, getArgs } from './cli/args.js';
@@ -69,6 +70,7 @@ import {
   unlock,
   worker,
   watch,
+  check,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
 import { hookCapabilities, hookNotify, showHookHelp } from './cli/hook-command.js';
@@ -128,6 +130,7 @@ const commands: Record<string, () => Promise<void>> = {
   unlock,
   worker,
   watch,
+  check,
 };
 
 const command = getCommand();
