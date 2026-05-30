@@ -14,6 +14,7 @@ import {
   gitContextTargetAllowsPath,
   parseGitContextUpdateTargetRef,
 } from './context-update-targets.js';
+import { branchIsRestricted } from './policy-enforcement.js';
 
 export interface RenderedGitPublishInput {
   cwd: string;
@@ -154,6 +155,15 @@ export async function executeGitPublishNode(
   const commit = (await git(['rev-parse', 'HEAD'], input.cwd)).trim();
   const shouldPush = node.push !== false;
   if (shouldPush) {
+    // Policy blast-radius fence: refuse to publish to a restricted branch (Tier-1 advisory
+    // enforcement of repos[].branches.restricted). Real read-only enforcement also comes from
+    // the brokered credential, but this fails fast and explains why.
+    if (branchIsRestricted(input.branch, node.restrictedBranches)) {
+      throw new Error(
+        `Branch '${input.branch}' is restricted by policy — refusing to publish. ` +
+          `Restricted patterns: ${(node.restrictedBranches ?? []).join(', ')}`,
+      );
+    }
     await git(['push', 'origin', `HEAD:${input.branch}`], input.cwd, credentialEnv);
   }
 

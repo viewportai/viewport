@@ -248,6 +248,10 @@ export interface WorkflowGitPublishNode extends WorkflowNodeBase {
   push?: boolean;
   credentialMode?: 'runner_local' | 'run_scoped_grant';
   credentialRef?: string;
+  // Policy blast-radius fences (composed from .viewport/policy.yaml repos[].branches/paths).
+  // Tier-1 advisory enforcement: the daemon refuses to publish to a restricted branch.
+  restrictedBranches?: string[];
+  restrictedPaths?: string[];
 }
 
 export interface WorkflowApprovalRecipient {
