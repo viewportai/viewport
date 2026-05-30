@@ -1,3 +1,10 @@
+## [0.25.12](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.11...@viewportai/daemon@0.25.12) (2026-05-30)
+
+
+### Bug Fixes
+
+* sync worker startup failures ([869af10](https://github.com/viewportai/viewport/commit/869af108ae5a9ab73f2f88f027263be19c4a5148))
+
 ## [0.25.11](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.10...@viewportai/daemon@0.25.11) (2026-05-29)
 
 
