@@ -12,6 +12,7 @@ import {
   waitForSessionWithPrompt,
   waitForTerminalRun,
 } from './support/workflow-runner-support.js';
+import { workflowRunToSyncPayload } from '../../src/workflows/platform-sync-payload.js';
 
 let tempHome: string;
 let projectDir: string;
@@ -119,6 +120,59 @@ nodes:
     expect(completed?.nodes.after?.output).toBe('Approved by test after');
     expect(completed?.events.map((event) => event.type)).toContain('approval-requested');
     expect(completed?.events.map((event) => event.type)).toContain('approval-resolved');
+  });
+
+  it('redacts runtime approval secrets from platform sync event payloads', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: approval-secret-redaction-proof
+nodes:
+  gate:
+    type: approval
+    prompt: Approve
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+    });
+    await waitForRunState(
+      daemon,
+      run.id,
+      (candidate) => candidate.nodes.gate?.status === 'blocked',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'gate', {
+      approved: true,
+      message: 'Approved',
+      runtimeSecretEnv: {
+        VIEWPORT_CREDENTIAL_REF_CHECKOUT: 'ghs_should_not_sync',
+      },
+      runtimeSecretFiles: {
+        VIEWPORT_CREDENTIAL_REF_CHECKOUT: '/tmp/run-secret-file',
+      },
+    });
+    await waitForCompletedRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const payload = workflowRunToSyncPayload(completed!);
+
+    expect(JSON.stringify(payload.events)).not.toContain('ghs_should_not_sync');
+    expect(payload.events).toContainEqual(
+      expect.objectContaining({
+        type: 'approval-resolved',
+        payload: expect.objectContaining({
+          runtimeSecretEnv: '[redacted]',
+          runtimeSecretFiles: '[redacted]',
+        }),
+      }),
+    );
   });
 
   it('runs the approval onReject command on denial and exposes the rejection message', async () => {

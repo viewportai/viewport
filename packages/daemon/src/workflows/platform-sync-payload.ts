@@ -176,7 +176,7 @@ function formatEvent(
       ? redactedContextEventPayload(event)
       : redactedLog
         ? redactedLogPayload(event)
-        : (event.data ?? null),
+        : sanitizeSyncPayload(event.data),
     occurred_at: iso(event.timestamp),
   };
 }
