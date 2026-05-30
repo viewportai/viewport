@@ -423,6 +423,7 @@ export const WorkflowDefinitionSchema = z
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
     triggers: z.array(WorkflowTriggerDefinitionSchema).optional(),
     context: WorkflowContextDefinitionSchema.optional(),
+    credentials: z.record(z.string(), z.unknown()).optional(),
     requires: RequiresSchema.optional(),
     executor: ExecutorRequirementSchema.optional(),
     runner: WorkflowRunnerRequirementSchema.optional(),

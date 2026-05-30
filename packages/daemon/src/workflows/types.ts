@@ -464,6 +464,7 @@ export interface WorkflowDefinition {
   inputs?: Record<string, WorkflowInputDefinition>;
   triggers?: WorkflowTriggerDefinition[];
   context?: WorkflowContext | WorkflowContextDefaults;
+  credentials?: Record<string, unknown>;
   requires?: WorkflowRequires;
   executor?: WorkflowExecutorRequirement;
   runner?: WorkflowRunnerRequirementV2;
