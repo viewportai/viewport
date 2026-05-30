@@ -452,6 +452,108 @@ describe('workflow managed worker CLI', () => {
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
   });
 
+  it('syncs an actionable failure when assignment startup fails before a local run exists', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/missing-repo',
+      '--agents',
+      'codex',
+      '--models',
+      'gpt-5.5',
+      '--agent-command',
+      'cat',
+      '--once',
+      '--json',
+    ];
+
+    const platformRequests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      platformRequests.push({ url, method: init?.method, body });
+
+      if (url.endsWith('/heartbeat')) {
+        return jsonResponse({ data: { id: 'executor_1' } });
+      }
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_start_failure',
+            assignment_claim_token: 'vpclaim_start_failure',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: start-failure\nnodes: {}\n',
+            source_ref: 'viewport://workflow/start-failure',
+            directory_path: '/missing-repo',
+            input_snapshot: { issue: 'PAY-1842' },
+            data_capture_policy: { transcripts: 'none', logs: 'metadata', artifacts: 'metadata' },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_start_failure/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_start_failure',
+        );
+        expect(body).toMatchObject({
+          runtime_run_id: 'assignment-start-failed-run_platform_start_failure',
+          status: 'failed',
+          error_summary: expect.stringContaining('could start or resume the local workflow run'),
+          events: [
+            expect.objectContaining({
+              runtime_event_id: 'managed-assignment-start-failure',
+              type: 'run-failed',
+              payload: expect.objectContaining({
+                platform_run_id: 'run_platform_start_failure',
+                recovery_policy: 'sync_failed_assignment_start',
+              }),
+            }),
+          ],
+        });
+        return jsonResponse({ data: { id: 'run_platform_start_failure', status: 'failed' } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') {
+        return jsonResponse({ agents: [{ id: 'codex', available: true }] });
+      }
+      if (urlPath === '/api/directories' && (!init || init.method === 'GET')) {
+        return jsonResponse([]);
+      }
+      if (urlPath === '/api/directories' && init?.method === 'POST') {
+        return jsonResponse({ message: 'Directory is outside the allowed worker root.' }, 422);
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(
+      platformRequests.some((request) =>
+        request.url.endsWith('/workflow-runs/run_platform_start_failure/sync'),
+      ),
+    ).toBe(true);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+  });
+
   it('signs runtime platform requests when a worker identity profile is present', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-signature-'));
     const keyPair = generateKeyPairSync('ed25519', {
