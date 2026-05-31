@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ManagedWorkerOptions } from './workflow-managed-worker-types.js';
-
-type WorkerLockOptions = Pick<
-  ManagedWorkerOptions,
-  'server' | 'workspaceId' | 'executorId' | 'runnerProfile' | 'accessMode'
->;
+export interface WorkerLockOptions {
+  server: string;
+  workspaceId: string;
+  executorId: string;
+  runnerProfile?: string;
+  accessMode: string;
+}
 
 interface WorkerLockRecord {
   schema: 'viewport.worker_process_lock/v1';

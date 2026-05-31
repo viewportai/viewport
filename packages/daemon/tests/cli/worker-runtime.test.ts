@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { acquireWorkerProcessLock } from '../../src/cli/worker-process-lock.js';
 
 describe('standalone worker runtime', () => {
   const originalArgv = process.argv.slice();
@@ -395,6 +396,40 @@ describe('standalone worker runtime', () => {
       '/api/runtime/workers/heartbeat',
     ]);
     expect(requests.at(-1)?.body).toMatchObject({ status: 'offline', health_status: 'offline' });
+  });
+
+  it('prevents duplicate standalone persistent workers for the same paired profile', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
+    await writeHostedWorkerProfile(serverUrl(server));
+    const lock = acquireWorkerProcessLock({
+      server: serverUrl(server),
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      accessMode: 'polling',
+    });
+    try {
+      process.argv = [
+        'node',
+        'vpd',
+        'worker',
+        'start',
+        '--mode',
+        'persistent',
+        '--transport',
+        'polling',
+        '--json',
+      ];
+      vi.resetModules();
+      const { worker } = await import('../../src/cli/worker-command.js');
+
+      await expect(worker()).rejects.toThrow(
+        'Workflow worker already running for this server/workspace/executor',
+      );
+      expect(requests).toEqual([]);
+    } finally {
+      lock.release();
+    }
   });
 
   it('fails closed for hosted managed executor claims without executable workflow material', async () => {

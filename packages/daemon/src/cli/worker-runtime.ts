@@ -17,6 +17,7 @@ import type {
   WorkflowRunStatus,
 } from '../workflows/types.js';
 import { transportFetch } from './network.js';
+import { acquireWorkerProcessLock } from './worker-process-lock.js';
 import type { WorkerLifecycle, WorkerTransport } from './worker-profile.js';
 
 export interface StandaloneWorkerOptions {
@@ -114,88 +115,107 @@ export async function runStandaloneWorker(
   if (transport === 'relay') {
     throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
   }
+  const processLock =
+    options.lifecycle === 'persistent' && !options.once
+      ? acquireWorkerProcessLock({
+          server: profile.serverUrl,
+          workspaceId: profile.workspaceId ?? profile.publicKeyFingerprint,
+          executorId: profile.managedExecutorId ?? profile.publicKeyFingerprint,
+          runnerProfile: runnerPoolFromCapabilities(profile.capabilities),
+          accessMode: transport,
+        })
+      : null;
 
-  let lastHeartbeatAt = Date.now();
-  await heartbeat(profile, {
-    status: 'online',
-    healthStatus: 'idle',
-    lifecycle: options.lifecycle,
-    transport,
-  });
-
-  if (options.leaseToken) {
-    const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
-    await syncLease(profile, lease, { status: 'completed' });
-    await cleanupLease(profile, lease);
-    return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
-  }
-
-  const result: StandaloneWorkerResult = {
-    claimed: 0,
-    completed: 0,
-    blocked: 0,
-    failed: 0,
-    cleanup: 0,
-    denied: 0,
-  };
   try {
-    while (!options.abortSignal?.aborted) {
-      const lease = await claimLease(profile, {
-        lifecycle: options.lifecycle,
-        transport,
-        leaseSeconds: options.leaseSeconds,
-      });
-      if (!lease) {
-        if (options.once || options.lifecycle !== 'persistent') break;
-        const now = Date.now();
-        if (now - lastHeartbeatAt > 30_000) {
-          await heartbeat(profile, {
-            status: 'online',
-            healthStatus: 'idle',
-            lifecycle: options.lifecycle,
-            transport,
-          });
-          lastHeartbeatAt = now;
-        }
-        await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
-        continue;
-      }
-      result.claimed += 1;
-      let execution = await executeClaim(profile, lease);
-      if (
-        isHostedManagedExecutorProfile(profile) &&
-        execution.status === 'blocked' &&
-        execution.run
-      ) {
-        await syncLease(profile, lease, execution);
-        execution = await resumeBlockedHostedExecution(profile, lease, execution);
-        if (execution.status !== 'blocked') {
-          await syncLease(profile, lease, execution);
-        }
-      } else {
-        await syncLease(profile, lease, execution);
-      }
-      if (execution.status === 'completed') {
-        result.completed += 1;
-      } else if (execution.status === 'blocked') {
-        result.blocked += 1;
-      } else {
-        result.failed += 1;
-      }
-      await cleanupLease(profile, lease);
-      result.cleanup += 1;
-      if (options.once) break;
-    }
-  } finally {
+    let lastHeartbeatAt = Date.now();
     await heartbeat(profile, {
-      status: 'offline',
-      healthStatus: 'offline',
+      status: 'online',
+      healthStatus: 'idle',
       lifecycle: options.lifecycle,
       transport,
     });
-  }
 
-  return result;
+    if (options.leaseToken) {
+      const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
+      await syncLease(profile, lease, { status: 'completed' });
+      await cleanupLease(profile, lease);
+      return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
+    }
+
+    const result: StandaloneWorkerResult = {
+      claimed: 0,
+      completed: 0,
+      blocked: 0,
+      failed: 0,
+      cleanup: 0,
+      denied: 0,
+    };
+    try {
+      while (!options.abortSignal?.aborted) {
+        const lease = await claimLease(profile, {
+          lifecycle: options.lifecycle,
+          transport,
+          leaseSeconds: options.leaseSeconds,
+        });
+        if (!lease) {
+          if (options.once || options.lifecycle !== 'persistent') break;
+          const now = Date.now();
+          if (now - lastHeartbeatAt > 30_000) {
+            await heartbeat(profile, {
+              status: 'online',
+              healthStatus: 'idle',
+              lifecycle: options.lifecycle,
+              transport,
+            });
+            lastHeartbeatAt = now;
+          }
+          await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
+          continue;
+        }
+        result.claimed += 1;
+        let execution = await executeClaim(profile, lease);
+        if (
+          isHostedManagedExecutorProfile(profile) &&
+          execution.status === 'blocked' &&
+          execution.run
+        ) {
+          await syncLease(profile, lease, execution);
+          execution = await resumeBlockedHostedExecution(profile, lease, execution);
+          if (execution.status !== 'blocked') {
+            await syncLease(profile, lease, execution);
+          }
+        } else {
+          await syncLease(profile, lease, execution);
+        }
+        if (execution.status === 'completed') {
+          result.completed += 1;
+        } else if (execution.status === 'blocked') {
+          result.blocked += 1;
+        } else {
+          result.failed += 1;
+        }
+        await cleanupLease(profile, lease);
+        result.cleanup += 1;
+        if (options.once) break;
+      }
+    } finally {
+      await heartbeat(profile, {
+        status: 'offline',
+        healthStatus: 'offline',
+        lifecycle: options.lifecycle,
+        transport,
+      });
+    }
+
+    return result;
+  } finally {
+    processLock?.release();
+  }
+}
+
+function runnerPoolFromCapabilities(capabilities: Record<string, unknown>): string | undefined {
+  const value = capabilities['runner_pool'] ?? capabilities['runnerPool'];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 async function validateWorkerWorkspaceRoot(workspaceRoot: string): Promise<void> {
