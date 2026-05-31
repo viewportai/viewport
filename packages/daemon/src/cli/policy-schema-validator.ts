@@ -56,6 +56,8 @@ const PolicyGateSchema = z
       .optional(),
     max_cost_usd: z.number().optional(),
     max_tokens: z.number().optional(),
+    approval_required_above_usd: z.number().optional(),
+    approval_required_above_tokens: z.number().int().positive().optional(),
     on_exceed: z.enum(['cancel', 'escalate']).optional(),
   })
   .strict();
