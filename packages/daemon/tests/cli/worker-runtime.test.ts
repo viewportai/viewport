@@ -508,9 +508,7 @@ describe('standalone worker runtime', () => {
       vi.resetModules();
       const { worker } = await import('../../src/cli/worker-command.js');
 
-      await expect(worker()).rejects.toThrow(
-        'Workflow worker already running for this server/workspace/executor',
-      );
+      await expect(worker()).rejects.toThrow('vpd worker run-once --lease <lease-token>');
       expect(requests).toEqual([]);
     } finally {
       lock.release();
@@ -1128,8 +1126,7 @@ nodes:
       .filter(
         (request) =>
           request.method === 'POST' &&
-          request.url ===
-            '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+          request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       )
       .map((request) => request.body);
     expect(claimBodies).toHaveLength(2);

@@ -58,7 +58,7 @@ export function acquireWorkerProcessLock(options: WorkerLockOptions): WorkerProc
     const existing = readWorkerLock(filePath);
     if (existing && processIsAlive(existing.pid)) {
       throw new Error(
-        `Workflow worker already running for this server/workspace/executor (pid ${existing.pid}). Stop it first, or run with --once for a one-shot worker.`,
+        `Workflow worker already running for this server/workspace/executor (pid ${existing.pid}). Stop it first, or use \`vpd worker run-once --lease <lease-token>\` for an ephemeral proof worker.`,
       );
     }
 
@@ -163,9 +163,7 @@ function workerProcessSignature(options: WorkerLockOptions): string {
 
 function viewportHome(): string {
   return path.resolve(
-    process.env['VIEWPORT_HOME'] ??
-      process.env['VPD_HOME'] ??
-      path.join(os.homedir(), '.viewport'),
+    process.env['VIEWPORT_HOME'] ?? process.env['VPD_HOME'] ?? path.join(os.homedir(), '.viewport'),
   );
 }
 
