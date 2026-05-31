@@ -46,6 +46,7 @@ describe('worker command', () => {
 
     const output = logSpy.mock.calls.map((call) => String(call[0] ?? '')).join('\n');
     expect(output).toContain('vpd pair --worker --transport=polling --workdir <path>');
+    expect(output).toContain('stop [--json]');
     expect(output).not.toContain('--agents');
     expect(output).not.toContain('--models');
     expect(output).not.toContain('--capabilities');
@@ -88,5 +89,46 @@ describe('worker command', () => {
     expect(payload.publicKeyFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.capabilities.agents).toEqual({});
     expect(payload.missing).toEqual([]);
+  });
+
+  it('removes stale persistent worker locks for the paired profile', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    const { acquireWorkerProcessLock } =
+      await import('../../src/cli/worker-process-lock.js');
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+    await storeWorkerProfile(null, profile);
+    const lock = acquireWorkerProcessLock({
+      server: profile.serverUrl,
+      workspaceId: profile.publicKeyFingerprint,
+      executorId: profile.publicKeyFingerprint,
+      accessMode: profile.transport,
+    });
+    const record = JSON.parse(await fs.readFile(lock.filePath, 'utf8')) as Record<string, unknown>;
+    record['pid'] = 999_999_999;
+    await fs.writeFile(lock.filePath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+    process.argv = ['node', 'vpd', 'worker', 'stop', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      ok: boolean;
+      stopped: boolean;
+      stale: boolean;
+      pid: number;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.stopped).toBe(false);
+    expect(payload.stale).toBe(true);
+    expect(payload.pid).toBe(999_999_999);
+    await expect(fs.stat(lock.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

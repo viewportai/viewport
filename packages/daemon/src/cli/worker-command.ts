@@ -1,6 +1,7 @@
 import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
+import { stopWorkerProcessLock, type WorkerLockOptions } from './worker-process-lock.js';
 import { runStandaloneWorker } from './worker-runtime.js';
 import {
   defaultWorkerWorkspaceRoot,
@@ -27,6 +28,9 @@ export async function worker(): Promise<void> {
     case 'reset':
       await workerReset();
       return;
+    case 'stop':
+      await workerStop();
+      return;
     case 'start':
       await workerStart();
       return;
@@ -49,6 +53,7 @@ function workerHelpText(): string {
     'Commands:',
     '  start --mode persistent --transport polling|relay|inbound [--lease <seconds>]',
     '  run-once --lease <lease-token> --transport polling|relay|inbound',
+    '  stop [--json]',
     '  doctor [--json]',
     '  reset [--json]',
     '  help',
@@ -125,6 +130,34 @@ async function workerReset(): Promise<void> {
   console.log('Run `vpd pair --worker --transport=polling --workdir <path>` to pair this worker again.');
 }
 
+async function workerStop(): Promise<void> {
+  const asJson = isJsonMode();
+  const options = await currentWorkerLockOptions();
+  if (!options) {
+    if (asJson) {
+      printJson({ command: 'worker stop', ok: false, stopped: false, reason: 'worker_not_configured' });
+      return;
+    }
+    console.log('No worker profile is configured. Run `vpd pair --worker --transport=polling --workdir <path>` first.');
+    return;
+  }
+
+  const result = stopWorkerProcessLock(options);
+  if (asJson) {
+    printJson({ command: 'worker stop', ok: true, ...result });
+    return;
+  }
+  if (result.stopped) {
+    console.log(`Sent ${result.signal ?? 'SIGTERM'} to worker pid ${result.pid}.`);
+    return;
+  }
+  if (result.stale) {
+    console.log(`Removed stale worker lock for pid ${result.pid}.`);
+    return;
+  }
+  console.log('No persistent worker lock is active for this profile.');
+}
+
 async function workerStart(): Promise<void> {
   const asJson = isJsonMode();
   const lifecycle = normalizeWorkerLifecycle(getFlag('mode') ?? getFlag('lifecycle'));
@@ -176,4 +209,26 @@ async function workerRunOnce(): Promise<void> {
     return;
   }
   console.log(`Worker run-once complete. Cleanup receipts: ${result.cleanup}.`);
+}
+
+async function currentWorkerLockOptions(): Promise<WorkerLockOptions | null> {
+  const manager = new ConfigManager();
+  await manager.load();
+  const workerConfig = manager.getDaemonConfig()?.worker;
+  if (!workerConfig?.serverUrl || !workerConfig.publicKeyFingerprint) {
+    return null;
+  }
+
+  return {
+    server: workerConfig.serverUrl,
+    workspaceId: workerConfig.workspaceId ?? workerConfig.publicKeyFingerprint,
+    executorId: workerConfig.managedExecutorId ?? workerConfig.publicKeyFingerprint,
+    runnerProfile: runnerPoolFromCapabilities(workerConfig.capabilities ?? {}),
+    accessMode: workerConfig.transport ?? 'polling',
+  };
+}
+
+function runnerPoolFromCapabilities(capabilities: Record<string, unknown>): string | undefined {
+  const value = capabilities['runner_pool'] ?? capabilities['runnerPool'];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }

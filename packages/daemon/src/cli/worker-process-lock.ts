@@ -22,6 +22,19 @@ export interface WorkerProcessLock {
   release: () => void;
 }
 
+export interface WorkerProcessLockStatus {
+  filePath: string;
+  active: boolean;
+  pid?: number;
+  startedAt?: string;
+  stale?: boolean;
+}
+
+export interface StopWorkerProcessLockResult extends WorkerProcessLockStatus {
+  stopped: boolean;
+  signal?: NodeJS.Signals;
+}
+
 export function acquireWorkerProcessLock(options: WorkerLockOptions): WorkerProcessLock {
   const filePath = workerProcessLockPath(options);
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
@@ -64,6 +77,41 @@ export function acquireWorkerProcessLock(options: WorkerLockOptions): WorkerProc
       }
     },
   };
+}
+
+export function inspectWorkerProcessLock(options: WorkerLockOptions): WorkerProcessLockStatus {
+  const filePath = workerProcessLockPath(options);
+  const record = readWorkerLock(filePath);
+  if (!record) {
+    return { filePath, active: false };
+  }
+  if (record.signature !== workerProcessSignature(options)) {
+    return { filePath, active: false };
+  }
+  const active = processIsAlive(record.pid);
+  return {
+    filePath,
+    active,
+    pid: record.pid,
+    startedAt: record.startedAt,
+    stale: !active,
+  };
+}
+
+export function stopWorkerProcessLock(
+  options: WorkerLockOptions,
+  signal: NodeJS.Signals = 'SIGTERM',
+): StopWorkerProcessLockResult {
+  const status = inspectWorkerProcessLock(options);
+  if (!status.pid) {
+    return { ...status, stopped: false };
+  }
+  if (!status.active) {
+    fs.rmSync(status.filePath, { force: true });
+    return { ...status, stopped: false, stale: true };
+  }
+  process.kill(status.pid, signal);
+  return { ...status, stopped: true, signal };
 }
 
 export function workerProcessLockPath(options: WorkerLockOptions): string {
