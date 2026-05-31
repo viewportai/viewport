@@ -45,7 +45,7 @@ describe('worker command', () => {
     await worker();
 
     const output = logSpy.mock.calls.map((call) => String(call[0] ?? '')).join('\n');
-    expect(output).toContain('vpd pair --worker --transport=polling');
+    expect(output).toContain('vpd pair --worker --transport=polling --workdir <path>');
     expect(output).not.toContain('--agents');
     expect(output).not.toContain('--models');
     expect(output).not.toContain('--capabilities');

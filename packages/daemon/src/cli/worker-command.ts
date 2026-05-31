@@ -54,8 +54,8 @@ function workerHelpText(): string {
     '  help',
     '',
     'Pairing:',
-    '  vpd pair --worker --transport=polling',
-    '  vpd pair --worker --server <url> --transport=polling',
+    '  vpd pair --worker --transport=polling --workdir <path>',
+    '  vpd pair --worker --server <url> --transport=polling --workdir <path>',
     '',
     'Defaults:',
     `  workspace root: ${defaultWorkerWorkspaceRoot()}`,
@@ -104,7 +104,7 @@ async function workerDoctor(): Promise<void> {
   console.log(`Agents:    ${agentCount > 0 ? `${agentCount} detected` : 'not recorded'}`);
   if (missing.length > 0) {
     console.log(`Missing:   ${missing.join(', ')}`);
-    console.log('Fix:       run `vpd pair --worker --transport=polling`.');
+    console.log('Fix:       run `vpd pair --worker --transport=polling --workdir <path>`.');
     return;
   }
   console.log('Status:    configured');
@@ -122,7 +122,7 @@ async function workerReset(): Promise<void> {
     return;
   }
   console.log('Worker pairing reset.');
-  console.log('Run `vpd pair --worker --transport=polling` to pair this worker again.');
+  console.log('Run `vpd pair --worker --transport=polling --workdir <path>` to pair this worker again.');
 }
 
 async function workerStart(): Promise<void> {
