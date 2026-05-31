@@ -434,6 +434,86 @@ describe('worker command', () => {
     );
   });
 
+  it('refuses worker reset while a persistent worker lock is active unless forced', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    const { acquireWorkerProcessLock } =
+      await import('../../src/cli/worker-process-lock.js');
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+    await storeWorkerProfile(null, profile);
+    const lock = acquireWorkerProcessLock({
+      server: profile.serverUrl,
+      workspaceId: profile.publicKeyFingerprint,
+      executorId: profile.publicKeyFingerprint,
+      accessMode: profile.transport,
+    });
+
+    try {
+      process.argv = ['node', 'vpd', 'worker', 'reset', '--json'];
+      vi.resetModules();
+      const { worker } = await import('../../src/cli/worker-command.js');
+      await worker();
+
+      const denied = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+        ok: boolean;
+        reset: boolean;
+        reason: string;
+        processLock: {
+          active: boolean;
+          pid: number | null;
+        };
+      };
+      expect(denied.ok).toBe(false);
+      expect(denied.reset).toBe(false);
+      expect(denied.reason).toBe('active_worker_lock');
+      expect(denied.processLock).toMatchObject({
+        active: true,
+        pid: process.pid,
+      });
+
+      const { ConfigManager } = await import('../../src/core/config.js');
+      const manager = new ConfigManager();
+      await manager.load();
+      expect(manager.getDaemonConfig()?.worker?.publicKeyFingerprint).toBe(
+        profile.publicKeyFingerprint,
+      );
+
+      process.argv = ['node', 'vpd', 'worker', 'reset', '--json', '--force'];
+      vi.resetModules();
+      const { worker: forceResetWorker } = await import('../../src/cli/worker-command.js');
+      await forceResetWorker();
+
+      const reset = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+        ok: boolean;
+        reset: boolean;
+        forced: boolean;
+        hadWorkerProfile: boolean;
+        removedIdentity: boolean;
+        processLock: {
+          active: boolean;
+          pid: number | null;
+        };
+      };
+      expect(reset.ok).toBe(true);
+      expect(reset.reset).toBe(true);
+      expect(reset.forced).toBe(true);
+      expect(reset.hadWorkerProfile).toBe(true);
+      expect(reset.removedIdentity).toBe(true);
+      expect(reset.processLock).toMatchObject({
+        active: true,
+        pid: process.pid,
+      });
+    } finally {
+      lock.release();
+    }
+  });
+
   it('removes stale persistent worker locks for the paired profile', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
     const { resolvePairingServerTransport } =

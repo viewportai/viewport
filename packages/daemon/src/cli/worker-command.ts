@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
-import { getArgs, getFlag } from './args.js';
+import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
   inspectWorkerProcessLock,
@@ -65,7 +65,7 @@ function workerHelpText(): string {
     '  run-once --lease <lease-token> --transport polling|relay|inbound',
     '  stop [--json]',
     '  doctor [--json] [--registration-profile <path>]',
-    '  reset [--json]',
+    '  reset [--json] [--force]',
     '  help',
     '',
     'Pairing:',
@@ -419,9 +419,37 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 async function workerReset(): Promise<void> {
   const asJson = isJsonMode();
+  const forced = hasFlag('force');
+  const lockStatus = lockStatusForOptions(await currentWorkerLockOptions());
+  if (lockStatus?.active && !forced) {
+    if (asJson) {
+      printJson({
+        command: 'worker reset',
+        ok: false,
+        reset: false,
+        reason: 'active_worker_lock',
+        processLock: lockStatus,
+        hint: 'Run `vpd worker stop` first, or rerun with `--force` if the worker is already stopped.',
+      });
+      return;
+    }
+    console.log(`A persistent worker appears active for this profile (pid ${lockStatus.pid}).`);
+    console.log(
+      'Run `vpd worker stop` first, or rerun with `--force` if the worker is already stopped.',
+    );
+    return;
+  }
+
   const result = await resetWorkerProfile();
   if (asJson) {
-    printJson({ command: 'worker reset', ok: true, ...result });
+    printJson({
+      command: 'worker reset',
+      ok: true,
+      reset: result.hadWorkerProfile,
+      forced,
+      processLock: lockStatus,
+      ...result,
+    });
     return;
   }
   if (!result.hadWorkerProfile) {
