@@ -86,6 +86,21 @@ export const WorkflowPolicyDefinitionSchema = z
       .object({
         requireApproval: z.boolean().optional(),
         allowedAdapters: z.array(identifierSchema).optional(),
+        allowed: z
+          .array(
+            z.union([
+              z.string().trim().min(1),
+              z
+                .object({
+                  provider: z.string().trim().min(1).optional(),
+                  adapter: z.string().trim().min(1).optional(),
+                  action: z.string().trim().min(1).optional(),
+                  actions: z.array(z.string().trim().min(1)).optional(),
+                })
+                .strict(),
+            ]),
+          )
+          .optional(),
       })
       .strict()
       .optional(),

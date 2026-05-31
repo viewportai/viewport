@@ -64,6 +64,15 @@ export interface WorkflowPolicyDefinition {
   sideEffects?: {
     requireApproval?: boolean;
     allowedAdapters?: string[];
+    allowed?: Array<
+      | string
+      | {
+          provider?: string;
+          adapter?: string;
+          action?: string;
+          actions?: string[];
+        }
+    >;
   };
   shell?: {
     policy?: 'constrained' | 'disabled';

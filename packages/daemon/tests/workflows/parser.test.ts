@@ -484,6 +484,11 @@ policies:
     allowedAdapters:
       - github
       - jira
+    allowed:
+      - github.pull_request.create
+      - provider: slack
+        actions:
+          - chat.postMessage
   shell:
     policy: constrained
     allowLegacyCommand: false
@@ -567,6 +572,10 @@ nodes:
     expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
     expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
     expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.policies?.sideEffects?.allowed).toEqual([
+      'github.pull_request.create',
+      { provider: 'slack', actions: ['chat.postMessage'] },
+    ]);
     expect(parsed.definition.policies?.shell?.policy).toBe('constrained');
     expect(parsed.definition.policies?.shell?.allowLegacyCommand).toBe(false);
     expect(parsed.definition.policies?.shell?.allowed).toEqual(['npm test', 'git status *']);
