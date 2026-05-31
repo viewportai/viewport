@@ -909,6 +909,129 @@ nodes:
     });
   });
 
+  it('reclaims a blocked hosted run after restart and resumes from local runtime state', async () => {
+    const projectDir = path.join(homeDir, 'hosted-restart-approval-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    const serverOptions: RuntimeServerOptions = {
+      reclaimSameHostedAssignment: true,
+      runtimeCommandsAfterBlockedSync: false,
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-restart-approval-proof
+nodes:
+  gate:
+    type: gate
+    gate:
+      type: human_review
+      prompt: Approve after worker restart.
+  proof:
+    type: shell
+    needs: [gate]
+    argv:
+      - printf
+      - restart-resumed
+`,
+        source_ref: 'viewport://test/hosted-worker-restart-approval-proof',
+        directory_path: projectDir,
+      },
+    };
+    server = await startRuntimeServer(requests, serverOptions);
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const first = await import('../../src/cli/worker-command.js');
+
+    await first.worker();
+
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? ''))).toMatchObject({
+      claimed: 1,
+      completed: 0,
+      blocked: 1,
+      failed: 0,
+      cleanup: 1,
+    });
+    const firstBlockedSync = requests.find(
+      (request) =>
+        request.method === 'PATCH' &&
+        request.url ===
+          '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync' &&
+        request.body['status'] === 'blocked',
+    );
+    expect(firstBlockedSync?.body).toMatchObject({
+      status: 'blocked',
+      runtime_run_id: expect.any(String),
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_key: 'gate', status: 'blocked' }),
+      ]),
+    });
+    expect(String(firstBlockedSync?.body['runtime_run_id'] ?? '')).not.toHaveLength(0);
+
+    serverOptions.runtimeCommandsAfterBlockedSync = true;
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const second = await import('../../src/cli/worker-command.js');
+
+    await second.worker();
+
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? ''))).toMatchObject({
+      claimed: 1,
+      completed: 1,
+      blocked: 0,
+      failed: 0,
+      cleanup: 1,
+    });
+    const claimBodies = requests
+      .filter(
+        (request) =>
+          request.method === 'POST' &&
+          request.url ===
+            '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      )
+      .map((request) => request.body);
+    expect(claimBodies).toHaveLength(2);
+    const completedSync = requests.find(
+      (request) =>
+        request.method === 'PATCH' &&
+        request.url ===
+          '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync' &&
+        request.body['status'] === 'completed',
+    );
+    expect(completedSync?.body).toMatchObject({
+      status: 'completed',
+      runtime_run_id: firstBlockedSync?.body['runtime_run_id'],
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          gate: expect.objectContaining({ status: 'completed', output: 'Approved in test' }),
+          proof: expect.objectContaining({ status: 'completed', output: 'restart-resumed' }),
+        }),
+      }),
+    });
+  });
+
   it('keeps polling hosted approval commands across sequential blocked gates', async () => {
     const projectDir = path.join(homeDir, 'hosted-multigate-workspace');
     await fs.mkdir(projectDir, { recursive: true });
@@ -1223,7 +1346,7 @@ async function startRuntimeServer(
         response.end();
         return;
       }
-      if (claimCount > 1) {
+      if (claimCount > 1 && !options.reclaimSameHostedAssignment) {
         response.statusCode = 204;
         response.end();
         return;
@@ -1233,6 +1356,9 @@ async function startRuntimeServer(
           data: {
             id: 'run_1',
             assignment_claim_token: 'vpclaim_run_1',
+            ...(options.reclaimSameHostedAssignment && blockedRuntimeRunId
+              ? { runtime_run_id: blockedRuntimeRunId }
+              : {}),
             ...(options.hostedAssignment ?? {}),
             run_lease: {
               lease_id: 'workflow_run:run_1',
@@ -1356,6 +1482,7 @@ interface RuntimeServerOptions {
   runtimeCommandsByBlockedNode?: Record<string, { message: string }>;
   rateLimitOnceForBlockedNode?: string;
   transientHostedSyncFailures?: number;
+  reclaimSameHostedAssignment?: boolean;
 }
 
 interface RuntimeRequest {
