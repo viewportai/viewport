@@ -226,49 +226,112 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             secret: runtimeSecretMaterial(context, envNameForCredentialRef(credentialRef)),
           }
         : undefined;
-    if (renderedNode.prePublishReview && state?.approval?.approved !== true) {
+    if (renderedNode.prePublishReview) {
       const decision = await evaluateGitPublishPrePublishReview(renderedNode, input);
-      if (state) {
-        state.metadata = {
-          ...(state.metadata ?? {}),
-          pre_publish_review: {
-            schema: 'viewport.pre_publish_review/v1',
-            required: decision.required,
-            facts: decision.facts,
-            matched_rules: decision.matchedRules,
-            policy: renderedNode.prePublishReview,
-          },
-        };
-      }
-      addEvent(
-        run,
-        decision.required ? 'pre-publish-review-required' : 'pre-publish-review-skipped',
-        decision.required
-          ? `Pre-publish review required for ${renderedNode.repository}`
-          : `Pre-publish review skipped for ${renderedNode.repository}`,
-        {
-          facts: decision.facts,
-          matchedRules: decision.matchedRules,
-        },
-        nodeId,
-      );
-      if (decision.required) {
-        const reviewerTags = [
-          ...new Set(decision.matchedRules.flatMap((rule) => rule.reviewerTags)),
-        ];
-        await helpers.blockForApproval(
-          context,
+      const previousReview = prePublishReviewMetadata(state?.metadata?.['pre_publish_review']);
+      const previousDigest = prePublishReviewDiffDigest(previousReview);
+      const approved = state?.approval?.approved === true;
+      const changedAfterApproval =
+        approved && previousDigest !== null && previousDigest !== decision.facts.diffDigest;
+      const missingApprovedDigest = approved && previousDigest === null && decision.required;
+
+      if (approved && !changedAfterApproval && !missingApprovedDigest) {
+        if (state) {
+          state.metadata = {
+            ...(state.metadata ?? {}),
+            pre_publish_review: {
+              ...(previousReview ?? {}),
+              schema: 'viewport.pre_publish_review/v1',
+              required: previousReview?.['required'] ?? decision.required,
+              facts: previousReview?.['facts'] ?? decision.facts,
+              matched_rules: previousReview?.['matched_rules'] ?? decision.matchedRules,
+              policy: previousReview?.['policy'] ?? renderedNode.prePublishReview,
+              resume_verification: {
+                verified_at: new Date().toISOString(),
+                facts: decision.facts,
+                diff_digest: decision.facts.diffDigest,
+              },
+            },
+          };
+        }
+      } else {
+        const invalidatedApproval =
+          changedAfterApproval || missingApprovedDigest
+            ? {
+                previous_diff_digest: previousDigest,
+                current_diff_digest: decision.facts.diffDigest,
+                previous_approval_resolved_at: state?.approval?.resolvedAt ?? null,
+                reason: changedAfterApproval
+                  ? 'diff_changed_after_approval'
+                  : 'approved_diff_digest_missing',
+              }
+            : null;
+
+        if (state) {
+          if (invalidatedApproval) {
+            state.approval = undefined;
+          }
+          state.metadata = {
+            ...(state.metadata ?? {}),
+            pre_publish_review: {
+              schema: 'viewport.pre_publish_review/v1',
+              required: decision.required || invalidatedApproval !== null,
+              facts: decision.facts,
+              matched_rules: decision.matchedRules,
+              policy: renderedNode.prePublishReview,
+              ...(invalidatedApproval ? { invalidated_approval: invalidatedApproval } : {}),
+            },
+          };
+        }
+        if (invalidatedApproval) {
+          addEvent(
+            run,
+            'pre-publish-review-invalidated',
+            `Pre-publish approval invalidated because the diff changed for ${renderedNode.repository}`,
+            {
+              facts: decision.facts,
+              matchedRules: decision.matchedRules,
+              invalidatedApproval,
+            },
+            nodeId,
+          );
+        }
+        addEvent(
           run,
-          nodeId,
-          prePublishReviewPrompt(renderedNode.repository, input.branch, decision),
+          decision.required || invalidatedApproval
+            ? 'pre-publish-review-required'
+            : 'pre-publish-review-skipped',
+          decision.required || invalidatedApproval
+            ? `Pre-publish review required for ${renderedNode.repository}`
+            : `Pre-publish review skipped for ${renderedNode.repository}`,
           {
-            gateIntent: 'approval',
-            reviewerTags,
-            timeout: decision.matchedRules.find((rule) => rule.timeout)?.timeout ?? undefined,
-            onTimeout: decision.matchedRules.find((rule) => rule.onTimeout)?.onTimeout ?? undefined,
+            facts: decision.facts,
+            matchedRules: decision.matchedRules,
+            ...(invalidatedApproval ? { invalidatedApproval } : {}),
           },
+          nodeId,
         );
-        return { result: 'blocked' };
+        if (decision.required || invalidatedApproval) {
+          const reviewerTags = [
+            ...new Set(decision.matchedRules.flatMap((rule) => rule.reviewerTags)),
+          ];
+          await helpers.blockForApproval(
+            context,
+            run,
+            nodeId,
+            invalidatedApproval
+              ? `${prePublishReviewPrompt(renderedNode.repository, input.branch, decision)}\n\nThe diff changed after the previous approval. Review the current diff before publishing.`
+              : prePublishReviewPrompt(renderedNode.repository, input.branch, decision),
+            {
+              gateIntent: 'approval',
+              reviewerTags,
+              timeout: decision.matchedRules.find((rule) => rule.timeout)?.timeout ?? undefined,
+              onTimeout:
+                decision.matchedRules.find((rule) => rule.onTimeout)?.onTimeout ?? undefined,
+            },
+          );
+          return { result: 'blocked' };
+        }
       }
     }
     const result = await executeGitPublishNode(renderedNode, input, credential);
@@ -816,6 +879,18 @@ function prePublishReviewPrompt(
     `Changed paths: ${paths || '(none)'}.`,
     `Diff size: ${decision.facts.diffLines} line(s).`,
   ].join('\n');
+}
+
+function prePublishReviewMetadata(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function prePublishReviewDiffDigest(review: Record<string, unknown> | null): string | null {
+  const facts = prePublishReviewMetadata(review?.['facts']);
+  const digest = facts?.['diffDigest'] ?? facts?.['diff_digest'];
+  return typeof digest === 'string' && digest.trim() !== '' ? digest : null;
 }
 
 async function backfillPromptDependencyOutputs(

@@ -275,6 +275,110 @@ nodes:
     );
   }, 60_000);
 
+  it('re-blocks dynamic pre-publish review when the diff changes after approval', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-dynamic-review-toctou-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "mkdir -p src/payments && printf 'export const payment = true;\\n' > src/payments/new-rule.ts"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: Publish proof update
+    prePublishReview:
+      rules:
+        - name: sensitive-path
+          when:
+            changed_paths_any: ["src/payments/**"]
+          require: human(tech-lead)
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+    const repoPath = blocked?.nodes.repo?.outputs?.path;
+
+    expect(blocked?.status).toBe('blocked');
+    expect(typeof repoPath).toBe('string');
+    await fs.mkdir(path.join(repoPath as string, 'docs'), { recursive: true });
+    await fs.writeFile(
+      path.join(repoPath as string, 'docs', 'late-mutation.md'),
+      'changed after approval request\n',
+      'utf8',
+    );
+
+    await daemon.workflowRunner.decideApproval(run.id, 'publish', {
+      approved: true,
+      actor: { id: 'user-1', name: 'Tech Lead' },
+      message: 'Approve the original diff',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const reblocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(reblocked?.status, reblocked?.error).toBe('blocked');
+    expect(reblocked?.nodes.publish?.status).toBe('blocked');
+    expect(reblocked?.nodes.publish?.metadata?.pre_publish_review).toMatchObject({
+      required: true,
+      invalidated_approval: expect.objectContaining({
+        reason: 'diff_changed_after_approval',
+      }),
+    });
+    expect(reblocked?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'pre-publish-review-invalidated',
+        nodeId: 'publish',
+      }),
+    );
+    await expect(
+      runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
+    ).rejects.toThrow();
+
+    await daemon.workflowRunner.decideApproval(run.id, 'publish', {
+      approved: true,
+      actor: { id: 'user-1', name: 'Tech Lead' },
+      message: 'Approve the changed diff',
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const pushedCommit = await runGit(
+      ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'],
+      root,
+    );
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.publish?.outputs?.commit).toBe(pushedCommit.trim());
+  }, 60_000);
+
   it('blocks dynamic pre-publish review from diff size even when paths are otherwise allowed', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -340,7 +444,10 @@ nodes:
 
   it('keeps restricted branch fences hard even when dynamic review would otherwise allow publish', async () => {
     const daemon = await setup(projectDir);
-    const initialMain = await runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'], root);
+    const initialMain = await runGit(
+      ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'],
+      root,
+    );
     const workflowPath = path.join(projectDir, 'workflow.yaml');
     await fs.writeFile(
       workflowPath,

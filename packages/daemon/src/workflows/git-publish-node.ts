@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import type { WorkflowGitPublishNode, WorkflowRunRecord } from './types.js';
 import {
   allowedRepositories,
@@ -42,6 +43,7 @@ export interface GitPublishReviewFacts {
   addedLines: number;
   removedLines: number;
   diffLines: number;
+  diffDigest: string;
 }
 
 export interface GitPublishReviewDecision {
@@ -57,7 +59,9 @@ export interface GitPublishReviewDecision {
   }>;
 }
 
-type PrePublishReviewRule = NonNullable<WorkflowGitPublishNode['prePublishReview']>['rules'][number];
+type PrePublishReviewRule = NonNullable<
+  WorkflowGitPublishNode['prePublishReview']
+>['rules'][number];
 
 export async function gitPublishAuthorityDenial(
   run: WorkflowRunRecord,
@@ -217,10 +221,7 @@ export async function evaluateGitPublishPrePublishReview(
 
       return {
         name: rule.name,
-        reason: [
-          pathMatches ? 'changed_paths_any' : null,
-          diffMatches ? 'diff_lines_gt' : null,
-        ]
+        reason: [pathMatches ? 'changed_paths_any' : null, diffMatches ? 'diff_lines_gt' : null]
           .filter(Boolean)
           .join(','),
         require: rule.require ?? null,
@@ -266,7 +267,13 @@ async function gitPublishReviewFacts(cwd: string): Promise<GitPublishReviewFacts
     addedLines,
     removedLines,
     diffLines: addedLines + removedLines,
+    diffDigest: await gitDiffDigest(cwd),
   };
+}
+
+async function gitDiffDigest(cwd: string): Promise<string> {
+  const diff = await git(['diff', '--cached', '--binary'], cwd);
+  return `sha256:${createHash('sha256').update(diff).digest('hex')}`;
 }
 
 function reviewerTagsForRule(rule: PrePublishReviewRule): string[] {
