@@ -325,9 +325,11 @@ nodes:
     await waitForTerminalRun(daemon, run.id);
     const blocked = await daemon.workflowRunner.getRun(run.id);
     const repoPath = blocked?.nodes.repo?.outputs?.path;
+    const originalDiffDigest = prePublishReviewDiffDigest(blocked?.nodes.publish?.metadata);
 
     expect(blocked?.status).toBe('blocked');
     expect(typeof repoPath).toBe('string');
+    expect(originalDiffDigest).toMatch(/^sha256:/);
     await fs.mkdir(path.join(repoPath as string, 'docs'), { recursive: true });
     await fs.writeFile(
       path.join(repoPath as string, 'docs', 'late-mutation.md'),
@@ -345,6 +347,7 @@ nodes:
           approved: true,
           decision: 'approve',
           message: 'Approve the original diff',
+          expected_action_digest: originalDiffDigest,
           actor: { id: 'user-1', name: 'Tech Lead', source: 'platform' },
         },
       ],
@@ -365,6 +368,9 @@ nodes:
         reason: 'diff_changed_after_approval',
       }),
     });
+    const changedDiffDigest = prePublishReviewDiffDigest(reblocked?.nodes.publish?.metadata);
+    expect(changedDiffDigest).toMatch(/^sha256:/);
+    expect(changedDiffDigest).not.toBe(originalDiffDigest);
     expect(reblocked?.events).toContainEqual(
       expect.objectContaining({
         type: 'pre-publish-review-invalidated',
@@ -398,6 +404,7 @@ nodes:
             approved: true,
             decision: 'approve',
             message: 'Approve the changed diff',
+            expected_action_digest: changedDiffDigest,
             actor: { id: 'user-1', name: 'Tech Lead', source: 'platform' },
           },
         ],
@@ -850,6 +857,18 @@ async function createBareRemote(remote: string, seed: string): Promise<void> {
     ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main'],
     path.dirname(remote),
   );
+}
+
+function prePublishReviewDiffDigest(metadata: Record<string, unknown> | undefined): string | null {
+  const review = metadata?.['pre_publish_review'];
+  if (!isRecord(review)) return null;
+  const facts = review['facts'];
+  if (!isRecord(facts)) return null;
+  return typeof facts['diffDigest'] === 'string' ? facts['diffDigest'] : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function runGit(args: string[], cwd: string): Promise<string> {

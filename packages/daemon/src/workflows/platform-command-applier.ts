@@ -34,6 +34,17 @@ export class WorkflowRuntimeCommandApplier {
     if (!node) return false;
     if (runtimeCommandConsumed(node.metadata, command.id)) return true;
     if (node.status !== 'blocked') return true;
+    const expectedActionDigest = command.expected_action_digest ?? undefined;
+    if (staleApprovalDigest(node, expectedActionDigest)) {
+      markRuntimeCommandConsumed(node, command.id, {
+        ignored: true,
+        reason: 'stale_expected_action_digest',
+        expected_action_digest: expectedActionDigest,
+        current_action_digest: approvalSubjectDigest(node),
+      });
+      await this.persistRun(run);
+      return true;
+    }
 
     markRuntimeCommandConsumed(node, command.id);
     await this.persistRun(run);
@@ -157,6 +168,7 @@ function runtimeCommandConsumed(metadata: Record<string, unknown> | undefined, i
 function markRuntimeCommandConsumed(
   node: WorkflowRunRecord['nodes'][string] | undefined,
   id: string,
+  extra: Record<string, unknown> = {},
 ): void {
   if (!node) return;
   const consumedAt = new Date().toISOString();
@@ -167,9 +179,33 @@ function markRuntimeCommandConsumed(
   const previous = Array.isArray(runtimeCommands['consumed'])
     ? runtimeCommands['consumed'].filter(isRecord)
     : [];
-  runtimeCommands['consumed'] = [...previous, { id, consumed_at: consumedAt }].slice(-50);
+  runtimeCommands['consumed'] = [...previous, { id, consumed_at: consumedAt, ...extra }].slice(
+    -50,
+  );
   metadata['runtime_commands'] = runtimeCommands;
   node.metadata = metadata;
+}
+
+function staleApprovalDigest(
+  node: WorkflowRunRecord['nodes'][string],
+  expectedDigest: string | undefined,
+): boolean {
+  if (!expectedDigest) return false;
+  const currentDigest = approvalSubjectDigest(node);
+  return typeof currentDigest === 'string' && currentDigest !== expectedDigest;
+}
+
+function approvalSubjectDigest(node: WorkflowRunRecord['nodes'][string]): unknown {
+  if (node.type === 'action' && isRecord(node.metadata?.['action'])) {
+    return node.metadata['action']['digest'];
+  }
+
+  if (node.type === 'git_publish' && isRecord(node.metadata?.['pre_publish_review'])) {
+    const facts = node.metadata['pre_publish_review']['facts'];
+    if (isRecord(facts)) return facts['diffDigest'];
+  }
+
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

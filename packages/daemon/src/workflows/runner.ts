@@ -395,12 +395,9 @@ export class WorkflowRunner {
     if (run.status !== 'blocked' || state.status !== 'blocked') {
       throw new Error(`Workflow node is not awaiting approval: ${nodeId}`);
     }
-    const currentActionDigest =
-      state.type === 'action' && state.metadata && typeof state.metadata['action'] === 'object'
-        ? (state.metadata['action'] as { digest?: unknown }).digest
-        : undefined;
+    const currentActionDigest = approvalSubjectDigest(state);
     if (
-      state.type === 'action' &&
+      (state.type === 'action' || state.type === 'git_publish') &&
       decision.expectedActionDigest &&
       typeof currentActionDigest === 'string' &&
       currentActionDigest !== decision.expectedActionDigest
@@ -454,8 +451,8 @@ export class WorkflowRunner {
       );
       await this.revisePlanAfterChangesRequested(run, nodeId, state, decision);
       await this.saveAndEmit(run);
-      return run;
-    }
+  return run;
+  }
 
     if (!decision.approved) {
       // Run the approval node's onReject command if declared. Failures here
@@ -842,6 +839,19 @@ function runtimeSecretRoot(runId: string): string {
     'run-secrets',
     runId,
   );
+}
+
+function approvalSubjectDigest(state: WorkflowNodeRunState): unknown {
+  if (state.type === 'action' && isRecord(state.metadata?.['action'])) {
+    return state.metadata['action']['digest'];
+  }
+
+  if (state.type === 'git_publish' && isRecord(state.metadata?.['pre_publish_review'])) {
+    const facts = state.metadata['pre_publish_review']['facts'];
+    if (isRecord(facts)) return facts['diffDigest'];
+  }
+
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
