@@ -1304,6 +1304,102 @@ nodes:
     }
   });
 
+  it('retries GitHub pull_request.create when a just-pushed branch is not visible yet', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            message: 'Not Found',
+            documentation_url: 'https://docs.github.com/rest/pulls/pulls#create-a-pull-request',
+          }),
+          { status: 404 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 44,
+            html_url: 'https://github.com/acme/docs/pull/44',
+            url: 'https://api.github.com/repos/acme/docs/pulls/44',
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 44,
+            html_url: 'https://github.com/acme/docs/pull/44',
+            url: 'https://api.github.com/repos/acme/docs/pulls/44',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env[githubPrWriterEnv];
+    const originalRetryDelay = process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'];
+    process.env[githubPrWriterEnv] = 'ghs_runner_token';
+    process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'] = '0';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-pr-retry-proof
+nodes:
+  open_pr:
+    type: action
+    adapter: github
+    action: pull_request.create
+    idempotencyKey: pr-retry:DOCS-44
+    with:
+      repository: acme/docs
+      title: Viewport docs change
+      head: viewport/docs-44
+      base: main
+      body: "Docs update."
+      credential_ref: github/pr-writer
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.github.com/repos/acme/docs/pulls');
+      expect(fetchMock.mock.calls[2]?.[0]).toBe('https://api.github.com/repos/acme/docs/pulls');
+      expect(completed?.status).toBe('completed');
+      expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
+        adapter: 'github',
+        action: 'pull_request.create',
+        status: 'executed',
+        response: {
+          status: 201,
+          attempts: 2,
+          htmlUrl: 'https://github.com/acme/docs/pull/44',
+          number: 44,
+        },
+      });
+    } finally {
+      if (originalCredentialRefToken === undefined) delete process.env[githubPrWriterEnv];
+      else process.env[githubPrWriterEnv] = originalCredentialRefToken;
+      if (originalRetryDelay === undefined) delete process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'];
+      else process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'] = originalRetryDelay;
+    }
+  });
+
   it('keeps run-scoped provider credentials available when resuming after approval', async () => {
     const fetchMock = vi
       .fn()
