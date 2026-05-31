@@ -483,6 +483,87 @@ describe('standalone worker runtime', () => {
     }
   });
 
+  it('drains queued leases across repeated persistent worker restarts', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      genericLeasesBeforeEmpty: 3,
+    });
+    await writeWorkerProfile(serverUrl(server));
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+
+    const first = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+    const second = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+    const third = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+    const idleAfterDrain = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+
+    expect([first, second, third]).toEqual([
+      { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 },
+      { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 },
+      { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 },
+    ]);
+    expect(idleAfterDrain).toMatchObject({
+      claimed: 0,
+      completed: 0,
+      blocked: 0,
+      failed: 0,
+      cleanup: 0,
+      denied: 0,
+    });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_1/sync',
+      'POST /api/runtime/workers/leases/lease_1/cleanup',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_2/sync',
+      'POST /api/runtime/workers/leases/lease_2/cleanup',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_3/sync',
+      'POST /api/runtime/workers/leases/lease_3/cleanup',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/heartbeat',
+    ]);
+    for (const request of requests.filter((entry) => entry.url.includes('/leases/'))) {
+      await expectSignedRequest(request, homeDir);
+    }
+    expect(
+      requests.filter((request) => request.url === '/api/runtime/workers/leases/lease_1/cleanup'),
+    ).toHaveLength(1);
+    expect(
+      requests.filter((request) => request.url === '/api/runtime/workers/leases/lease_2/cleanup'),
+    ).toHaveLength(1);
+    expect(
+      requests.filter((request) => request.url === '/api/runtime/workers/leases/lease_3/cleanup'),
+    ).toHaveLength(1);
+  });
+
   it('prevents duplicate standalone persistent workers for the same paired profile', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
