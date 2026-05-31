@@ -473,10 +473,21 @@ function renderRuntimeMessage(run: WorkflowRunRecord, template: string): string 
     (match, key: string) => variables[key] ?? match,
   );
 
-  return doubleRendered.replace(
+  const rendered = doubleRendered.replace(
     /(?<!{){\s*([A-Za-z0-9_.-]+)\s*}(?!})/g,
     (match, key: string) => variables[key] ?? match,
   );
+
+  return normalizeSlackMessageText(rendered);
+}
+
+function normalizeSlackMessageText(text: string): string {
+  return text
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
 }
 
 function runtimeRunUrl(run: WorkflowRunRecord): string {
