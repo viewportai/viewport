@@ -376,6 +376,64 @@ describe('worker command', () => {
     );
   });
 
+  it('blocks approved worker configs when the pairing record is missing', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    await storeWorkerProfile(
+      {
+        status: 'approved',
+        workspace_id: 'workspace_missing_pairing',
+        workspace_name: 'Missing Pairing Workspace',
+        managed_executor_id: 'executor_missing_pairing',
+        managed_executor_credential: 'secret-missing-pairing-token',
+        token: 'secret-missing-pairing-relay-token',
+        server_id: 'server_missing_pairing',
+      },
+      await resolveWorkerProfileDefaults({
+        server: await resolvePairingServerTransport(),
+        detectCapabilities: false,
+      }),
+    );
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const workerConfig = manager.getDaemonConfig()?.worker;
+    await fs.rm(path.join(String(workerConfig?.stateDir), 'pairing.json'), { force: true });
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const raw = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
+    const payload = JSON.parse(raw) as {
+      ok: boolean;
+      pairingIntegrity: {
+        ok: boolean;
+        pairingPresent: boolean;
+        mismatches: string[];
+      };
+    };
+    expect(payload.ok).toBe(false);
+    expect(payload.pairingIntegrity).toEqual({
+      ok: false,
+      pairingPresent: false,
+      mismatches: ['pairingRecord'],
+    });
+    expect(raw).not.toContain('secret-missing-pairing-token');
+    expect(raw).not.toContain('secret-missing-pairing-relay-token');
+
+    process.argv = ['node', 'vpd', 'worker', 'start', '--once'];
+    vi.resetModules();
+    const { worker: startWorker } = await import('../../src/cli/worker-command.js');
+    await expect(startWorker()).rejects.toThrow(
+      'Worker profile does not match the approved pairing record: pairingRecord.',
+    );
+  });
+
   it('removes stale persistent worker locks for the paired profile', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
     const { resolvePairingServerTransport } =

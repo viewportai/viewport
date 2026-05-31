@@ -295,8 +295,16 @@ export function workerProfileIntegrity(
   pairing: WorkerPairingRecord | null,
 ): { ok: boolean; pairingPresent: boolean; mismatches: string[] } {
   const mismatches: string[] = [];
-  if (!worker || !pairing) {
+  if (!worker) {
     return { ok: true, pairingPresent: Boolean(pairing), mismatches };
+  }
+
+  if (!pairing) {
+    if (worker.workspaceId || worker.managedExecutorId || worker.serverId || worker.credential) {
+      return { ok: false, pairingPresent: false, mismatches: ['pairingRecord'] };
+    }
+
+    return { ok: true, pairingPresent: false, mismatches };
   }
 
   comparePinnedValue(mismatches, 'serverUrl', worker.serverUrl, pairing.serverUrl);
