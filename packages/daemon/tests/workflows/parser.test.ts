@@ -487,6 +487,16 @@ policies:
   shell:
     policy: constrained
     allowLegacyCommand: false
+    allowed:
+      - npm test
+      - git status *
+    denied:
+      - rm -rf *
+  escalation:
+    whenStuck: human(tech-lead)
+    reviewerTags:
+      - tech-lead
+    channel: slack/#eng-reviews
   budget:
     maxTokens: 100000
     maxCostUsd: 25
@@ -559,6 +569,9 @@ nodes:
     expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
     expect(parsed.definition.policies?.shell?.policy).toBe('constrained');
     expect(parsed.definition.policies?.shell?.allowLegacyCommand).toBe(false);
+    expect(parsed.definition.policies?.shell?.allowed).toEqual(['npm test', 'git status *']);
+    expect(parsed.definition.policies?.shell?.denied).toEqual(['rm -rf *']);
+    expect(parsed.definition.policies?.escalation?.reviewerTags).toEqual(['tech-lead']);
     expect(parsed.definition.policies?.budget?.maxTokens).toBe(100000);
     expect(parsed.definition.policies?.budget?.approvalThresholds?.costUsd).toBe(10);
     expect(parsed.definition.notifications?.inbox).toContain('approval_requested');
