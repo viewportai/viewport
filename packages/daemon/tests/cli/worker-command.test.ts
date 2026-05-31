@@ -74,6 +74,11 @@ describe('worker command', () => {
       workspaceRoot: string;
       runnerPool: string;
       credentialSource: string;
+      supportPacket: {
+        docsUrl: string;
+        reviewBeforeSharing: boolean;
+        omittedSecrets: string[];
+      };
       missing: string[];
       warnings: string[];
     };
@@ -86,6 +91,10 @@ describe('worker command', () => {
     expect(payload.workspaceRoot).toBe(path.join(homeDir, 'worktrees'));
     expect(payload.runnerPool).toBe('organization-default');
     expect(payload.credentialSource).toBe('file');
+    expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
+    expect(payload.supportPacket.reviewBeforeSharing).toBe(true);
+    expect(payload.supportPacket.omittedSecrets).toContain('lease_tokens');
+    expect(payload.supportPacket.omittedSecrets).toContain('worker_private_keys');
     expect(payload.missing).toEqual([]);
     expect(payload.warnings).toEqual([]);
   });
@@ -128,6 +137,7 @@ describe('worker command', () => {
       ok: boolean;
       runtimeProfile: string;
       credentialSource: string;
+      supportPacket: { docsUrl: string; omittedSecrets: string[] };
       missing: string[];
       warnings: string[];
       capabilities: { integrations: string[] };
@@ -135,6 +145,8 @@ describe('worker command', () => {
     expect(payload.ok).toBe(true);
     expect(payload.runtimeProfile).toBe('managed-executor');
     expect(payload.credentialSource).toBe('profile');
+    expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
+    expect(payload.supportPacket.omittedSecrets).toContain('credentials');
     expect(payload.missing).toEqual([]);
     expect(payload.warnings).toContain('workspace root not pinned; pass --workdir for predictable checkouts');
     expect(payload.capabilities.integrations).toEqual(['github', 'slack']);
@@ -183,6 +195,7 @@ describe('worker command', () => {
       workspaceRoot: string;
       publicKeyFingerprint: string;
       capabilities: { agents: Record<string, unknown> };
+      supportPacket: { docsUrl: string; omittedSecrets: string[] };
       missing: string[];
     };
     expect(payload.ok).toBe(true);
@@ -192,6 +205,8 @@ describe('worker command', () => {
     expect(payload.workspaceRoot).toBe(path.join(homeDir, 'workspace'));
     expect(payload.publicKeyFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.capabilities.agents).toEqual({});
+    expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
+    expect(payload.supportPacket.omittedSecrets).toContain('claim_tokens');
     expect(payload.missing).toEqual([]);
   });
 

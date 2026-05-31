@@ -13,6 +13,17 @@ import {
 } from './worker-profile.js';
 
 const DEFAULT_WORKER_LEASE_SECONDS = 1_800;
+const SUPPORT_PACKET_DOCS_URL = 'https://docs.getviewport.com/troubleshooting/support-packet';
+const SUPPORT_PACKET_OMITTED_SECRETS = [
+  'credentials',
+  'worker_private_keys',
+  'pairing_codes',
+  'bootstrap_tokens',
+  'claim_tokens',
+  'lease_tokens',
+  'provider_tokens',
+  'model_keys',
+];
 
 export async function worker(): Promise<void> {
   const args = getArgs();
@@ -87,6 +98,7 @@ async function workerDoctor(): Promise<void> {
     console.log(`Executor:  ${managed.payload.executorId ?? 'not configured'}`);
     console.log(`Work root: ${managed.payload.workspaceRoot ?? 'not configured'}`);
     console.log(`Credential:${managed.payload.credentialSource ? ` ${managed.payload.credentialSource}` : ' missing'}`);
+    console.log(`Support:   ${SUPPORT_PACKET_DOCS_URL}`);
     if (managed.payload.missing.length > 0) {
       console.log(`Missing:   ${managed.payload.missing.join(', ')}`);
       console.log('Fix:       pass --server, --workspace, --executor, and --credential-file.');
@@ -118,6 +130,7 @@ async function workerDoctor(): Promise<void> {
     publicKeyFingerprint: workerConfig?.publicKeyFingerprint ?? null,
     capabilities: workerConfig?.capabilities ?? null,
     missing,
+    supportPacket: supportPacketMetadata(),
   };
   if (asJson) {
     printJson(payload);
@@ -128,6 +141,7 @@ async function workerDoctor(): Promise<void> {
   console.log(`Transport: ${payload.transport ?? 'not configured'}`);
   console.log(`Server:    ${payload.serverUrl ?? 'not configured'}`);
   console.log(`Work root: ${payload.workspaceRoot ?? 'not configured'}`);
+  console.log(`Support:   ${SUPPORT_PACKET_DOCS_URL}`);
   const agents = payload.capabilities?.agents;
   const agentCount = Array.isArray(agents)
     ? agents.length
@@ -159,6 +173,7 @@ interface ManagedExecutorDoctorPayload {
   capabilities: Record<string, unknown> | null;
   missing: string[];
   warnings: string[];
+  supportPacket: ReturnType<typeof supportPacketMetadata>;
 }
 
 function managedExecutorDoctorProfile(): {
@@ -279,7 +294,20 @@ function managedExecutorDoctorProfile(): {
       capabilities: recordValue(profile['capabilities']),
       missing,
       warnings,
+      supportPacket: supportPacketMetadata(),
     },
+  };
+}
+
+function supportPacketMetadata(): {
+  docsUrl: string;
+  reviewBeforeSharing: true;
+  omittedSecrets: string[];
+} {
+  return {
+    docsUrl: SUPPORT_PACKET_DOCS_URL,
+    reviewBeforeSharing: true,
+    omittedSecrets: SUPPORT_PACKET_OMITTED_SECRETS,
   };
 }
 
