@@ -229,7 +229,11 @@ function staleApprovalRequestedAt(
 ): boolean {
   if (!decidedAt || !node.approval?.requestedAt) return false;
   const decidedAtMs = Date.parse(decidedAt);
-  return Number.isFinite(decidedAtMs) && decidedAtMs < node.approval.requestedAt;
+  if (!Number.isFinite(decidedAtMs) || decidedAtMs >= node.approval.requestedAt) {
+    return false;
+  }
+
+  return !sameDigestPrePublishReblock(node);
 }
 
 function approvalSubjectDigest(node: WorkflowRunRecord['nodes'][string]): unknown {
@@ -243,6 +247,25 @@ function approvalSubjectDigest(node: WorkflowRunRecord['nodes'][string]): unknow
   }
 
   return undefined;
+}
+
+function sameDigestPrePublishReblock(node: WorkflowRunRecord['nodes'][string]): boolean {
+  if (node.type !== 'git_publish' || !isRecord(node.metadata?.['pre_publish_review'])) {
+    return false;
+  }
+
+  const review = node.metadata['pre_publish_review'];
+  const facts = review['facts'];
+  const invalidated = review['invalidated_approval'];
+  if (!isRecord(facts) || !isRecord(invalidated)) return false;
+
+  const currentDigest = facts['diffDigest'];
+  const invalidatedDigest = invalidated['current_diff_digest'];
+  return (
+    typeof currentDigest === 'string' &&
+    typeof invalidatedDigest === 'string' &&
+    currentDigest === invalidatedDigest
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

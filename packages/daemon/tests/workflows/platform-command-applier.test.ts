@@ -225,6 +225,58 @@ describe('WorkflowRuntimeCommandApplier', () => {
       }),
     ]);
   });
+
+  it('accepts same-digest pre-publish approval commands after repeated reblock churn', async () => {
+    const run = blockedRun();
+    run.nodes.publish = {
+      id: 'publish',
+      type: 'git_publish',
+      title: 'Publish',
+      status: 'blocked',
+      approval: {
+        prompt: 'Review the current diff again.',
+        requestedAt: Date.parse('2026-05-31T18:52:17.000Z'),
+      },
+      metadata: {
+        pre_publish_review: {
+          schema: 'viewport.pre_publish_review/v1',
+          facts: {
+            diffDigest: 'sha256:current-diff',
+          },
+          invalidated_approval: {
+            previous_diff_digest: 'sha256:old-diff',
+            current_diff_digest: 'sha256:current-diff',
+          },
+        },
+      },
+    };
+    delete run.nodes.review;
+
+    const decisions: WorkflowApprovalDecision[] = [];
+    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), async (_runId, _nodeId, decision) => {
+      decisions.push(decision);
+      return run;
+    });
+
+    const applied = await applier.apply({
+      id: 'approval-decision:same-digest-after-reblock',
+      type: 'workflow.approval_decision',
+      workflow_run_id: run.id,
+      workflow_node_id: 'publish',
+      approved: true,
+      decision: 'approve',
+      expected_action_digest: 'sha256:current-diff',
+      decided_at: '2026-05-31T18:52:16.000Z',
+    });
+
+    expect(applied).toBe(true);
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        approved: true,
+        expectedActionDigest: 'sha256:current-diff',
+      }),
+    ]);
+  });
 });
 
 function storeWith(runs: WorkflowRunRecord[]): WorkflowRunStore {
