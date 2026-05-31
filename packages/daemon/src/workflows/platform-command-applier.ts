@@ -11,6 +11,8 @@ export type WorkflowApprovalDecider = (
 ) => Promise<WorkflowRunRecord>;
 
 export class WorkflowRuntimeCommandApplier {
+  private readonly consumedCommandIds = new Set<string>();
+
   constructor(
     private readonly store: WorkflowRunStore,
     private readonly decideApproval: WorkflowApprovalDecider,
@@ -18,6 +20,8 @@ export class WorkflowRuntimeCommandApplier {
   ) {}
 
   async apply(command: WorkflowRuntimeCommand, syncedRunId?: string): Promise<boolean> {
+    if (this.commandConsumedInProcess(command.id)) return true;
+
     if (command.type === 'workflow.action_completed') {
       return this.applyActionCompleted(command, syncedRunId);
     }
@@ -34,6 +38,17 @@ export class WorkflowRuntimeCommandApplier {
     if (!node) return false;
     if (runtimeCommandConsumed(node.metadata, command.id)) return true;
     if (node.status !== 'blocked') return true;
+    this.markCommandConsumedInProcess(command.id);
+    if (staleApprovalRequestBinding(node, command.approval_requested_at ?? undefined)) {
+      markRuntimeCommandConsumed(node, command.id, {
+        ignored: true,
+        reason: 'stale_approval_request_binding',
+        command_approval_requested_at: command.approval_requested_at,
+        current_requested_at: node.approval?.requestedAt,
+      });
+      await this.persistRun(run);
+      return true;
+    }
     if (staleApprovalRequestedAt(node, command.decided_at)) {
       markRuntimeCommandConsumed(node, command.id, {
         ignored: true,
@@ -83,6 +98,17 @@ export class WorkflowRuntimeCommandApplier {
     return true;
   }
 
+  private commandConsumedInProcess(id: string): boolean {
+    return this.consumedCommandIds.has(id);
+  }
+
+  private markCommandConsumedInProcess(id: string): void {
+    this.consumedCommandIds.add(id);
+    if (this.consumedCommandIds.size <= 500) return;
+    const oldest = this.consumedCommandIds.values().next().value;
+    if (typeof oldest === 'string') this.consumedCommandIds.delete(oldest);
+  }
+
   private async applyActionCompleted(
     command: Extract<WorkflowRuntimeCommand, { type: 'workflow.action_completed' }>,
     syncedRunId?: string,
@@ -102,6 +128,7 @@ export class WorkflowRuntimeCommandApplier {
     if (node.status !== 'blocked' && node.status !== 'queued' && node.status !== 'running') {
       return false;
     }
+    this.markCommandConsumedInProcess(command.id);
 
     const completedAt = Date.now();
     const metadata = { ...(node.metadata ?? {}) };
@@ -221,6 +248,15 @@ function missingDigestAfterInvalidation(
   if (expectedDigest) return false;
   const review = node.metadata?.['pre_publish_review'];
   return isRecord(review) && isRecord(review['invalidated_approval']);
+}
+
+function staleApprovalRequestBinding(
+  node: WorkflowRunRecord['nodes'][string],
+  commandRequestedAt: string | undefined,
+): boolean {
+  if (!commandRequestedAt) return false;
+  const currentRequestedAt = node.approval?.requestedAt;
+  return currentRequestedAt !== undefined && String(currentRequestedAt) !== commandRequestedAt;
 }
 
 function staleApprovalRequestedAt(

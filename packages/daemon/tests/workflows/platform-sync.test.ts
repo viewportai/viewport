@@ -948,9 +948,57 @@ describe('WorkflowRunPlatformSync', () => {
         message: 'Approved by reviewer.',
         actor: { id: 1, name: 'Reviewer' },
         feedback: null,
+        approval_requested_at: null,
+        decided_at: null,
       },
     ]);
     expect(calls.map((call) => call['status'])).toEqual(['blocked', 'running']);
+  });
+
+  it('applies runtime approval commands when the run is running but one node is blocked', async () => {
+    const commands: unknown[] = [];
+    const run = workflowRun();
+    run.status = 'running';
+    run.nodes.inspect.status = 'blocked';
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { id: 'platform-run-1' },
+            runtime_commands: [
+              {
+                id: 'approval-decision:publish:current-digest',
+                type: 'workflow.approval_decision',
+                workflow_run_id: 'runtime-run-1',
+                workflow_node_id: 'inspect',
+                approved: true,
+                expected_action_digest: 'sha256:current',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      {
+        blockedPollDelayMs: 0,
+        onRuntimeCommand: async (command) => {
+          commands.push(command);
+          run.nodes.inspect.status = 'running';
+          sync.schedule(run);
+        },
+      },
+    );
+
+    sync.schedule(run);
+    await waitForCondition(() => commands.length === 1);
+    await sync.flushPending();
+
+    expect(commands).toEqual([
+      expect.objectContaining({
+        id: 'approval-decision:publish:current-digest',
+        expected_action_digest: 'sha256:current',
+      }),
+    ]);
   });
 
   it('polls blocked platform-linked runs while waiting for a review command', async () => {

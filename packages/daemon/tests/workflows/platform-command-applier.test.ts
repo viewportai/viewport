@@ -266,6 +266,7 @@ describe('WorkflowRuntimeCommandApplier', () => {
       approved: true,
       decision: 'approve',
       expected_action_digest: 'sha256:current-diff',
+      approval_requested_at: '1780253537000',
       decided_at: '2026-05-31T18:52:16.000Z',
     });
 
@@ -276,6 +277,110 @@ describe('WorkflowRuntimeCommandApplier', () => {
         expectedActionDigest: 'sha256:current-diff',
       }),
     ]);
+  });
+
+  it('ignores approval commands bound to a previous approval request', async () => {
+    const run = blockedRun();
+    run.nodes.publish = {
+      id: 'publish',
+      type: 'git_publish',
+      title: 'Publish',
+      status: 'blocked',
+      approval: {
+        prompt: 'Review the mutated diff.',
+        requestedAt: 1_780_254_464_488,
+      },
+      metadata: {
+        pre_publish_review: {
+          schema: 'viewport.pre_publish_review/v1',
+          facts: {
+            diffDigest: 'sha256:mutated-diff',
+          },
+          invalidated_approval: {
+            previous_diff_digest: 'sha256:old-diff',
+            current_diff_digest: 'sha256:mutated-diff',
+          },
+        },
+      },
+    };
+    delete run.nodes.review;
+
+    const decisions: WorkflowApprovalDecision[] = [];
+    const saved: WorkflowRunRecord[] = [];
+    const applier = new WorkflowRuntimeCommandApplier(
+      storeWith([run]),
+      async (_runId, _nodeId, decision) => {
+        decisions.push(decision);
+        return run;
+      },
+      async (value) => {
+        saved.push(JSON.parse(JSON.stringify(value)) as WorkflowRunRecord);
+      },
+    );
+
+    const applied = await applier.apply({
+      id: 'approval-decision:old-request',
+      type: 'workflow.approval_decision',
+      workflow_run_id: run.id,
+      workflow_node_id: 'publish',
+      approved: true,
+      decision: 'approve',
+      expected_action_digest: 'sha256:mutated-diff',
+      approval_requested_at: '1780254464068',
+      decided_at: '2026-05-31T19:07:42.000Z',
+    });
+
+    expect(applied).toBe(true);
+    expect(decisions).toEqual([]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.nodes.publish.status).toBe('blocked');
+    expect(saved[0]?.nodes.publish.metadata?.['runtime_commands']).toMatchObject({
+      consumed: [
+        expect.objectContaining({
+          id: 'approval-decision:old-request',
+          ignored: true,
+          reason: 'stale_approval_request_binding',
+        }),
+      ],
+    });
+  });
+
+  it('deduplicates concurrent approval command delivery in process', async () => {
+    const run = blockedRun();
+    let resolveDecision: ((run: WorkflowRunRecord) => void) | null = null;
+    let markDecisionStarted: (() => void) | null = null;
+    const decisionStarted = new Promise<void>((resolve) => {
+      markDecisionStarted = resolve;
+    });
+    const decisions: WorkflowApprovalDecision[] = [];
+    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), async (_runId, _nodeId, decision) => {
+      decisions.push(decision);
+      markDecisionStarted?.();
+      await new Promise<WorkflowRunRecord>((resolve) => {
+        resolveDecision = resolve;
+      });
+      return run;
+    });
+
+    const command = {
+      id: 'approval-decision:concurrent',
+      type: 'workflow.approval_decision' as const,
+      workflow_run_id: run.id,
+      workflow_node_id: 'review',
+      approved: true,
+      decision: 'approve' as const,
+    };
+
+    const first = applier.apply(command);
+    await decisionStarted;
+
+    expect(decisions).toHaveLength(1);
+    const second = applier.apply(command);
+    resolveDecision?.(run);
+
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(decisions).toHaveLength(1);
   });
 });
 

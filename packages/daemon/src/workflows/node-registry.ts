@@ -240,7 +240,6 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       const missingCurrentDigestAfterInvalidation =
         approved &&
         priorApprovalInvalidated &&
-        approvedDigest !== undefined &&
         approvedDigest !== decision.facts.diffDigest;
 
       if (

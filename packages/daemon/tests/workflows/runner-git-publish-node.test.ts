@@ -394,6 +394,21 @@ nodes:
       runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
     ).rejects.toThrow();
 
+    await daemon.workflowRunner.decideApproval(run.id, 'publish', {
+      approved: true,
+      decision: 'approve',
+      message: 'Approve without carrying the current digest',
+      actor: { id: 'user-1', name: 'Tech Lead', source: 'platform' },
+    });
+    await waitForTerminalRun(daemon, run.id);
+    const missingDigestApproval = await daemon.workflowRunner.getRun(run.id);
+
+    expect(missingDigestApproval?.status, missingDigestApproval?.error).toBe('blocked');
+    expect(missingDigestApproval?.nodes.publish?.status).toBe('blocked');
+    await expect(
+      runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
+    ).rejects.toThrow();
+
     expect(
       await daemon.workflowRunner.applyRuntimeCommandBody(run.id, {
         runtime_commands: [
