@@ -430,6 +430,59 @@ describe('standalone worker runtime', () => {
     }
   });
 
+  it('soaks through multiple persistent polling leases, drains cleanup, then idles until stopped', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      genericLeasesBeforeEmpty: 3,
+    });
+    await writeWorkerProfile(serverUrl(server));
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+    const abort = new AbortController();
+
+    const run = runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: false,
+      pollIntervalMs: 5,
+      abortSignal: abort.signal,
+    });
+    await waitUntil(
+      () => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 4,
+      2_000,
+    );
+    abort.abort();
+    const result = await run;
+    const requestNames = requests.map((request) => `${request.method} ${request.url}`);
+
+    expect(result).toMatchObject({
+      claimed: 3,
+      completed: 3,
+      blocked: 0,
+      failed: 0,
+      cleanup: 3,
+      denied: 0,
+    });
+    expect(requestNames).toEqual([
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_1/sync',
+      'POST /api/runtime/workers/leases/lease_1/cleanup',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_2/sync',
+      'POST /api/runtime/workers/leases/lease_2/cleanup',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_3/sync',
+      'POST /api/runtime/workers/leases/lease_3/cleanup',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/heartbeat',
+    ]);
+    expect(requests.at(-1)?.body).toMatchObject({ status: 'offline', health_status: 'offline' });
+    for (const request of requests.filter((entry) => entry.url.includes('/leases/'))) {
+      await expectSignedRequest(request, homeDir);
+    }
+  });
+
   it('prevents duplicate standalone persistent workers for the same paired profile', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
@@ -1393,12 +1446,15 @@ async function startRuntimeServer(
         response.end();
         return;
       }
-      if (claimCount > 1) {
+      const genericLeasesBeforeEmpty = options.genericLeasesBeforeEmpty ?? 1;
+      if (claimCount > genericLeasesBeforeEmpty) {
         response.statusCode = 204;
         response.end();
         return;
       }
-      response.end(JSON.stringify({ lease: { id: 'lease_1', run_id: 'run_1' } }));
+      response.end(
+        JSON.stringify({ lease: { id: `lease_${claimCount}`, run_id: `run_${claimCount}` } }),
+      );
       return;
     }
     if (request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim') {
@@ -1551,6 +1607,7 @@ interface RuntimeServerOptions {
   rateLimitOnceForBlockedNode?: string;
   transientHostedSyncFailures?: number;
   reclaimSameHostedAssignment?: boolean;
+  genericLeasesBeforeEmpty?: number;
 }
 
 interface RuntimeRequest {
