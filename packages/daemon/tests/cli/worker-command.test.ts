@@ -311,6 +311,68 @@ describe('worker command', () => {
     });
   });
 
+  it('warns when multiple local profiles exist and no worker profile is selected', async () => {
+    await fs.writeFile(
+      path.join(homeDir, 'profiles.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            prod: {
+              name: 'prod',
+              home: path.join(homeDir, 'profiles', 'prod'),
+              createdAt: new Date(0).toISOString(),
+              updatedAt: new Date(0).toISOString(),
+            },
+            staging: {
+              name: 'staging',
+              home: path.join(homeDir, 'profiles', 'staging'),
+              createdAt: new Date(0).toISOString(),
+              updatedAt: new Date(0).toISOString(),
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    await storeWorkerProfile(
+      null,
+      await resolveWorkerProfileDefaults({
+        server: await resolvePairingServerTransport(),
+        detectCapabilities: false,
+      }),
+    );
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      ok: boolean;
+      warnings: string[];
+      vpdProfile: {
+        name: string | null;
+        source: string;
+      };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.vpdProfile).toMatchObject({
+      name: null,
+      source: 'none',
+    });
+    expect(payload.warnings).toContain(
+      'multiple profiles exist (prod, staging); select one with --profile before pairing or starting a worker',
+    );
+  });
+
   it('reports the approved workspace id without printing the worker credential', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
     const { resolvePairingServerTransport } =

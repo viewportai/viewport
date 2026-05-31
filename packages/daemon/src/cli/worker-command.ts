@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
-import { activeProfileInfo } from '../core/profiles.js';
+import { activeProfileInfo, readProfileRegistry } from '../core/profiles.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
@@ -82,7 +82,8 @@ function workerHelpText(): string {
 
 async function workerDoctor(): Promise<void> {
   const asJson = isJsonMode();
-  const managed = managedExecutorDoctorProfile();
+  const vpdProfile = currentVpdProfilePayload();
+  const managed = await managedExecutorDoctorProfile(vpdProfile);
   if (managed.present) {
     if (asJson) {
       printJson(managed.payload);
@@ -128,7 +129,7 @@ async function workerDoctor(): Promise<void> {
   const payload = {
     command: 'worker doctor',
     ok: missing.length === 0 && integrity.ok,
-    vpdProfile: currentVpdProfilePayload(),
+    vpdProfile,
     lifecycle: workerConfig?.lifecycle ?? null,
     transport: workerConfig?.transport ?? null,
     serverUrl: workerConfig?.serverUrl ?? null,
@@ -139,6 +140,7 @@ async function workerDoctor(): Promise<void> {
     processLock: lockStatusForOptions(lockOptions),
     pairingIntegrity: integrity,
     missing,
+    warnings: await profileSelectionWarnings(vpdProfile),
     supportPacket: supportPacketMetadata(),
   };
   if (asJson) {
@@ -161,6 +163,9 @@ async function workerDoctor(): Promise<void> {
       ? Object.keys(agents).length
       : 0;
   console.log(`Agents:    ${agentCount > 0 ? `${agentCount} detected` : 'not recorded'}`);
+  if (payload.warnings.length > 0) {
+    console.log(`Warnings:  ${payload.warnings.join(', ')}`);
+  }
   if (missing.length > 0) {
     console.log(`Missing:   ${missing.join(', ')}`);
     console.log('Fix:       run `vpd pair --worker --transport=polling --workdir <path>`.');
@@ -202,10 +207,10 @@ interface VpdProfilePayload {
   baseHome: string;
 }
 
-function managedExecutorDoctorProfile(): {
+async function managedExecutorDoctorProfile(vpdProfile: VpdProfilePayload): Promise<{
   present: boolean;
   payload: ManagedExecutorDoctorPayload;
-} {
+}> {
   const profilePath =
     getFlag('registration-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE_FILE'];
   const profile = profilePath ? readManagedExecutorProfile(profilePath) : {};
@@ -287,6 +292,7 @@ function managedExecutorDoctorProfile(): {
   if (!executorId) missing.push('managed executor id');
   if (!workspaceRoot)
     warnings.push('workspace root not pinned; pass --workdir for predictable checkouts');
+  warnings.push(...(await profileSelectionWarnings(vpdProfile)));
 
   const lockOptions = managedWorkerLockOptions({
     serverUrl,
@@ -312,7 +318,7 @@ function managedExecutorDoctorProfile(): {
       command: 'worker doctor',
       ok: missing.length === 0,
       runtimeProfile: 'managed-executor',
-      vpdProfile: currentVpdProfilePayload(),
+      vpdProfile,
       lifecycle: 'persistent',
       transport: lockOptions?.accessMode ?? 'polling',
       serverUrl: serverUrl ?? null,
@@ -377,6 +383,22 @@ function currentVpdProfilePayload(): VpdProfilePayload {
 
 function formatVpdProfile(profile: VpdProfilePayload): string {
   return ` ${profile.name ?? 'default'} (${profile.source})`;
+}
+
+async function profileSelectionWarnings(profile: VpdProfilePayload): Promise<string[]> {
+  if (profile.source !== 'none') {
+    return [];
+  }
+
+  const registry = await readProfileRegistry(profile.baseHome);
+  const profileNames = Object.keys(registry.profiles);
+  if (profileNames.length <= 1) {
+    return [];
+  }
+
+  return [
+    `multiple profiles exist (${profileNames.sort().join(', ')}); select one with --profile before pairing or starting a worker`,
+  ];
 }
 
 function lockStatusForOptions(
