@@ -1481,19 +1481,42 @@ nodes:
     const manager = new ConfigManager();
     await manager.load();
     const existing = manager.getDaemonConfig() ?? {};
+    const worker = existing.worker;
+    const stateDir = worker?.stateDir ?? path.join(homeDir, 'worker');
+    const serverId = 'sha256:server_1';
+    const workspaceId = 'workspace_1';
+    const managedExecutorId = 'executor_1';
     await manager.setDaemonConfig({
       ...existing,
       worker: {
-        ...existing.worker,
-        workspaceId: 'workspace_1',
-        managedExecutorId: 'executor_1',
+        ...worker,
+        workspaceId,
+        managedExecutorId,
         credential: 'vpexec_hosted',
-        serverId: 'sha256:server_1',
+        serverId,
         capabilities: {
           agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
         },
       },
     });
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, 'pairing.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          workspaceId,
+          workspaceName: 'Test Workspace',
+          managedExecutorId,
+          serverUrl,
+          serverId,
+          pairedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
   }
 });
 
