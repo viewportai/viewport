@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
+import { activeProfileInfo } from '../core/profiles.js';
 import { getArgs, getFlag, hasFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
 import {
@@ -88,6 +89,7 @@ async function workerDoctor(): Promise<void> {
       return;
     }
     console.log('Viewport worker doctor');
+    console.log(`VPD profile:${formatVpdProfile(managed.payload.vpdProfile)}`);
     console.log('Runtime:   managed executor');
     console.log(`Transport: ${managed.payload.transport ?? 'not configured'}`);
     console.log(`Server:    ${managed.payload.serverUrl ?? 'not configured'}`);
@@ -126,6 +128,7 @@ async function workerDoctor(): Promise<void> {
   const payload = {
     command: 'worker doctor',
     ok: missing.length === 0 && integrity.ok,
+    vpdProfile: currentVpdProfilePayload(),
     lifecycle: workerConfig?.lifecycle ?? null,
     transport: workerConfig?.transport ?? null,
     serverUrl: workerConfig?.serverUrl ?? null,
@@ -143,6 +146,7 @@ async function workerDoctor(): Promise<void> {
     return;
   }
   console.log('Viewport worker doctor');
+  console.log(`VPD profile:${formatVpdProfile(payload.vpdProfile)}`);
   console.log(`Mode:      ${payload.lifecycle ?? 'not configured'}`);
   console.log(`Transport: ${payload.transport ?? 'not configured'}`);
   console.log(`Server:    ${payload.serverUrl ?? 'not configured'}`);
@@ -174,6 +178,7 @@ interface ManagedExecutorDoctorPayload {
   command: 'worker doctor';
   ok: boolean;
   runtimeProfile: 'managed-executor';
+  vpdProfile: VpdProfilePayload;
   lifecycle: 'persistent';
   transport: string | null;
   serverUrl: string | null;
@@ -188,6 +193,13 @@ interface ManagedExecutorDoctorPayload {
   missing: string[];
   warnings: string[];
   supportPacket: ReturnType<typeof supportPacketMetadata>;
+}
+
+interface VpdProfilePayload {
+  name: string | null;
+  source: 'env' | 'current-profile' | 'none';
+  home: string;
+  baseHome: string;
 }
 
 function managedExecutorDoctorProfile(): {
@@ -300,6 +312,7 @@ function managedExecutorDoctorProfile(): {
       command: 'worker doctor',
       ok: missing.length === 0,
       runtimeProfile: 'managed-executor',
+      vpdProfile: currentVpdProfilePayload(),
       lifecycle: 'persistent',
       transport: lockOptions?.accessMode ?? 'polling',
       serverUrl: serverUrl ?? null,
@@ -350,6 +363,20 @@ function managedWorkerLockOptions(input: {
     runnerProfile: input.runnerPool,
     accessMode: input.transport ?? 'polling',
   };
+}
+
+function currentVpdProfilePayload(): VpdProfilePayload {
+  const info = activeProfileInfo();
+  return {
+    name: info.name,
+    source: info.source,
+    home: info.home,
+    baseHome: info.baseHome,
+  };
+}
+
+function formatVpdProfile(profile: VpdProfilePayload): string {
+  return ` ${profile.name ?? 'default'} (${profile.source})`;
 }
 
 function lockStatusForOptions(

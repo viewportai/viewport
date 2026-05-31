@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 describe('worker command', () => {
   const originalArgv = process.argv.slice();
   const originalHome = process.env['VIEWPORT_HOME'];
+  const originalProfile = process.env['VIEWPORT_PROFILE'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let homeDir = '';
 
@@ -21,6 +22,8 @@ describe('worker command', () => {
     process.argv = originalArgv;
     if (originalHome) process.env['VIEWPORT_HOME'] = originalHome;
     else delete process.env['VIEWPORT_HOME'];
+    if (originalProfile) process.env['VIEWPORT_PROFILE'] = originalProfile;
+    else delete process.env['VIEWPORT_PROFILE'];
     await fs.rm(homeDir, { recursive: true, force: true });
   });
 
@@ -85,6 +88,12 @@ describe('worker command', () => {
         reviewBeforeSharing: boolean;
         omittedSecrets: string[];
       };
+      vpdProfile: {
+        name: string | null;
+        source: string;
+        home: string;
+        baseHome: string;
+      };
       missing: string[];
       warnings: string[];
     };
@@ -102,6 +111,12 @@ describe('worker command', () => {
       stale: false,
       pid: null,
       startedAt: null,
+    });
+    expect(payload.vpdProfile).toEqual({
+      name: null,
+      source: 'none',
+      home: homeDir,
+      baseHome: homeDir,
     });
     expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
     expect(payload.supportPacket.reviewBeforeSharing).toBe(true);
@@ -150,6 +165,7 @@ describe('worker command', () => {
       runtimeProfile: string;
       credentialSource: string;
       supportPacket: { docsUrl: string; omittedSecrets: string[] };
+      vpdProfile: { name: string | null; source: string; home: string; baseHome: string };
       missing: string[];
       warnings: string[];
       capabilities: { integrations: string[] };
@@ -159,6 +175,12 @@ describe('worker command', () => {
     expect(payload.credentialSource).toBe('profile');
     expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
     expect(payload.supportPacket.omittedSecrets).toContain('credentials');
+    expect(payload.vpdProfile).toEqual({
+      name: null,
+      source: 'none',
+      home: homeDir,
+      baseHome: homeDir,
+    });
     expect(payload.missing).toEqual([]);
     expect(payload.warnings).toContain('workspace root not pinned; pass --workdir for predictable checkouts');
     expect(payload.capabilities.integrations).toEqual(['github', 'slack']);
@@ -214,6 +236,12 @@ describe('worker command', () => {
         pid: number | null;
         startedAt: string | null;
       };
+      vpdProfile: {
+        name: string | null;
+        source: string;
+        home: string;
+        baseHome: string;
+      };
       supportPacket: { docsUrl: string; omittedSecrets: string[] };
       missing: string[];
     };
@@ -231,9 +259,56 @@ describe('worker command', () => {
       pid: null,
       startedAt: null,
     });
+    expect(payload.vpdProfile).toEqual({
+      name: null,
+      source: 'none',
+      home: homeDir,
+      baseHome: homeDir,
+    });
     expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
     expect(payload.supportPacket.omittedSecrets).toContain('claim_tokens');
     expect(payload.missing).toEqual([]);
+  });
+
+  it('reports the active vpd profile and profile home for paired workers', async () => {
+    process.env['VIEWPORT_PROFILE'] = 'prod';
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    await storeWorkerProfile(
+      null,
+      await resolveWorkerProfileDefaults({
+        server: await resolvePairingServerTransport(),
+        detectCapabilities: false,
+      }),
+    );
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      ok: boolean;
+      workspaceRoot: string;
+      vpdProfile: {
+        name: string | null;
+        source: string;
+        home: string;
+        baseHome: string;
+      };
+    };
+    const profileHome = path.join(homeDir, 'profiles', 'prod');
+    expect(payload.ok).toBe(true);
+    expect(payload.workspaceRoot).toBe(path.join(profileHome, 'workspace'));
+    expect(payload.vpdProfile).toEqual({
+      name: 'prod',
+      source: 'env',
+      home: profileHome,
+      baseHome: homeDir,
+    });
   });
 
   it('reports the approved workspace id without printing the worker credential', async () => {
