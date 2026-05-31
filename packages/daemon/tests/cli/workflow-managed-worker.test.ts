@@ -761,6 +761,9 @@ describe('workflow managed worker CLI', () => {
   });
 
   it('materializes selected run credentials into transient daemon env only', async () => {
+    const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-credential-material-'));
+    const workdir = path.join(workdirParent, 'workspace');
+
     process.argv = [
       'node',
       'vpd',
@@ -775,7 +778,7 @@ describe('workflow managed worker CLI', () => {
       '--credential',
       'vpexec_secret',
       '--workdir',
-      '/repo',
+      workdir,
       '--once',
       '--json',
     ];
@@ -822,7 +825,7 @@ nodes:
               },
             },
             source_ref: 'viewport://workflow/proof',
-            directory_path: '/repo',
+            directory_path: workdir,
             execution_profile_snapshot: {
               key: 'payments-prod',
               credentials: {
@@ -1997,6 +2000,7 @@ nodes:
 
   it('advertises profile agent capabilities and claims matching work without manual flags', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-claim-'));
+    const workdir = path.join(dir, 'workspace');
     const profilePath = path.join(dir, 'runner.json');
     await fs.writeFile(
       profilePath,
@@ -2025,7 +2029,7 @@ nodes:
       '--registration-profile',
       profilePath,
       '--workdir',
-      '/repo',
+      workdir,
       '--once',
       '--json',
     ];
@@ -2062,7 +2066,7 @@ nodes:
             assignment_claim_token: 'vpclaim_profile_claim',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: profile-claim\nnodes: {}\n',
             source_ref: 'viewport://workflow/profile-claim',
-            directory_path: '/repo',
+            directory_path: workdir,
             input_snapshot: { issue: 'VIE-30' },
             runner_workspace_snapshot: { runner_pool: 'payments-profile' },
           },
