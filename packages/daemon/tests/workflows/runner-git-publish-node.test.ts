@@ -335,11 +335,24 @@ nodes:
       'utf8',
     );
 
-    await daemon.workflowRunner.decideApproval(run.id, 'publish', {
-      approved: true,
-      actor: { id: 'user-1', name: 'Tech Lead' },
-      message: 'Approve the original diff',
-    });
+    const originalApprovalCommand = {
+      runtime_commands: [
+        {
+          id: 'approval-command-original-diff',
+          type: 'workflow.approval_decision',
+          workflow_run_id: run.id,
+          workflow_node_id: 'publish',
+          approved: true,
+          decision: 'approve',
+          message: 'Approve the original diff',
+          actor: { id: 'user-1', name: 'Tech Lead', source: 'platform' },
+        },
+      ],
+    };
+
+    expect(await daemon.workflowRunner.applyRuntimeCommandBody(run.id, originalApprovalCommand)).toBe(
+      1,
+    );
 
     await waitForTerminalRun(daemon, run.id);
     const reblocked = await daemon.workflowRunner.getRun(run.id);
@@ -362,11 +375,34 @@ nodes:
       runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
     ).rejects.toThrow();
 
-    await daemon.workflowRunner.decideApproval(run.id, 'publish', {
-      approved: true,
-      actor: { id: 'user-1', name: 'Tech Lead' },
-      message: 'Approve the changed diff',
-    });
+    expect(await daemon.workflowRunner.applyRuntimeCommandBody(run.id, originalApprovalCommand)).toBe(
+      1,
+    );
+    await waitForTerminalRun(daemon, run.id);
+    const stillReblocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(stillReblocked?.status, stillReblocked?.error).toBe('blocked');
+    expect(stillReblocked?.nodes.publish?.status).toBe('blocked');
+    await expect(
+      runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
+    ).rejects.toThrow();
+
+    expect(
+      await daemon.workflowRunner.applyRuntimeCommandBody(run.id, {
+        runtime_commands: [
+          {
+            id: 'approval-command-changed-diff',
+            type: 'workflow.approval_decision',
+            workflow_run_id: run.id,
+            workflow_node_id: 'publish',
+            approved: true,
+            decision: 'approve',
+            message: 'Approve the changed diff',
+            actor: { id: 'user-1', name: 'Tech Lead', source: 'platform' },
+          },
+        ],
+      }),
+    ).toBe(1);
 
     await waitForTerminalRun(daemon, run.id);
     const completed = await daemon.workflowRunner.getRun(run.id);

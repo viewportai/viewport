@@ -32,9 +32,13 @@ export class WorkflowRuntimeCommandApplier {
 
     const node = run.nodes[command.workflow_node_id];
     if (!node) return false;
+    if (runtimeCommandConsumed(node.metadata, command.id)) return true;
     if (node.status !== 'blocked') return true;
 
-    await this.decideApproval(run.id, command.workflow_node_id, {
+    markRuntimeCommandConsumed(node, command.id);
+    await this.persistRun(run);
+
+    const updated = await this.decideApproval(run.id, command.workflow_node_id, {
       approved: command.approved,
       ...(command.decision ? { decision: command.decision } : {}),
       ...(command.message ? { message: command.message } : {}),
@@ -45,6 +49,7 @@ export class WorkflowRuntimeCommandApplier {
       ...(command.feedback ? { feedback: command.feedback } : {}),
       ...workflowApprovalActorPayload(command.actor),
     });
+    markRuntimeCommandConsumed(updated.nodes[command.workflow_node_id], command.id);
     return true;
   }
 
@@ -132,4 +137,41 @@ export class WorkflowRuntimeCommandApplier {
     }
     return true;
   }
+
+  private async persistRun(run: WorkflowRunRecord): Promise<void> {
+    if (this.saveRun) {
+      await this.saveRun(run);
+    } else if ('save' in this.store && typeof this.store.save === 'function') {
+      await this.store.save(run);
+    }
+  }
+}
+
+function runtimeCommandConsumed(metadata: Record<string, unknown> | undefined, id: string): boolean {
+  const runtimeCommands = metadata?.['runtime_commands'];
+  if (!isRecord(runtimeCommands)) return false;
+  const consumed = runtimeCommands['consumed'];
+  return Array.isArray(consumed) && consumed.some((entry) => isRecord(entry) && entry['id'] === id);
+}
+
+function markRuntimeCommandConsumed(
+  node: WorkflowRunRecord['nodes'][string] | undefined,
+  id: string,
+): void {
+  if (!node) return;
+  const consumedAt = new Date().toISOString();
+  const metadata = { ...(node.metadata ?? {}) };
+  const runtimeCommands = isRecord(metadata['runtime_commands'])
+    ? { ...metadata['runtime_commands'] }
+    : {};
+  const previous = Array.isArray(runtimeCommands['consumed'])
+    ? runtimeCommands['consumed'].filter(isRecord)
+    : [];
+  runtimeCommands['consumed'] = [...previous, { id, consumed_at: consumedAt }].slice(-50);
+  metadata['runtime_commands'] = runtimeCommands;
+  node.metadata = metadata;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
