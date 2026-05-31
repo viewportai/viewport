@@ -107,6 +107,27 @@ const PolicyPublishSchema = z
   })
   .strict();
 
+const PolicySideEffectAllowSchema = z.union([
+  z.enum(['auto', 'deny']),
+  z.string().regex(/^human\([a-zA-Z0-9_, -]+\)$/),
+]);
+
+const PolicySideEffectRuleSchema = z
+  .object({
+    allow: PolicySideEffectAllowSchema,
+  })
+  .strict();
+
+const PolicySideEffectsSchema = z
+  .object({
+    open_pr: PolicySideEffectRuleSchema.optional(),
+    slack_post: PolicySideEffectRuleSchema.optional(),
+    merge_pr: PolicySideEffectRuleSchema.optional(),
+    deploy: PolicySideEffectRuleSchema.optional(),
+    external_api: PolicySideEffectRuleSchema.optional(),
+  })
+  .strict();
+
 const PolicyContextSourceSchema = z
   .object({
     name: z.string().min(1),
@@ -148,6 +169,7 @@ export const PolicyDocumentSchema = z
       })
       .strict(),
     publish: PolicyPublishSchema.optional(),
+    side_effects: PolicySideEffectsSchema.optional(),
     execution: z
       .object({
         shell_policy: z
