@@ -398,6 +398,38 @@ describe('standalone worker runtime', () => {
     expect(requests.at(-1)?.body).toMatchObject({ status: 'offline', health_status: 'offline' });
   });
 
+  it('does not hot-loop persistent polling claims when the control plane has no work', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
+    await writeWorkerProfile(serverUrl(server));
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+    const abort = new AbortController();
+
+    const run = runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: false,
+      pollIntervalMs: 25,
+      abortSignal: abort.signal,
+    });
+    await waitUntil(
+      () => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 3,
+      2_000,
+    );
+    abort.abort();
+    const result = await run;
+    const claimTimes = requests
+      .filter((request) => request.url === '/api/runtime/workers/claim')
+      .map((request) => request.receivedAtMs);
+
+    expect(result).toMatchObject({ claimed: 0, completed: 0, failed: 0, cleanup: 0 });
+    expect(claimTimes.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < Math.min(claimTimes.length, 4); i += 1) {
+      expect(claimTimes[i]! - claimTimes[i - 1]!).toBeGreaterThanOrEqual(18);
+    }
+  });
+
   it('prevents duplicate standalone persistent workers for the same paired profile', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
@@ -1351,6 +1383,7 @@ async function startRuntimeServer(
       method: request.method ?? 'GET',
       body,
       headers: request.headers,
+      receivedAtMs: Date.now(),
     });
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/api/runtime/workers/claim') {
@@ -1525,6 +1558,7 @@ interface RuntimeRequest {
   method: string;
   body: Record<string, unknown>;
   headers: http.IncomingHttpHeaders;
+  receivedAtMs: number;
 }
 
 function serverUrl(server: http.Server): string {
