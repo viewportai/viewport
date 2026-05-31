@@ -437,6 +437,14 @@ nodes:
 
     expect(completed?.status).toBe('completed');
     expect(completed?.nodes.publish?.outputs?.commit).toBe(pushedCommit.trim());
+    expect(
+      completed?.nodes.publish?.metadata?.pre_publish_review?.['invalidated_approval'],
+    ).toBeUndefined();
+    expect(completed?.nodes.publish?.metadata?.pre_publish_review).toMatchObject({
+      resume_verification: expect.objectContaining({
+        diff_digest: changedDiffDigest,
+      }),
+    });
   }, 60_000);
 
   it('blocks dynamic pre-publish review from diff size even when paths are otherwise allowed', async () => {

@@ -249,10 +249,13 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         !missingCurrentDigestAfterInvalidation
       ) {
         if (state) {
+          const verifiedReview = previousReview ? { ...previousReview } : {};
+          delete verifiedReview['invalidated_approval'];
+
           state.metadata = {
             ...(state.metadata ?? {}),
             pre_publish_review: {
-              ...(previousReview ?? {}),
+              ...verifiedReview,
               schema: 'viewport.pre_publish_review/v1',
               required: previousReview?.['required'] ?? decision.required,
               facts: previousReview?.['facts'] ?? decision.facts,
