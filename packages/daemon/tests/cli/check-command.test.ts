@@ -11,6 +11,10 @@ repos:
     access: read-write
 invoke:
   agent: claude-code
+  notify:
+    provider: slack
+    credential_ref: slack/support
+    channel: C123
 `.trim();
 
 const INVALID_POLICY_BAD_REPO = `

@@ -68,6 +68,15 @@ const PolicyInvokeStepSchema = z
   })
   .strict();
 
+const PolicyNotifySchema = z
+  .object({
+    provider: z.literal('slack'),
+    credential_ref: z.string().min(1),
+    channel: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+  })
+  .strict();
+
 const PolicyContextSourceSchema = z
   .object({
     name: z.string().min(1),
@@ -104,6 +113,7 @@ export const PolicyDocumentSchema = z
         role: z.string().optional(),
         steps: z.array(PolicyInvokeStepSchema).optional(),
         workflow: z.string().optional(),
+        notify: PolicyNotifySchema.optional(),
       })
       .strict(),
     execution: z
