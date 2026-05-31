@@ -11,6 +11,7 @@ export interface WorkflowApprovalDecisionCommand {
   decision?: 'approve' | 'request_changes' | 'reject';
   message?: string | null;
   expected_action_digest?: string | null;
+  decided_at?: string | null;
   execution_grant?: {
     schema?: string;
     digest: string;
@@ -95,6 +96,7 @@ export function runtimeCommands(body: unknown): WorkflowRuntimeCommand[] {
         ...(decision ? { decision } : {}),
         message: readString(value['message']),
         ...(expectedActionDigest ? { expected_action_digest: expectedActionDigest } : {}),
+        decided_at: readString(value['decided_at']),
         ...(executionGrant ? { execution_grant: executionGrant } : {}),
         actor: readRecord(value['actor']),
         feedback: readRecord(value['feedback']),

@@ -34,6 +34,16 @@ export class WorkflowRuntimeCommandApplier {
     if (!node) return false;
     if (runtimeCommandConsumed(node.metadata, command.id)) return true;
     if (node.status !== 'blocked') return true;
+    if (staleApprovalRequestedAt(node, command.decided_at)) {
+      markRuntimeCommandConsumed(node, command.id, {
+        ignored: true,
+        reason: 'stale_approval_decided_before_current_request',
+        decided_at: command.decided_at,
+        requested_at: node.approval?.requestedAt,
+      });
+      await this.persistRun(run);
+      return true;
+    }
     const expectedActionDigest = command.expected_action_digest ?? undefined;
     if (staleApprovalDigest(node, expectedActionDigest)) {
       markRuntimeCommandConsumed(node, command.id, {
@@ -193,6 +203,15 @@ function staleApprovalDigest(
   if (!expectedDigest) return false;
   const currentDigest = approvalSubjectDigest(node);
   return typeof currentDigest === 'string' && currentDigest !== expectedDigest;
+}
+
+function staleApprovalRequestedAt(
+  node: WorkflowRunRecord['nodes'][string],
+  decidedAt: string | null | undefined,
+): boolean {
+  if (!decidedAt || !node.approval?.requestedAt) return false;
+  const decidedAtMs = Date.parse(decidedAt);
+  return Number.isFinite(decidedAtMs) && decidedAtMs < node.approval.requestedAt;
 }
 
 function approvalSubjectDigest(node: WorkflowRunRecord['nodes'][string]): unknown {
