@@ -39,7 +39,8 @@ export class WorkflowRuntimeCommandApplier {
     if (runtimeCommandConsumed(node.metadata, command.id)) return true;
     if (node.status !== 'blocked') return true;
     this.markCommandConsumedInProcess(command.id);
-    if (staleApprovalRequestBinding(node, command.approval_requested_at ?? undefined)) {
+    const expectedActionDigest = command.expected_action_digest ?? undefined;
+    if (staleApprovalRequestBinding(node, command.approval_requested_at ?? undefined, expectedActionDigest)) {
       markRuntimeCommandConsumed(node, command.id, {
         ignored: true,
         reason: 'stale_approval_request_binding',
@@ -59,7 +60,6 @@ export class WorkflowRuntimeCommandApplier {
       await this.persistRun(run);
       return true;
     }
-    const expectedActionDigest = command.expected_action_digest ?? undefined;
     if (missingDigestAfterInvalidation(node, expectedActionDigest)) {
       markRuntimeCommandConsumed(node, command.id, {
         ignored: true,
@@ -253,10 +253,15 @@ function missingDigestAfterInvalidation(
 function staleApprovalRequestBinding(
   node: WorkflowRunRecord['nodes'][string],
   commandRequestedAt: string | undefined,
+  expectedDigest: string | undefined,
 ): boolean {
   if (!commandRequestedAt) return false;
   const currentRequestedAt = node.approval?.requestedAt;
-  return currentRequestedAt !== undefined && String(currentRequestedAt) !== commandRequestedAt;
+  if (currentRequestedAt === undefined || String(currentRequestedAt) === commandRequestedAt) {
+    return false;
+  }
+
+  return !(expectedDigest && sameDigestPrePublishReblock(node, expectedDigest));
 }
 
 function staleApprovalRequestedAt(
@@ -285,7 +290,10 @@ function approvalSubjectDigest(node: WorkflowRunRecord['nodes'][string]): unknow
   return undefined;
 }
 
-function sameDigestPrePublishReblock(node: WorkflowRunRecord['nodes'][string]): boolean {
+function sameDigestPrePublishReblock(
+  node: WorkflowRunRecord['nodes'][string],
+  expectedDigest?: string,
+): boolean {
   if (node.type !== 'git_publish' || !isRecord(node.metadata?.['pre_publish_review'])) {
     return false;
   }
@@ -300,7 +308,8 @@ function sameDigestPrePublishReblock(node: WorkflowRunRecord['nodes'][string]): 
   return (
     typeof currentDigest === 'string' &&
     typeof invalidatedDigest === 'string' &&
-    currentDigest === invalidatedDigest
+    currentDigest === invalidatedDigest &&
+    (expectedDigest === undefined || expectedDigest === currentDigest)
   );
 }
 

@@ -325,7 +325,7 @@ describe('WorkflowRuntimeCommandApplier', () => {
       workflow_node_id: 'publish',
       approved: true,
       decision: 'approve',
-      expected_action_digest: 'sha256:mutated-diff',
+      expected_action_digest: 'sha256:old-diff',
       approval_requested_at: '1780254464068',
       decided_at: '2026-05-31T19:07:42.000Z',
     });
@@ -343,6 +343,60 @@ describe('WorkflowRuntimeCommandApplier', () => {
         }),
       ],
     });
+  });
+
+  it('accepts same-digest pre-publish commands after request timestamp churn', async () => {
+    const run = blockedRun();
+    run.nodes.publish = {
+      id: 'publish',
+      type: 'git_publish',
+      title: 'Publish',
+      status: 'blocked',
+      approval: {
+        prompt: 'Review the same diff after repeated re-blocks.',
+        requestedAt: 1_780_256_772_898,
+      },
+      metadata: {
+        pre_publish_review: {
+          schema: 'viewport.pre_publish_review/v1',
+          facts: {
+            diffDigest: 'sha256:current-diff',
+          },
+          invalidated_approval: {
+            previous_diff_digest: 'sha256:current-diff',
+            current_diff_digest: 'sha256:current-diff',
+            reason: 'current_diff_digest_not_approved',
+          },
+        },
+      },
+    };
+    delete run.nodes.review;
+
+    const decisions: WorkflowApprovalDecision[] = [];
+    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), async (_runId, _nodeId, decision) => {
+      decisions.push(decision);
+      return run;
+    });
+
+    const applied = await applier.apply({
+      id: 'approval-decision:same-digest-request-churn',
+      type: 'workflow.approval_decision',
+      workflow_run_id: run.id,
+      workflow_node_id: 'publish',
+      approved: true,
+      decision: 'approve',
+      expected_action_digest: 'sha256:current-diff',
+      approval_requested_at: '1780256513375',
+      decided_at: '2026-05-31T19:37:24.000Z',
+    });
+
+    expect(applied).toBe(true);
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        approved: true,
+        expectedActionDigest: 'sha256:current-diff',
+      }),
+    ]);
   });
 
   it('deduplicates concurrent approval command delivery in process', async () => {
