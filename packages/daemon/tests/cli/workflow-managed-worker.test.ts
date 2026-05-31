@@ -2381,6 +2381,135 @@ nodes:
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
   });
 
+  it('cancels a blocked local run when the platform assignment is canceled', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    let assignmentPolls = 0;
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_canceled_gate',
+            assignment_claim_token: 'vpclaim_canceled_gate',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: cancel-gated\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_canceled_gate') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_canceled_gate',
+        );
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_canceled_gate',
+            status: 'canceled',
+            nodes: [
+              {
+                node_key: 'approve',
+                type: 'approval',
+                status: 'blocked',
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_canceled_gate/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_canceled_gate',
+        );
+        platformSyncStatuses.push(String(body.status));
+        if (body.status === 'canceled') {
+          expect(body).toMatchObject({
+            runtime_run_id: 'local_run_canceled_gate',
+            status: 'canceled',
+            nodes: [
+              expect.objectContaining({
+                node_key: 'approve',
+                status: 'canceled',
+              }),
+            ],
+            events: [
+              expect.objectContaining({
+                type: 'run-canceled',
+                message: 'Managed workflow assignment was canceled from Viewport.',
+              }),
+            ],
+          });
+        }
+        return jsonResponse({ data: { id: 'run_platform_canceled_gate', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let cancelCalled = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_canceled_gate' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_canceled_gate') {
+        return jsonResponse({ run: blockedLocalRun('local_run_canceled_gate') });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_canceled_gate/cancel') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        });
+        cancelCalled = true;
+        return jsonResponse({ run: canceledLocalRun('local_run_canceled_gate') });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_canceled_gate/approvals/approve') {
+        throw new Error('Canceled assignments must not approve or resume the local gate.');
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(cancelCalled).toBe(true);
+    expect(assignmentPolls).toBeGreaterThanOrEqual(1);
+    expect(platformSyncStatuses).toEqual(['blocked', 'canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+  });
+
   it('uses the local workflow snapshot to rematerialize provider credentials after approval', async () => {
     process.argv = [
       'node',
@@ -4295,6 +4424,34 @@ function blockedLocalRun(id = 'local_run_2'): WorkflowRunRecord {
     ],
     createdAt: now - 2000,
     startedAt: now - 1000,
+    updatedAt: now,
+  };
+}
+
+function canceledLocalRun(id = 'local_run_canceled_gate'): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    ...blockedLocalRun(id),
+    status: 'canceled',
+    nodes: {
+      approve: {
+        id: 'approve',
+        type: 'approval',
+        status: 'canceled',
+        output: 'Managed workflow assignment was canceled from Viewport.',
+        completedAt: now,
+      },
+    },
+    events: [
+      {
+        id: 'evt_canceled',
+        runId: id,
+        timestamp: now,
+        type: 'run-canceled',
+        message: 'Managed workflow assignment was canceled from Viewport.',
+      },
+    ],
+    completedAt: now,
     updatedAt: now,
   };
 }
