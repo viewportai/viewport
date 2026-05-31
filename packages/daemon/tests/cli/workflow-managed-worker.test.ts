@@ -4152,6 +4152,100 @@ nodes:
     await fs.rm(tempWorkdir, { recursive: true, force: true });
   });
 
+  it('cancels a running local run when billing is suspended mid-run', async () => {
+    const tempWorkdir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-billing-'));
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      tempWorkdir,
+      '--lease',
+      '2',
+      '--once',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_billing_suspended_mid_run',
+            assignment_claim_token: 'vpclaim_billing_suspended_mid_run',
+            yaml_snapshot:
+              'schema: viewport.workflow/v1\nname: billing-suspended-mid-run\nnodes: {}\n',
+            directory_path: tempWorkdir,
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_billing_suspended_mid_run/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_billing_suspended_mid_run',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ ok: false, reason: 'BILLING_SUSPENDED' }, 402);
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let localPollCount = 0;
+    let cancelCalled = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: tempWorkdir }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_billing_suspended_mid_run' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_billing_suspended_mid_run') {
+        localPollCount += 1;
+        return jsonResponse({
+          run: runningLocalRun({ id: 'local_run_billing_suspended_mid_run' }),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_billing_suspended_mid_run/cancel') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        });
+        cancelCalled = true;
+        return jsonResponse({ run: canceledLocalRun('local_run_billing_suspended_mid_run') });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(cancelCalled).toBe(true);
+    expect(localPollCount).toBe(1);
+    expect(platformSyncStatuses).toEqual(['running', 'canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+
+    await fs.rm(tempWorkdir, { recursive: true, force: true });
+  });
+
   it('runs through real CLI HTTP boundaries against platform and daemon endpoints', async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-process-'));
     const goldenYaml = await goldenWorkflowYaml();
