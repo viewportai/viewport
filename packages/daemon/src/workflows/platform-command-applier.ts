@@ -45,6 +45,15 @@ export class WorkflowRuntimeCommandApplier {
       return true;
     }
     const expectedActionDigest = command.expected_action_digest ?? undefined;
+    if (missingDigestAfterInvalidation(node, expectedActionDigest)) {
+      markRuntimeCommandConsumed(node, command.id, {
+        ignored: true,
+        reason: 'missing_expected_action_digest_after_invalidation',
+        current_action_digest: approvalSubjectDigest(node),
+      });
+      await this.persistRun(run);
+      return true;
+    }
     if (staleApprovalDigest(node, expectedActionDigest)) {
       markRuntimeCommandConsumed(node, command.id, {
         ignored: true,
@@ -203,6 +212,15 @@ function staleApprovalDigest(
   if (!expectedDigest) return false;
   const currentDigest = approvalSubjectDigest(node);
   return typeof currentDigest === 'string' && currentDigest !== expectedDigest;
+}
+
+function missingDigestAfterInvalidation(
+  node: WorkflowRunRecord['nodes'][string],
+  expectedDigest: string | undefined,
+): boolean {
+  if (expectedDigest) return false;
+  const review = node.metadata?.['pre_publish_review'];
+  return isRecord(review) && isRecord(review['invalidated_approval']);
 }
 
 function staleApprovalRequestedAt(
