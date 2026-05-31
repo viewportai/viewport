@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
@@ -54,7 +56,7 @@ function workerHelpText(): string {
     '  start --mode persistent --transport polling|relay|inbound [--lease <seconds>]',
     '  run-once --lease <lease-token> --transport polling|relay|inbound',
     '  stop [--json]',
-    '  doctor [--json]',
+    '  doctor [--json] [--registration-profile <path>]',
     '  reset [--json]',
     '  help',
     '',
@@ -71,6 +73,32 @@ function workerHelpText(): string {
 
 async function workerDoctor(): Promise<void> {
   const asJson = isJsonMode();
+  const managed = managedExecutorDoctorProfile();
+  if (managed.present) {
+    if (asJson) {
+      printJson(managed.payload);
+      return;
+    }
+    console.log('Viewport worker doctor');
+    console.log('Runtime:   managed executor');
+    console.log(`Transport: ${managed.payload.transport ?? 'not configured'}`);
+    console.log(`Server:    ${managed.payload.serverUrl ?? 'not configured'}`);
+    console.log(`Workspace: ${managed.payload.workspaceId ?? 'not configured'}`);
+    console.log(`Executor:  ${managed.payload.executorId ?? 'not configured'}`);
+    console.log(`Work root: ${managed.payload.workspaceRoot ?? 'not configured'}`);
+    console.log(`Credential:${managed.payload.credentialSource ? ` ${managed.payload.credentialSource}` : ' missing'}`);
+    if (managed.payload.missing.length > 0) {
+      console.log(`Missing:   ${managed.payload.missing.join(', ')}`);
+      console.log('Fix:       pass --server, --workspace, --executor, and --credential-file.');
+      return;
+    }
+    if (managed.payload.warnings.length > 0) {
+      console.log(`Warnings:  ${managed.payload.warnings.join(', ')}`);
+    }
+    console.log('Status:    configured');
+    return;
+  }
+
   const manager = new ConfigManager();
   await manager.load();
   const workerConfig = manager.getDaemonConfig()?.worker;
@@ -113,6 +141,185 @@ async function workerDoctor(): Promise<void> {
     return;
   }
   console.log('Status:    configured');
+}
+
+interface ManagedExecutorDoctorPayload {
+  command: 'worker doctor';
+  ok: boolean;
+  runtimeProfile: 'managed-executor';
+  lifecycle: 'persistent';
+  transport: string | null;
+  serverUrl: string | null;
+  serverId: string | null;
+  workspaceId: string | null;
+  executorId: string | null;
+  workspaceRoot: string | null;
+  runnerPool: string | null;
+  credentialSource: 'inline' | 'file' | 'profile' | null;
+  capabilities: Record<string, unknown> | null;
+  missing: string[];
+  warnings: string[];
+}
+
+function managedExecutorDoctorProfile(): {
+  present: boolean;
+  payload: ManagedExecutorDoctorPayload;
+} {
+  const profilePath =
+    getFlag('registration-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE_FILE'];
+  const profile = profilePath ? readManagedExecutorProfile(profilePath) : {};
+  const hasManagedInput = Boolean(
+    profilePath ||
+      getFlag('server') ||
+      getFlag('workspace') ||
+      getFlag('resource') ||
+      getFlag('executor') ||
+      getFlag('credential') ||
+      getFlag('credential-file') ||
+      process.env['VIEWPORT_SERVER_URL'] ||
+      process.env['VPD_SERVER_URL'] ||
+      process.env['VIEWPORT_WORKSPACE_ID'] ||
+      process.env['VIEWPORT_MANAGED_EXECUTOR_ID'] ||
+      process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ||
+      process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ||
+      process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN_FILE'] ||
+      process.env['VPD_MANAGED_EXECUTOR_TOKEN_FILE'],
+  );
+
+  const credentialFile =
+    getFlag('credential-file') ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN_FILE'] ??
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN_FILE'] ??
+    stringValue(profile['credentialFile']) ??
+    stringValue(profile['credential_file']);
+  const inlineCredential =
+    getFlag('credential') ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ??
+    stringValue(profile['credential']);
+  let credentialSource: ManagedExecutorDoctorPayload['credentialSource'] =
+    inlineCredential ? (profile['credential'] === inlineCredential ? 'profile' : 'inline') : null;
+  const missing: string[] = [];
+  const warnings: string[] = [];
+
+  if (credentialFile) {
+    const readable = credentialFileIsReadable(credentialFile);
+    if (readable) {
+      credentialSource = 'file';
+    } else {
+      missing.push('managed executor credential file');
+    }
+  }
+  if (!credentialFile && !inlineCredential) {
+    missing.push('managed executor credential');
+  }
+
+  const serverUrl =
+    getFlag('server') ??
+    process.env['VIEWPORT_SERVER_URL'] ??
+    process.env['VPD_SERVER_URL'] ??
+    stringValue(profile['serverUrl']) ??
+    stringValue(profile['server_url']);
+  const workspaceId =
+    getFlag('workspace') ??
+    getFlag('resource') ??
+    process.env['VIEWPORT_WORKSPACE_ID'] ??
+    stringValue(profile['workspaceId']) ??
+    stringValue(profile['workspace_id']);
+  const executorId =
+    getFlag('executor') ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_ID'] ??
+    stringValue(profile['executorId']) ??
+    stringValue(profile['executor_id']) ??
+    stringValue(profile['managedExecutorId']) ??
+    stringValue(profile['managed_executor_id']);
+  const workspaceRoot =
+    getFlag('workdir') ??
+    stringValue(profile['workspaceRoot']) ??
+    stringValue(profile['workspace_root']) ??
+    stringValue(profile['workdir']);
+  if (!serverUrl) missing.push('server URL');
+  if (!workspaceId) missing.push('workspace id');
+  if (!executorId) missing.push('managed executor id');
+  if (!workspaceRoot) warnings.push('workspace root not pinned; pass --workdir for predictable checkouts');
+
+  return {
+    present: hasManagedInput,
+    payload: {
+      command: 'worker doctor',
+      ok: missing.length === 0,
+      runtimeProfile: 'managed-executor',
+      lifecycle: 'persistent',
+      transport:
+        getFlag('access-mode') ??
+        process.env['VIEWPORT_MANAGED_EXECUTOR_ACCESS_MODE'] ??
+        stringValue(profile['accessMode']) ??
+        stringValue(profile['access_mode']) ??
+        'polling',
+      serverUrl: serverUrl ?? null,
+      serverId:
+        getFlag('server-id') ??
+        process.env['VIEWPORT_SERVER_ID'] ??
+        process.env['VPD_SERVER_ID'] ??
+        stringValue(profile['serverId']) ??
+        stringValue(profile['server_id']) ??
+        stringValue(profile['control_plane_id']) ??
+        null,
+      workspaceId: workspaceId ?? null,
+      executorId: executorId ?? null,
+      workspaceRoot: workspaceRoot ? path.resolve(workspaceRoot) : null,
+      runnerPool:
+        getFlag('runner-pool') ??
+        process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
+        process.env['VIEWPORT_MANAGED_EXECUTOR_RUNNER_POOL'] ??
+        stringValue(profile['runnerPool']) ??
+        stringValue(profile['runner_pool']) ??
+        null,
+      credentialSource,
+      capabilities: recordValue(profile['capabilities']),
+      missing,
+      warnings,
+    },
+  };
+}
+
+function readManagedExecutorProfile(profilePath: string): Record<string, unknown> {
+  const resolved = resolveProfilePath(profilePath);
+  const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Managed executor registration profile is not a JSON object: ${resolved}`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const daemon = recordValue(record['daemon']);
+  const worker = recordValue(daemon?.['worker']);
+
+  return { ...record, ...(worker ?? {}) };
+}
+
+function credentialFileIsReadable(filePath: string): boolean {
+  try {
+    return fs.readFileSync(resolveProfilePath(filePath), 'utf8').trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function resolveProfilePath(profilePath: string): string {
+  if (profilePath === '~') return process.env['HOME'] ?? profilePath;
+  if (profilePath.startsWith('~/')) {
+    const home = process.env['HOME'];
+    return home ? path.join(home, profilePath.slice(2)) : path.resolve(profilePath);
+  }
+  return path.resolve(profilePath);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 async function workerReset(): Promise<void> {

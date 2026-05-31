@@ -38,6 +38,109 @@ describe('worker command', () => {
     expect(payload.missing).toEqual(['server URL', 'workspace root', 'worker identity']);
   });
 
+  it('reports managed-executor worker flags as a configured worker profile', async () => {
+    const tokenPath = path.join(homeDir, 'managed-token');
+    await fs.writeFile(tokenPath, 'worker-secret\n', 'utf8');
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'doctor',
+      '--json',
+      '--server',
+      'https://api.getviewport.test',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential-file',
+      tokenPath,
+      '--workdir',
+      path.join(homeDir, 'worktrees'),
+      '--runner-pool',
+      'organization-default',
+    ];
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      ok: boolean;
+      runtimeProfile: string;
+      transport: string;
+      serverUrl: string;
+      workspaceId: string;
+      executorId: string;
+      workspaceRoot: string;
+      runnerPool: string;
+      credentialSource: string;
+      missing: string[];
+      warnings: string[];
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.runtimeProfile).toBe('managed-executor');
+    expect(payload.transport).toBe('polling');
+    expect(payload.serverUrl).toBe('https://api.getviewport.test');
+    expect(payload.workspaceId).toBe('workspace_1');
+    expect(payload.executorId).toBe('executor_1');
+    expect(payload.workspaceRoot).toBe(path.join(homeDir, 'worktrees'));
+    expect(payload.runnerPool).toBe('organization-default');
+    expect(payload.credentialSource).toBe('file');
+    expect(payload.missing).toEqual([]);
+    expect(payload.warnings).toEqual([]);
+  });
+
+  it('reports managed-executor registration profiles without printing credentials', async () => {
+    const profilePath = path.join(homeDir, 'registration-profile.json');
+    await fs.writeFile(
+      profilePath,
+      JSON.stringify(
+        {
+          schema: 'viewport.managed_executor_registration/v1',
+          server_url: 'https://api.getviewport.test',
+          workspace_id: 'workspace_profile',
+          managed_executor_id: 'executor_profile',
+          credential: 'secret-value',
+          access_mode: 'polling',
+          runner_profile: 'organization-default',
+          capabilities: { integrations: ['github', 'slack'] },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'doctor',
+      '--json',
+      '--registration-profile',
+      profilePath,
+    ];
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const raw = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
+    const payload = JSON.parse(raw) as {
+      ok: boolean;
+      runtimeProfile: string;
+      credentialSource: string;
+      missing: string[];
+      warnings: string[];
+      capabilities: { integrations: string[] };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.runtimeProfile).toBe('managed-executor');
+    expect(payload.credentialSource).toBe('profile');
+    expect(payload.missing).toEqual([]);
+    expect(payload.warnings).toContain('workspace root not pinned; pass --workdir for predictable checkouts');
+    expect(payload.capabilities.integrations).toEqual(['github', 'slack']);
+    expect(raw).not.toContain('secret-value');
+  });
+
   it('keeps manual capability flags out of the default worker help path', async () => {
     process.argv = ['node', 'vpd', 'worker', 'help'];
     const { worker } = await import('../../src/cli/worker-command.js');
@@ -46,6 +149,7 @@ describe('worker command', () => {
 
     const output = logSpy.mock.calls.map((call) => String(call[0] ?? '')).join('\n');
     expect(output).toContain('vpd pair --worker --transport=polling --workdir <path>');
+    expect(output).toContain('doctor [--json] [--registration-profile <path>]');
     expect(output).toContain('stop [--json]');
     expect(output).not.toContain('--agents');
     expect(output).not.toContain('--models');
