@@ -334,6 +334,27 @@ nodes:
     expect(result.issues[0]?.message).toMatch(/Invalid workflow/);
   });
 
+  it('explains executionMode on unsupported node types', () => {
+    const result = validateWorkflowText(
+      `
+schema: viewport.workflow/v1
+name: bad-execution-mode
+nodes:
+  draft_plan:
+    type: plan
+    body: Review the implementation plan.
+    executionMode: plan
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]?.message).toContain(
+      'Unsupported key "executionMode". executionMode is only valid on prompt/agent execution nodes',
+    );
+    expect(result.issues[0]?.message).toContain('use gates, reviewer tags, branch/path fences');
+  });
+
   it('rejects dependency cycles', () => {
     expect(() =>
       parseWorkflow(

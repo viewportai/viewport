@@ -55,7 +55,9 @@ export function parseWorkflow(sourceText: string, sourcePath: string): ParsedWor
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const issuePath = issue?.path.join('.') || '<root>';
-    throw new Error(`Invalid workflow at ${issuePath}: ${issue?.message ?? 'schema mismatch'}`);
+    throw new Error(
+      `Invalid workflow at ${issuePath}: ${workflowSchemaIssueMessage(issue)}`,
+    );
   }
 
   validateWorkflowGraph(parsed.data);
@@ -69,6 +71,18 @@ export function parseWorkflow(sourceText: string, sourcePath: string): ParsedWor
     sourceText,
     normalizedJson,
   };
+}
+
+function workflowSchemaIssueMessage(issue: z.ZodIssue | undefined): string {
+  if (!issue) return 'schema mismatch';
+  if (
+    issue.code === 'unrecognized_keys' &&
+    issue.keys.includes('executionMode')
+  ) {
+    return 'Unsupported key "executionMode". executionMode is only valid on prompt/agent execution nodes in compiled workflow YAML; do not add it to plan, approval, action, route, or policy nodes. In .viewport config, use gates, reviewer tags, branch/path fences, and route policy instead.';
+  }
+
+  return issue.message;
 }
 
 export function workflowNodeOrder(definition: WorkflowDefinition): string[] {
