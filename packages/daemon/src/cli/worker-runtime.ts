@@ -82,6 +82,8 @@ interface ClaimedLease {
   inputSnapshot?: Record<string, WorkflowInputValue>;
   resourceManifest?: Record<string, unknown>;
   workflowAuthorityContract?: Record<string, unknown>;
+  executionProfileSnapshot?: Record<string, unknown>;
+  workflowSnapshot?: Record<string, unknown>;
   runtimeTargetId?: string;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
 }
@@ -359,6 +361,10 @@ async function claimLease(
     workflowAuthorityContract: recordValue(
       data['workflow_authority_contract'] ?? rawLease['workflow_authority_contract'],
     ),
+    executionProfileSnapshot: recordValue(
+      data['execution_profile_snapshot'] ?? rawLease['execution_profile_snapshot'],
+    ),
+    workflowSnapshot: recordValue(data['workflow_snapshot'] ?? rawLease['workflow_snapshot']),
     runtimeTargetId: stringValue(data['runtime_target_id'] ?? rawLease['runtime_target_id']),
     dataCapturePolicy: dataCapturePolicyValue(
       data['data_capture_policy'] ?? rawLease['data_capture_policy'],
@@ -625,7 +631,10 @@ function credentialHandlesFromLease(lease: ClaimedLease): string[] {
   const workflow = yamlSnapshotDocument(lease);
   const handles = new Set<string>();
   for (const handle of [
-    ...actionCredentialRefs(isRecord(workflow) ? workflow['nodes'] : undefined),
+    ...workflowNodeCredentialRefs(isRecord(workflow) ? workflow['nodes'] : undefined),
+    ...topLevelCredentialRefs(isRecord(workflow) ? workflow['credentials'] : undefined),
+    ...profileCredentialRefs(lease.executionProfileSnapshot),
+    ...profileCredentialRefs(lease.workflowSnapshot),
     ...providerActionCredentialRefs(lease.workflowAuthorityContract),
   ]) {
     handles.add(handle);
@@ -641,28 +650,66 @@ function repositoryForCredentialHandle(
   const nodes = isRecord(workflow) ? workflow['nodes'] : undefined;
   if (!isRecord(nodes)) return {};
   for (const node of Object.values(nodes)) {
-    if (!isRecord(node) || stringValue(node['type']) !== 'action') continue;
+    if (!isRecord(node)) continue;
     const withValue = isRecord(node['with']) ? node['with'] : {};
     const credentialRef =
-      stringValue(withValue['credential_ref']) ?? stringValue(withValue['credentialRef']);
+      stringValue(withValue['credential_ref']) ??
+      stringValue(withValue['credentialRef']) ??
+      stringValue(node['credential_ref']) ??
+      stringValue(node['credentialRef']);
     if (credentialRef !== handle) continue;
-    const repository = renderLeaseTemplate(
-      stringValue(withValue['repository']) ?? stringValue(withValue['repo']),
-      lease,
-    );
+    const repository = renderLeaseTemplate(repositoryTemplateForNode(node, withValue), lease);
     if (repository) return { repository };
   }
   return {};
 }
 
-function actionCredentialRefs(nodes: unknown): string[] {
+function workflowNodeCredentialRefs(nodes: unknown): string[] {
   if (!isRecord(nodes)) return [];
   return Object.values(nodes).flatMap((node) => {
-    if (!isRecord(node) || stringValue(node['type']) !== 'action') return [];
+    if (!isRecord(node)) return [];
+    const type = stringValue(node['type']);
+    if (type !== 'action' && type !== 'checkout' && type !== 'git_publish') return [];
     const withValue = isRecord(node['with']) ? node['with'] : {};
     const credentialRef =
-      stringValue(withValue['credential_ref']) ?? stringValue(withValue['credentialRef']);
+      stringValue(withValue['credential_ref']) ??
+      stringValue(withValue['credentialRef']) ??
+      stringValue(node['credential_ref']) ??
+      stringValue(node['credentialRef']);
     return credentialRef ? [credentialRef] : [];
+  });
+}
+
+function topLevelCredentialRefs(credentials: unknown): string[] {
+  if (!isRecord(credentials)) return [];
+  const refs: string[] = [];
+  for (const value of Object.values(credentials)) {
+    refs.push(...credentialEntriesFrom(value));
+  }
+  return refs;
+}
+
+function profileCredentialRefs(snapshot: unknown): string[] {
+  const credentials = pathValue(asRecord(snapshot), ['credentials']);
+  if (!isRecord(credentials)) return [];
+  const refs: string[] = [];
+  for (const value of Object.values(credentials)) {
+    refs.push(...credentialEntriesFrom(value));
+  }
+  return refs;
+}
+
+function credentialEntriesFrom(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry === 'string' && entry.trim() !== '') return [entry.trim()];
+    if (!isRecord(entry)) return [];
+    const handle =
+      stringValue(entry['handle']) ??
+      stringValue(entry['ref']) ??
+      stringValue(entry['credential_ref']) ??
+      stringValue(entry['credentialRef']);
+    return handle ? [handle] : [];
   });
 }
 
@@ -678,6 +725,18 @@ function providerActionCredentialRefs(contract: unknown): string[] {
       stringValue(entry['credential_ref']);
     return value ? [value] : [];
   });
+}
+
+function repositoryTemplateForNode(
+  node: Record<string, unknown>,
+  withValue: Record<string, unknown>,
+): string | undefined {
+  return (
+    stringValue(withValue['repository']) ??
+    stringValue(withValue['repo']) ??
+    stringValue(node['repository']) ??
+    stringValue(node['repo'])
+  );
 }
 
 function renderLeaseTemplate(value: string | undefined, lease: ClaimedLease): string | null {
