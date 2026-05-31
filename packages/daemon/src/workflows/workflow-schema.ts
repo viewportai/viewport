@@ -240,6 +240,10 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
   type: z.literal('approval'),
   prompt: z.string().trim().min(1),
   recipients: z.array(ApprovalRecipientSchema).optional(),
+  gate_intent: z.enum(['plan', 'approval']).optional(),
+  reviewer_tags: z.array(z.string().trim().min(1)).optional(),
+  timeout: z.string().trim().min(1).optional(),
+  on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
   captureResponse: z.boolean().optional(),
   onReject: ApprovalOnRejectSchema.optional(),
 }).strict();

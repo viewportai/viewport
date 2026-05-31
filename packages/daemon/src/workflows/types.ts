@@ -266,6 +266,10 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
   type: 'approval';
   prompt: string;
   recipients?: WorkflowApprovalRecipient[];
+  gate_intent?: 'plan' | 'approval';
+  reviewer_tags?: string[];
+  timeout?: string;
+  on_timeout?: 'escalate' | 'auto-approve' | 'cancel';
   /** When true, the approver's message becomes the node's output. */
   captureResponse?: boolean;
   /**

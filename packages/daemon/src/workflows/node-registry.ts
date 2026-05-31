@@ -18,7 +18,7 @@ import {
 import { envNameForCredentialRef } from './action-provider-utils.js';
 import { executeSubflowNode } from './subflow-executor.js';
 import { buildExpressionContext, evaluateConditionExpression } from './expression.js';
-import type { WorkflowNodeExecutorContext } from './node-executor.js';
+import type { ApprovalBlockOptions, WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
 import { readPromptNodeOutput } from './prompt-output.js';
@@ -73,6 +73,7 @@ export interface BuiltinExecutorHelpers {
     run: WorkflowRunRecord,
     nodeId: string,
     prompt: string,
+    options?: ApprovalBlockOptions,
   ) => Promise<void>;
 }
 
@@ -450,7 +451,12 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
 
   approval: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'approval') return { result: 'completed' };
-    await helpers.blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
+    await helpers.blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run), {
+      gateIntent: node.gate_intent,
+      reviewerTags: node.reviewer_tags,
+      timeout: node.timeout,
+      onTimeout: node.on_timeout,
+    });
     return { result: 'blocked' };
   },
 

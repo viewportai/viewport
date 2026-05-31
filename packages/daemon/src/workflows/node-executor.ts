@@ -22,6 +22,13 @@ import type { WorkflowPlatformContextClient } from './platform-context-client.js
 import type { WorkflowShellAbortRegistry } from './shell-abort-registry.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 
+export interface ApprovalBlockOptions {
+  gateIntent?: unknown;
+  reviewerTags?: unknown;
+  timeout?: unknown;
+  onTimeout?: unknown;
+}
+
 export interface WorkflowNodeExecutorContext {
   daemon: Daemon;
   sessionLinks: WorkflowSessionLinkStore;
@@ -490,18 +497,83 @@ async function blockForApproval(
   run: WorkflowRunRecord,
   nodeId: string,
   prompt: string,
+  options: ApprovalBlockOptions = {},
 ): Promise<void> {
   const state = run.nodes[nodeId];
   if (!state) return;
 
+  const requestedAt = Date.now();
+  const metadata = {
+    ...(state.metadata ?? {}),
+    ...approvalBlockMetadata(options, requestedAt),
+  };
   state.status = 'blocked';
+  state.metadata = metadata;
   state.approval = {
     prompt,
-    requestedAt: Date.now(),
+    requestedAt,
   };
   run.status = 'blocked';
   run.updatedAt = state.approval.requestedAt;
   addEvent(run, 'approval-requested', `Approval requested for node ${nodeId}`, { prompt }, nodeId);
   addEvent(run, 'run-blocked', `Workflow blocked by approval gate: ${nodeId}`, undefined, nodeId);
   await context.saveAndEmit(run);
+}
+
+function approvalBlockMetadata(
+  options: ApprovalBlockOptions,
+  requestedAt: number,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  const gateIntent = stringValue(options.gateIntent);
+  if (gateIntent === 'plan' || gateIntent === 'approval') {
+    metadata['gate_intent'] = gateIntent;
+  }
+
+  if (Array.isArray(options.reviewerTags)) {
+    const reviewerTags = options.reviewerTags.filter(
+      (value): value is string => typeof value === 'string' && value.trim() !== '',
+    );
+    if (reviewerTags.length > 0) {
+      metadata['reviewer_tags'] = reviewerTags;
+    }
+  }
+
+  const onTimeout = stringValue(options.onTimeout);
+  if (onTimeout === 'escalate' || onTimeout === 'auto-approve' || onTimeout === 'cancel') {
+    metadata['on_timeout'] = onTimeout;
+  }
+
+  const timeoutAt = timeoutAtIso(options.timeout, requestedAt);
+  if (timeoutAt) {
+    metadata['timeout_at'] = timeoutAt;
+  }
+
+  return metadata;
+}
+
+function timeoutAtIso(value: unknown, requestedAt: number): string | null {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  const match = raw.match(
+    /^(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/i,
+  );
+  if (!match) return null;
+  const amount = Number.parseInt(match[1] ?? '', 10);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const unit = (match[2] ?? '').toLowerCase();
+  const multiplier =
+    unit.startsWith('s')
+      ? 1_000
+      : unit.startsWith('m')
+        ? 60_000
+        : unit.startsWith('h')
+          ? 3_600_000
+          : 86_400_000;
+
+  return new Date(requestedAt + amount * multiplier).toISOString();
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
