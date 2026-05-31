@@ -425,11 +425,16 @@ async function executeSlackAction(
     node.action === 'message' ||
     node.action === 'chat.postMessage'
   ) {
+    const renderedActionInput = {
+      ...actionInput,
+      text,
+    };
+
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: 'https://slack.com/api/chat.postMessage',
       headers: withIdempotencyHeader({ Authorization: `Bearer ${token}` }, options.idempotencyKey),
-      proposalInput: actionInput,
+      proposalInput: renderedActionInput,
       body: {
         channel,
         text,

@@ -727,6 +727,12 @@ nodes:
         `<https://app.getviewport.test/workflows/runs/${run.id}#audit|`,
         `<https://app.getviewport.test/workflows/runs/${run.id}|`,
       ]);
+      expect(completed?.nodes.notify_completion?.metadata?.action?.input).toMatchObject({
+        text: slackBody.text,
+      });
+      expect(
+        String(completed?.nodes.notify_completion?.metadata?.action?.input?.['text']),
+      ).not.toContain('{github_pr.url}');
     } finally {
       if (originalGitHubToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalGitHubToken;
