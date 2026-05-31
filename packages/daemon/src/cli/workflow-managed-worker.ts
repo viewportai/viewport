@@ -1794,9 +1794,14 @@ async function materializeCredential(
 function repositoryForCredentialMaterialization(
   assignment: ManagedAssignment,
   handle: string,
-): { repository: string } | Record<string, never> {
-  const actionRepository = repositoryFromActionCredentialRef(assignment, handle);
-  if (actionRepository) return { repository: actionRepository };
+): { repository: string } | { repositories: string[] } | Record<string, never> {
+  const actionRepositories = repositoriesFromActionCredentialRef(assignment, handle);
+  if (actionRepositories.length === 1 && actionRepositories[0]) {
+    return { repository: actionRepositories[0] };
+  }
+  if (actionRepositories.length > 1) {
+    return { repositories: actionRepositories };
+  }
 
   const checkoutEntries = [
     ...credentialEntriesFrom(
@@ -1942,14 +1947,15 @@ function actionCredentialRefs(nodes: unknown): string[] {
   });
 }
 
-function repositoryFromActionCredentialRef(
+function repositoriesFromActionCredentialRef(
   assignment: ManagedAssignment,
   handle: string,
-): string | null {
+): string[] {
   const workflow = yamlSnapshotDocument(assignment);
   const nodes = isRecord(workflow) ? workflow['nodes'] : undefined;
-  if (!isRecord(nodes)) return null;
+  if (!isRecord(nodes)) return [];
 
+  const repositories = new Set<string>();
   for (const node of Object.values(nodes)) {
     if (!isRecord(node) || stringField(node, 'type') !== 'action') continue;
     const withValue = isRecord(node['with']) ? node['with'] : {};
@@ -1959,10 +1965,10 @@ function repositoryFromActionCredentialRef(
 
     const repository = stringField(withValue, 'repository') ?? stringField(withValue, 'repo');
     const rendered = renderCredentialTemplate(repository, assignment);
-    if (rendered) return rendered;
+    if (rendered) repositories.add(rendered);
   }
 
-  return null;
+  return [...repositories].sort();
 }
 
 function renderCredentialTemplate(
