@@ -3,7 +3,12 @@ import path from 'node:path';
 import { ConfigManager } from '../core/config.js';
 import { getArgs, getFlag } from './args.js';
 import { isJsonMode, printJson } from './command-shared.js';
-import { stopWorkerProcessLock, type WorkerLockOptions } from './worker-process-lock.js';
+import {
+  inspectWorkerProcessLock,
+  stopWorkerProcessLock,
+  type WorkerLockOptions,
+  type WorkerProcessLockStatus,
+} from './worker-process-lock.js';
 import { runStandaloneWorker } from './worker-runtime.js';
 import {
   defaultWorkerWorkspaceRoot,
@@ -98,6 +103,7 @@ async function workerDoctor(): Promise<void> {
     console.log(`Executor:  ${managed.payload.executorId ?? 'not configured'}`);
     console.log(`Work root: ${managed.payload.workspaceRoot ?? 'not configured'}`);
     console.log(`Credential:${managed.payload.credentialSource ? ` ${managed.payload.credentialSource}` : ' missing'}`);
+    console.log(`Lock:      ${workerLockLabel(managed.payload.processLock)}`);
     console.log(`Support:   ${SUPPORT_PACKET_DOCS_URL}`);
     if (managed.payload.missing.length > 0) {
       console.log(`Missing:   ${managed.payload.missing.join(', ')}`);
@@ -120,6 +126,7 @@ async function workerDoctor(): Promise<void> {
   if (!workerConfig?.identityKeyPath || !workerConfig.publicKeyFingerprint) {
     missing.push('worker identity');
   }
+  const lockOptions = await currentWorkerLockOptions();
   const payload = {
     command: 'worker doctor',
     ok: missing.length === 0,
@@ -129,6 +136,7 @@ async function workerDoctor(): Promise<void> {
     workspaceRoot: workerConfig?.workspaceRoot ?? null,
     publicKeyFingerprint: workerConfig?.publicKeyFingerprint ?? null,
     capabilities: workerConfig?.capabilities ?? null,
+    processLock: lockStatusForOptions(lockOptions),
     missing,
     supportPacket: supportPacketMetadata(),
   };
@@ -141,6 +149,7 @@ async function workerDoctor(): Promise<void> {
   console.log(`Transport: ${payload.transport ?? 'not configured'}`);
   console.log(`Server:    ${payload.serverUrl ?? 'not configured'}`);
   console.log(`Work root: ${payload.workspaceRoot ?? 'not configured'}`);
+  console.log(`Lock:      ${workerLockLabel(payload.processLock)}`);
   console.log(`Support:   ${SUPPORT_PACKET_DOCS_URL}`);
   const agents = payload.capabilities?.agents;
   const agentCount = Array.isArray(agents)
@@ -171,6 +180,7 @@ interface ManagedExecutorDoctorPayload {
   runnerPool: string | null;
   credentialSource: 'inline' | 'file' | 'profile' | null;
   capabilities: Record<string, unknown> | null;
+  processLock: SanitizedWorkerProcessLockStatus | null;
   missing: string[];
   warnings: string[];
   supportPacket: ReturnType<typeof supportPacketMetadata>;
@@ -258,6 +268,24 @@ function managedExecutorDoctorProfile(): {
   if (!executorId) missing.push('managed executor id');
   if (!workspaceRoot) warnings.push('workspace root not pinned; pass --workdir for predictable checkouts');
 
+  const lockOptions = managedWorkerLockOptions({
+    serverUrl,
+    workspaceId,
+    executorId,
+    runnerPool:
+      getFlag('runner-pool') ??
+      process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
+      process.env['VIEWPORT_MANAGED_EXECUTOR_RUNNER_POOL'] ??
+      stringValue(profile['runnerPool']) ??
+      stringValue(profile['runner_pool']),
+    transport:
+      getFlag('access-mode') ??
+      process.env['VIEWPORT_MANAGED_EXECUTOR_ACCESS_MODE'] ??
+      stringValue(profile['accessMode']) ??
+      stringValue(profile['access_mode']) ??
+      'polling',
+  });
+
   return {
     present: hasManagedInput,
     payload: {
@@ -265,12 +293,7 @@ function managedExecutorDoctorProfile(): {
       ok: missing.length === 0,
       runtimeProfile: 'managed-executor',
       lifecycle: 'persistent',
-      transport:
-        getFlag('access-mode') ??
-        process.env['VIEWPORT_MANAGED_EXECUTOR_ACCESS_MODE'] ??
-        stringValue(profile['accessMode']) ??
-        stringValue(profile['access_mode']) ??
-        'polling',
+      transport: lockOptions?.accessMode ?? 'polling',
       serverUrl: serverUrl ?? null,
       serverId:
         getFlag('server-id') ??
@@ -284,19 +307,65 @@ function managedExecutorDoctorProfile(): {
       executorId: executorId ?? null,
       workspaceRoot: workspaceRoot ? path.resolve(workspaceRoot) : null,
       runnerPool:
-        getFlag('runner-pool') ??
-        process.env['VIEWPORT_MANAGED_RUNNER_POOL'] ??
-        process.env['VIEWPORT_MANAGED_EXECUTOR_RUNNER_POOL'] ??
-        stringValue(profile['runnerPool']) ??
-        stringValue(profile['runner_pool']) ??
+        lockOptions?.runnerProfile ??
         null,
       credentialSource,
       capabilities: recordValue(profile['capabilities']),
+      processLock: lockStatusForOptions(lockOptions),
       missing,
       warnings,
       supportPacket: supportPacketMetadata(),
     },
   };
+}
+
+interface SanitizedWorkerProcessLockStatus {
+  active: boolean;
+  stale: boolean;
+  pid: number | null;
+  startedAt: string | null;
+}
+
+function managedWorkerLockOptions(input: {
+  serverUrl: string | undefined;
+  workspaceId: string | undefined;
+  executorId: string | undefined;
+  runnerPool: string | undefined;
+  transport: string | undefined;
+}): WorkerLockOptions | null {
+  if (!input.serverUrl || !input.workspaceId || !input.executorId) {
+    return null;
+  }
+
+  return {
+    server: input.serverUrl,
+    workspaceId: input.workspaceId,
+    executorId: input.executorId,
+    runnerProfile: input.runnerPool,
+    accessMode: input.transport ?? 'polling',
+  };
+}
+
+function lockStatusForOptions(options: WorkerLockOptions | null): SanitizedWorkerProcessLockStatus | null {
+  if (!options) return null;
+  return sanitizeWorkerLockStatus(inspectWorkerProcessLock(options));
+}
+
+function sanitizeWorkerLockStatus(status: WorkerProcessLockStatus): SanitizedWorkerProcessLockStatus {
+  return {
+    active: status.active,
+    stale: Boolean(status.stale),
+    pid: status.pid ?? null,
+    startedAt: status.startedAt ?? null,
+  };
+}
+
+function workerLockLabel(status: SanitizedWorkerProcessLockStatus | null): string {
+  if (!status) return 'not available';
+  if (!status.pid) return 'not active';
+  if (status.active) return `active pid ${status.pid}`;
+  if (status.stale) return `stale pid ${status.pid}`;
+  return 'not active';
 }
 
 function supportPacketMetadata(): {

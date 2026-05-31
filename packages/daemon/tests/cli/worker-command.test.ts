@@ -74,6 +74,12 @@ describe('worker command', () => {
       workspaceRoot: string;
       runnerPool: string;
       credentialSource: string;
+      processLock: {
+        active: boolean;
+        stale: boolean;
+        pid: number | null;
+        startedAt: string | null;
+      };
       supportPacket: {
         docsUrl: string;
         reviewBeforeSharing: boolean;
@@ -91,6 +97,12 @@ describe('worker command', () => {
     expect(payload.workspaceRoot).toBe(path.join(homeDir, 'worktrees'));
     expect(payload.runnerPool).toBe('organization-default');
     expect(payload.credentialSource).toBe('file');
+    expect(payload.processLock).toEqual({
+      active: false,
+      stale: false,
+      pid: null,
+      startedAt: null,
+    });
     expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
     expect(payload.supportPacket.reviewBeforeSharing).toBe(true);
     expect(payload.supportPacket.omittedSecrets).toContain('lease_tokens');
@@ -195,6 +207,12 @@ describe('worker command', () => {
       workspaceRoot: string;
       publicKeyFingerprint: string;
       capabilities: { agents: Record<string, unknown> };
+      processLock: {
+        active: boolean;
+        stale: boolean;
+        pid: number | null;
+        startedAt: string | null;
+      };
       supportPacket: { docsUrl: string; omittedSecrets: string[] };
       missing: string[];
     };
@@ -205,6 +223,12 @@ describe('worker command', () => {
     expect(payload.workspaceRoot).toBe(path.join(homeDir, 'workspace'));
     expect(payload.publicKeyFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.capabilities.agents).toEqual({});
+    expect(payload.processLock).toEqual({
+      active: false,
+      stale: false,
+      pid: null,
+      startedAt: null,
+    });
     expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
     expect(payload.supportPacket.omittedSecrets).toContain('claim_tokens');
     expect(payload.missing).toEqual([]);
@@ -249,5 +273,49 @@ describe('worker command', () => {
     expect(payload.stale).toBe(true);
     expect(payload.pid).toBe(999_999_999);
     await expect(fs.stat(lock.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reports stale persistent worker locks in doctor output', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    const { acquireWorkerProcessLock } =
+      await import('../../src/cli/worker-process-lock.js');
+    const profile = await resolveWorkerProfileDefaults({
+      server: await resolvePairingServerTransport(),
+      detectCapabilities: false,
+    });
+    await storeWorkerProfile(null, profile);
+    const lock = acquireWorkerProcessLock({
+      server: profile.serverUrl,
+      workspaceId: profile.publicKeyFingerprint,
+      executorId: profile.publicKeyFingerprint,
+      accessMode: profile.transport,
+    });
+    const record = JSON.parse(await fs.readFile(lock.filePath, 'utf8')) as Record<string, unknown>;
+    record['pid'] = 999_999_998;
+    await fs.writeFile(lock.filePath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      processLock: {
+        active: boolean;
+        stale: boolean;
+        pid: number | null;
+        startedAt: string | null;
+      };
+    };
+    expect(payload.processLock).toMatchObject({
+      active: false,
+      stale: true,
+      pid: 999_999_998,
+    });
+    expect(payload.processLock.startedAt).toEqual(expect.any(String));
   });
 });
