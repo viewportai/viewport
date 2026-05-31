@@ -309,6 +309,9 @@ async function syncDaemonModelCapabilities(options: ManagedWorkerOptions): Promi
     return;
   }
 
+  if (options.capabilities.agents.length === 0) {
+    options.capabilities.agents = Object.keys(catalog);
+  }
   options.capabilities.models = allModels;
   options.capabilities.agentModels = catalog;
 }
@@ -2357,6 +2360,7 @@ function assignmentFrom(body: unknown): ManagedAssignment {
 
 async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
   const resolvedPath = path.resolve(directoryPath);
+  await fs.promises.mkdir(resolvedPath, { recursive: true, mode: 0o700 });
   const directories = (await daemonJson('GET', '/api/directories')) as DirectoryInfo[];
   const existing = directories.find((directory) => directory.path === resolvedPath);
   if (existing) return existing;

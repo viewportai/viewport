@@ -165,6 +165,9 @@ describe('workflow managed worker CLI', () => {
   });
 
   it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {
+    const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-managed-worker-'));
+    const workdir = path.join(workdirParent, 'workspace');
+
     process.argv = [
       'node',
       'vpd',
@@ -179,7 +182,7 @@ describe('workflow managed worker CLI', () => {
       '--credential',
       'vpexec_secret',
       '--workdir',
-      '/repo',
+      workdir,
       '--agents',
       'codex',
       '--models',
@@ -225,7 +228,7 @@ describe('workflow managed worker CLI', () => {
             assignment_claim_token: 'vpclaim_run_platform_1',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
             source_ref: 'viewport://workflow/proof',
-            directory_path: '/repo',
+            directory_path: workdir,
             input_snapshot: { issue: 'PAY-1842' },
             schema_versions: { route: 'viewport.route/v1' },
             route_snapshot: { key: 'payments-bugs' },
@@ -399,6 +402,7 @@ describe('workflow managed worker CLI', () => {
 
     expect(process.env[githubPrWriterEnv]).toBeUndefined();
     expect(process.env[repoPaymentsEnv]).toBeUndefined();
+    await expect(pathExists(workdir)).resolves.toBe(true);
 
     expect(platformRequests.map((request) => request.url)).toEqual([
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
@@ -1806,6 +1810,72 @@ nodes:
             { agentId: 'claude', value: 'default', displayName: 'Default' },
             { agentId: 'claude', value: 'sonnet', displayName: 'Sonnet' },
             { agentId: 'codex', value: 'gpt-5.4', displayName: 'gpt-5.4' },
+          ],
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+  });
+
+  it('infers worker agent capabilities from the daemon model catalog', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_auto_agents',
+      '--executor',
+      'executor_auto_agents',
+      '--credential',
+      'vpexec_auto_agents',
+      '--doctor',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          capabilities: {
+            agents: {
+              claude: expect.objectContaining({
+                models: ['default', 'sonnet'],
+                default_model: 'default',
+              }),
+              codex: expect.objectContaining({
+                models: ['gpt-5.4'],
+                default_model: 'gpt-5.4',
+              }),
+            },
+            models: ['default', 'sonnet', 'gpt-5.4'],
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_auto_agents' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/models') {
+        return jsonResponse({
+          models: [
+            { agentId: 'claude', value: 'default' },
+            { agentId: 'claude', value: 'sonnet' },
+            { agentId: 'codex', value: 'gpt-5.4' },
           ],
         });
       }
