@@ -204,6 +204,7 @@ describe('worker command', () => {
       lifecycle: string;
       transport: string;
       serverUrl: string;
+      workspaceId: string | null;
       workspaceRoot: string;
       publicKeyFingerprint: string;
       capabilities: { agents: Record<string, unknown> };
@@ -220,6 +221,7 @@ describe('worker command', () => {
     expect(payload.lifecycle).toBe('persistent');
     expect(payload.transport).toBe('polling');
     expect(payload.serverUrl).toBe('https://api.getviewport.com');
+    expect(payload.workspaceId).toBe(null);
     expect(payload.workspaceRoot).toBe(path.join(homeDir, 'workspace'));
     expect(payload.publicKeyFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(payload.capabilities.agents).toEqual({});
@@ -232,6 +234,48 @@ describe('worker command', () => {
     expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
     expect(payload.supportPacket.omittedSecrets).toContain('claim_tokens');
     expect(payload.missing).toEqual([]);
+  });
+
+  it('reports the approved workspace id without printing the worker credential', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    await storeWorkerProfile(
+      {
+        status: 'approved',
+        workspace_id: 'workspace_launch',
+        workspace_name: 'Launch Workspace',
+        managed_executor_id: 'executor_launch',
+        managed_executor_credential: 'secret-managed-worker-token',
+        token: 'secret-relay-token',
+        server_id: 'server_launch',
+      },
+      await resolveWorkerProfileDefaults({
+        server: await resolvePairingServerTransport(),
+        detectCapabilities: false,
+      }),
+    );
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const raw = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
+    const payload = JSON.parse(raw) as {
+      ok: boolean;
+      serverUrl: string;
+      workspaceId: string;
+      missing: string[];
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.serverUrl).toBe('https://api.getviewport.com');
+    expect(payload.workspaceId).toBe('workspace_launch');
+    expect(payload.missing).toEqual([]);
+    expect(raw).not.toContain('secret-managed-worker-token');
+    expect(raw).not.toContain('secret-relay-token');
   });
 
   it('removes stale persistent worker locks for the paired profile', async () => {

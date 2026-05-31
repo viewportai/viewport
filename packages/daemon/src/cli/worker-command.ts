@@ -133,6 +133,7 @@ async function workerDoctor(): Promise<void> {
     lifecycle: workerConfig?.lifecycle ?? null,
     transport: workerConfig?.transport ?? null,
     serverUrl: workerConfig?.serverUrl ?? null,
+    workspaceId: workerConfig?.workspaceId ?? null,
     workspaceRoot: workerConfig?.workspaceRoot ?? null,
     publicKeyFingerprint: workerConfig?.publicKeyFingerprint ?? null,
     capabilities: workerConfig?.capabilities ?? null,
@@ -148,6 +149,7 @@ async function workerDoctor(): Promise<void> {
   console.log(`Mode:      ${payload.lifecycle ?? 'not configured'}`);
   console.log(`Transport: ${payload.transport ?? 'not configured'}`);
   console.log(`Server:    ${payload.serverUrl ?? 'not configured'}`);
+  console.log(`Workspace: ${payload.workspaceId ?? 'not paired'}`);
   console.log(`Work root: ${payload.workspaceRoot ?? 'not configured'}`);
   console.log(`Lock:      ${workerLockLabel(payload.processLock)}`);
   console.log(`Support:   ${SUPPORT_PACKET_DOCS_URL}`);
