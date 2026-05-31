@@ -16,19 +16,9 @@ import {
   normalizeWorkerTransport,
   resetWorkerProfile,
 } from './worker-profile.js';
+import { SUPPORT_PACKET_DOCS_URL, supportPacketMetadata } from './support-packet.js';
 
 const DEFAULT_WORKER_LEASE_SECONDS = 1_800;
-const SUPPORT_PACKET_DOCS_URL = 'https://docs.getviewport.com/troubleshooting/support-packet';
-const SUPPORT_PACKET_OMITTED_SECRETS = [
-  'credentials',
-  'worker_private_keys',
-  'pairing_codes',
-  'bootstrap_tokens',
-  'claim_tokens',
-  'lease_tokens',
-  'provider_tokens',
-  'model_keys',
-];
 
 export async function worker(): Promise<void> {
   const args = getArgs();
@@ -102,7 +92,9 @@ async function workerDoctor(): Promise<void> {
     console.log(`Workspace: ${managed.payload.workspaceId ?? 'not configured'}`);
     console.log(`Executor:  ${managed.payload.executorId ?? 'not configured'}`);
     console.log(`Work root: ${managed.payload.workspaceRoot ?? 'not configured'}`);
-    console.log(`Credential:${managed.payload.credentialSource ? ` ${managed.payload.credentialSource}` : ' missing'}`);
+    console.log(
+      `Credential:${managed.payload.credentialSource ? ` ${managed.payload.credentialSource}` : ' missing'}`,
+    );
     console.log(`Lock:      ${workerLockLabel(managed.payload.processLock)}`);
     console.log(`Support:   ${SUPPORT_PACKET_DOCS_URL}`);
     if (managed.payload.missing.length > 0) {
@@ -197,20 +189,20 @@ function managedExecutorDoctorProfile(): {
   const profile = profilePath ? readManagedExecutorProfile(profilePath) : {};
   const hasManagedInput = Boolean(
     profilePath ||
-      getFlag('server') ||
-      getFlag('workspace') ||
-      getFlag('resource') ||
-      getFlag('executor') ||
-      getFlag('credential') ||
-      getFlag('credential-file') ||
-      process.env['VIEWPORT_SERVER_URL'] ||
-      process.env['VPD_SERVER_URL'] ||
-      process.env['VIEWPORT_WORKSPACE_ID'] ||
-      process.env['VIEWPORT_MANAGED_EXECUTOR_ID'] ||
-      process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ||
-      process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ||
-      process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN_FILE'] ||
-      process.env['VPD_MANAGED_EXECUTOR_TOKEN_FILE'],
+    getFlag('server') ||
+    getFlag('workspace') ||
+    getFlag('resource') ||
+    getFlag('executor') ||
+    getFlag('credential') ||
+    getFlag('credential-file') ||
+    process.env['VIEWPORT_SERVER_URL'] ||
+    process.env['VPD_SERVER_URL'] ||
+    process.env['VIEWPORT_WORKSPACE_ID'] ||
+    process.env['VIEWPORT_MANAGED_EXECUTOR_ID'] ||
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ||
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ||
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN_FILE'] ||
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN_FILE'],
   );
 
   const credentialFile =
@@ -224,8 +216,11 @@ function managedExecutorDoctorProfile(): {
     process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
     process.env['VPD_MANAGED_EXECUTOR_TOKEN'] ??
     stringValue(profile['credential']);
-  let credentialSource: ManagedExecutorDoctorPayload['credentialSource'] =
-    inlineCredential ? (profile['credential'] === inlineCredential ? 'profile' : 'inline') : null;
+  let credentialSource: ManagedExecutorDoctorPayload['credentialSource'] = inlineCredential
+    ? profile['credential'] === inlineCredential
+      ? 'profile'
+      : 'inline'
+    : null;
   const missing: string[] = [];
   const warnings: string[] = [];
 
@@ -268,7 +263,8 @@ function managedExecutorDoctorProfile(): {
   if (!serverUrl) missing.push('server URL');
   if (!workspaceId) missing.push('workspace id');
   if (!executorId) missing.push('managed executor id');
-  if (!workspaceRoot) warnings.push('workspace root not pinned; pass --workdir for predictable checkouts');
+  if (!workspaceRoot)
+    warnings.push('workspace root not pinned; pass --workdir for predictable checkouts');
 
   const lockOptions = managedWorkerLockOptions({
     serverUrl,
@@ -308,9 +304,7 @@ function managedExecutorDoctorProfile(): {
       workspaceId: workspaceId ?? null,
       executorId: executorId ?? null,
       workspaceRoot: workspaceRoot ? path.resolve(workspaceRoot) : null,
-      runnerPool:
-        lockOptions?.runnerProfile ??
-        null,
+      runnerPool: lockOptions?.runnerProfile ?? null,
       credentialSource,
       capabilities: recordValue(profile['capabilities']),
       processLock: lockStatusForOptions(lockOptions),
@@ -348,12 +342,16 @@ function managedWorkerLockOptions(input: {
   };
 }
 
-function lockStatusForOptions(options: WorkerLockOptions | null): SanitizedWorkerProcessLockStatus | null {
+function lockStatusForOptions(
+  options: WorkerLockOptions | null,
+): SanitizedWorkerProcessLockStatus | null {
   if (!options) return null;
   return sanitizeWorkerLockStatus(inspectWorkerProcessLock(options));
 }
 
-function sanitizeWorkerLockStatus(status: WorkerProcessLockStatus): SanitizedWorkerProcessLockStatus {
+function sanitizeWorkerLockStatus(
+  status: WorkerProcessLockStatus,
+): SanitizedWorkerProcessLockStatus {
   return {
     active: status.active,
     stale: Boolean(status.stale),
@@ -368,18 +366,6 @@ function workerLockLabel(status: SanitizedWorkerProcessLockStatus | null): strin
   if (status.active) return `active pid ${status.pid}`;
   if (status.stale) return `stale pid ${status.pid}`;
   return 'not active';
-}
-
-function supportPacketMetadata(): {
-  docsUrl: string;
-  reviewBeforeSharing: true;
-  omittedSecrets: string[];
-} {
-  return {
-    docsUrl: SUPPORT_PACKET_DOCS_URL,
-    reviewBeforeSharing: true,
-    omittedSecrets: SUPPORT_PACKET_OMITTED_SECRETS,
-  };
 }
 
 function readManagedExecutorProfile(profilePath: string): Record<string, unknown> {
@@ -433,7 +419,9 @@ async function workerReset(): Promise<void> {
     return;
   }
   console.log('Worker pairing reset.');
-  console.log('Run `vpd pair --worker --transport=polling --workdir <path>` to pair this worker again.');
+  console.log(
+    'Run `vpd pair --worker --transport=polling --workdir <path>` to pair this worker again.',
+  );
 }
 
 async function workerStop(): Promise<void> {
@@ -441,10 +429,17 @@ async function workerStop(): Promise<void> {
   const options = await currentWorkerLockOptions();
   if (!options) {
     if (asJson) {
-      printJson({ command: 'worker stop', ok: false, stopped: false, reason: 'worker_not_configured' });
+      printJson({
+        command: 'worker stop',
+        ok: false,
+        stopped: false,
+        reason: 'worker_not_configured',
+      });
       return;
     }
-    console.log('No worker profile is configured. Run `vpd pair --worker --transport=polling --workdir <path>` first.');
+    console.log(
+      'No worker profile is configured. Run `vpd pair --worker --transport=polling --workdir <path>` first.',
+    );
     return;
   }
 

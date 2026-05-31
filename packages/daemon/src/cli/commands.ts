@@ -52,3 +52,4 @@ export { unlock } from './unlock-command.js';
 export { worker } from './worker-command.js';
 export { watch } from './watch-command.js';
 export { check } from './check-command.js';
+export { diagnostic } from './diagnostic-command.js';

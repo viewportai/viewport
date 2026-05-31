@@ -346,6 +346,7 @@ export function showHelp(): void {
   console.log(
     '  doctor [--json]              Show daemon identity, runtime mode, and active targets',
   );
+  console.log('  diagnostic [--json]          Print a sanitized support diagnostic snapshot');
   console.log('  status [--json] [--check-updates]');
   console.log('                               Daemon health and runtime status');
   console.log('  stop [--json] [--timeout <seconds>] [--force]');
