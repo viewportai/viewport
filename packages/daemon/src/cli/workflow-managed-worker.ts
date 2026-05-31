@@ -2284,7 +2284,7 @@ async function resumeApprovedLocalRun(
       },
     );
   } catch (error) {
-    if (!isAlreadyResolvedApprovalError(error)) throw error;
+    if (!isNonFatalApprovalResumeError(error)) throw error;
 
     const current = await readExistingLocalRun(localRunId);
     if (!current) throw error;
@@ -2398,10 +2398,13 @@ function assignmentWorkflowAuthorityContracts(
   ].filter(isRecord);
 }
 
-function isAlreadyResolvedApprovalError(error: unknown): boolean {
+function isNonFatalApprovalResumeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
 
-  return message.includes('Workflow node is not awaiting approval');
+  return (
+    message.includes('Workflow node is not awaiting approval') ||
+    message.includes('The proposed action changed before approval')
+  );
 }
 
 function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
