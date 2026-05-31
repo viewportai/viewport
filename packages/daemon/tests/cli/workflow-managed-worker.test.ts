@@ -2514,6 +2514,103 @@ nodes:
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
   });
 
+  it('does not start a local run for an assignment canceled before execution', async () => {
+    const tempWorkdir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-canceled-'));
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      tempWorkdir,
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_pre_start_cancel',
+            status: 'canceled',
+            assignment_claim_token: 'vpclaim_pre_start_cancel',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: pre-start-cancel\nnodes: {}\n',
+            directory_path: tempWorkdir,
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_pre_start_cancel/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_pre_start_cancel',
+        );
+        platformSyncStatuses.push(String(body.status));
+        expect(body).toMatchObject({
+          runtime_run_id: 'assignment-canceled-before-start-run_platform_pre_start_cancel',
+          status: 'canceled',
+          events: [
+            expect.objectContaining({
+              type: 'run-canceled',
+              message: 'Managed workflow assignment was canceled before local execution started.',
+              payload: expect.objectContaining({
+                recovery_policy: 'skip_local_execution_for_canceled_assignment',
+              }),
+            }),
+          ],
+        });
+        return jsonResponse({
+          data: { id: 'run_platform_pre_start_cancel', status: body.status },
+        });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/models') {
+        return jsonResponse({
+          models: [{ agentId: 'claude', value: 'default', displayName: 'Default' }],
+        });
+      }
+      throw new Error(
+        `Canceled assignments must not start, resume, or cancel local daemon work: ${urlPath}`,
+      );
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(daemonFetch).toHaveBeenCalledTimes(1);
+    expect(daemonFetch).toHaveBeenCalledWith('/api/models', {
+      method: 'GET',
+      timeoutMs: 30000,
+    });
+    expect(platformSyncStatuses).toEqual(['canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+
+    await fs.rm(tempWorkdir, { recursive: true, force: true });
+  });
+
   it('uses the local workflow snapshot to rematerialize provider credentials after approval', async () => {
     process.argv = [
       'node',

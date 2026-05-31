@@ -137,6 +137,20 @@ export async function workflowWorker(): Promise<void> {
       }
 
       stats.claimed += 1;
+      if (assignment.status === 'canceled') {
+        const canceledRun = assignmentCanceledBeforeStartRun(assignment);
+        clearRunCredentialMaterial(assignment.id);
+        await syncLocalRun(options, assignment.id, canceledRun, assignment.assignment_claim_token);
+        stats.failed += 1;
+        if (
+          options.once ||
+          (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+        ) {
+          break;
+        }
+        continue;
+      }
+
       let localRun: WorkflowRunRecord;
       try {
         localRun = await runAssignmentLocally(options, assignment);
@@ -1415,6 +1429,67 @@ function assignmentExecutionFailureRun(
           platform_run_id: assignment.id,
           runtime_run_id: runtimeRunId,
           recovery_policy: 'sync_failed_assignment_start',
+        },
+      },
+    ],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+    completedAt: now,
+    error: message,
+  };
+}
+
+function assignmentCanceledBeforeStartRun(assignment: ManagedAssignment): WorkflowRunRecord {
+  const now = Date.now();
+  const runtimeRunId = `assignment-canceled-before-start-${assignment.id}`;
+  const message = 'Managed workflow assignment was canceled before local execution started.';
+
+  return {
+    id: runtimeRunId,
+    workflowName: 'managed-assignment-canceled',
+    sourceType: 'viewport_snapshot',
+    sourcePath: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
+    digest: `managed-assignment-canceled:${assignment.id}`,
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: assignment.yaml_snapshot ?? '',
+    directoryId: 'managed-assignment-canceled',
+    directoryPath: assignment.directory_path ?? process.cwd(),
+    resourceId: undefined,
+    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    platformRunId: assignment.id,
+    machineId: 'managed-executor',
+    dataCapturePolicy: {
+      transcripts: assignment.data_capture_policy?.transcripts ?? 'none',
+      logs: assignment.data_capture_policy?.logs ?? 'metadata',
+      artifacts: assignment.data_capture_policy?.artifacts ?? 'metadata',
+    },
+    initiation: 'cli',
+    status: 'canceled',
+    inputs: assignment.input_snapshot ?? {},
+    preflight: {
+      ok: false,
+      issues: [
+        {
+          kind: 'node',
+          name: 'managed-assignment-canceled',
+          message,
+        },
+      ],
+    },
+    nodes: {},
+    artifacts: [],
+    events: [
+      {
+        id: 'managed-assignment-canceled-before-start',
+        runId: runtimeRunId,
+        timestamp: now,
+        type: 'run-canceled',
+        message,
+        data: {
+          platform_run_id: assignment.id,
+          runtime_run_id: runtimeRunId,
+          recovery_policy: 'skip_local_execution_for_canceled_assignment',
         },
       },
     ],
