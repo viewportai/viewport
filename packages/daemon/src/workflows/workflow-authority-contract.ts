@@ -399,6 +399,9 @@ function shellProviderSideEffects(command: string): Array<{ provider: string; ac
   if (/\bcurl\b/.test(normalized) && /slack\.com\/api\/chat\.postmessage/.test(normalized)) {
     effects.push({ provider: 'slack', action: 'post-message' });
   }
+  if (/\b(curl|wget)\b/.test(normalized) && /https?:\/\//.test(normalized)) {
+    effects.push({ provider: 'external-api', action: 'request' });
+  }
   return effects;
 }
 

@@ -1105,7 +1105,7 @@ function buildShellExecutionReceipt(input: {
   completedAt?: number;
   status: 'preflight' | 'denied' | 'completed' | 'failed' | 'canceled';
   exitCode?: number | null;
-  denial?: { reason: string; detail: string };
+  denial?: { reason: string; detail: string; provider?: string; action?: string };
 }): Record<string, unknown> {
   const durationMs =
     input.completedAt !== undefined ? Math.max(0, input.completedAt - input.startedAt) : null;
@@ -1128,10 +1128,14 @@ function buildShellExecutionReceipt(input: {
     duration_ms: durationMs,
     exit_code: input.exitCode ?? null,
     denial: input.denial
-      ? {
-          reason: input.denial.reason,
-          detail: input.denial.detail,
-        }
+      ? Object.fromEntries(
+          Object.entries({
+            reason: input.denial.reason,
+            detail: input.denial.detail,
+            provider: input.denial.provider,
+            action: input.denial.action,
+          }).filter(([, value]) => value !== undefined),
+        )
       : null,
   };
 }
