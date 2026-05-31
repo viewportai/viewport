@@ -68,15 +68,42 @@ export function acquireWorkerProcessLock(options: WorkerLockOptions): WorkerProc
     fs.closeSync(fd);
   }
 
-  return {
-    filePath,
-    release: () => {
-      const current = readWorkerLock(filePath);
-      if (current?.pid === process.pid) {
-        fs.rmSync(filePath, { force: true });
-      }
-    },
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    process.off('exit', onExit);
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
+    process.off('SIGHUP', onSighup);
+    const current = readWorkerLock(filePath);
+    if (current?.pid === process.pid) {
+      fs.rmSync(filePath, { force: true });
+    }
   };
+  const onExit = (): void => {
+    release();
+  };
+  const exitFromSignal = (code: number): void => {
+    release();
+    process.exit(code);
+  };
+  const onSigint = (): void => {
+    exitFromSignal(130);
+  };
+  const onSigterm = (): void => {
+    exitFromSignal(143);
+  };
+  const onSighup = (): void => {
+    exitFromSignal(129);
+  };
+
+  process.once('exit', onExit);
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
+  process.once('SIGHUP', onSighup);
+
+  return { filePath, release };
 }
 
 export function inspectWorkerProcessLock(options: WorkerLockOptions): WorkerProcessLockStatus {

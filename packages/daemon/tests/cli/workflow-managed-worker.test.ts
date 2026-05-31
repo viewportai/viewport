@@ -78,6 +78,30 @@ describe('workflow managed worker CLI', () => {
     }
   });
 
+  it('removes signal cleanup listeners when worker locks are released', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    const beforeSigint = process.listenerCount('SIGINT');
+    const beforeSigterm = process.listenerCount('SIGTERM');
+    const options = {
+      server: 'https://api.getviewport.test',
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      accessMode: 'polling' as const,
+    };
+
+    const lock = acquireWorkerProcessLock(options);
+    expect(process.listenerCount('SIGINT')).toBe(beforeSigint + 1);
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm + 1);
+
+    lock.release();
+
+    expect(process.listenerCount('SIGINT')).toBe(beforeSigint);
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
+    expect(await pathExists(lock.filePath)).toBe(false);
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
   it('auto-heals stale persistent worker lock files', async () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
     process.env['VIEWPORT_HOME'] = tempHome;
