@@ -50,6 +50,25 @@ route:
     repo: acme/backend
 `.trim();
 
+const VALID_SLACK_ROUTE_WITH_MENTION = `
+route:
+  name: slack-support
+  team: platform
+  trigger:
+    integration: slack
+    events: [app_mention]
+    conditions:
+      channel: C1234567890
+      mentionsAny:
+        - viewport
+  policy:
+    source: git
+    repo: acme/backend
+    ref: main
+    path: .viewport/policy.yaml
+  priority: 30
+`.trim();
+
 const INVALID_ROUTE_BAD_NAME = `
 route:
   name: BackendJira
@@ -171,6 +190,21 @@ describe('check-command', () => {
     expect(exitCode).toBe(0);
     const out = stdoutLines.join('');
     expect(out).toContain('routes/backend.yaml');
+    expect(out).toContain('✓');
+  });
+
+  it('validates Slack routes with mention conditions', async () => {
+    await fs.mkdir(path.join(tmpDir, '.viewport', 'routes'));
+    await fs.writeFile(path.join(tmpDir, '.viewport', 'policy.yaml'), VALID_POLICY);
+    await fs.writeFile(
+      path.join(tmpDir, '.viewport', 'routes', 'slack-support.yaml'),
+      VALID_SLACK_ROUTE_WITH_MENTION,
+    );
+    await runCheck([tmpDir]);
+
+    expect(exitCode).toBe(0);
+    const out = stdoutLines.join('');
+    expect(out).toContain('routes/slack-support.yaml');
     expect(out).toContain('✓');
   });
 

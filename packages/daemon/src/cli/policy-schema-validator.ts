@@ -173,7 +173,13 @@ const GithubConditionsSchema = z
   })
   .strict();
 
-const SlackConditionsSchema = z.object({ channel: z.string().optional() }).strict();
+const SlackConditionsSchema = z
+  .object({
+    channel: z.string().optional(),
+    mentionsAny: z.array(z.string().min(1)).optional(),
+    mentions_any: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
 
 const LinearConditionsSchema = z
   .object({
