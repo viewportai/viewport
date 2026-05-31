@@ -213,12 +213,27 @@ export async function workflowWorker(): Promise<void> {
           continue;
         }
       }
-      const synced = await syncLocalRun(
-        options,
-        assignment.id,
-        localRun,
-        assignment.assignment_claim_token,
-      );
+      let synced: ManagedAssignment;
+      try {
+        synced = await syncLocalRun(
+          options,
+          assignment.id,
+          localRun,
+          assignment.assignment_claim_token,
+        );
+      } catch (error) {
+        if (localRun.status === 'canceled' && isPlatformAccessDenied(error)) {
+          stats.failed += 1;
+          if (
+            options.once ||
+            (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+          ) {
+            break;
+          }
+          continue;
+        }
+        throw error;
+      }
       if (synced.status === 'blocked') {
         stats.blocked += 1;
         if (!options.once) {
@@ -1229,7 +1244,14 @@ async function runAssignmentLocally(
       const completed = await pollLocalRun(
         existingRun.id,
         async (run) => {
-          await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+          try {
+            await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+          } catch (error) {
+            if (isPlatformAccessDenied(error)) {
+              return cancelLocalRun(existingRun.id);
+            }
+            throw error;
+          }
           return cancelLocalRunIfAssignmentCanceled(
             options,
             assignment.id,
@@ -1286,7 +1308,14 @@ async function runAssignmentLocally(
   const completed = await pollLocalRun(
     runId,
     async (run) => {
-      await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+      try {
+        await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+      } catch (error) {
+        if (isPlatformAccessDenied(error)) {
+          return cancelLocalRun(runId);
+        }
+        throw error;
+      }
       return cancelLocalRunIfAssignmentCanceled(
         options,
         assignment.id,
@@ -2492,6 +2521,20 @@ async function pollLocalRun(
   }
 }
 
+class PlatformRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PlatformRequestError';
+  }
+}
+
+function isPlatformAccessDenied(error: unknown): boolean {
+  return error instanceof PlatformRequestError && [401, 402, 403, 404].includes(error.status);
+}
+
 async function daemonJson(method: string, urlPath: string, body?: unknown): Promise<unknown> {
   const response = await daemonFetch(urlPath, {
     method,
@@ -2548,7 +2591,10 @@ async function platformFetch(
     tlsPins: parseCsvList(process.env['VPD_SERVER_TLS_PINS']),
   });
   if (!response.ok && response.status !== 204) {
-    throw new Error(`Platform request failed: HTTP ${response.status} ${await response.text()}`);
+    throw new PlatformRequestError(
+      response.status,
+      `Platform request failed: HTTP ${response.status} ${await response.text()}`,
+    );
   }
   return response;
 }
