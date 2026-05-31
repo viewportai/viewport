@@ -43,6 +43,11 @@ export async function runPairCommand(options: PairingCommandOptions): Promise<vo
   const pairCommandIndex = args[0] === 'daemon' && args[1] === 'pair' ? 1 : 0;
   const pairSubcommand = args[pairCommandIndex + 1];
 
+  if (pairSubcommand === 'help' || pairSubcommand === '--help' || pairSubcommand === '-h') {
+    console.log(pairHelpText());
+    return;
+  }
+
   if (pairSubcommand === 'rotate-token') {
     const result = await rotateAuthToken();
     if (asJson) {
@@ -86,6 +91,34 @@ export async function runPairCommand(options: PairingCommandOptions): Promise<vo
   } else {
     await pairWithoutCode(undefined, asJson, options.restartDaemon);
   }
+}
+
+function pairHelpText(): string {
+  return [
+    'Usage: vpd pair [<code>] [options]',
+    '',
+    'Pairs this machine with Viewport.',
+    '',
+    'Worker setup:',
+    '  vpd pair <code> --worker --transport=polling [--workdir <path>]',
+    '  vpd pair <code> --worker --server <url> --transport=polling [--workdir <path>]',
+    '',
+    'Monitor setup:',
+    '  vpd pair',
+    '  vpd pair <code>',
+    '',
+    'Options:',
+    '  --worker                         Pair a workflow worker profile instead of a personal monitor',
+    '  --transport polling|relay|inbound Worker transport; polling is the hosted default',
+    '  --workdir <path>                  Worker workspace root recorded during pairing',
+    '  --runner-pool <name>              Optional runner pool advertised by this worker',
+    '  --server <url>                    Compatible control-plane server; hosted Viewport is default',
+    '  --app-url <url>                   Browser app URL for pairing approval',
+    '  --auto-unlock                    Trust this machine for hosted web trusted-edge unlocks',
+    '  --no-auto-unlock                 Do not trust this machine for auto-unlock',
+    '  --auto-unlock-ttl <seconds>       Auto-unlock session TTL, clamped by policy',
+    '  --json                           Print machine-readable output',
+  ].join('\n');
 }
 
 async function autoRestartDaemon(

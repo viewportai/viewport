@@ -12,6 +12,7 @@ describe('lifecycle pair command', () => {
   let homeDir = '';
 
   beforeEach(async () => {
+    vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-pair-command-test-'));
     process.env['VIEWPORT_HOME'] = homeDir;
     process.chdir(homeDir);
@@ -24,6 +25,24 @@ describe('lifecycle pair command', () => {
     if (originalViewportHome) process.env['VIEWPORT_HOME'] = originalViewportHome;
     else delete process.env['VIEWPORT_HOME'];
     await fs.rm(homeDir, { recursive: true, force: true });
+  });
+
+  it('prints pair help without minting a pairing code', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--help'];
+    const printed: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((value) => {
+      printed.push(String(value));
+    });
+    const restartDaemon = vi.fn(async () => undefined);
+
+    const { runPairCommand } = await import('../../src/cli/lifecycle-pair-command.js');
+    await runPairCommand({ restartDaemon });
+
+    expect(restartDaemon).not.toHaveBeenCalled();
+    expect(printed.join('\n')).toContain(
+      'vpd pair <code> --worker --transport=polling [--workdir <path>]',
+    );
+    expect(printed.join('\n')).toContain('--server <url>');
   });
 
   it('does not restart the personal monitor daemon for worker pairing', async () => {

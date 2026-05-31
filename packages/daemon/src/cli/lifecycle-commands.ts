@@ -460,7 +460,7 @@ export function showHelp(): void {
   console.log('  hook plan                    Send a plan proposal hook from stdin');
   console.log('  hook capabilities [--adapter <name>] [--json]');
   console.log(
-    '  pair [<code>] [--server <url>] [--app-url <url>] [--no-auto-unlock] [--auto-unlock-ttl <seconds>] [--json]',
+    '  pair [<code>] [--worker] [--transport polling|relay|inbound] [--workdir <path>] [--server <url>] [--app-url <url>] [--json]',
   );
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');
