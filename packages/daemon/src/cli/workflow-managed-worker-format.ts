@@ -146,7 +146,10 @@ export function approvalExpectedActionDigest(
 ): string | undefined {
   const approval = node.metadata?.['approval'];
   if (approval && typeof approval === 'object') {
-    const digest = (approval as { actionDigest?: unknown }).actionDigest;
+    const digest =
+      (approval as { expectedActionDigest?: unknown }).expectedActionDigest ??
+      (approval as { expected_action_digest?: unknown }).expected_action_digest ??
+      (approval as { actionDigest?: unknown }).actionDigest;
     if (typeof digest === 'string' && digest.trim() !== '') return digest;
   }
   const action = node.metadata?.['action'];

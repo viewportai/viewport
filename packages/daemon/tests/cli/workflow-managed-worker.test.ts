@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 import {
+  approvalExpectedActionDigest,
   approvalFeedback,
   capabilityPayload,
   localRunToSyncPayload,
@@ -186,6 +187,21 @@ describe('workflow managed worker CLI', () => {
       plan_body: 'Revised approved plan.',
       plan_body_sha256: 'sha256:plan',
     });
+  });
+
+  it('carries snake-case approval digests from platform runtime commands', () => {
+    expect(
+      approvalExpectedActionDigest({
+        node_key: 'publish',
+        type: 'plan',
+        status: 'blocked',
+        metadata: {
+          approval: {
+            expected_action_digest: 'sha256:current-diff',
+          },
+        },
+      }),
+    ).toBe('sha256:current-diff');
   });
 
   it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {
