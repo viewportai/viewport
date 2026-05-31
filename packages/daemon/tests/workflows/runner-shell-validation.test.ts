@@ -359,6 +359,55 @@ nodes:
     });
   });
 
+  it('blocks argv shell commands denied by the workflow authority contract', async () => {
+    const daemon = await setup();
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: shell-policy-deny-proof
+nodes:
+  dangerous:
+    type: shell
+    argv:
+      - rm
+      - -rf
+      - /tmp/viewport-proof
+`,
+      'utf-8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        side_effects: { allowed: [] },
+        shell: {
+          policy: 'constrained',
+          denied: ['rm -rf *'],
+        },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.dangerous?.metadata?.['shell_execution']).toMatchObject({
+      status: 'denied',
+      denial: expect.objectContaining({
+        reason: 'shell_command_not_allowed',
+        detail: expect.stringContaining('denied pattern'),
+      }),
+    });
+    expect(failed?.events.some((event) => event.type === 'shell-blocked')).toBe(true);
+  });
+
   it('blocks shell commands that reference repositories outside the workflow authority contract', async () => {
     const daemon = await setup();
     await fs.writeFile(path.join(projectDir, 'README.md'), 'proof\n', 'utf8');
