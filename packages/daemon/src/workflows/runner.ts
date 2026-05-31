@@ -387,7 +387,8 @@ export class WorkflowRunner {
       (state.type !== 'approval' &&
         state.type !== 'gate' &&
         state.type !== 'plan' &&
-        state.type !== 'action')
+        state.type !== 'action' &&
+        state.type !== 'git_publish')
     ) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
@@ -501,7 +502,7 @@ export class WorkflowRunner {
 
     const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
     const approvalNode = parsed.definition.nodes[nodeId];
-    if (approvalNode?.type === 'action') {
+    if (approvalNode?.type === 'action' || approvalNode?.type === 'git_publish') {
       state.status = 'queued';
       state.completedAt = undefined;
       state.output = decision.message ?? 'Approved';

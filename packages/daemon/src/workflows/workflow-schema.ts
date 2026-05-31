@@ -216,6 +216,39 @@ const GitPublishNodeSchema = NodeBaseSchema.extend({
   credentialRef: z.string().trim().min(1).optional(),
   restrictedBranches: z.array(z.string().trim().min(1)).optional(),
   restrictedPaths: z.array(z.string().trim().min(1)).optional(),
+  prePublishReview: z
+    .object({
+      rules: z
+        .array(
+          z
+            .object({
+              name: z.string().trim().min(1),
+              when: z
+                .object({
+                  changed_paths_any: z.array(z.string().trim().min(1)).optional(),
+                  diff_lines_gt: z.number().int().nonnegative().optional(),
+                })
+                .strict(),
+              require: z.string().trim().min(1).optional(),
+              reviewers: z
+                .object({ tags: z.array(z.string().trim().min(1)).optional() })
+                .strict()
+                .optional(),
+              timeout: z.string().trim().min(1).optional(),
+              on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
+            })
+            .strict()
+            .refine(
+              (rule) =>
+                (rule.when.changed_paths_any?.length ?? 0) > 0 ||
+                rule.when.diff_lines_gt !== undefined,
+              { message: 'prePublishReview rule must set at least one observable condition' },
+            ),
+        )
+        .min(1),
+    })
+    .strict()
+    .optional(),
 }).strict();
 
 const ApprovalOnRejectSchema = z.union([

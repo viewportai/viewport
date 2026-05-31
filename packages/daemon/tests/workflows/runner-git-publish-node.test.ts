@@ -114,6 +114,167 @@ nodes:
     );
   }, 60_000);
 
+  it('skips dynamic pre-publish review when observable diff facts do not match', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-dynamic-review-skip-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "printf '\\nsmall docs change\\n' >> README.md"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: Publish proof update
+    prePublishReview:
+      rules:
+        - name: sensitive-path
+          when:
+            changed_paths_any: ["src/payments/**"]
+          require: human(tech-lead)
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.publish?.metadata?.pre_publish_review).toMatchObject({
+      schema: 'viewport.pre_publish_review/v1',
+      required: false,
+      facts: expect.objectContaining({
+        changedPaths: ['README.md'],
+      }),
+      matched_rules: [],
+    });
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'pre-publish-review-skipped',
+        nodeId: 'publish',
+      }),
+    );
+  }, 60_000);
+
+  it('blocks dynamic pre-publish review from observable diff facts, then resumes after approval', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-dynamic-review-block-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "mkdir -p src/payments && printf 'export const payment = true;\\n' > src/payments/new-rule.ts && printf 'agent says this is trivial\\n' > agent-self-report.txt"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: Publish proof update
+    prePublishReview:
+      rules:
+        - name: sensitive-path
+          when:
+            changed_paths_any: ["src/payments/**"]
+          require: human(tech-lead)
+          timeout: 4h
+          on_timeout: escalate
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(blocked?.status, blocked?.error).toBe('blocked');
+    expect(blocked?.nodes.publish?.status).toBe('blocked');
+    expect(blocked?.nodes.publish?.metadata?.pre_publish_review).toMatchObject({
+      schema: 'viewport.pre_publish_review/v1',
+      required: true,
+      facts: expect.objectContaining({
+        changedPaths: expect.arrayContaining(['src/payments/new-rule.ts']),
+      }),
+      matched_rules: [
+        expect.objectContaining({
+          name: 'sensitive-path',
+          reason: 'changed_paths_any',
+          reviewerTags: ['tech-lead'],
+        }),
+      ],
+    });
+    await expect(
+      runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
+    ).rejects.toThrow();
+
+    await daemon.workflowRunner.decideApproval(run.id, 'publish', {
+      approved: true,
+      actor: { id: 'user-1', name: 'Tech Lead' },
+      message: 'Approved from dynamic review test',
+    });
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+    const pushedCommit = await runGit(
+      ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'],
+      root,
+    );
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.nodes.publish?.outputs?.commit).toBe(pushedCommit.trim());
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'approval-resolved',
+        nodeId: 'publish',
+      }),
+    );
+  }, 60_000);
+
   it('fails clearly when a branch publish has no changes and empty commits are not allowed', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');

@@ -60,6 +60,27 @@ const PolicyGateSchema = z
   })
   .strict();
 
+const PolicyReviewRuleSchema = z
+  .object({
+    name: z.string().min(1),
+    when: z
+      .object({
+        changed_paths_any: z.array(z.string().min(1)).optional(),
+        diff_lines_gt: z.number().int().nonnegative().optional(),
+      })
+      .strict(),
+    require: z.string().min(1).optional(),
+    reviewers: z.object({ tags: z.array(z.string()).min(1) }).strict().optional(),
+    timeout: z.string().optional(),
+    on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
+  })
+  .strict()
+  .refine(
+    (rule) =>
+      (rule.when.changed_paths_any?.length ?? 0) > 0 || rule.when.diff_lines_gt !== undefined,
+    { path: ['when'], message: 'Must define at least one observable review condition' },
+  );
+
 const PolicyInvokeStepSchema = z
   .object({
     name: z.string().min(1),
@@ -110,6 +131,7 @@ export const PolicyDocumentSchema = z
       .strict()
       .optional(),
     gates: z.array(PolicyGateSchema).optional(),
+    review: z.array(PolicyReviewRuleSchema).optional(),
     invoke: z
       .object({
         agent: z.enum(['claude-code', 'codex']).default('claude-code'),

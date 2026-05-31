@@ -222,6 +222,14 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
       node.message,
       node.credentialRef,
       ...(node.paths ?? []),
+      ...(node.prePublishReview?.rules ?? []).flatMap((rule) => [
+        rule.name,
+        rule.require,
+        rule.timeout,
+        rule.on_timeout,
+        ...(rule.when.changed_paths_any ?? []),
+        ...(rule.reviewers?.tags ?? []),
+      ]),
     ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'approval') {

@@ -24,7 +24,11 @@ import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
 import { readPromptNodeOutput } from './prompt-output.js';
 import { shellAuthorityDenial } from './workflow-authority-contract.js';
 import { checkoutAuthorityDenial, executeCheckoutNode } from './checkout-node.js';
-import { executeGitPublishNode, gitPublishAuthorityDenial } from './git-publish-node.js';
+import {
+  evaluateGitPublishPrePublishReview,
+  executeGitPublishNode,
+  gitPublishAuthorityDenial,
+} from './git-publish-node.js';
 
 /**
  * Outcome of a per-type executor handler. The orchestrator in
@@ -184,7 +188,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'completed', artifactCwd: result.path };
   },
 
-  git_publish: async (context, run, nodeId, node) => {
+  git_publish: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'git_publish') return { result: 'completed' };
     const state = run.nodes[nodeId];
     const renderedNode = {
@@ -222,6 +226,51 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             secret: runtimeSecretMaterial(context, envNameForCredentialRef(credentialRef)),
           }
         : undefined;
+    if (renderedNode.prePublishReview && state?.approval?.approved !== true) {
+      const decision = await evaluateGitPublishPrePublishReview(renderedNode, input);
+      if (state) {
+        state.metadata = {
+          ...(state.metadata ?? {}),
+          pre_publish_review: {
+            schema: 'viewport.pre_publish_review/v1',
+            required: decision.required,
+            facts: decision.facts,
+            matched_rules: decision.matchedRules,
+            policy: renderedNode.prePublishReview,
+          },
+        };
+      }
+      addEvent(
+        run,
+        decision.required ? 'pre-publish-review-required' : 'pre-publish-review-skipped',
+        decision.required
+          ? `Pre-publish review required for ${renderedNode.repository}`
+          : `Pre-publish review skipped for ${renderedNode.repository}`,
+        {
+          facts: decision.facts,
+          matchedRules: decision.matchedRules,
+        },
+        nodeId,
+      );
+      if (decision.required) {
+        const reviewerTags = [
+          ...new Set(decision.matchedRules.flatMap((rule) => rule.reviewerTags)),
+        ];
+        await helpers.blockForApproval(
+          context,
+          run,
+          nodeId,
+          prePublishReviewPrompt(renderedNode.repository, input.branch, decision),
+          {
+            gateIntent: 'approval',
+            reviewerTags,
+            timeout: decision.matchedRules.find((rule) => rule.timeout)?.timeout ?? undefined,
+            onTimeout: decision.matchedRules.find((rule) => rule.onTimeout)?.onTimeout ?? undefined,
+          },
+        );
+        return { result: 'blocked' };
+      }
+    }
     const result = await executeGitPublishNode(renderedNode, input, credential);
     if (state) {
       state.output = JSON.stringify(result);
@@ -752,6 +801,22 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'blocked' };
   },
 };
+
+function prePublishReviewPrompt(
+  repository: string,
+  branch: string,
+  decision: Awaited<ReturnType<typeof evaluateGitPublishPrePublishReview>>,
+): string {
+  const paths = decision.facts.changedPaths.slice(0, 20).join(', ');
+  const rules = decision.matchedRules.map((rule) => rule.name).join(', ');
+
+  return [
+    `Approve publishing ${repository} to ${branch}?`,
+    `Matched review rule(s): ${rules}.`,
+    `Changed paths: ${paths || '(none)'}.`,
+    `Diff size: ${decision.facts.diffLines} line(s).`,
+  ].join('\n');
+}
 
 async function backfillPromptDependencyOutputs(
   run: WorkflowRunRecord,

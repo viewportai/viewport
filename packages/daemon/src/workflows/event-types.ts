@@ -29,6 +29,8 @@ export interface WorkflowRunEvent {
     | 'checkout-completed'
     | 'git-publish-blocked'
     | 'git-publish-completed'
+    | 'pre-publish-review-required'
+    | 'pre-publish-review-skipped'
     | 'context-update-proposed'
     | 'context-update-proposal-failed'
     | 'shell-blocked'
