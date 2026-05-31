@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import type { ZodSchema } from 'zod';
 import { PolicyDocumentSchema, RouteConfigDocumentSchema } from './policy-schema-validator.js';
@@ -16,6 +17,8 @@ interface CheckOutput {
   valid: boolean;
   results: CheckResult[];
   errorCount: number;
+  warnings: string[];
+  warningCount: number;
 }
 
 export async function check(): Promise<void> {
@@ -62,7 +65,10 @@ export async function check(): Promise<void> {
     valid: results.length > 0 && results.every((r) => r.valid),
     results,
     errorCount: results.filter((r) => !r.valid).length,
+    warnings: gitIgnoreWarnings(path.resolve(targetPath)),
+    warningCount: 0,
   };
+  output.warningCount = output.warnings.length;
 
   if (results.length === 0) {
     output.valid = false;
@@ -150,6 +156,20 @@ function validateAccessYaml(fullPath: string): CheckResult {
   };
 }
 
+function gitIgnoreWarnings(resolvedPath: string): string[] {
+  try {
+    execFileSync('git', ['-C', resolvedPath, 'check-ignore', '-q', '--no-index', '.viewport'], {
+      stdio: 'ignore',
+    });
+
+    return [
+      '.viewport/ appears to be ignored by git. Declarative GitOps requires committed .viewport/ policy and route files.',
+    ];
+  } catch {
+    return [];
+  }
+}
+
 function printHumanOutput(output: CheckOutput, resolvedPath: string): void {
   process.stdout.write(`Checking .viewport/ in ${resolvedPath}\n\n`);
 
@@ -161,6 +181,13 @@ function printHumanOutput(output: CheckOutput, resolvedPath: string): void {
       for (const err of result.errors) {
         process.stdout.write(`      ${err}\n`);
       }
+    }
+  }
+
+  if (output.warnings.length > 0) {
+    process.stdout.write('\nWarnings:\n');
+    for (const warning of output.warnings) {
+      process.stdout.write(`  ! ${warning}\n`);
     }
   }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const VALID_POLICY = `
@@ -194,6 +195,28 @@ describe('check-command', () => {
     const parsed = JSON.parse(raw) as { valid: boolean; results: unknown[] };
     expect(parsed.valid).toBe(true);
     expect(Array.isArray(parsed.results)).toBe(true);
+  });
+
+  it('warns when .viewport is ignored by git', async () => {
+    execFileSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' });
+    await fs.writeFile(path.join(tmpDir, '.gitignore'), '.viewport/\n');
+    await fs.writeFile(path.join(tmpDir, '.viewport', 'policy.yaml'), VALID_POLICY);
+    await runCheck([tmpDir]);
+
+    expect(exitCode).toBe(0);
+    expect(stdoutLines.join('')).toContain('.viewport/ appears to be ignored by git');
+  });
+
+  it('includes gitignore warnings in JSON output', async () => {
+    execFileSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' });
+    await fs.writeFile(path.join(tmpDir, '.gitignore'), '.viewport/\n');
+    await fs.writeFile(path.join(tmpDir, '.viewport', 'policy.yaml'), VALID_POLICY);
+    await runCheck([tmpDir, '--json']);
+
+    expect(exitCode).toBe(0);
+    const parsed = JSON.parse(stdoutLines.join('')) as { warningCount: number; warnings: string[] };
+    expect(parsed.warningCount).toBe(1);
+    expect(parsed.warnings[0]).toContain('.viewport/ appears to be ignored by git');
   });
 
   it('--json outputs valid=false and error list for invalid policy', async () => {
