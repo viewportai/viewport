@@ -8,8 +8,8 @@
  * published to npm. When @viewportai/protocol is available as an npm dependency,
  * replace these schemas with imports from the published package.
  *
- * Drift is caught by the shared conformance fixture corpus:
- *   viewportai/protocol/tests/policy-schema-conformance.test.ts
+ * Drift is caught by tests/cli/policy-schema-validator.conformance.test.ts,
+ * which reads the protocol-owned fixture corpus directly.
  */
 import { z } from 'zod';
 
@@ -41,7 +41,10 @@ const PolicyGateSchema = z
   .object({
     name: z.string().min(1),
     type: z.enum(['plan', 'approval', 'auto', 'budget']),
-    reviewers: z.object({ tags: z.array(z.string()).min(1) }).strict().optional(),
+    reviewers: z
+      .object({ tags: z.array(z.string()).min(1) })
+      .strict()
+      .optional(),
     timeout: z.string().optional(),
     on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
     auto_approve_if: z
@@ -193,7 +196,10 @@ export const RouteConfigDocumentSchema = z
   .object({
     route: z
       .object({
-        name: z.string().min(1).regex(/^[a-z0-9-]+$/),
+        name: z
+          .string()
+          .min(1)
+          .regex(/^[a-z0-9-]+$/),
         team: z.string().min(1),
         trigger: z
           .object({
