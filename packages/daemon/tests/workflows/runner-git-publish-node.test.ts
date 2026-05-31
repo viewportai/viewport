@@ -275,6 +275,131 @@ nodes:
     );
   }, 60_000);
 
+  it('blocks dynamic pre-publish review from diff size even when paths are otherwise allowed', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-dynamic-review-large-diff-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "mkdir -p docs && for i in $(seq 1 201); do echo line-$i; done > docs/large.md"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: Publish proof update
+    prePublishReview:
+      rules:
+        - name: large-diff
+          when:
+            diff_lines_gt: 200
+          require: human(tech-lead)
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+
+    expect(blocked?.status, blocked?.error).toBe('blocked');
+    expect(blocked?.nodes.publish?.metadata?.pre_publish_review).toMatchObject({
+      required: true,
+      facts: expect.objectContaining({ diffLines: 201 }),
+      matched_rules: [
+        expect.objectContaining({
+          name: 'large-diff',
+          reason: 'diff_lines_gt',
+        }),
+      ],
+    });
+  }, 60_000);
+
+  it('keeps restricted branch fences hard even when dynamic review would otherwise allow publish', async () => {
+    const daemon = await setup(projectDir);
+    const initialMain = await runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'], root);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-restricted-branch-fence-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "printf '\\nfenced change\\n' >> README.md"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: main
+    message: Publish proof update
+    restrictedBranches: [main]
+    prePublishReview:
+      rules:
+        - name: sensitive-path
+          when:
+            changed_paths_any: ["src/payments/**"]
+          require: human(tech-lead)
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    const afterMain = await runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'], root);
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.publish?.error).toContain("Branch 'main' is restricted by policy");
+    expect(failed?.nodes.publish?.metadata?.pre_publish_review).toMatchObject({
+      required: false,
+      matched_rules: [],
+    });
+    expect(afterMain.trim()).toBe(initialMain.trim());
+  }, 60_000);
+
   it('fails clearly when a branch publish has no changes and empty commits are not allowed', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');
