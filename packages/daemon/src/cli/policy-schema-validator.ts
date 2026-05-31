@@ -141,6 +141,18 @@ const PolicyContextSourceSchema = z
   })
   .strict();
 
+const PolicyHumanTargetSchema = z.string().regex(/^human\([a-zA-Z0-9_, -]+\)$/);
+
+const PolicyEscalationSchema = z
+  .object({
+    when_stuck: PolicyHumanTargetSchema.optional(),
+    channel: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((value) => value.when_stuck !== undefined || value.channel !== undefined, {
+    message: 'Escalation must define when_stuck or channel',
+  });
+
 export const PolicyDocumentSchema = z
   .object({
     version: z.literal(1),
@@ -172,6 +184,7 @@ export const PolicyDocumentSchema = z
       .strict(),
     publish: PolicyPublishSchema.optional(),
     side_effects: PolicySideEffectsSchema.optional(),
+    escalation: PolicyEscalationSchema.optional(),
     execution: z
       .object({
         shell_policy: z
