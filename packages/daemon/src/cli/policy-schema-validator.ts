@@ -101,6 +101,12 @@ const PolicyNotifySchema = z
   })
   .strict();
 
+const PolicyPublishSchema = z
+  .object({
+    branch: z.string().min(1).optional(),
+  })
+  .strict();
+
 const PolicyContextSourceSchema = z
   .object({
     name: z.string().min(1),
@@ -141,6 +147,7 @@ export const PolicyDocumentSchema = z
         notify: PolicyNotifySchema.optional(),
       })
       .strict(),
+    publish: PolicyPublishSchema.optional(),
     execution: z
       .object({
         shell_policy: z

@@ -31,8 +31,8 @@ const corpus = JSON.parse(readFileSync(corpusPath, 'utf8')) as Corpus;
 
 describe('daemon PolicyDocumentSchema conformance', () => {
   it('uses the shared corpus version', () => {
-    expect(corpus.version).toBe('2026-05-30/20');
-    expect(corpus.fixtures).toHaveLength(20);
+    expect(corpus.version).toBe('2026-05-31/21');
+    expect(corpus.fixtures).toHaveLength(21);
   });
 
   it('accepts every shared accept fixture', () => {
