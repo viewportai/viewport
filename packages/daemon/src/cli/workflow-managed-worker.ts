@@ -1230,6 +1230,12 @@ async function runAssignmentLocally(
         existingRun.id,
         async (run) => {
           await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+          return cancelLocalRunIfAssignmentCanceled(
+            options,
+            assignment.id,
+            existingRun.id,
+            assignment.assignment_claim_token,
+          );
         },
         progressSyncEveryMs(options.leaseSeconds),
       );
@@ -1281,6 +1287,12 @@ async function runAssignmentLocally(
     runId,
     async (run) => {
       await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+      return cancelLocalRunIfAssignmentCanceled(
+        options,
+        assignment.id,
+        runId,
+        assignment.assignment_claim_token,
+      );
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
@@ -2047,15 +2059,7 @@ async function waitForApprovalAndResume(
       }
     }
     if (assignment.status === 'canceled' || assignment.status === 'failed') {
-      const canceled = await daemonJson(
-        'POST',
-        `/api/workflows/runs/${encodeURIComponent(localRunId)}/cancel`,
-        {
-          message: 'Managed workflow assignment was canceled from Viewport.',
-          actor: { name: 'Viewport', source: 'managed-executor' },
-        },
-      );
-      const run = readRun(canceled);
+      const run = await cancelLocalRun(localRunId);
       await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
@@ -2065,6 +2069,29 @@ async function waitForApprovalAndResume(
     }
     await delay(options.commandSleepSeconds * 1000);
   }
+}
+
+async function cancelLocalRunIfAssignmentCanceled(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  localRunId: string,
+  assignmentClaimToken?: string | null,
+): Promise<WorkflowRunRecord | void> {
+  const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+  if (assignment.status !== 'canceled' && assignment.status !== 'failed') return undefined;
+  return cancelLocalRun(localRunId);
+}
+
+async function cancelLocalRun(localRunId: string): Promise<WorkflowRunRecord> {
+  const canceled = await daemonJson(
+    'POST',
+    `/api/workflows/runs/${encodeURIComponent(localRunId)}/cancel`,
+    {
+      message: 'Managed workflow assignment was canceled from Viewport.',
+      actor: { name: 'Viewport', source: 'managed-executor' },
+    },
+  );
+  return readRun(canceled);
 }
 
 async function applyBrokerActionCompletedCommands(
@@ -2448,7 +2475,7 @@ async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
 
 async function pollLocalRun(
   runId: string,
-  onProgress?: (run: WorkflowRunRecord) => Promise<void>,
+  onProgress?: (run: WorkflowRunRecord) => Promise<WorkflowRunRecord | void>,
   progressEveryMs = 30_000,
 ): Promise<WorkflowRunRecord> {
   let nextProgressAt = 0;
@@ -2457,7 +2484,8 @@ async function pollLocalRun(
     const run = readRun(body);
     if (['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) return run;
     if (onProgress && Date.now() >= nextProgressAt) {
-      await onProgress(run);
+      const progressRun = await onProgress(run);
+      if (progressRun) return progressRun;
       nextProgressAt = Date.now() + progressEveryMs;
     }
     await delay(500);
