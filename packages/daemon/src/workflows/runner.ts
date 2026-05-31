@@ -415,6 +415,7 @@ export class WorkflowRunner {
       approved: decision.approved,
       decision: decision.decision ?? (decision.approved ? 'approve' : 'reject'),
       ...(decision.message ? { message: decision.message } : {}),
+      ...(decision.expectedActionDigest ? { expectedActionDigest: decision.expectedActionDigest } : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
       ...(decision.feedback ? { feedback: decision.feedback } : {}),
       ...(decision.executionGrant ? { executionGrant: decision.executionGrant } : {}),

@@ -231,11 +231,21 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       const previousReview = prePublishReviewMetadata(state?.metadata?.['pre_publish_review']);
       const previousDigest = prePublishReviewDiffDigest(previousReview);
       const approved = state?.approval?.approved === true;
+      const approvedDigest = state?.approval?.expectedActionDigest;
+      const priorApprovalInvalidated =
+        previousReview !== null && prePublishReviewMetadata(previousReview['invalidated_approval']) !== null;
       const changedAfterApproval =
         approved && previousDigest !== null && previousDigest !== decision.facts.diffDigest;
       const missingApprovedDigest = approved && previousDigest === null && decision.required;
+      const missingCurrentDigestAfterInvalidation =
+        approved && priorApprovalInvalidated && approvedDigest !== decision.facts.diffDigest;
 
-      if (approved && !changedAfterApproval && !missingApprovedDigest) {
+      if (
+        approved &&
+        !changedAfterApproval &&
+        !missingApprovedDigest &&
+        !missingCurrentDigestAfterInvalidation
+      ) {
         if (state) {
           state.metadata = {
             ...(state.metadata ?? {}),
@@ -256,14 +266,16 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
         }
       } else {
         const invalidatedApproval =
-          changedAfterApproval || missingApprovedDigest
+          changedAfterApproval || missingApprovedDigest || missingCurrentDigestAfterInvalidation
             ? {
                 previous_diff_digest: previousDigest,
                 current_diff_digest: decision.facts.diffDigest,
                 previous_approval_resolved_at: state?.approval?.resolvedAt ?? null,
                 reason: changedAfterApproval
                   ? 'diff_changed_after_approval'
-                  : 'approved_diff_digest_missing',
+                  : missingCurrentDigestAfterInvalidation
+                    ? 'current_diff_digest_not_approved'
+                    : 'approved_diff_digest_missing',
               }
             : null;
 

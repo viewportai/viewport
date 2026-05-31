@@ -58,6 +58,7 @@ export interface WorkflowNodeRunState {
     approved?: boolean;
     decision?: 'approve' | 'request_changes' | 'reject';
     message?: string;
+    expectedActionDigest?: string;
     actor?: WorkflowApprovalActor;
     feedback?: Record<string, unknown>;
     executionGrant?: WorkflowExecutionGrant;
