@@ -43,6 +43,7 @@ import {
   progressSyncEveryMs,
   readRun,
 } from './workflow-managed-worker-format.js';
+import { acquireWorkerProcessLock } from './worker-process-lock.js';
 import type {
   DirectoryInfo,
   ManagedAssignment,
@@ -106,6 +107,7 @@ export async function workflowWorker(): Promise<void> {
     failed: 0,
   };
   let failed = false;
+  const processLock = options.once ? undefined : acquireWorkerProcessLock(options);
   try {
     do {
       await heartbeat(options, 'online', 'idle');
@@ -233,6 +235,7 @@ export async function workflowWorker(): Promise<void> {
     await safeHeartbeat(options, 'stale', 'degraded');
     throw error;
   } finally {
+    processLock?.release();
     await safeHeartbeat(options, 'offline', failed ? 'degraded' : 'offline');
   }
 

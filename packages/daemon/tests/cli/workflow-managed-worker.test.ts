@@ -14,6 +14,10 @@ import {
   localRunToSyncPayload,
 } from '../../src/cli/workflow-managed-worker-format.js';
 import { commandPollSeconds } from '../../src/cli/workflow-managed-worker-util.js';
+import {
+  acquireWorkerProcessLock,
+  workerProcessLockPath,
+} from '../../src/cli/worker-process-lock.js';
 
 const exec = promisify(execFile);
 const anthropicClaudeEnv = envNameForCredentialRef('agent/anthropic/claude-code');
@@ -21,9 +25,19 @@ const githubPrWriterEnv = envNameForCredentialRef('github/pr-writer');
 const githubTokenEnv = envNameForCredentialRef('github/token');
 const repoPaymentsEnv = envNameForCredentialRef('repo/github/payments-api');
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('workflow managed worker CLI', () => {
   const originalArgv = process.argv.slice();
   const originalFetch = global.fetch;
+  const originalViewportHome = process.env['VIEWPORT_HOME'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   beforeEach(() => {
@@ -34,7 +48,64 @@ describe('workflow managed worker CLI', () => {
   afterEach(() => {
     process.argv = originalArgv;
     global.fetch = originalFetch;
+    if (originalViewportHome === undefined) {
+      delete process.env['VIEWPORT_HOME'];
+    } else {
+      process.env['VIEWPORT_HOME'] = originalViewportHome;
+    }
     vi.doUnmock('../../src/cli/daemon-client.js');
+  });
+
+  it('prevents duplicate persistent worker processes for the same executor', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    const options = {
+      server: 'https://api.getviewport.test',
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      runnerProfile: 'default',
+      accessMode: 'polling' as const,
+    };
+
+    const lock = acquireWorkerProcessLock(options);
+    try {
+      expect(lock.filePath).toBe(workerProcessLockPath(options));
+      expect(await pathExists(lock.filePath)).toBe(true);
+      expect(() => acquireWorkerProcessLock(options)).toThrow(/already running/);
+    } finally {
+      lock.release();
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('auto-heals stale persistent worker lock files', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    const options = {
+      server: 'https://api.getviewport.test',
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      accessMode: 'polling' as const,
+    };
+    const filePath = workerProcessLockPath(options);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        schema: 'viewport.worker_process_lock/v1',
+        pid: 987654321,
+        signature: 'stale',
+        startedAt: '2026-05-30T00:00:00.000Z',
+      }),
+    );
+
+    const lock = acquireWorkerProcessLock(options);
+    try {
+      expect(JSON.parse(await fs.readFile(filePath, 'utf8')).pid).toBe(process.pid);
+    } finally {
+      lock.release();
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
   });
 
   it('keeps approval command polling faster than idle assignment polling by default', () => {
