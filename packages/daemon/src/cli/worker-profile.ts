@@ -70,6 +70,20 @@ export interface WorkerPairingPayload {
   };
 }
 
+export interface WorkerPairingRecord {
+  version?: number;
+  workspaceId?: string;
+  workspaceName?: string;
+  installId?: string;
+  runtimeTargetId?: string;
+  managedExecutorId?: string;
+  serverUrl?: string;
+  serverId?: string;
+  pairedAt?: string;
+}
+
+type WorkerConfig = NonNullable<NonNullable<ViewportConfig['daemon']>['worker']>;
+
 const WORKER_RUNTIME_TOOLS = ['shell'];
 const BROKERED_PROVIDER_INTEGRATIONS = ['github', 'slack', 'linear'];
 const DEFAULT_RUNNER_LOCAL_SECRETS = ['github/runner-local', 'github/pr-writer', 'slack/notifier'];
@@ -256,6 +270,58 @@ export async function resetWorkerProfile(): Promise<{
     removedIdentity,
     removedPairing,
   };
+}
+
+export async function readWorkerPairingRecord(
+  stateDir: string | undefined,
+): Promise<WorkerPairingRecord | null> {
+  if (!stateDir) return null;
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(path.join(stateDir, 'pairing.json'), 'utf8'),
+    ) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+
+    return parsed as WorkerPairingRecord;
+  } catch {
+    return null;
+  }
+}
+
+export function workerProfileIntegrity(
+  worker: WorkerConfig | undefined,
+  pairing: WorkerPairingRecord | null,
+): { ok: boolean; pairingPresent: boolean; mismatches: string[] } {
+  const mismatches: string[] = [];
+  if (!worker || !pairing) {
+    return { ok: true, pairingPresent: Boolean(pairing), mismatches };
+  }
+
+  comparePinnedValue(mismatches, 'serverUrl', worker.serverUrl, pairing.serverUrl);
+  comparePinnedValue(mismatches, 'serverId', worker.serverId, pairing.serverId);
+  comparePinnedValue(mismatches, 'workspaceId', worker.workspaceId, pairing.workspaceId);
+  comparePinnedValue(
+    mismatches,
+    'managedExecutorId',
+    worker.managedExecutorId,
+    pairing.managedExecutorId,
+  );
+
+  return { ok: mismatches.length === 0, pairingPresent: true, mismatches };
+}
+
+function comparePinnedValue(
+  mismatches: string[],
+  key: string,
+  configured: string | undefined,
+  paired: string | undefined,
+): void {
+  if (!configured || !paired) return;
+  if (configured !== paired) {
+    mismatches.push(key);
+  }
 }
 
 export function isWorkerPairing(): boolean {

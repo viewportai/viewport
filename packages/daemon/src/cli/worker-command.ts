@@ -14,7 +14,9 @@ import {
   defaultWorkerWorkspaceRoot,
   normalizeWorkerLifecycle,
   normalizeWorkerTransport,
+  readWorkerPairingRecord,
   resetWorkerProfile,
+  workerProfileIntegrity,
 } from './worker-profile.js';
 import { SUPPORT_PACKET_DOCS_URL, supportPacketMetadata } from './support-packet.js';
 
@@ -112,6 +114,8 @@ async function workerDoctor(): Promise<void> {
   const manager = new ConfigManager();
   await manager.load();
   const workerConfig = manager.getDaemonConfig()?.worker;
+  const pairing = await readWorkerPairingRecord(workerConfig?.stateDir);
+  const integrity = workerProfileIntegrity(workerConfig, pairing);
   const missing: string[] = [];
   if (!workerConfig?.serverUrl) missing.push('server URL');
   if (!workerConfig?.workspaceRoot) missing.push('workspace root');
@@ -121,7 +125,7 @@ async function workerDoctor(): Promise<void> {
   const lockOptions = await currentWorkerLockOptions();
   const payload = {
     command: 'worker doctor',
-    ok: missing.length === 0,
+    ok: missing.length === 0 && integrity.ok,
     lifecycle: workerConfig?.lifecycle ?? null,
     transport: workerConfig?.transport ?? null,
     serverUrl: workerConfig?.serverUrl ?? null,
@@ -130,6 +134,7 @@ async function workerDoctor(): Promise<void> {
     publicKeyFingerprint: workerConfig?.publicKeyFingerprint ?? null,
     capabilities: workerConfig?.capabilities ?? null,
     processLock: lockStatusForOptions(lockOptions),
+    pairingIntegrity: integrity,
     missing,
     supportPacket: supportPacketMetadata(),
   };
@@ -155,6 +160,11 @@ async function workerDoctor(): Promise<void> {
   if (missing.length > 0) {
     console.log(`Missing:   ${missing.join(', ')}`);
     console.log('Fix:       run `vpd pair --worker --transport=polling --workdir <path>`.');
+    return;
+  }
+  if (!integrity.ok) {
+    console.log(`Mismatch:  ${integrity.mismatches.join(', ')}`);
+    console.log('Fix:       run `vpd worker reset`, then pair this worker again.');
     return;
   }
   console.log('Status:    configured');

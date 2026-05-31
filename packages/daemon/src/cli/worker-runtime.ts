@@ -18,7 +18,12 @@ import type {
 } from '../workflows/types.js';
 import { transportFetch } from './network.js';
 import { acquireWorkerProcessLock } from './worker-process-lock.js';
-import type { WorkerLifecycle, WorkerTransport } from './worker-profile.js';
+import {
+  readWorkerPairingRecord,
+  workerProfileIntegrity,
+  type WorkerLifecycle,
+  type WorkerTransport,
+} from './worker-profile.js';
 
 export interface StandaloneWorkerOptions {
   lifecycle: WorkerLifecycle;
@@ -258,6 +263,15 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
   if (!worker?.publicKeyFingerprint) missing.push('worker identity');
   if (missing.length > 0) {
     throw new Error(`Worker profile is not configured: missing ${missing.join(', ')}.`);
+  }
+  const pairing = await readWorkerPairingRecord(worker!.stateDir);
+  const integrity = workerProfileIntegrity(worker, pairing);
+  if (!integrity.ok) {
+    throw new Error(
+      `Worker profile does not match the approved pairing record: ${integrity.mismatches.join(
+        ', ',
+      )}. Run \`vpd worker reset\`, then pair this worker again.`,
+    );
   }
   return {
     serverUrl: worker!.serverUrl!,

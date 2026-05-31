@@ -312,6 +312,70 @@ describe('worker command', () => {
     expect(output).not.toContain('secret-human-relay-token');
   });
 
+  it('blocks worker start when local config drifts from the approved pairing record', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    await storeWorkerProfile(
+      {
+        status: 'approved',
+        workspace_id: 'workspace_pinned',
+        workspace_name: 'Pinned Workspace',
+        managed_executor_id: 'executor_pinned',
+        managed_executor_credential: 'secret-pinned-worker-token',
+        token: 'secret-pinned-relay-token',
+        server_id: 'server_pinned',
+      },
+      await resolveWorkerProfileDefaults({
+        server: await resolvePairingServerTransport(),
+        detectCapabilities: false,
+      }),
+    );
+    const { ConfigManager } = await import('../../src/core/config.js');
+    const manager = new ConfigManager();
+    await manager.load();
+    const daemonConfig = manager.getDaemonConfig();
+    await manager.setDaemonConfig({
+      ...daemonConfig,
+      worker: {
+        ...daemonConfig?.worker,
+        workspaceId: 'workspace_wrong',
+      },
+    });
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor', '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const raw = String(logSpy.mock.calls.at(-1)?.[0] ?? '');
+    const payload = JSON.parse(raw) as {
+      ok: boolean;
+      pairingIntegrity: {
+        ok: boolean;
+        pairingPresent: boolean;
+        mismatches: string[];
+      };
+    };
+    expect(payload.ok).toBe(false);
+    expect(payload.pairingIntegrity).toEqual({
+      ok: false,
+      pairingPresent: true,
+      mismatches: ['workspaceId'],
+    });
+    expect(raw).not.toContain('secret-pinned-worker-token');
+    expect(raw).not.toContain('secret-pinned-relay-token');
+
+    process.argv = ['node', 'vpd', 'worker', 'start', '--once'];
+    vi.resetModules();
+    const { worker: startWorker } = await import('../../src/cli/worker-command.js');
+    await expect(startWorker()).rejects.toThrow(
+      'Worker profile does not match the approved pairing record: workspaceId.',
+    );
+  });
+
   it('removes stale persistent worker locks for the paired profile', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
     const { resolvePairingServerTransport } =
