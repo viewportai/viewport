@@ -258,6 +258,56 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('promotes provider reconciliation URLs onto execution receipts', async () => {
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push({
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.events.push({
+      id: 'event-slack-action',
+      runId: run.id,
+      timestamp: 2_100,
+      type: 'action-executed',
+      nodeId: 'inspect',
+      message: 'Slack completion sent',
+      data: {
+        action: {
+          adapter: 'slack',
+          action: 'post_message',
+          idempotencyKey: 'slack:run-1:notify',
+          response: {
+            ok: true,
+            channel: 'C123TEAM',
+            ts: '1780186939.354569',
+          },
+          providerReconciliation: {
+            status: 'verified',
+            method: 'slack.chat_postMessage',
+            providerReference: '1780186939.354569',
+            providerUrl: 'https://viewport-global.slack.com/archives/C123TEAM/p1780186939354569',
+          },
+        },
+      },
+    });
+
+    await sync.sync(run);
+
+    const receipt = (calls[0]?.body['execution_receipts'] as Array<Record<string, unknown>>)[0];
+    expect(receipt).toMatchObject({
+      adapter: 'slack',
+      action: 'post_message',
+      provider_reference: '1780186939.354569',
+      provider_url: 'https://viewport-global.slack.com/archives/C123TEAM/p1780186939354569',
+      provider_reconciliation: expect.objectContaining({
+        providerUrl: 'https://viewport-global.slack.com/archives/C123TEAM/p1780186939354569',
+      }),
+    });
+  });
+
   it('syncs normalized aggregate usage from daemon agent ledgers', async () => {
     const calls: Array<{ body: Record<string, unknown> }> = [];
     const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
