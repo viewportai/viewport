@@ -278,6 +278,40 @@ describe('worker command', () => {
     expect(raw).not.toContain('secret-relay-token');
   });
 
+  it('prints the approved workspace id in human worker doctor output', async () => {
+    process.argv = ['node', 'vpd', 'pair', '--worker'];
+    const { resolvePairingServerTransport } =
+      await import('../../src/cli/lifecycle-pair-server.js');
+    const { resolveWorkerProfileDefaults, storeWorkerProfile } =
+      await import('../../src/cli/worker-profile.js');
+    await storeWorkerProfile(
+      {
+        status: 'approved',
+        workspace_id: 'workspace_human',
+        workspace_name: 'Human Workspace',
+        managed_executor_id: 'executor_human',
+        managed_executor_credential: 'secret-human-worker-token',
+        token: 'secret-human-relay-token',
+        server_id: 'server_human',
+      },
+      await resolveWorkerProfileDefaults({
+        server: await resolvePairingServerTransport(),
+        detectCapabilities: false,
+      }),
+    );
+
+    process.argv = ['node', 'vpd', 'worker', 'doctor'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await worker();
+
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? '')).join('\n');
+    expect(output).toContain('Workspace: workspace_human');
+    expect(output).toContain('Status:    configured');
+    expect(output).not.toContain('secret-human-worker-token');
+    expect(output).not.toContain('secret-human-relay-token');
+  });
+
   it('removes stale persistent worker locks for the paired profile', async () => {
     process.argv = ['node', 'vpd', 'pair', '--worker'];
     const { resolvePairingServerTransport } =
