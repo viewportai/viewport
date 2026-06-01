@@ -22,12 +22,12 @@ import {
   readWorkerPairingRecord,
   workerProfileIntegrity,
   type WorkerLifecycle,
-  type WorkerTransport,
+  type WorkerTransport as WorkerTransportMode,
 } from './worker-profile.js';
 
 export interface StandaloneWorkerOptions {
   lifecycle: WorkerLifecycle;
-  transport: WorkerTransport;
+  transport: WorkerTransportMode;
   once: boolean;
   leaseToken?: string;
   bootstrapPath?: string;
@@ -49,7 +49,7 @@ interface WorkerRuntimeProfile {
   serverUrl: string;
   serverId?: string;
   lifecycle: WorkerLifecycle;
-  transport: WorkerTransport;
+  transport: WorkerTransportMode;
   inbound?: {
     enabled?: boolean;
     signedRequests?: boolean;
@@ -115,6 +115,53 @@ interface HostedAssignmentCommandPoll {
   _viewport_worker_retry?: boolean;
 }
 
+export interface WorkerTransport {
+  readonly mode: WorkerTransportMode;
+  claim(body: Record<string, unknown>): Promise<ClaimedLease | null>;
+  heartbeat(options: {
+    status: 'online' | 'offline';
+    healthStatus: 'idle' | 'offline';
+    lifecycle: WorkerLifecycle;
+  }): Promise<void>;
+  sync(lease: ClaimedLease, execution: HostedClaimExecutionResult): Promise<void>;
+  cleanup(lease: ClaimedLease): Promise<void>;
+  pollRuntimeCommands(lease: ClaimedLease): Promise<HostedAssignmentCommandPoll>;
+}
+
+class HttpPollingTransport implements WorkerTransport {
+  constructor(
+    private readonly profile: WorkerRuntimeProfile,
+    public readonly mode: WorkerTransportMode,
+  ) {}
+
+  claim(body: Record<string, unknown>): Promise<ClaimedLease | null> {
+    return claimLeaseHttp(this.profile, body);
+  }
+
+  heartbeat(options: {
+    status: 'online' | 'offline';
+    healthStatus: 'idle' | 'offline';
+    lifecycle: WorkerLifecycle;
+  }): Promise<void> {
+    return heartbeatHttp(this.profile, {
+      ...options,
+      transport: this.mode,
+    });
+  }
+
+  sync(lease: ClaimedLease, execution: HostedClaimExecutionResult): Promise<void> {
+    return syncLeaseHttp(this.profile, lease, execution);
+  }
+
+  cleanup(lease: ClaimedLease): Promise<void> {
+    return cleanupLeaseHttp(this.profile, lease);
+  }
+
+  pollRuntimeCommands(lease: ClaimedLease): Promise<HostedAssignmentCommandPoll> {
+    return fetchHostedAssignmentHttp(this.profile, lease);
+  }
+}
+
 const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 
 export async function runStandaloneWorker(
@@ -133,6 +180,7 @@ export async function runStandaloneWorker(
     if (transport === 'relay') {
       throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
     }
+    const workerTransport = new HttpPollingTransport(profile, transport);
     processLock =
       options.lifecycle === 'persistent' && !options.once
         ? acquireWorkerProcessLock({
@@ -144,28 +192,26 @@ export async function runStandaloneWorker(
           })
         : null;
     let lastHeartbeatAt = Date.now();
-    await heartbeat(profile, {
+    await workerTransport.heartbeat({
       status: 'online',
       healthStatus: 'idle',
       lifecycle: options.lifecycle,
-      transport,
     });
 
     if (bootstrap.lease) {
-      const result = await executeBootstrapLease(profile, bootstrap.lease);
-      await heartbeat(profile, {
+      const result = await executeBootstrapLease(profile, workerTransport, bootstrap.lease);
+      await workerTransport.heartbeat({
         status: 'offline',
         healthStatus: 'offline',
         lifecycle: options.lifecycle,
-        transport,
       });
       return result;
     }
 
     if (options.leaseToken) {
       const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
-      await syncLease(profile, lease, { status: 'completed' });
-      await cleanupLease(profile, lease);
+      await workerTransport.sync(lease, { status: 'completed' });
+      await workerTransport.cleanup(lease);
       return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
     }
 
@@ -179,7 +225,7 @@ export async function runStandaloneWorker(
     };
     try {
       while (!options.abortSignal?.aborted) {
-        const lease = await claimLease(profile, {
+        const lease = await workerTransport.claim({
           lifecycle: options.lifecycle,
           transport,
           leaseSeconds: options.leaseSeconds,
@@ -188,11 +234,10 @@ export async function runStandaloneWorker(
           if (options.once || options.lifecycle !== 'persistent') break;
           const now = Date.now();
           if (now - lastHeartbeatAt > 30_000) {
-            await heartbeat(profile, {
+            await workerTransport.heartbeat({
               status: 'online',
               healthStatus: 'idle',
               lifecycle: options.lifecycle,
-              transport,
             });
             lastHeartbeatAt = now;
           }
@@ -200,19 +245,19 @@ export async function runStandaloneWorker(
           continue;
         }
         result.claimed += 1;
-        let execution = await executeClaim(profile, lease);
+        let execution = await executeClaim(profile, workerTransport, lease);
         if (
           isHostedManagedExecutorProfile(profile) &&
           execution.status === 'blocked' &&
           execution.run
         ) {
-          await syncLease(profile, lease, execution);
-          execution = await resumeBlockedHostedExecution(profile, lease, execution);
+          await workerTransport.sync(lease, execution);
+          execution = await resumeBlockedHostedExecution(profile, workerTransport, lease, execution);
           if (execution.status !== 'blocked') {
-            await syncLease(profile, lease, execution);
+            await workerTransport.sync(lease, execution);
           }
         } else {
-          await syncLease(profile, lease, execution);
+          await workerTransport.sync(lease, execution);
         }
         if (execution.status === 'completed') {
           result.completed += 1;
@@ -221,16 +266,15 @@ export async function runStandaloneWorker(
         } else {
           result.failed += 1;
         }
-        await cleanupLease(profile, lease);
+        await workerTransport.cleanup(lease);
         result.cleanup += 1;
         if (options.once) break;
       }
     } finally {
-      await heartbeat(profile, {
+      await workerTransport.heartbeat({
         status: 'offline',
         healthStatus: 'offline',
         lifecycle: options.lifecycle,
-        transport,
       });
     }
 
@@ -243,11 +287,12 @@ export async function runStandaloneWorker(
 
 async function executeBootstrapLease(
   profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
   lease: ClaimedLease,
 ): Promise<StandaloneWorkerResult> {
-  const execution = await executeClaim(profile, lease);
-  await syncLease(profile, lease, execution);
-  await cleanupLease(profile, lease);
+  const execution = await executeClaim(profile, transport, lease);
+  await transport.sync(lease, execution);
+  await transport.cleanup(lease);
 
   return {
     claimed: 1,
@@ -286,12 +331,13 @@ async function validateWorkerWorkspaceRoot(workspaceRoot: string): Promise<void>
 
 async function executeClaim(
   profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
   lease: ClaimedLease,
 ): Promise<HostedClaimExecutionResult> {
   if (!isHostedManagedExecutorProfile(profile)) {
     return { status: 'completed' };
   }
-  return executeHostedWorkflowClaim(profile, lease);
+  return executeHostedWorkflowClaim(profile, transport, lease);
 }
 
 async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
@@ -444,7 +490,7 @@ async function materializeBootstrapIdentity(
   return { path: filePath, publicKeyFingerprint, ephemeral: true };
 }
 
-function workerTransportValue(value: unknown): WorkerTransport | undefined {
+function workerTransportValue(value: unknown): WorkerTransportMode | undefined {
   return value === 'polling' || value === 'relay' || value === 'inbound' ? value : undefined;
 }
 
@@ -478,7 +524,7 @@ function validateInboundWorkerGate(profile: WorkerRuntimeProfile): never {
   );
 }
 
-async function claimLease(
+async function claimLeaseHttp(
   profile: WorkerRuntimeProfile,
   body: Record<string, unknown>,
 ): Promise<ClaimedLease | null> {
@@ -534,13 +580,13 @@ async function claimLease(
   };
 }
 
-async function heartbeat(
+async function heartbeatHttp(
   profile: WorkerRuntimeProfile,
   options: {
     status: 'online' | 'offline';
     healthStatus: 'idle' | 'offline';
     lifecycle: WorkerLifecycle;
-    transport: WorkerTransport;
+    transport: WorkerTransportMode;
   },
 ): Promise<void> {
   const capabilityPayload = managedExecutorCapabilities(profile.capabilities);
@@ -580,7 +626,7 @@ async function heartbeat(
   });
 }
 
-async function syncLease(
+async function syncLeaseHttp(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
   execution: HostedClaimExecutionResult,
@@ -661,6 +707,7 @@ async function syncLease(
 
 async function executeHostedWorkflowClaim(
   profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
   lease: ClaimedLease,
 ): Promise<HostedClaimExecutionResult> {
   if (!lease.leaseToken) {
@@ -682,7 +729,7 @@ async function executeHostedWorkflowClaim(
     const existing = await existingHostedRuntimeRun(lease);
     if (existing) {
       if (existing.status === 'blocked') {
-        const body = await fetchHostedAssignment(profile, lease);
+        const body = await transport.pollRuntimeCommands(lease);
         const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
         const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body, {
           runtimeSecretEnv,
@@ -939,6 +986,7 @@ async function existingHostedRuntimeRun(lease: ClaimedLease): Promise<WorkflowRu
 
 async function resumeBlockedHostedExecution(
   profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
   lease: ClaimedLease,
   execution: HostedClaimExecutionResult,
 ): Promise<HostedClaimExecutionResult> {
@@ -950,7 +998,7 @@ async function resumeBlockedHostedExecution(
   const workflowRunId = execution.run.id;
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
-    const body = await fetchHostedAssignment(profile, lease);
+    const body = await transport.pollRuntimeCommands(lease);
     if (!hasRuntimeCommands(body)) {
       if (shouldRetryHostedCommandPoll(body)) {
         continue;
@@ -969,7 +1017,7 @@ async function resumeBlockedHostedExecution(
           run: completed,
           daemon,
         };
-        await syncLease(profile, lease, blockedExecution);
+        await transport.sync(lease, blockedExecution);
         execution = blockedExecution;
         continue;
       }
@@ -988,7 +1036,7 @@ async function resumeBlockedHostedExecution(
   return execution;
 }
 
-async function fetchHostedAssignment(
+async function fetchHostedAssignmentHttp(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
 ): Promise<HostedAssignmentCommandPoll> {
@@ -1082,7 +1130,7 @@ function workflowRunFailure(run: WorkflowRunRecord): HostedWorkerFailure {
   };
 }
 
-async function cleanupLease(profile: WorkerRuntimeProfile, lease: ClaimedLease): Promise<void> {
+async function cleanupLeaseHttp(profile: WorkerRuntimeProfile, lease: ClaimedLease): Promise<void> {
   if (isHostedManagedExecutorProfile(profile)) {
     return;
   }
