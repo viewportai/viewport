@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
+import type { SessionResourceManifest } from '../config-resolution/types.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
 import { addEvent, normalizeInputs, renderTemplate } from './runtime-helpers.js';
 import { WorkflowRunPlatformSync } from './platform-sync.js';
@@ -134,11 +135,10 @@ export class WorkflowRunner {
     const now = Date.now();
     const resourceId = request.resourceId;
     const runtimeTargetId = request.runtimeTargetId;
-    const resourceManifest =
-      request.resourceManifest ??
-      resolveSessionResourceManifestSync({
-        workingDirectory: directory.path,
-      });
+    const resourceManifest = resolveWorkflowRunResourceManifest(
+      request.resourceManifest,
+      directory.path,
+    );
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
       workflowName: parsed.definition.name,
@@ -415,7 +415,9 @@ export class WorkflowRunner {
       approved: decision.approved,
       decision: decision.decision ?? (decision.approved ? 'approve' : 'reject'),
       ...(decision.message ? { message: decision.message } : {}),
-      ...(decision.expectedActionDigest ? { expectedActionDigest: decision.expectedActionDigest } : {}),
+      ...(decision.expectedActionDigest
+        ? { expectedActionDigest: decision.expectedActionDigest }
+        : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
       ...(decision.feedback ? { feedback: decision.feedback } : {}),
       ...(decision.executionGrant ? { executionGrant: decision.executionGrant } : {}),
@@ -452,8 +454,8 @@ export class WorkflowRunner {
       );
       await this.revisePlanAfterChangesRequested(run, nodeId, state, decision);
       await this.saveAndEmit(run);
-  return run;
-  }
+      return run;
+    }
 
     if (!decision.approved) {
       // Run the approval node's onReject command if declared. Failures here
@@ -802,6 +804,33 @@ export class WorkflowRunner {
       clearTimeout(timeout);
     };
   }
+}
+
+function resolveWorkflowRunResourceManifest(
+  manifest: WorkflowRunRequest['resourceManifest'],
+  workingDirectory: string,
+): SessionResourceManifest {
+  if (isCompleteSessionResourceManifest(manifest)) return manifest;
+
+  return resolveSessionResourceManifestSync({
+    workingDirectory,
+  });
+}
+
+function isCompleteSessionResourceManifest(
+  manifest: WorkflowRunRequest['resourceManifest'],
+): manifest is SessionResourceManifest {
+  return (
+    Boolean(manifest) &&
+    typeof manifest?.manifestDigest === 'string' &&
+    Array.isArray(manifest.configSources) &&
+    Array.isArray(manifest.contract?.contextProviders) &&
+    Array.isArray(manifest.contract?.workflows) &&
+    Array.isArray(manifest.contract?.contextPackages) &&
+    Array.isArray(manifest.contract?.riskyPathRules) &&
+    Array.isArray(manifest.conflicts) &&
+    Array.isArray(manifest.warnings)
+  );
 }
 
 async function assertRunnableWorkflowDirectory(directoryPath: string): Promise<void> {

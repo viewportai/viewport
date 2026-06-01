@@ -114,6 +114,40 @@ nodes:
     );
   }, 60_000);
 
+  it('falls back to a local resource manifest when hosted assignments provide a partial manifest', async () => {
+    const daemon = await setup(projectDir);
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowYaml: `
+schema: viewport.workflow/v1
+name: hosted-partial-resource-manifest-proof
+nodes:
+  proof:
+    type: shell
+    command: "printf 'hosted manifest fallback works\\n'"
+`,
+      workflowSourceRef: 'viewport://managed-executor/partial-resource-manifest-proof',
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      resourceManifest: {} as never,
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const completed = await daemon.workflowRunner.getRun(run.id);
+
+    expect(completed?.status).toBe('completed');
+    expect(completed?.resourceManifest?.manifestDigest).toMatch(/^sha256:/);
+    expect(completed?.events).toContainEqual(
+      expect.objectContaining({
+        type: 'context-manifest-resolved',
+        data: expect.objectContaining({
+          manifestDigest: completed?.resourceManifest?.manifestDigest,
+          configSourceCount: 0,
+        }),
+      }),
+    );
+  }, 30_000);
+
   it('skips dynamic pre-publish review when observable diff facts do not match', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');
@@ -354,9 +388,9 @@ nodes:
       ],
     };
 
-    expect(await daemon.workflowRunner.applyRuntimeCommandBody(run.id, originalApprovalCommand)).toBe(
-      1,
-    );
+    expect(
+      await daemon.workflowRunner.applyRuntimeCommandBody(run.id, originalApprovalCommand),
+    ).toBe(1);
 
     await waitForTerminalRun(daemon, run.id);
     const reblocked = await daemon.workflowRunner.getRun(run.id);
@@ -382,9 +416,9 @@ nodes:
       runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'], root),
     ).rejects.toThrow();
 
-    expect(await daemon.workflowRunner.applyRuntimeCommandBody(run.id, originalApprovalCommand)).toBe(
-      1,
-    );
+    expect(
+      await daemon.workflowRunner.applyRuntimeCommandBody(run.id, originalApprovalCommand),
+    ).toBe(1);
     await waitForTerminalRun(daemon, run.id);
     const stillReblocked = await daemon.workflowRunner.getRun(run.id);
 
@@ -724,7 +758,13 @@ nodes:
     const failed = await daemon.workflowRunner.getRun(run.id);
     const afterMain = await runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'], root);
     const pushedBranch = await runGit(
-      ['--git-dir', remoteDir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/viewport/proof'],
+      [
+        '--git-dir',
+        remoteDir,
+        'for-each-ref',
+        '--format=%(refname:short)',
+        'refs/heads/viewport/proof',
+      ],
       root,
     );
 
