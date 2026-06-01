@@ -674,6 +674,68 @@ nodes:
     expect(afterMain.trim()).toBe(initialMain.trim());
   }, 60_000);
 
+  it('keeps restricted path fences hard before commit and push', async () => {
+    const daemon = await setup(projectDir);
+    const initialMain = await runGit(
+      ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'],
+      root,
+    );
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-restricted-path-fence-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "printf '\\nfenced README change\\n' >> README.md"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/proof
+    message: Publish proof update
+    restrictedPaths: [README.md]
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const failed = await daemon.workflowRunner.getRun(run.id);
+    const afterMain = await runGit(['--git-dir', remoteDir, 'rev-parse', 'refs/heads/main'], root);
+    const pushedBranch = await runGit(
+      ['--git-dir', remoteDir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/viewport/proof'],
+      root,
+    );
+
+    expect(failed?.status).toBe('failed');
+    expect(failed?.nodes.publish?.error).toContain(
+      "Changed path 'README.md' is restricted by policy",
+    );
+    expect(afterMain.trim()).toBe(initialMain.trim());
+    expect(pushedBranch.trim()).toBe('');
+  }, 60_000);
+
   it('fails clearly when a branch publish has no changes and empty commits are not allowed', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');

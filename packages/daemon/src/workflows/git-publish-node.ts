@@ -15,7 +15,7 @@ import {
   gitContextTargetAllowsPath,
   parseGitContextUpdateTargetRef,
 } from './context-update-targets.js';
-import { branchIsRestricted, matchesGlob } from './policy-enforcement.js';
+import { branchIsRestricted, matchesGlob, restrictedPathsTouched } from './policy-enforcement.js';
 
 export interface RenderedGitPublishInput {
   cwd: string;
@@ -166,6 +166,16 @@ export async function executeGitPublishNode(
   if (!changed && node.allowEmpty !== true) {
     throw new Error(
       'Git publish node has no changes to publish. Ensure the implementation step writes a diff, or set allowEmpty: true for an intentional empty commit.',
+    );
+  }
+  const restrictedPathMatches = restrictedPathsTouched(
+    await gitChangedPaths(input.cwd),
+    node.restrictedPaths,
+  );
+  if (restrictedPathMatches.length > 0) {
+    throw new Error(
+      `Changed path '${restrictedPathMatches[0]}' is restricted by policy — refusing to publish. ` +
+        `Restricted patterns: ${(node.restrictedPaths ?? []).join(', ')}`,
     );
   }
 
