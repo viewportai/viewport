@@ -1,3 +1,10 @@
+## [0.25.13](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.12...@viewportai/daemon@0.25.13) (2026-06-01)
+
+
+### Bug Fixes
+
+* keep hosted managed runner out of oss ([#150](https://github.com/viewportai/viewport/issues/150)) ([346003a](https://github.com/viewportai/viewport/commit/346003a5f2158127bafe8cb44160b3f0e4a4a8dc))
+
 ## [0.25.12](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.11...@viewportai/daemon@0.25.12) (2026-05-30)
 
 
