@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { redact } from './redaction.js';
 import type {
   EphemeralSecret,
@@ -29,10 +30,11 @@ export class ManagedRunnerService {
       updatedAt: now,
       command: this.redactCommand(command, request.secrets),
     };
-    this.records.set(id, record);
+      this.records.set(id, record);
 
     try {
       await this.writeBootstrap(sandbox, request);
+      await this.writeVpdPackageOverride(sandbox);
       await sandbox.run(request.vpdInstallCommand, {
         timeoutMs: request.timeoutMs,
       });
@@ -117,6 +119,17 @@ export class ManagedRunnerService {
       throw new Error('sandbox_provider_does_not_support_file_write');
     }
     await sandbox.writeFile(this.bootstrapPath(request), `${JSON.stringify(request.bootstrap, null, 2)}\n`);
+  }
+
+  private async writeVpdPackageOverride(sandbox: Awaited<ReturnType<ManagedSandboxProvider['create']>>): Promise<void> {
+    const tarballPath = process.env.VPD_PACKAGE_TARBALL?.trim();
+    if (!tarballPath) return;
+    if (!sandbox.writeFile) {
+      throw new Error('sandbox_provider_does_not_support_file_write');
+    }
+
+    const tarball = await readFile(tarballPath, { encoding: 'base64' });
+    await sandbox.writeFile('/tmp/viewport/vpd.tgz.b64', tarball);
   }
 
   private bootstrapPath(request: ManagedRunStartRequest): string {

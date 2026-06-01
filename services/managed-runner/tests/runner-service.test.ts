@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { rm, writeFile } from 'node:fs/promises';
 import { FakeSandboxProvider } from '../src/fake-provider.js';
 import { ManagedRunnerService } from '../src/runner-service.js';
 
@@ -66,5 +67,37 @@ describe('ManagedRunnerService', () => {
       'true',
       'vpd worker run-once --bootstrap /viewport/bootstrap/bootstrap.json --json',
     ]);
+  });
+
+  it('uploads a local vpd package override before install when configured', async () => {
+    const provider = new FakeSandboxProvider();
+    const service = new ManagedRunnerService(provider);
+    const tarballPath = '/tmp/viewport-managed-runner-test-vpd.tgz';
+    const previous = process.env.VPD_PACKAGE_TARBALL;
+    process.env.VPD_PACKAGE_TARBALL = tarballPath;
+    await writeFile(tarballPath, 'local-vpd-tarball');
+
+    try {
+      const record = await service.start({
+        runId: 'run-package-override',
+        workspaceId: 'workspace-package-override',
+        serverUrl: 'https://api.getviewport.test',
+        leaseToken: 'lease-secret',
+        vpdInstallCommand: 'base64 -d /tmp/viewport/vpd.tgz.b64 > /tmp/viewport/vpd.tgz && npm install -g /tmp/viewport/vpd.tgz',
+        workerCommand: 'vpd worker run-once --lease "$VIEWPORT_RUN_LEASE_TOKEN"',
+      });
+
+      expect(record.status).toBe('completed');
+      const sandbox = provider.sandboxes[0];
+      expect(sandbox.files.get('/tmp/viewport/vpd.tgz.b64')).toBe(Buffer.from('local-vpd-tarball').toString('base64'));
+      expect(sandbox.commands[0].command).toContain('/tmp/viewport/vpd.tgz');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.VPD_PACKAGE_TARBALL;
+      } else {
+        process.env.VPD_PACKAGE_TARBALL = previous;
+      }
+      await rm(tarballPath, { force: true });
+    }
   });
 });
