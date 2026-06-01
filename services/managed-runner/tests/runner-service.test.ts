@@ -137,4 +137,33 @@ describe('ManagedRunnerService', () => {
       await rm(authPath, { force: true });
     }
   });
+
+  it('passes the explicit local GitHub proof opt-in into the worker command env', async () => {
+    const provider = new FakeSandboxProvider();
+    const service = new ManagedRunnerService(provider);
+    const previous = process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF;
+    process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF = '1';
+
+    try {
+      const record = await service.start({
+        runId: 'run-local-github-proof',
+        workspaceId: 'workspace-local-github-proof',
+        serverUrl: 'https://api.getviewport.test',
+        leaseToken: 'lease-secret',
+        vpdInstallCommand: 'true',
+        workerCommand: 'test "$VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF" = "1"',
+      });
+
+      expect(record.status).toBe('completed');
+      expect(provider.sandboxes[0].commands.at(-1)?.env).toMatchObject({
+        VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF: '1',
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF;
+      } else {
+        process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF = previous;
+      }
+    }
+  });
 });
