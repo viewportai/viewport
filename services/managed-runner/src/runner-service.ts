@@ -89,12 +89,6 @@ export class ManagedRunnerService {
       VIEWPORT_WORKSPACE_ID: request.workspaceId,
       VIEWPORT_RUN_ID: request.runId,
       ...(process.env.CODEX_AUTH_JSON_PATH?.trim() ? { CODEX_HOME: '/home/user/.codex' } : {}),
-      ...(process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF?.trim()
-        ? {
-            VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF:
-              process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF.trim(),
-          }
-        : {}),
       ...(request.env ?? {}),
     };
   }

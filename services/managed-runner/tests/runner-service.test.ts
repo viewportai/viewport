@@ -138,7 +138,7 @@ describe('ManagedRunnerService', () => {
     }
   });
 
-  it('passes the explicit local GitHub proof opt-in into the worker command env', async () => {
+  it('does not inherit the local GitHub proof opt-in from the host environment', async () => {
     const provider = new FakeSandboxProvider();
     const service = new ManagedRunnerService(provider);
     const previous = process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF;
@@ -146,18 +146,18 @@ describe('ManagedRunnerService', () => {
 
     try {
       const record = await service.start({
-        runId: 'run-local-github-proof',
-        workspaceId: 'workspace-local-github-proof',
+        runId: 'run-local-github-proof-denied',
+        workspaceId: 'workspace-local-github-proof-denied',
         serverUrl: 'https://api.getviewport.test',
         leaseToken: 'lease-secret',
         vpdInstallCommand: 'true',
-        workerCommand: 'test "$VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF" = "1"',
+        workerCommand: 'true',
       });
 
       expect(record.status).toBe('completed');
-      expect(provider.sandboxes[0].commands.at(-1)?.env).toMatchObject({
-        VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF: '1',
-      });
+      expect(provider.sandboxes[0].commands.at(-1)?.env).not.toHaveProperty(
+        'VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF',
+      );
     } finally {
       if (previous === undefined) {
         delete process.env.VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF;
