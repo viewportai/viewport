@@ -35,6 +35,7 @@ export class ManagedRunnerService {
     try {
       await this.writeBootstrap(sandbox, request);
       await this.writeVpdPackageOverride(sandbox);
+      await this.writeCodexAuthOverride(sandbox);
       await sandbox.run(request.vpdInstallCommand, {
         timeoutMs: request.timeoutMs,
       });
@@ -87,6 +88,7 @@ export class ManagedRunnerService {
       VIEWPORT_MANAGED_RUN: '1',
       VIEWPORT_WORKSPACE_ID: request.workspaceId,
       VIEWPORT_RUN_ID: request.runId,
+      ...(process.env.CODEX_AUTH_JSON_PATH?.trim() ? { CODEX_HOME: '/home/user/.codex' } : {}),
       ...(request.env ?? {}),
     };
   }
@@ -130,6 +132,18 @@ export class ManagedRunnerService {
 
     const tarball = await readFile(tarballPath, { encoding: 'base64' });
     await sandbox.writeFile('/tmp/viewport/vpd.tgz.b64', tarball);
+  }
+
+  private async writeCodexAuthOverride(sandbox: Awaited<ReturnType<ManagedSandboxProvider['create']>>): Promise<void> {
+    const authPath = process.env.CODEX_AUTH_JSON_PATH?.trim();
+    if (!authPath) return;
+    if (!sandbox.writeFile) {
+      throw new Error('sandbox_provider_does_not_support_file_write');
+    }
+
+    await sandbox.run('mkdir -p /home/user/.codex && chmod 700 /home/user/.codex');
+    await sandbox.writeFile('/home/user/.codex/auth.json', await readFile(authPath, 'utf8'));
+    await sandbox.run('chmod 600 /home/user/.codex/auth.json');
   }
 
   private bootstrapPath(request: ManagedRunStartRequest): string {
