@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
+import type { z } from 'zod';
 import { WORKFLOW_SCHEMA_VERSION, WorkflowDefinitionSchema } from './workflow-schema.js';
 import type { ParsedWorkflow, WorkflowContextReference, WorkflowDefinition } from './types.js';
 
@@ -55,7 +56,7 @@ export function parseWorkflow(sourceText: string, sourcePath: string): ParsedWor
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const issuePath = issue?.path.join('.') || '<root>';
-    throw new Error(`Invalid workflow at ${issuePath}: ${issue?.message ?? 'schema mismatch'}`);
+    throw new Error(`Invalid workflow at ${issuePath}: ${workflowSchemaIssueMessage(issue)}`);
   }
 
   validateWorkflowGraph(parsed.data);
@@ -69,6 +70,15 @@ export function parseWorkflow(sourceText: string, sourcePath: string): ParsedWor
     sourceText,
     normalizedJson,
   };
+}
+
+function workflowSchemaIssueMessage(issue: z.ZodIssue | undefined): string {
+  if (!issue) return 'schema mismatch';
+  if (issue.code === 'unrecognized_keys' && issue.keys.includes('executionMode')) {
+    return 'Unsupported key "executionMode". executionMode is only valid on prompt/agent execution nodes in compiled workflow YAML; do not add it to plan, approval, action, route, or policy nodes. In .viewport config, use gates, reviewer tags, branch/path fences, and route policy instead.';
+  }
+
+  return issue.message;
 }
 
 export function workflowNodeOrder(definition: WorkflowDefinition): string[] {
@@ -212,6 +222,14 @@ function nodeTemplates(node: WorkflowDefinition['nodes'][string]): string[] {
       node.message,
       node.credentialRef,
       ...(node.paths ?? []),
+      ...(node.prePublishReview?.rules ?? []).flatMap((rule) => [
+        rule.name,
+        rule.require,
+        rule.timeout,
+        rule.on_timeout,
+        ...(rule.when.changed_paths_any ?? []),
+        ...(rule.reviewers?.tags ?? []),
+      ]),
     ].filter((value): value is string => typeof value === 'string');
   }
   if (node.type === 'approval') {

@@ -258,6 +258,56 @@ describe('WorkflowRunPlatformSync', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('promotes provider reconciliation URLs onto execution receipts', async () => {
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
+      calls.push({
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    const run = workflowRun();
+    run.events.push({
+      id: 'event-slack-action',
+      runId: run.id,
+      timestamp: 2_100,
+      type: 'action-executed',
+      nodeId: 'inspect',
+      message: 'Slack completion sent',
+      data: {
+        action: {
+          adapter: 'slack',
+          action: 'post_message',
+          idempotencyKey: 'slack:run-1:notify',
+          response: {
+            ok: true,
+            channel: 'C123TEAM',
+            ts: '1780186939.354569',
+          },
+          providerReconciliation: {
+            status: 'verified',
+            method: 'slack.chat_postMessage',
+            providerReference: '1780186939.354569',
+            providerUrl: 'https://viewport-global.slack.com/archives/C123TEAM/p1780186939354569',
+          },
+        },
+      },
+    });
+
+    await sync.sync(run);
+
+    const receipt = (calls[0]?.body['execution_receipts'] as Array<Record<string, unknown>>)[0];
+    expect(receipt).toMatchObject({
+      adapter: 'slack',
+      action: 'post_message',
+      provider_reference: '1780186939.354569',
+      provider_url: 'https://viewport-global.slack.com/archives/C123TEAM/p1780186939354569',
+      provider_reconciliation: expect.objectContaining({
+        providerUrl: 'https://viewport-global.slack.com/archives/C123TEAM/p1780186939354569',
+      }),
+    });
+  });
+
   it('syncs normalized aggregate usage from daemon agent ledgers', async () => {
     const calls: Array<{ body: Record<string, unknown> }> = [];
     const sync = new WorkflowRunPlatformSync(configManager(), async (_url, init) => {
@@ -898,9 +948,57 @@ describe('WorkflowRunPlatformSync', () => {
         message: 'Approved by reviewer.',
         actor: { id: 1, name: 'Reviewer' },
         feedback: null,
+        approval_requested_at: null,
+        decided_at: null,
       },
     ]);
     expect(calls.map((call) => call['status'])).toEqual(['blocked', 'running']);
+  });
+
+  it('applies runtime approval commands when the run is running but one node is blocked', async () => {
+    const commands: unknown[] = [];
+    const run = workflowRun();
+    run.status = 'running';
+    run.nodes.inspect.status = 'blocked';
+    const sync = new WorkflowRunPlatformSync(
+      configManager(),
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { id: 'platform-run-1' },
+            runtime_commands: [
+              {
+                id: 'approval-decision:publish:current-digest',
+                type: 'workflow.approval_decision',
+                workflow_run_id: 'runtime-run-1',
+                workflow_node_id: 'inspect',
+                approved: true,
+                expected_action_digest: 'sha256:current',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      {
+        blockedPollDelayMs: 0,
+        onRuntimeCommand: async (command) => {
+          commands.push(command);
+          run.nodes.inspect.status = 'running';
+          sync.schedule(run);
+        },
+      },
+    );
+
+    sync.schedule(run);
+    await waitForCondition(() => commands.length === 1);
+    await sync.flushPending();
+
+    expect(commands).toEqual([
+      expect.objectContaining({
+        id: 'approval-decision:publish:current-digest',
+        expected_action_digest: 'sha256:current',
+      }),
+    ]);
   });
 
   it('polls blocked platform-linked runs while waiting for a review command', async () => {

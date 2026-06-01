@@ -17,13 +17,20 @@ import type {
   WorkflowRunStatus,
 } from '../workflows/types.js';
 import { transportFetch } from './network.js';
-import type { WorkerLifecycle, WorkerTransport } from './worker-profile.js';
+import { acquireWorkerProcessLock } from './worker-process-lock.js';
+import {
+  readWorkerPairingRecord,
+  workerProfileIntegrity,
+  type WorkerLifecycle,
+  type WorkerTransport,
+} from './worker-profile.js';
 
 export interface StandaloneWorkerOptions {
   lifecycle: WorkerLifecycle;
   transport: WorkerTransport;
   once: boolean;
   leaseToken?: string;
+  bootstrapPath?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
@@ -58,6 +65,12 @@ interface WorkerRuntimeProfile {
   capabilities: Record<string, unknown>;
 }
 
+interface WorkerRuntimeBootstrap {
+  profile: WorkerRuntimeProfile;
+  lease?: ClaimedLease;
+  cleanup?: () => Promise<void>;
+}
+
 interface WorkerIdentityFile {
   publicKey: string;
   privateKey: string;
@@ -76,6 +89,8 @@ interface ClaimedLease {
   inputSnapshot?: Record<string, WorkflowInputValue>;
   resourceManifest?: Record<string, unknown>;
   workflowAuthorityContract?: Record<string, unknown>;
+  executionProfileSnapshot?: Record<string, unknown>;
+  workflowSnapshot?: Record<string, unknown>;
   runtimeTargetId?: string;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
 }
@@ -105,97 +120,148 @@ const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
-  const profile = await loadWorkerRuntimeProfile();
-  await validateWorkerWorkspaceRoot(profile.workspaceRoot);
-  const transport = options.transport ?? profile.transport;
-  if (transport === 'inbound') {
-    validateInboundWorkerGate(profile);
-  }
-  if (transport === 'relay') {
-    throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
-  }
+  const bootstrap = await loadWorkerRuntimeBootstrap(options.bootstrapPath);
+  const profile = bootstrap.profile;
+  let processLock: ReturnType<typeof acquireWorkerProcessLock> | null = null;
 
-  let lastHeartbeatAt = Date.now();
-  await heartbeat(profile, {
-    status: 'online',
-    healthStatus: 'idle',
-    lifecycle: options.lifecycle,
-    transport,
-  });
-
-  if (options.leaseToken) {
-    const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
-    await syncLease(profile, lease, { status: 'completed' });
-    await cleanupLease(profile, lease);
-    return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
-  }
-
-  const result: StandaloneWorkerResult = {
-    claimed: 0,
-    completed: 0,
-    blocked: 0,
-    failed: 0,
-    cleanup: 0,
-    denied: 0,
-  };
   try {
-    while (!options.abortSignal?.aborted) {
-      const lease = await claimLease(profile, {
-        lifecycle: options.lifecycle,
-        transport,
-        leaseSeconds: options.leaseSeconds,
-      });
-      if (!lease) {
-        if (options.once || options.lifecycle !== 'persistent') break;
-        const now = Date.now();
-        if (now - lastHeartbeatAt > 30_000) {
-          await heartbeat(profile, {
-            status: 'online',
-            healthStatus: 'idle',
-            lifecycle: options.lifecycle,
-            transport,
-          });
-          lastHeartbeatAt = now;
-        }
-        await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
-        continue;
-      }
-      result.claimed += 1;
-      let execution = await executeClaim(profile, lease);
-      if (
-        isHostedManagedExecutorProfile(profile) &&
-        execution.status === 'blocked' &&
-        execution.run
-      ) {
-        await syncLease(profile, lease, execution);
-        execution = await resumeBlockedHostedExecution(profile, lease, execution);
-        if (execution.status !== 'blocked') {
-          await syncLease(profile, lease, execution);
-        }
-      } else {
-        await syncLease(profile, lease, execution);
-      }
-      if (execution.status === 'completed') {
-        result.completed += 1;
-      } else if (execution.status === 'blocked') {
-        result.blocked += 1;
-      } else {
-        result.failed += 1;
-      }
-      await cleanupLease(profile, lease);
-      result.cleanup += 1;
-      if (options.once) break;
+    await validateWorkerWorkspaceRoot(profile.workspaceRoot);
+    const transport = options.transport ?? profile.transport;
+    if (transport === 'inbound') {
+      validateInboundWorkerGate(profile);
     }
-  } finally {
+    if (transport === 'relay') {
+      throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
+    }
+    processLock =
+      options.lifecycle === 'persistent' && !options.once
+        ? acquireWorkerProcessLock({
+            server: profile.serverUrl,
+            workspaceId: profile.workspaceId ?? profile.publicKeyFingerprint,
+            executorId: profile.managedExecutorId ?? profile.publicKeyFingerprint,
+            runnerProfile: runnerPoolFromCapabilities(profile.capabilities),
+            accessMode: transport,
+          })
+        : null;
+    let lastHeartbeatAt = Date.now();
     await heartbeat(profile, {
-      status: 'offline',
-      healthStatus: 'offline',
+      status: 'online',
+      healthStatus: 'idle',
       lifecycle: options.lifecycle,
       transport,
     });
-  }
 
-  return result;
+    if (bootstrap.lease) {
+      const result = await executeBootstrapLease(profile, bootstrap.lease);
+      await heartbeat(profile, {
+        status: 'offline',
+        healthStatus: 'offline',
+        lifecycle: options.lifecycle,
+        transport,
+      });
+      return result;
+    }
+
+    if (options.leaseToken) {
+      const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
+      await syncLease(profile, lease, { status: 'completed' });
+      await cleanupLease(profile, lease);
+      return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
+    }
+
+    const result: StandaloneWorkerResult = {
+      claimed: 0,
+      completed: 0,
+      blocked: 0,
+      failed: 0,
+      cleanup: 0,
+      denied: 0,
+    };
+    try {
+      while (!options.abortSignal?.aborted) {
+        const lease = await claimLease(profile, {
+          lifecycle: options.lifecycle,
+          transport,
+          leaseSeconds: options.leaseSeconds,
+        });
+        if (!lease) {
+          if (options.once || options.lifecycle !== 'persistent') break;
+          const now = Date.now();
+          if (now - lastHeartbeatAt > 30_000) {
+            await heartbeat(profile, {
+              status: 'online',
+              healthStatus: 'idle',
+              lifecycle: options.lifecycle,
+              transport,
+            });
+            lastHeartbeatAt = now;
+          }
+          await sleepWithAbort(options.pollIntervalMs ?? 5_000, options.abortSignal);
+          continue;
+        }
+        result.claimed += 1;
+        let execution = await executeClaim(profile, lease);
+        if (
+          isHostedManagedExecutorProfile(profile) &&
+          execution.status === 'blocked' &&
+          execution.run
+        ) {
+          await syncLease(profile, lease, execution);
+          execution = await resumeBlockedHostedExecution(profile, lease, execution);
+          if (execution.status !== 'blocked') {
+            await syncLease(profile, lease, execution);
+          }
+        } else {
+          await syncLease(profile, lease, execution);
+        }
+        if (execution.status === 'completed') {
+          result.completed += 1;
+        } else if (execution.status === 'blocked') {
+          result.blocked += 1;
+        } else {
+          result.failed += 1;
+        }
+        await cleanupLease(profile, lease);
+        result.cleanup += 1;
+        if (options.once) break;
+      }
+    } finally {
+      await heartbeat(profile, {
+        status: 'offline',
+        healthStatus: 'offline',
+        lifecycle: options.lifecycle,
+        transport,
+      });
+    }
+
+    return result;
+  } finally {
+    processLock?.release();
+    await bootstrap.cleanup?.();
+  }
+}
+
+async function executeBootstrapLease(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<StandaloneWorkerResult> {
+  const execution = await executeClaim(profile, lease);
+  await syncLease(profile, lease, execution);
+  await cleanupLease(profile, lease);
+
+  return {
+    claimed: 1,
+    completed: execution.status === 'completed' ? 1 : 0,
+    blocked: execution.status === 'blocked' ? 1 : 0,
+    failed: execution.status === 'failed' || execution.status === 'canceled' ? 1 : 0,
+    cleanup: 1,
+    denied: 0,
+  };
+}
+
+function runnerPoolFromCapabilities(capabilities: Record<string, unknown>): string | undefined {
+  const value = capabilities['runner_pool'] ?? capabilities['runnerPool'];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 async function validateWorkerWorkspaceRoot(workspaceRoot: string): Promise<void> {
@@ -228,6 +294,14 @@ async function executeClaim(
   return executeHostedWorkflowClaim(profile, lease);
 }
 
+async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
+  if (bootstrapPath) {
+    return loadSandboxBootstrap(bootstrapPath);
+  }
+
+  return { profile: await loadWorkerRuntimeProfile() };
+}
+
 async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
   const manager = new ConfigManager();
   await manager.load();
@@ -238,6 +312,15 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
   if (!worker?.publicKeyFingerprint) missing.push('worker identity');
   if (missing.length > 0) {
     throw new Error(`Worker profile is not configured: missing ${missing.join(', ')}.`);
+  }
+  const pairing = await readWorkerPairingRecord(worker!.stateDir);
+  const integrity = workerProfileIntegrity(worker, pairing);
+  if (!integrity.ok) {
+    throw new Error(
+      `Worker profile does not match the approved pairing record: ${integrity.mismatches.join(
+        ', ',
+      )}. Run \`vpd worker reset\`, then pair this worker again.`,
+    );
   }
   return {
     serverUrl: worker!.serverUrl!,
@@ -256,6 +339,121 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
     capabilities: worker!.capabilities ?? {},
   };
+}
+
+async function loadSandboxBootstrap(bootstrapPath: string): Promise<WorkerRuntimeBootstrap> {
+  const raw = JSON.parse(await fs.readFile(bootstrapPath, 'utf8')) as Record<string, unknown>;
+  if (raw['schema'] !== 'viewport.sandbox_bootstrap/v1') {
+    throw new Error('Sandbox bootstrap file must use schema viewport.sandbox_bootstrap/v1.');
+  }
+  const workspaceRoot = requiredString(
+    raw['workspace_root'] ?? raw['workspaceRoot'],
+    'workspace_root',
+  );
+  const identity = recordValue(raw['identity']);
+  const identityFile = await materializeBootstrapIdentity(identity, workspaceRoot);
+  const profile: WorkerRuntimeProfile = {
+    serverUrl: requiredString(raw['server_url'] ?? raw['serverUrl'], 'server_url'),
+    serverId: stringValue(raw['server_id'] ?? raw['serverId']),
+    lifecycle: 'ephemeral',
+    transport: workerTransportValue(raw['transport']) ?? 'polling',
+    workspaceId: requiredString(raw['workspace_id'] ?? raw['workspaceId'], 'workspace_id'),
+    managedExecutorId: requiredString(raw['executor_id'] ?? raw['executorId'], 'executor_id'),
+    credential: requiredString(raw['credential'], 'credential'),
+    workspaceRoot,
+    identityKeyPath: identityFile.path,
+    publicKeyFingerprint: identityFile.publicKeyFingerprint,
+    capabilities: recordValue(raw['capabilities']) ?? {},
+  };
+
+  return {
+    profile,
+    lease: claimedLeaseFromBootstrap(recordValue(raw['lease'])),
+    cleanup: async () => {
+      if (identityFile.ephemeral) {
+        await fs.rm(identityFile.path, { force: true });
+      }
+    },
+  };
+}
+
+function claimedLeaseFromBootstrap(
+  rawLease: Record<string, unknown> | undefined,
+): ClaimedLease | undefined {
+  if (!rawLease) return undefined;
+  const id = requiredString(
+    rawLease['id'] ?? rawLease['lease_id'] ?? rawLease['leaseId'],
+    'lease.id',
+  );
+  return {
+    id,
+    runId: stringValue(rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId']),
+    runtimeRunId: stringValue(rawLease['runtime_run_id'] ?? rawLease['runtimeRunId']),
+    leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
+    assignmentClaimToken: stringValue(
+      rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken'],
+    ),
+    yamlSnapshot: stringValue(rawLease['yaml_snapshot'] ?? rawLease['yamlSnapshot']),
+    sourceRef: stringValue(rawLease['source_ref'] ?? rawLease['sourceRef']),
+    directoryPath: stringValue(rawLease['directory_path'] ?? rawLease['directoryPath']),
+    inputSnapshot: recordValue(rawLease['input_snapshot'] ?? rawLease['inputSnapshot']) as
+      | Record<string, WorkflowInputValue>
+      | undefined,
+    resourceManifest: recordValue(rawLease['resource_manifest'] ?? rawLease['resourceManifest']),
+    workflowAuthorityContract: recordValue(
+      rawLease['workflow_authority_contract'] ?? rawLease['workflowAuthorityContract'],
+    ),
+    executionProfileSnapshot: recordValue(
+      rawLease['execution_profile_snapshot'] ?? rawLease['executionProfileSnapshot'],
+    ),
+    workflowSnapshot: recordValue(rawLease['workflow_snapshot'] ?? rawLease['workflowSnapshot']),
+    runtimeTargetId: stringValue(rawLease['runtime_target_id'] ?? rawLease['runtimeTargetId']),
+    dataCapturePolicy: dataCapturePolicyValue(
+      rawLease['data_capture_policy'] ?? rawLease['dataCapturePolicy'],
+    ),
+  };
+}
+
+async function materializeBootstrapIdentity(
+  identity: Record<string, unknown> | undefined,
+  workspaceRoot: string,
+): Promise<{ path: string; publicKeyFingerprint: string; ephemeral: boolean }> {
+  if (!identity) {
+    throw new Error('Sandbox bootstrap file is missing identity.');
+  }
+  const publicKey = requiredString(
+    identity['public_key'] ?? identity['publicKey'],
+    'identity.public_key',
+  );
+  const privateKey = requiredString(
+    identity['private_key'] ?? identity['privateKey'],
+    'identity.private_key',
+  );
+  const publicKeyFingerprint = requiredString(
+    identity['public_key_fingerprint'] ?? identity['publicKeyFingerprint'],
+    'identity.public_key_fingerprint',
+  );
+  const dir = path.join(workspaceRoot, '.viewport', 'bootstrap');
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const filePath = path.join(dir, `identity-${crypto.randomUUID()}.json`);
+  await fs.writeFile(
+    filePath,
+    `${JSON.stringify({ publicKey, privateKey, publicKeyFingerprint })}\n`,
+    { mode: 0o600 },
+  );
+  return { path: filePath, publicKeyFingerprint, ephemeral: true };
+}
+
+function workerTransportValue(value: unknown): WorkerTransport | undefined {
+  return value === 'polling' || value === 'relay' || value === 'inbound' ? value : undefined;
+}
+
+function requiredString(value: unknown, label: string): string {
+  const result = stringValue(value);
+  if (!result) {
+    throw new Error(`Sandbox bootstrap file is missing ${label}.`);
+  }
+  return result;
 }
 
 function validateInboundWorkerGate(profile: WorkerRuntimeProfile): never {
@@ -325,6 +523,10 @@ async function claimLease(
     workflowAuthorityContract: recordValue(
       data['workflow_authority_contract'] ?? rawLease['workflow_authority_contract'],
     ),
+    executionProfileSnapshot: recordValue(
+      data['execution_profile_snapshot'] ?? rawLease['execution_profile_snapshot'],
+    ),
+    workflowSnapshot: recordValue(data['workflow_snapshot'] ?? rawLease['workflow_snapshot']),
     runtimeTargetId: stringValue(data['runtime_target_id'] ?? rawLease['runtime_target_id']),
     dataCapturePolicy: dataCapturePolicyValue(
       data['data_capture_policy'] ?? rawLease['data_capture_policy'],
@@ -481,7 +683,10 @@ async function executeHostedWorkflowClaim(
     if (existing) {
       if (existing.status === 'blocked') {
         const body = await fetchHostedAssignment(profile, lease);
-        const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body);
+        const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+        const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body, {
+          runtimeSecretEnv,
+        });
         if (applied > 0) {
           const completed = await waitForWorkflowRun(daemon, existing.id);
           return {
@@ -591,7 +796,10 @@ function credentialHandlesFromLease(lease: ClaimedLease): string[] {
   const workflow = yamlSnapshotDocument(lease);
   const handles = new Set<string>();
   for (const handle of [
-    ...actionCredentialRefs(isRecord(workflow) ? workflow['nodes'] : undefined),
+    ...workflowNodeCredentialRefs(isRecord(workflow) ? workflow['nodes'] : undefined),
+    ...topLevelCredentialRefs(isRecord(workflow) ? workflow['credentials'] : undefined),
+    ...profileCredentialRefs(lease.executionProfileSnapshot),
+    ...profileCredentialRefs(lease.workflowSnapshot),
     ...providerActionCredentialRefs(lease.workflowAuthorityContract),
   ]) {
     handles.add(handle);
@@ -607,28 +815,66 @@ function repositoryForCredentialHandle(
   const nodes = isRecord(workflow) ? workflow['nodes'] : undefined;
   if (!isRecord(nodes)) return {};
   for (const node of Object.values(nodes)) {
-    if (!isRecord(node) || stringValue(node['type']) !== 'action') continue;
+    if (!isRecord(node)) continue;
     const withValue = isRecord(node['with']) ? node['with'] : {};
     const credentialRef =
-      stringValue(withValue['credential_ref']) ?? stringValue(withValue['credentialRef']);
+      stringValue(withValue['credential_ref']) ??
+      stringValue(withValue['credentialRef']) ??
+      stringValue(node['credential_ref']) ??
+      stringValue(node['credentialRef']);
     if (credentialRef !== handle) continue;
-    const repository = renderLeaseTemplate(
-      stringValue(withValue['repository']) ?? stringValue(withValue['repo']),
-      lease,
-    );
+    const repository = renderLeaseTemplate(repositoryTemplateForNode(node, withValue), lease);
     if (repository) return { repository };
   }
   return {};
 }
 
-function actionCredentialRefs(nodes: unknown): string[] {
+function workflowNodeCredentialRefs(nodes: unknown): string[] {
   if (!isRecord(nodes)) return [];
   return Object.values(nodes).flatMap((node) => {
-    if (!isRecord(node) || stringValue(node['type']) !== 'action') return [];
+    if (!isRecord(node)) return [];
+    const type = stringValue(node['type']);
+    if (type !== 'action' && type !== 'checkout' && type !== 'git_publish') return [];
     const withValue = isRecord(node['with']) ? node['with'] : {};
     const credentialRef =
-      stringValue(withValue['credential_ref']) ?? stringValue(withValue['credentialRef']);
+      stringValue(withValue['credential_ref']) ??
+      stringValue(withValue['credentialRef']) ??
+      stringValue(node['credential_ref']) ??
+      stringValue(node['credentialRef']);
     return credentialRef ? [credentialRef] : [];
+  });
+}
+
+function topLevelCredentialRefs(credentials: unknown): string[] {
+  if (!isRecord(credentials)) return [];
+  const refs: string[] = [];
+  for (const value of Object.values(credentials)) {
+    refs.push(...credentialEntriesFrom(value));
+  }
+  return refs;
+}
+
+function profileCredentialRefs(snapshot: unknown): string[] {
+  const credentials = pathValue(asRecord(snapshot), ['credentials']);
+  if (!isRecord(credentials)) return [];
+  const refs: string[] = [];
+  for (const value of Object.values(credentials)) {
+    refs.push(...credentialEntriesFrom(value));
+  }
+  return refs;
+}
+
+function credentialEntriesFrom(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry === 'string' && entry.trim() !== '') return [entry.trim()];
+    if (!isRecord(entry)) return [];
+    const handle =
+      stringValue(entry['handle']) ??
+      stringValue(entry['ref']) ??
+      stringValue(entry['credential_ref']) ??
+      stringValue(entry['credentialRef']);
+    return handle ? [handle] : [];
   });
 }
 
@@ -644,6 +890,18 @@ function providerActionCredentialRefs(contract: unknown): string[] {
       stringValue(entry['credential_ref']);
     return value ? [value] : [];
   });
+}
+
+function repositoryTemplateForNode(
+  node: Record<string, unknown>,
+  withValue: Record<string, unknown>,
+): string | undefined {
+  return (
+    stringValue(withValue['repository']) ??
+    stringValue(withValue['repo']) ??
+    stringValue(node['repository']) ??
+    stringValue(node['repo'])
+  );
 }
 
 function renderLeaseTemplate(value: string | undefined, lease: ClaimedLease): string | null {
@@ -699,7 +957,10 @@ async function resumeBlockedHostedExecution(
       }
       return execution;
     }
-    const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body);
+    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+    const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body, {
+      runtimeSecretEnv,
+    });
     if (applied > 0) {
       const completed = await waitForWorkflowRun(daemon, workflowRunId);
       if (completed.status === 'blocked') {

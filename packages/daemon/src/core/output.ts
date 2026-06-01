@@ -1,5 +1,7 @@
 /* eslint-disable no-console */
 
+import { redactLogArgs } from './redaction.js';
+
 /**
  * Unified process output facade for CLI/runtime messaging.
  *
@@ -8,15 +10,15 @@
  */
 export const logger = {
   log: (...parts: unknown[]): void => {
-    console.log(...parts);
+    console.log(...redactLogArgs(parts));
   },
   info: (...parts: unknown[]): void => {
-    console.info(...parts);
+    console.info(...redactLogArgs(parts));
   },
   warn: (...parts: unknown[]): void => {
-    console.warn(...parts);
+    console.warn(...redactLogArgs(parts));
   },
   error: (...parts: unknown[]): void => {
-    console.error(...parts);
+    console.error(...redactLogArgs(parts));
   },
 };

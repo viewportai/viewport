@@ -86,6 +86,21 @@ export const WorkflowPolicyDefinitionSchema = z
       .object({
         requireApproval: z.boolean().optional(),
         allowedAdapters: z.array(identifierSchema).optional(),
+        allowed: z
+          .array(
+            z.union([
+              z.string().trim().min(1),
+              z
+                .object({
+                  provider: z.string().trim().min(1).optional(),
+                  adapter: z.string().trim().min(1).optional(),
+                  action: z.string().trim().min(1).optional(),
+                  actions: z.array(z.string().trim().min(1)).optional(),
+                })
+                .strict(),
+            ]),
+          )
+          .optional(),
       })
       .strict()
       .optional(),
@@ -95,6 +110,19 @@ export const WorkflowPolicyDefinitionSchema = z
         mode: z.enum(['constrained', 'disabled']).optional(),
         allowLegacyCommand: z.boolean().optional(),
         allow_legacy_command: z.boolean().optional(),
+        allowed: z.array(z.string().trim().min(1)).optional(),
+        denied: z.array(z.string().trim().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
+    escalation: z
+      .object({
+        whenStuck: z
+          .string()
+          .regex(/^human\([a-zA-Z0-9_, -]+\)$/)
+          .optional(),
+        reviewerTags: z.array(z.string().trim().min(1)).optional(),
+        channel: z.string().trim().min(1).optional(),
       })
       .strict()
       .optional(),

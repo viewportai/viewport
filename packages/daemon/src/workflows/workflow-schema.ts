@@ -161,6 +161,7 @@ const PromptNodeSchema = NodeBaseSchema.extend({
 const AgentNodeSchema = NodeBaseSchema.extend({
   type: z.literal('agent'),
   prompt: z.string().trim().min(1),
+  cwd: z.string().trim().min(1).optional(),
   agent: z.string().trim().min(1),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
@@ -213,6 +214,41 @@ const GitPublishNodeSchema = NodeBaseSchema.extend({
   push: z.boolean().optional(),
   credentialMode: z.enum(['runner_local', 'run_scoped_grant']).optional(),
   credentialRef: z.string().trim().min(1).optional(),
+  restrictedBranches: z.array(z.string().trim().min(1)).optional(),
+  restrictedPaths: z.array(z.string().trim().min(1)).optional(),
+  prePublishReview: z
+    .object({
+      rules: z
+        .array(
+          z
+            .object({
+              name: z.string().trim().min(1),
+              when: z
+                .object({
+                  changed_paths_any: z.array(z.string().trim().min(1)).optional(),
+                  diff_lines_gt: z.number().int().nonnegative().optional(),
+                })
+                .strict(),
+              require: z.string().trim().min(1).optional(),
+              reviewers: z
+                .object({ tags: z.array(z.string().trim().min(1)).optional() })
+                .strict()
+                .optional(),
+              timeout: z.string().trim().min(1).optional(),
+              on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
+            })
+            .strict()
+            .refine(
+              (rule) =>
+                (rule.when.changed_paths_any?.length ?? 0) > 0 ||
+                rule.when.diff_lines_gt !== undefined,
+              { message: 'prePublishReview rule must set at least one observable condition' },
+            ),
+        )
+        .min(1),
+    })
+    .strict()
+    .optional(),
 }).strict();
 
 const ApprovalOnRejectSchema = z.union([
@@ -237,6 +273,10 @@ const ApprovalNodeSchema = NodeBaseSchema.extend({
   type: z.literal('approval'),
   prompt: z.string().trim().min(1),
   recipients: z.array(ApprovalRecipientSchema).optional(),
+  gate_intent: z.enum(['plan', 'approval']).optional(),
+  reviewer_tags: z.array(z.string().trim().min(1)).optional(),
+  timeout: z.string().trim().min(1).optional(),
+  on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
   captureResponse: z.boolean().optional(),
   onReject: ApprovalOnRejectSchema.optional(),
 }).strict();
@@ -411,9 +451,16 @@ export const WorkflowDefinitionSchema = z
     name: identifierSchema,
     title: z.string().trim().min(1).optional(),
     description: z.string().optional(),
+    scope: z
+      .object({
+        repos: z.array(z.string().trim().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
     inputs: z.record(z.string(), InputDefinitionSchema).optional(),
     triggers: z.array(WorkflowTriggerDefinitionSchema).optional(),
     context: WorkflowContextDefinitionSchema.optional(),
+    credentials: z.record(z.string(), z.unknown()).optional(),
     requires: RequiresSchema.optional(),
     executor: ExecutorRequirementSchema.optional(),
     runner: WorkflowRunnerRequirementSchema.optional(),

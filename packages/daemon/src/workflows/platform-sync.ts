@@ -133,7 +133,7 @@ export class WorkflowRunPlatformSync {
       }
 
       if (this.latestRuns.get(runId) === run) {
-        if (run.status === 'blocked') {
+        if (isBlockedForRuntimeCommand(run)) {
           this.scheduleBlockedPoll(runId);
           return;
         }
@@ -175,7 +175,7 @@ export class WorkflowRunPlatformSync {
   }
 
   private async applyRuntimeCommands(run: WorkflowRunRecord, body: unknown): Promise<void> {
-    if (!this.onRuntimeCommand || run.status !== 'blocked') return;
+    if (!this.onRuntimeCommand || !isBlockedForRuntimeCommand(run)) return;
     const commands = runtimeCommands(body);
     if (commands.length === 0) return;
 
@@ -220,6 +220,12 @@ export class WorkflowRunPlatformSync {
       tlsPins: target.tlsPins,
     };
   }
+}
+
+function isBlockedForRuntimeCommand(run: WorkflowRunRecord): boolean {
+  if (run.status === 'blocked') return true;
+
+  return Object.values(run.nodes).some((node) => node.status === 'blocked');
 }
 
 class WorkflowPlatformSyncError extends Error {

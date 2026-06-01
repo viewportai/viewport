@@ -43,6 +43,7 @@ import {
   progressSyncEveryMs,
   readRun,
 } from './workflow-managed-worker-format.js';
+import { acquireWorkerProcessLock } from './worker-process-lock.js';
 import type {
   DirectoryInfo,
   ManagedAssignment,
@@ -106,6 +107,7 @@ export async function workflowWorker(): Promise<void> {
     failed: 0,
   };
   let failed = false;
+  const processLock = options.once ? undefined : acquireWorkerProcessLock(options);
   try {
     do {
       await heartbeat(options, 'online', 'idle');
@@ -135,6 +137,20 @@ export async function workflowWorker(): Promise<void> {
       }
 
       stats.claimed += 1;
+      if (assignment.status === 'canceled') {
+        const canceledRun = assignmentCanceledBeforeStartRun(assignment);
+        clearRunCredentialMaterial(assignment.id);
+        await syncLocalRun(options, assignment.id, canceledRun, assignment.assignment_claim_token);
+        stats.failed += 1;
+        if (
+          options.once ||
+          (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+        ) {
+          break;
+        }
+        continue;
+      }
+
       let localRun: WorkflowRunRecord;
       try {
         localRun = await runAssignmentLocally(options, assignment);
@@ -197,12 +213,27 @@ export async function workflowWorker(): Promise<void> {
           continue;
         }
       }
-      const synced = await syncLocalRun(
-        options,
-        assignment.id,
-        localRun,
-        assignment.assignment_claim_token,
-      );
+      let synced: ManagedAssignment;
+      try {
+        synced = await syncLocalRun(
+          options,
+          assignment.id,
+          localRun,
+          assignment.assignment_claim_token,
+        );
+      } catch (error) {
+        if (localRun.status === 'canceled' && isPlatformAccessDenied(error)) {
+          stats.failed += 1;
+          if (
+            options.once ||
+            (options.maxRuns !== undefined && totalClaimed(stats) >= options.maxRuns)
+          ) {
+            break;
+          }
+          continue;
+        }
+        throw error;
+      }
       if (synced.status === 'blocked') {
         stats.blocked += 1;
         if (!options.once) {
@@ -233,6 +264,7 @@ export async function workflowWorker(): Promise<void> {
     await safeHeartbeat(options, 'stale', 'degraded');
     throw error;
   } finally {
+    processLock?.release();
     await safeHeartbeat(options, 'offline', failed ? 'degraded' : 'offline');
   }
 
@@ -306,6 +338,9 @@ async function syncDaemonModelCapabilities(options: ManagedWorkerOptions): Promi
     return;
   }
 
+  if (options.capabilities.agents.length === 0) {
+    options.capabilities.agents = Object.keys(catalog);
+  }
   options.capabilities.models = allModels;
   options.capabilities.agentModels = catalog;
 }
@@ -1209,7 +1244,20 @@ async function runAssignmentLocally(
       const completed = await pollLocalRun(
         existingRun.id,
         async (run) => {
-          await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+          try {
+            await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+          } catch (error) {
+            if (isPlatformAccessDenied(error)) {
+              return cancelLocalRun(existingRun.id);
+            }
+            throw error;
+          }
+          return cancelLocalRunIfAssignmentCanceled(
+            options,
+            assignment.id,
+            existingRun.id,
+            assignment.assignment_claim_token,
+          );
         },
         progressSyncEveryMs(options.leaseSeconds),
       );
@@ -1260,7 +1308,20 @@ async function runAssignmentLocally(
   const completed = await pollLocalRun(
     runId,
     async (run) => {
-      await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+      try {
+        await syncLocalRun(options, assignment.id, run, assignment.assignment_claim_token);
+      } catch (error) {
+        if (isPlatformAccessDenied(error)) {
+          return cancelLocalRun(runId);
+        }
+        throw error;
+      }
+      return cancelLocalRunIfAssignmentCanceled(
+        options,
+        assignment.id,
+        runId,
+        assignment.assignment_claim_token,
+      );
     },
     progressSyncEveryMs(options.leaseSeconds),
   );
@@ -1409,6 +1470,67 @@ function assignmentExecutionFailureRun(
           platform_run_id: assignment.id,
           runtime_run_id: runtimeRunId,
           recovery_policy: 'sync_failed_assignment_start',
+        },
+      },
+    ],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now,
+    completedAt: now,
+    error: message,
+  };
+}
+
+function assignmentCanceledBeforeStartRun(assignment: ManagedAssignment): WorkflowRunRecord {
+  const now = Date.now();
+  const runtimeRunId = `assignment-canceled-before-start-${assignment.id}`;
+  const message = 'Managed workflow assignment was canceled before local execution started.';
+
+  return {
+    id: runtimeRunId,
+    workflowName: 'managed-assignment-canceled',
+    sourceType: 'viewport_snapshot',
+    sourcePath: assignment.source_ref ?? `viewport://managed-executor/${assignment.id}`,
+    digest: `managed-assignment-canceled:${assignment.id}`,
+    schema: 'viewport.workflow/v1',
+    yamlSnapshot: assignment.yaml_snapshot ?? '',
+    directoryId: 'managed-assignment-canceled',
+    directoryPath: assignment.directory_path ?? process.cwd(),
+    resourceId: undefined,
+    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    platformRunId: assignment.id,
+    machineId: 'managed-executor',
+    dataCapturePolicy: {
+      transcripts: assignment.data_capture_policy?.transcripts ?? 'none',
+      logs: assignment.data_capture_policy?.logs ?? 'metadata',
+      artifacts: assignment.data_capture_policy?.artifacts ?? 'metadata',
+    },
+    initiation: 'cli',
+    status: 'canceled',
+    inputs: assignment.input_snapshot ?? {},
+    preflight: {
+      ok: false,
+      issues: [
+        {
+          kind: 'node',
+          name: 'managed-assignment-canceled',
+          message,
+        },
+      ],
+    },
+    nodes: {},
+    artifacts: [],
+    events: [
+      {
+        id: 'managed-assignment-canceled-before-start',
+        runId: runtimeRunId,
+        timestamp: now,
+        type: 'run-canceled',
+        message,
+        data: {
+          platform_run_id: assignment.id,
+          runtime_run_id: runtimeRunId,
+          recovery_policy: 'skip_local_execution_for_canceled_assignment',
         },
       },
     ],
@@ -1672,9 +1794,14 @@ async function materializeCredential(
 function repositoryForCredentialMaterialization(
   assignment: ManagedAssignment,
   handle: string,
-): { repository: string } | Record<string, never> {
-  const actionRepository = repositoryFromActionCredentialRef(assignment, handle);
-  if (actionRepository) return { repository: actionRepository };
+): { repository: string } | { repositories: string[] } | Record<string, never> {
+  const actionRepositories = repositoriesFromActionCredentialRef(assignment, handle);
+  if (actionRepositories.length === 1 && actionRepositories[0]) {
+    return { repository: actionRepositories[0] };
+  }
+  if (actionRepositories.length > 1) {
+    return { repositories: actionRepositories };
+  }
 
   const checkoutEntries = [
     ...credentialEntriesFrom(
@@ -1820,14 +1947,15 @@ function actionCredentialRefs(nodes: unknown): string[] {
   });
 }
 
-function repositoryFromActionCredentialRef(
+function repositoriesFromActionCredentialRef(
   assignment: ManagedAssignment,
   handle: string,
-): string | null {
+): string[] {
   const workflow = yamlSnapshotDocument(assignment);
   const nodes = isRecord(workflow) ? workflow['nodes'] : undefined;
-  if (!isRecord(nodes)) return null;
+  if (!isRecord(nodes)) return [];
 
+  const repositories = new Set<string>();
   for (const node of Object.values(nodes)) {
     if (!isRecord(node) || stringField(node, 'type') !== 'action') continue;
     const withValue = isRecord(node['with']) ? node['with'] : {};
@@ -1837,10 +1965,10 @@ function repositoryFromActionCredentialRef(
 
     const repository = stringField(withValue, 'repository') ?? stringField(withValue, 'repo');
     const rendered = renderCredentialTemplate(repository, assignment);
-    if (rendered) return rendered;
+    if (rendered) repositories.add(rendered);
   }
 
-  return null;
+  return [...repositories].sort();
 }
 
 function renderCredentialTemplate(
@@ -1966,15 +2094,7 @@ async function waitForApprovalAndResume(
       }
     }
     if (assignment.status === 'canceled' || assignment.status === 'failed') {
-      const canceled = await daemonJson(
-        'POST',
-        `/api/workflows/runs/${encodeURIComponent(localRunId)}/cancel`,
-        {
-          message: 'Managed workflow assignment was canceled from Viewport.',
-          actor: { name: 'Viewport', source: 'managed-executor' },
-        },
-      );
-      const run = readRun(canceled);
+      const run = await cancelLocalRun(localRunId);
       await syncLocalRun(options, platformRunId, run, assignmentClaimToken);
       return run;
     }
@@ -1984,6 +2104,29 @@ async function waitForApprovalAndResume(
     }
     await delay(options.commandSleepSeconds * 1000);
   }
+}
+
+async function cancelLocalRunIfAssignmentCanceled(
+  options: ManagedWorkerOptions,
+  platformRunId: string,
+  localRunId: string,
+  assignmentClaimToken?: string | null,
+): Promise<WorkflowRunRecord | void> {
+  const assignment = await getAssignment(options, platformRunId, assignmentClaimToken);
+  if (assignment.status !== 'canceled' && assignment.status !== 'failed') return undefined;
+  return cancelLocalRun(localRunId);
+}
+
+async function cancelLocalRun(localRunId: string): Promise<WorkflowRunRecord> {
+  const canceled = await daemonJson(
+    'POST',
+    `/api/workflows/runs/${encodeURIComponent(localRunId)}/cancel`,
+    {
+      message: 'Managed workflow assignment was canceled from Viewport.',
+      actor: { name: 'Viewport', source: 'managed-executor' },
+    },
+  );
+  return readRun(canceled);
 }
 
 async function applyBrokerActionCompletedCommands(
@@ -2147,7 +2290,7 @@ async function resumeApprovedLocalRun(
       },
     );
   } catch (error) {
-    if (!isAlreadyResolvedApprovalError(error)) throw error;
+    if (!isNonFatalApprovalResumeError(error)) throw error;
 
     const current = await readExistingLocalRun(localRunId);
     if (!current) throw error;
@@ -2261,10 +2404,13 @@ function assignmentWorkflowAuthorityContracts(
   ].filter(isRecord);
 }
 
-function isAlreadyResolvedApprovalError(error: unknown): boolean {
+function isNonFatalApprovalResumeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
 
-  return message.includes('Workflow node is not awaiting approval');
+  return (
+    message.includes('Workflow node is not awaiting approval') ||
+    message.includes('The proposed action changed before approval')
+  );
 }
 
 function isResolvedManagedGateNode(node: NonNullable<ManagedAssignment['nodes']>[number]): boolean {
@@ -2357,6 +2503,7 @@ async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
   const directories = (await daemonJson('GET', '/api/directories')) as DirectoryInfo[];
   const existing = directories.find((directory) => directory.path === resolvedPath);
   if (existing) return existing;
+  await fs.promises.mkdir(resolvedPath, { recursive: true, mode: 0o700 });
   const created = (await daemonJson('POST', '/api/directories', { path: resolvedPath })) as {
     id?: string;
   };
@@ -2366,7 +2513,7 @@ async function ensureDirectory(directoryPath: string): Promise<DirectoryInfo> {
 
 async function pollLocalRun(
   runId: string,
-  onProgress?: (run: WorkflowRunRecord) => Promise<void>,
+  onProgress?: (run: WorkflowRunRecord) => Promise<WorkflowRunRecord | void>,
   progressEveryMs = 30_000,
 ): Promise<WorkflowRunRecord> {
   let nextProgressAt = 0;
@@ -2375,11 +2522,26 @@ async function pollLocalRun(
     const run = readRun(body);
     if (['completed', 'failed', 'blocked', 'canceled'].includes(run.status)) return run;
     if (onProgress && Date.now() >= nextProgressAt) {
-      await onProgress(run);
+      const progressRun = await onProgress(run);
+      if (progressRun) return progressRun;
       nextProgressAt = Date.now() + progressEveryMs;
     }
     await delay(500);
   }
+}
+
+class PlatformRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PlatformRequestError';
+  }
+}
+
+function isPlatformAccessDenied(error: unknown): boolean {
+  return error instanceof PlatformRequestError && [401, 402, 403, 404].includes(error.status);
 }
 
 async function daemonJson(method: string, urlPath: string, body?: unknown): Promise<unknown> {
@@ -2438,7 +2600,10 @@ async function platformFetch(
     tlsPins: parseCsvList(process.env['VPD_SERVER_TLS_PINS']),
   });
   if (!response.ok && response.status !== 204) {
-    throw new Error(`Platform request failed: HTTP ${response.status} ${await response.text()}`);
+    throw new PlatformRequestError(
+      response.status,
+      `Platform request failed: HTTP ${response.status} ${await response.text()}`,
+    );
   }
   return response;
 }

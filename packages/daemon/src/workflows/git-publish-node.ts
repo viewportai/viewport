@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import type { WorkflowGitPublishNode, WorkflowRunRecord } from './types.js';
 import {
   allowedRepositories,
@@ -14,6 +15,7 @@ import {
   gitContextTargetAllowsPath,
   parseGitContextUpdateTargetRef,
 } from './context-update-targets.js';
+import { branchIsRestricted, matchesGlob, restrictedPathsTouched } from './policy-enforcement.js';
 
 export interface RenderedGitPublishInput {
   cwd: string;
@@ -35,6 +37,31 @@ export interface GitPublishCredentialMaterial {
   envName: string;
   secret?: string;
 }
+
+export interface GitPublishReviewFacts {
+  changedPaths: string[];
+  addedLines: number;
+  removedLines: number;
+  diffLines: number;
+  diffDigest: string;
+}
+
+export interface GitPublishReviewDecision {
+  required: boolean;
+  facts: GitPublishReviewFacts;
+  matchedRules: Array<{
+    name: string;
+    reason: string;
+    require: string | null;
+    reviewerTags: string[];
+    timeout: string | null;
+    onTimeout: 'escalate' | 'auto-approve' | 'cancel' | null;
+  }>;
+}
+
+type PrePublishReviewRule = NonNullable<
+  WorkflowGitPublishNode['prePublishReview']
+>['rules'][number];
 
 export async function gitPublishAuthorityDenial(
   run: WorkflowRunRecord,
@@ -141,6 +168,16 @@ export async function executeGitPublishNode(
       'Git publish node has no changes to publish. Ensure the implementation step writes a diff, or set allowEmpty: true for an intentional empty commit.',
     );
   }
+  const restrictedPathMatches = restrictedPathsTouched(
+    await gitChangedPaths(input.cwd),
+    node.restrictedPaths,
+  );
+  if (restrictedPathMatches.length > 0) {
+    throw new Error(
+      `Changed path '${restrictedPathMatches[0]}' is restricted by policy — refusing to publish. ` +
+        `Restricted patterns: ${(node.restrictedPaths ?? []).join(', ')}`,
+    );
+  }
 
   await git(
     [
@@ -154,6 +191,15 @@ export async function executeGitPublishNode(
   const commit = (await git(['rev-parse', 'HEAD'], input.cwd)).trim();
   const shouldPush = node.push !== false;
   if (shouldPush) {
+    // Policy blast-radius fence: refuse to publish to a restricted branch (Tier-1 advisory
+    // enforcement of repos[].branches.restricted). Real read-only enforcement also comes from
+    // the brokered credential, but this fails fast and explains why.
+    if (branchIsRestricted(input.branch, node.restrictedBranches)) {
+      throw new Error(
+        `Branch '${input.branch}' is restricted by policy — refusing to publish. ` +
+          `Restricted patterns: ${(node.restrictedBranches ?? []).join(', ')}`,
+      );
+    }
     await git(['push', 'origin', `HEAD:${input.branch}`], input.cwd, credentialEnv);
   }
 
@@ -168,9 +214,93 @@ export async function executeGitPublishNode(
   };
 }
 
-async function gitCredentialEnv(root: string, secret: string): Promise<NodeJS.ProcessEnv> {
-  const directory = path.join(root, '.viewport', 'credential-helpers');
-  await fs.mkdir(directory, { recursive: true });
+export async function evaluateGitPublishPrePublishReview(
+  node: WorkflowGitPublishNode,
+  input: RenderedGitPublishInput,
+): Promise<GitPublishReviewDecision> {
+  await prepareGitPublishIndex(node, input);
+  const facts = await gitPublishReviewFacts(input.cwd);
+  const matchedRules = (node.prePublishReview?.rules ?? [])
+    .map((rule) => {
+      const pathMatches = (rule.when.changed_paths_any ?? []).some((pattern) =>
+        facts.changedPaths.some((changedPath) => matchesGlob(changedPath, pattern)),
+      );
+      const diffMatches =
+        rule.when.diff_lines_gt !== undefined && facts.diffLines > rule.when.diff_lines_gt;
+      if (!pathMatches && !diffMatches) return null;
+
+      return {
+        name: rule.name,
+        reason: [pathMatches ? 'changed_paths_any' : null, diffMatches ? 'diff_lines_gt' : null]
+          .filter(Boolean)
+          .join(','),
+        require: rule.require ?? null,
+        reviewerTags: reviewerTagsForRule(rule),
+        timeout: rule.timeout ?? null,
+        onTimeout: rule.on_timeout ?? null,
+      };
+    })
+    .filter((rule): rule is NonNullable<typeof rule> => Boolean(rule));
+
+  return {
+    required: matchedRules.length > 0,
+    facts,
+    matchedRules,
+  };
+}
+
+async function prepareGitPublishIndex(
+  node: WorkflowGitPublishNode,
+  input: RenderedGitPublishInput,
+): Promise<void> {
+  await git(['config', 'user.email', 'viewport-runner@example.invalid'], input.cwd);
+  await git(['config', 'user.name', 'Viewport Runner'], input.cwd);
+  await git(['checkout', '-B', input.branch], input.cwd);
+  await git(['add', ...(node.paths && node.paths.length > 0 ? node.paths : ['-A'])], input.cwd);
+}
+
+async function gitPublishReviewFacts(cwd: string): Promise<GitPublishReviewFacts> {
+  const changedPaths = await gitChangedPaths(cwd);
+  const numstat = await git(['diff', '--cached', '--numstat'], cwd);
+  let addedLines = 0;
+  let removedLines = 0;
+  for (const line of numstat.split('\n')) {
+    const [added, removed] = line.trim().split(/\s+/);
+    const addedNumber = Number.parseInt(added ?? '', 10);
+    const removedNumber = Number.parseInt(removed ?? '', 10);
+    if (Number.isFinite(addedNumber)) addedLines += addedNumber;
+    if (Number.isFinite(removedNumber)) removedLines += removedNumber;
+  }
+
+  return {
+    changedPaths,
+    addedLines,
+    removedLines,
+    diffLines: addedLines + removedLines,
+    diffDigest: await gitDiffDigest(cwd),
+  };
+}
+
+async function gitDiffDigest(cwd: string): Promise<string> {
+  const diff = await git(['diff', '--cached', '--binary'], cwd);
+  return `sha256:${createHash('sha256').update(diff).digest('hex')}`;
+}
+
+function reviewerTagsForRule(rule: PrePublishReviewRule): string[] {
+  const explicitTags = rule.reviewers?.tags ?? [];
+  if (explicitTags.length > 0) return explicitTags;
+
+  const human = rule.require?.match(/^human\(([^)]+)\)$/i);
+  if (!human?.[1]) return [];
+
+  return human[1]
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+async function gitCredentialEnv(_root: string, secret: string): Promise<NodeJS.ProcessEnv> {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-git-askpass-'));
   const helperPath = path.join(
     directory,
     `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`,

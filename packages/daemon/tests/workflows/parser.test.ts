@@ -74,6 +74,65 @@ nodes:
     }
   });
 
+  it('accepts policy-composed checkout and publish constraints', () => {
+    const parsed = parseWorkflow(
+      `
+schema: viewport.workflow/v1
+name: policy-composed
+scope:
+  repos:
+    - acme/backend
+requires:
+  agents:
+    - claude
+nodes:
+  checkout:
+    type: checkout
+    repository: acme/backend
+    ref: main
+    credentialMode: runner_local
+  implement:
+    type: agent
+    needs: [checkout]
+    cwd: "{{ nodes.checkout.outputs.path }}"
+    agent: claude
+    prompt: Make the smallest governed change.
+    executionMode: implement
+    allowedTools: [Read, Grep]
+  publish:
+    type: git_publish
+    needs: [implement]
+    repository: acme/backend
+    cwd: "{{ nodes.checkout.outputs.path }}"
+    branch: "agent/{{ run.id }}"
+    message: "Viewport policy run {{ run.id }}"
+    paths:
+      - src
+    restrictedBranches:
+      - main
+      - "release/*"
+    restrictedPaths:
+      - "src/security/**"
+    allowEmpty: false
+    push: true
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    const publish = parsed.definition.nodes.publish;
+    expect(parsed.definition.scope?.repos).toEqual(['acme/backend']);
+    expect(publish?.type).toBe('git_publish');
+    const implement = parsed.definition.nodes.implement;
+    expect(implement?.type).toBe('agent');
+    if (implement?.type === 'agent') {
+      expect(implement.cwd).toBe('{{ nodes.checkout.outputs.path }}');
+    }
+    if (publish?.type === 'git_publish') {
+      expect(publish.restrictedBranches).toEqual(['main', 'release/*']);
+      expect(publish.restrictedPaths).toEqual(['src/security/**']);
+    }
+  });
+
   it('requires shell nodes to set command or argv, but not both', () => {
     expect(() =>
       parseWorkflow(
@@ -275,6 +334,27 @@ nodes:
     expect(result.issues[0]?.message).toMatch(/Invalid workflow/);
   });
 
+  it('explains executionMode on unsupported node types', () => {
+    const result = validateWorkflowText(
+      `
+schema: viewport.workflow/v1
+name: bad-execution-mode
+nodes:
+  draft_plan:
+    type: plan
+    body: Review the implementation plan.
+    executionMode: plan
+`,
+      '/tmp/workflow.yaml',
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]?.message).toContain(
+      'Unsupported key "executionMode". executionMode is only valid on prompt/agent execution nodes',
+    );
+    expect(result.issues[0]?.message).toContain('use gates, reviewer tags, branch/path fences');
+  });
+
   it('rejects dependency cycles', () => {
     expect(() =>
       parseWorkflow(
@@ -404,9 +484,24 @@ policies:
     allowedAdapters:
       - github
       - jira
+    allowed:
+      - github.pull_request.create
+      - provider: slack
+        actions:
+          - chat.postMessage
   shell:
     policy: constrained
     allowLegacyCommand: false
+    allowed:
+      - npm test
+      - git status *
+    denied:
+      - rm -rf *
+  escalation:
+    whenStuck: human(tech-lead)
+    reviewerTags:
+      - tech-lead
+    channel: slack/#eng-reviews
   budget:
     maxTokens: 100000
     maxCostUsd: 25
@@ -477,8 +572,15 @@ nodes:
     expect(parsed.definition.triggers?.[0]?.type).toBe('webhook');
     expect(parsed.definition.runner?.kind).toBe('self_hosted_runner');
     expect(parsed.definition.policies?.sideEffects?.allowedAdapters).toEqual(['github', 'jira']);
+    expect(parsed.definition.policies?.sideEffects?.allowed).toEqual([
+      'github.pull_request.create',
+      { provider: 'slack', actions: ['chat.postMessage'] },
+    ]);
     expect(parsed.definition.policies?.shell?.policy).toBe('constrained');
     expect(parsed.definition.policies?.shell?.allowLegacyCommand).toBe(false);
+    expect(parsed.definition.policies?.shell?.allowed).toEqual(['npm test', 'git status *']);
+    expect(parsed.definition.policies?.shell?.denied).toEqual(['rm -rf *']);
+    expect(parsed.definition.policies?.escalation?.reviewerTags).toEqual(['tech-lead']);
     expect(parsed.definition.policies?.budget?.maxTokens).toBe(100000);
     expect(parsed.definition.policies?.budget?.approvalThresholds?.costUsd).toBe(10);
     expect(parsed.definition.notifications?.inbox).toContain('approval_requested');

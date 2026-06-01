@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { acquireWorkerProcessLock } from '../../src/cli/worker-process-lock.js';
 
 describe('standalone worker runtime', () => {
   const originalArgv = process.argv.slice();
@@ -365,6 +366,90 @@ describe('standalone worker runtime', () => {
     ]);
   });
 
+  it('runs a sandbox bootstrap lease once without polling for idle work or persisting identity', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    const workspaceRoot = await fs.mkdtemp(path.join(homeDir, 'bootstrap-workspace-'));
+    const identity = createWorkerIdentity();
+    const bootstrapPath = path.join(homeDir, 'sandbox-bootstrap.json');
+    await fs.writeFile(
+      bootstrapPath,
+      `${JSON.stringify(
+        {
+          schema: 'viewport.sandbox_bootstrap/v1',
+          server_url: serverUrl(server),
+          server_id: 'sha256:server_1',
+          workspace_id: 'workspace_1',
+          executor_id: 'executor_1',
+          credential: 'vpexec_bootstrap',
+          workspace_root: workspaceRoot,
+          transport: 'polling',
+          capabilities: {
+            agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
+          },
+          identity: {
+            public_key: identity.publicKey,
+            private_key: identity.privateKey,
+            public_key_fingerprint: identity.publicKeyFingerprint,
+          },
+          lease: {
+            id: 'workflow_run:run_1',
+            workflow_run_id: 'run_1',
+            lease_token: 'vplease_bootstrap',
+            assignment_claim_token: 'vpclaim_bootstrap',
+            yaml_snapshot: [
+              'schema: viewport.workflow/v1',
+              'name: bootstrap-proof',
+              'nodes:',
+              '  proof:',
+              '    type: shell',
+              '    command: "printf bootstrapped"',
+              '',
+            ].join('\n'),
+            directory_path: workspaceRoot,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    process.argv = ['node', 'vpd', 'worker', 'run-once', '--bootstrap', bootstrapPath, '--json'];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
+    expect(requests.map((request) => request.url)).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests.some((request) => request.url.endsWith('/claim'))).toBe(false);
+    expect(requests[1]?.headers['x-viewport-run-lease']).toBe('vplease_bootstrap');
+    expect(requests[1]?.body).toMatchObject({
+      status: 'completed',
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          proof: expect.objectContaining({ output: 'bootstrapped' }),
+        }),
+      }),
+    });
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpexec_bootstrap');
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpclaim_bootstrap');
+    const bootstrapIdentityFiles = await fs.readdir(
+      path.join(workspaceRoot, '.viewport', 'bootstrap'),
+    );
+    expect(bootstrapIdentityFiles).toEqual([]);
+  });
+
   it('keeps persistent polling workers online while idle until stopped', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
@@ -395,6 +480,204 @@ describe('standalone worker runtime', () => {
       '/api/runtime/workers/heartbeat',
     ]);
     expect(requests.at(-1)?.body).toMatchObject({ status: 'offline', health_status: 'offline' });
+  });
+
+  it('does not hot-loop persistent polling claims when the control plane has no work', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
+    await writeWorkerProfile(serverUrl(server));
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+    const abort = new AbortController();
+
+    const run = runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: false,
+      pollIntervalMs: 25,
+      abortSignal: abort.signal,
+    });
+    await waitUntil(
+      () => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 3,
+      2_000,
+    );
+    abort.abort();
+    const result = await run;
+    const claimTimes = requests
+      .filter((request) => request.url === '/api/runtime/workers/claim')
+      .map((request) => request.receivedAtMs);
+
+    expect(result).toMatchObject({ claimed: 0, completed: 0, failed: 0, cleanup: 0 });
+    expect(claimTimes.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < Math.min(claimTimes.length, 4); i += 1) {
+      expect(claimTimes[i]! - claimTimes[i - 1]!).toBeGreaterThanOrEqual(18);
+    }
+  });
+
+  it('soaks through multiple persistent polling leases, drains cleanup, then idles until stopped', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      genericLeasesBeforeEmpty: 3,
+    });
+    await writeWorkerProfile(serverUrl(server));
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+    const abort = new AbortController();
+
+    const run = runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: false,
+      pollIntervalMs: 5,
+      abortSignal: abort.signal,
+    });
+    await waitUntil(
+      () => requests.filter((request) => request.url === '/api/runtime/workers/claim').length >= 4,
+      2_000,
+    );
+    abort.abort();
+    const result = await run;
+    const requestNames = requests.map((request) => `${request.method} ${request.url}`);
+
+    expect(result).toMatchObject({
+      claimed: 3,
+      completed: 3,
+      blocked: 0,
+      failed: 0,
+      cleanup: 3,
+      denied: 0,
+    });
+    expect(requestNames).toEqual([
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_1/sync',
+      'POST /api/runtime/workers/leases/lease_1/cleanup',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_2/sync',
+      'POST /api/runtime/workers/leases/lease_2/cleanup',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_3/sync',
+      'POST /api/runtime/workers/leases/lease_3/cleanup',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/heartbeat',
+    ]);
+    expect(requests.at(-1)?.body).toMatchObject({ status: 'offline', health_status: 'offline' });
+    for (const request of requests.filter((entry) => entry.url.includes('/leases/'))) {
+      await expectSignedRequest(request, homeDir);
+    }
+  });
+
+  it('drains queued leases across repeated persistent worker restarts', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      genericLeasesBeforeEmpty: 3,
+    });
+    await writeWorkerProfile(serverUrl(server));
+    vi.resetModules();
+    const { runStandaloneWorker } = await import('../../src/cli/worker-runtime.js');
+
+    const first = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+    const second = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+    const third = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+    const idleAfterDrain = await runStandaloneWorker({
+      lifecycle: 'persistent',
+      transport: 'polling',
+      once: true,
+      pollIntervalMs: 5,
+    });
+
+    expect([first, second, third]).toEqual([
+      { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 },
+      { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 },
+      { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 },
+    ]);
+    expect(idleAfterDrain).toMatchObject({
+      claimed: 0,
+      completed: 0,
+      blocked: 0,
+      failed: 0,
+      cleanup: 0,
+      denied: 0,
+    });
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_1/sync',
+      'POST /api/runtime/workers/leases/lease_1/cleanup',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_2/sync',
+      'POST /api/runtime/workers/leases/lease_2/cleanup',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/leases/lease_3/sync',
+      'POST /api/runtime/workers/leases/lease_3/cleanup',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/heartbeat',
+      'POST /api/runtime/workers/claim',
+      'POST /api/runtime/workers/heartbeat',
+    ]);
+    for (const request of requests.filter((entry) => entry.url.includes('/leases/'))) {
+      await expectSignedRequest(request, homeDir);
+    }
+    expect(
+      requests.filter((request) => request.url === '/api/runtime/workers/leases/lease_1/cleanup'),
+    ).toHaveLength(1);
+    expect(
+      requests.filter((request) => request.url === '/api/runtime/workers/leases/lease_2/cleanup'),
+    ).toHaveLength(1);
+    expect(
+      requests.filter((request) => request.url === '/api/runtime/workers/leases/lease_3/cleanup'),
+    ).toHaveLength(1);
+  });
+
+  it('prevents duplicate standalone persistent workers for the same paired profile', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
+    await writeHostedWorkerProfile(serverUrl(server));
+    const lock = acquireWorkerProcessLock({
+      server: serverUrl(server),
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      accessMode: 'polling',
+    });
+    try {
+      process.argv = [
+        'node',
+        'vpd',
+        'worker',
+        'start',
+        '--mode',
+        'persistent',
+        '--transport',
+        'polling',
+        '--json',
+      ];
+      vi.resetModules();
+      const { worker } = await import('../../src/cli/worker-command.js');
+
+      await expect(worker()).rejects.toThrow('vpd worker run-once --lease <lease-token>');
+      expect(requests).toEqual([]);
+    } finally {
+      lock.release();
+    }
   });
 
   it('fails closed for hosted managed executor claims without executable workflow material', async () => {
@@ -909,6 +1192,128 @@ nodes:
     });
   });
 
+  it('reclaims a blocked hosted run after restart and resumes from local runtime state', async () => {
+    const projectDir = path.join(homeDir, 'hosted-restart-approval-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    const serverOptions: RuntimeServerOptions = {
+      reclaimSameHostedAssignment: true,
+      runtimeCommandsAfterBlockedSync: false,
+      hostedAssignment: {
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-restart-approval-proof
+nodes:
+  gate:
+    type: gate
+    gate:
+      type: human_review
+      prompt: Approve after worker restart.
+  proof:
+    type: shell
+    needs: [gate]
+    argv:
+      - printf
+      - restart-resumed
+`,
+        source_ref: 'viewport://test/hosted-worker-restart-approval-proof',
+        directory_path: projectDir,
+      },
+    };
+    server = await startRuntimeServer(requests, serverOptions);
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const first = await import('../../src/cli/worker-command.js');
+
+    await first.worker();
+
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? ''))).toMatchObject({
+      claimed: 1,
+      completed: 0,
+      blocked: 1,
+      failed: 0,
+      cleanup: 1,
+    });
+    const firstBlockedSync = requests.find(
+      (request) =>
+        request.method === 'PATCH' &&
+        request.url ===
+          '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync' &&
+        request.body['status'] === 'blocked',
+    );
+    expect(firstBlockedSync?.body).toMatchObject({
+      status: 'blocked',
+      runtime_run_id: expect.any(String),
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_key: 'gate', status: 'blocked' }),
+      ]),
+    });
+    expect(String(firstBlockedSync?.body['runtime_run_id'] ?? '')).not.toHaveLength(0);
+
+    serverOptions.runtimeCommandsAfterBlockedSync = true;
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const second = await import('../../src/cli/worker-command.js');
+
+    await second.worker();
+
+    expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? ''))).toMatchObject({
+      claimed: 1,
+      completed: 1,
+      blocked: 0,
+      failed: 0,
+      cleanup: 1,
+    });
+    const claimBodies = requests
+      .filter(
+        (request) =>
+          request.method === 'POST' &&
+          request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      )
+      .map((request) => request.body);
+    expect(claimBodies).toHaveLength(2);
+    const completedSync = requests.find(
+      (request) =>
+        request.method === 'PATCH' &&
+        request.url ===
+          '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync' &&
+        request.body['status'] === 'completed',
+    );
+    expect(completedSync?.body).toMatchObject({
+      status: 'completed',
+      runtime_run_id: firstBlockedSync?.body['runtime_run_id'],
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          gate: expect.objectContaining({ status: 'completed', output: 'Approved in test' }),
+          proof: expect.objectContaining({ status: 'completed', output: 'restart-resumed' }),
+        }),
+      }),
+    });
+  });
+
   it('keeps polling hosted approval commands across sequential blocked gates', async () => {
     const projectDir = path.join(homeDir, 'hosted-multigate-workspace');
     await fs.mkdir(projectDir, { recursive: true });
@@ -1160,19 +1565,42 @@ nodes:
     const manager = new ConfigManager();
     await manager.load();
     const existing = manager.getDaemonConfig() ?? {};
+    const worker = existing.worker;
+    const stateDir = worker?.stateDir ?? path.join(homeDir, 'worker');
+    const serverId = 'sha256:server_1';
+    const workspaceId = 'workspace_1';
+    const managedExecutorId = 'executor_1';
     await manager.setDaemonConfig({
       ...existing,
       worker: {
-        ...existing.worker,
-        workspaceId: 'workspace_1',
-        managedExecutorId: 'executor_1',
+        ...worker,
+        workspaceId,
+        managedExecutorId,
         credential: 'vpexec_hosted',
-        serverId: 'sha256:server_1',
+        serverId,
         capabilities: {
           agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
         },
       },
     });
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, 'pairing.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          workspaceId,
+          workspaceName: 'Test Workspace',
+          managedExecutorId,
+          serverUrl,
+          serverId,
+          pairedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
   }
 });
 
@@ -1193,6 +1621,7 @@ async function startRuntimeServer(
       method: request.method ?? 'GET',
       body,
       headers: request.headers,
+      receivedAtMs: Date.now(),
     });
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/api/runtime/workers/claim') {
@@ -1202,12 +1631,15 @@ async function startRuntimeServer(
         response.end();
         return;
       }
-      if (claimCount > 1) {
+      const genericLeasesBeforeEmpty = options.genericLeasesBeforeEmpty ?? 1;
+      if (claimCount > genericLeasesBeforeEmpty) {
         response.statusCode = 204;
         response.end();
         return;
       }
-      response.end(JSON.stringify({ lease: { id: 'lease_1', run_id: 'run_1' } }));
+      response.end(
+        JSON.stringify({ lease: { id: `lease_${claimCount}`, run_id: `run_${claimCount}` } }),
+      );
       return;
     }
     if (request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim') {
@@ -1223,7 +1655,7 @@ async function startRuntimeServer(
         response.end();
         return;
       }
-      if (claimCount > 1) {
+      if (claimCount > 1 && !options.reclaimSameHostedAssignment) {
         response.statusCode = 204;
         response.end();
         return;
@@ -1233,6 +1665,9 @@ async function startRuntimeServer(
           data: {
             id: 'run_1',
             assignment_claim_token: 'vpclaim_run_1',
+            ...(options.reclaimSameHostedAssignment && blockedRuntimeRunId
+              ? { runtime_run_id: blockedRuntimeRunId }
+              : {}),
             ...(options.hostedAssignment ?? {}),
             run_lease: {
               lease_id: 'workflow_run:run_1',
@@ -1356,6 +1791,8 @@ interface RuntimeServerOptions {
   runtimeCommandsByBlockedNode?: Record<string, { message: string }>;
   rateLimitOnceForBlockedNode?: string;
   transientHostedSyncFailures?: number;
+  reclaimSameHostedAssignment?: boolean;
+  genericLeasesBeforeEmpty?: number;
 }
 
 interface RuntimeRequest {
@@ -1363,6 +1800,7 @@ interface RuntimeRequest {
   method: string;
   body: Record<string, unknown>;
   headers: http.IncomingHttpHeaders;
+  receivedAtMs: number;
 }
 
 function serverUrl(server: http.Server): string {
@@ -1375,6 +1813,22 @@ function closeServer(server: http.Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+}
+
+function createWorkerIdentity(): {
+  publicKey: string;
+  privateKey: string;
+  publicKeyFingerprint: string;
+} {
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const publicKey = pair.publicKey.export({ format: 'pem', type: 'spki' }).toString();
+  const privateKey = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const publicKeyDer = pair.publicKey.export({ format: 'der', type: 'spki' });
+  return {
+    publicKey,
+    privateKey,
+    publicKeyFingerprint: crypto.createHash('sha256').update(publicKeyDer).digest('hex'),
+  };
 }
 
 async function readBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {

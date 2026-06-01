@@ -727,6 +727,12 @@ nodes:
         `<https://app.getviewport.test/workflows/runs/${run.id}#audit|`,
         `<https://app.getviewport.test/workflows/runs/${run.id}|`,
       ]);
+      expect(completed?.nodes.notify_completion?.metadata?.action?.input).toMatchObject({
+        text: slackBody.text,
+      });
+      expect(
+        String(completed?.nodes.notify_completion?.metadata?.action?.input?.['text']),
+      ).not.toContain('{github_pr.url}');
     } finally {
       if (originalGitHubToken === undefined) delete process.env['GITHUB_TOKEN'];
       else process.env['GITHUB_TOKEN'] = originalGitHubToken;
@@ -1004,6 +1010,74 @@ nodes:
     } finally {
       if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
       else process.env[githubTokenEnv] = originalCredentialRefToken;
+    }
+  });
+
+  it('allows GitHub user tokens only behind the explicit local proof escape hatch', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          html_url: 'https://github.com/acme/payments/issues/1842#issuecomment-1842',
+          url: 'https://api.github.com/repos/acme/payments/issues/comments/1842',
+        }),
+        { status: 201 },
+      ),
+    );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env[githubTokenEnv];
+    const originalProofFlag = process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+    process.env[githubTokenEnv] = 'ghp_local_proof_token';
+    process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = '1';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-local-proof-token-proof
+nodes:
+  comment_issue:
+    type: action
+    adapter: github
+    action: comment_issue
+    with:
+      owner: acme
+      repo: payments
+      issue_number: "1842"
+      body: "Local proof only."
+      credential_ref: github/token
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(completed?.status).toBe('completed');
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments/issues/1842/comments',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer ghp_local_proof_token',
+          }),
+        }),
+      );
+      expect(JSON.stringify(completed)).not.toContain('ghp_local_proof_token');
+    } finally {
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
+      if (originalProofFlag === undefined)
+        delete process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+      else process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = originalProofFlag;
     }
   });
 
@@ -1295,6 +1369,102 @@ nodes:
     } finally {
       if (originalCredentialRefToken === undefined) delete process.env[githubPrWriterEnv];
       else process.env[githubPrWriterEnv] = originalCredentialRefToken;
+    }
+  });
+
+  it('retries GitHub pull_request.create when a just-pushed branch is not visible yet', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            message: 'Not Found',
+            documentation_url: 'https://docs.github.com/rest/pulls/pulls#create-a-pull-request',
+          }),
+          { status: 404 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 44,
+            html_url: 'https://github.com/acme/docs/pull/44',
+            url: 'https://api.github.com/repos/acme/docs/pulls/44',
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 44,
+            html_url: 'https://github.com/acme/docs/pull/44',
+            url: 'https://api.github.com/repos/acme/docs/pulls/44',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env[githubPrWriterEnv];
+    const originalRetryDelay = process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'];
+    process.env[githubPrWriterEnv] = 'ghs_runner_token';
+    process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'] = '0';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-pr-retry-proof
+nodes:
+  open_pr:
+    type: action
+    adapter: github
+    action: pull_request.create
+    idempotencyKey: pr-retry:DOCS-44
+    with:
+      repository: acme/docs
+      title: Viewport docs change
+      head: viewport/docs-44
+      base: main
+      body: "Docs update."
+      credential_ref: github/pr-writer
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.github.com/repos/acme/docs/pulls');
+      expect(fetchMock.mock.calls[2]?.[0]).toBe('https://api.github.com/repos/acme/docs/pulls');
+      expect(completed?.status).toBe('completed');
+      expect(completed?.nodes.open_pr?.metadata?.action).toMatchObject({
+        adapter: 'github',
+        action: 'pull_request.create',
+        status: 'executed',
+        response: {
+          status: 201,
+          attempts: 2,
+          htmlUrl: 'https://github.com/acme/docs/pull/44',
+          number: 44,
+        },
+      });
+    } finally {
+      if (originalCredentialRefToken === undefined) delete process.env[githubPrWriterEnv];
+      else process.env[githubPrWriterEnv] = originalCredentialRefToken;
+      if (originalRetryDelay === undefined) delete process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'];
+      else process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'] = originalRetryDelay;
     }
   });
 
@@ -1950,6 +2120,81 @@ nodes:
         status: 'executed',
         response: { channel: 'C123', ts: '177000.0002' },
       });
+    } finally {
+      if (originalCredentialRefToken === undefined) delete process.env[slackNotifierEnv];
+      else process.env[slackNotifierEnv] = originalCredentialRefToken;
+    }
+  });
+
+  it('normalizes literal Slack newline escapes while still posting to the source thread', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, channel: 'C123', ts: '177000.0002' }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            permalink: 'https://acme.slack.com/archives/C123/p1770000002',
+          }),
+          { status: 200 },
+        ),
+      );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env[slackNotifierEnv];
+    process.env[slackNotifierEnv] = 'slack-token';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: slack-literal-newline-source-thread-proof
+nodes:
+  announce:
+    type: action
+    adapter: slack
+    action: post_message
+    idempotencyKey: slack-source-thread-literal-newlines:PAY-1842
+    with:
+      text: 'Viewport completed the support run.\\nGitHub PR -> <{github_pr.url}|{github_pr.label}>\\nRun -> <{run.url}|Open run>'
+      credential_ref: slack/notifier
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        inputs: {
+          integration_event: {
+            payload: {
+              event: {
+                channel: 'C123',
+                ts: '177000.0001',
+              },
+            },
+          },
+        },
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+
+      expect(body).toMatchObject({
+        channel: 'C123',
+        thread_ts: '177000.0001',
+        client_msg_id: 'slack-source-thread-literal-newlines:PAY-1842',
+      });
+      expect(body.text).toContain('support run.\nGitHub PR ->');
+      expect(body.text).toContain('\nRun ->');
+      expect(body.text).not.toContain('\\n');
     } finally {
       if (originalCredentialRefToken === undefined) delete process.env[slackNotifierEnv];
       else process.env[slackNotifierEnv] = originalCredentialRefToken;

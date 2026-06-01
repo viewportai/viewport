@@ -139,6 +139,7 @@ async function executeGitHubAction(
       },
       reconcile: (parsed) =>
         githubReconciliationRequest(githubHeaders(token), parsed, 'pull_request'),
+      retry: githubPullRequestCreateRetryPolicy(),
     });
   }
 
@@ -175,6 +176,7 @@ function assertGitHubBrokeredCredential(
   runtimeSecretEnvKeys: string[],
 ): asserts token is string {
   if (token && token.startsWith('ghs_')) return;
+  if (token && localGitHubProofTokensAllowed() && isGitHubUserToken(token)) return;
 
   const reason = token
     ? 'github_credential_must_be_installation_token'
@@ -204,6 +206,7 @@ function assertGitHubBrokeredCredential(
         reason,
         required: 'github_app_installation_token',
         acceptedPrefix: 'ghs_',
+        localDevelopmentUserTokenAllowed: localGitHubProofTokensAllowed(),
         credentialRef,
         expectedEnvName,
         runtimeSecretEnvKeys,
@@ -228,6 +231,14 @@ function assertGitHubBrokeredCredential(
     output: `${node.adapter}.${node.action} blocked`,
     metadata,
   });
+}
+
+function localGitHubProofTokensAllowed(): boolean {
+  return process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] === '1';
+}
+
+function isGitHubUserToken(token: string): boolean {
+  return token.startsWith('ghp_') || token.startsWith('github_pat_') || token.startsWith('gho_');
 }
 
 async function existingGitHubPullRequest(
@@ -425,11 +436,16 @@ async function executeSlackAction(
     node.action === 'message' ||
     node.action === 'chat.postMessage'
   ) {
+    const renderedActionInput = {
+      ...actionInput,
+      text,
+    };
+
     return executeJsonApiAction(run, nodeId, node, {
       method: 'POST',
       url: 'https://slack.com/api/chat.postMessage',
       headers: withIdempotencyHeader({ Authorization: `Bearer ${token}` }, options.idempotencyKey),
-      proposalInput: actionInput,
+      proposalInput: renderedActionInput,
       body: {
         channel,
         text,
@@ -473,10 +489,21 @@ function renderRuntimeMessage(run: WorkflowRunRecord, template: string): string 
     (match, key: string) => variables[key] ?? match,
   );
 
-  return doubleRendered.replace(
+  const rendered = doubleRendered.replace(
     /(?<!{){\s*([A-Za-z0-9_.-]+)\s*}(?!})/g,
     (match, key: string) => variables[key] ?? match,
   );
+
+  return normalizeSlackMessageText(rendered);
+}
+
+function normalizeSlackMessageText(text: string): string {
+  return text
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
 }
 
 function runtimeRunUrl(run: WorkflowRunRecord): string {
@@ -702,9 +729,14 @@ async function executeJsonApiAction(
     okFromBody?: boolean;
     reconcile?: (parsed: unknown) => ProviderReconciliationRequest | null;
     reconciliationUnsupported?: string;
+    retry?: {
+      statuses: number[];
+      attempts: number;
+      delayMs: number;
+    };
   },
 ): Promise<ActionResult> {
-  const response = await fetch(request.url, {
+  const requestInit = {
     method: request.method,
     headers: {
       Accept: 'application/vnd.github+json, application/json;q=0.9, */*;q=0.8',
@@ -712,7 +744,15 @@ async function executeJsonApiAction(
       ...request.headers,
     },
     body: JSON.stringify(compactObject(request.body)),
-  });
+  };
+  let response = await fetch(request.url, requestInit);
+  let attempts = 1;
+  const retry = request.retry;
+  while (retry && attempts < retry.attempts && retry.statuses.includes(response.status)) {
+    await sleep(retry.delayMs);
+    attempts += 1;
+    response = await fetch(request.url, requestInit);
+  }
   const responseText = await safeResponseText(response);
   const parsed = parseJson(responseText);
   const appOk = request.okFromBody ? objectBoolean(parsed, 'ok') !== false : true;
@@ -742,6 +782,7 @@ async function executeJsonApiAction(
       response: {
         status: response.status,
         ok,
+        attempts,
         bodyExcerpt: responseText.slice(0, MAX_RESPONSE_CHARS),
         htmlUrl: objectString(parsed, 'html_url'),
         apiUrl: objectString(parsed, 'url'),
@@ -797,6 +838,28 @@ async function executeJsonApiAction(
     output: `${node.adapter}.${node.action} ${response.status}`,
     metadata,
   };
+}
+
+function githubPullRequestCreateRetryPolicy(): {
+  statuses: number[];
+  attempts: number;
+  delayMs: number;
+} {
+  const delayMs = Number.parseInt(process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'] ?? '', 10);
+
+  return {
+    // GitHub can briefly return "not found" for a just-pushed branch when the
+    // PR action follows the publish action immediately, especially in
+    // multi-repo runs where branches are created in quick succession.
+    statuses: [404, 422],
+    attempts: 3,
+    delayMs: Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 750,
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function declaredProviderAction(

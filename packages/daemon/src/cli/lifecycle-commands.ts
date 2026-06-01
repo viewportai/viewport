@@ -346,6 +346,7 @@ export function showHelp(): void {
   console.log(
     '  doctor [--json]              Show daemon identity, runtime mode, and active targets',
   );
+  console.log('  diagnostic [--json]          Print a sanitized support diagnostic snapshot');
   console.log('  status [--json] [--check-updates]');
   console.log('                               Daemon health and runtime status');
   console.log('  stop [--json] [--timeout <seconds>] [--force]');
@@ -460,7 +461,7 @@ export function showHelp(): void {
   console.log('  hook plan                    Send a plan proposal hook from stdin');
   console.log('  hook capabilities [--adapter <name>] [--json]');
   console.log(
-    '  pair [<code>] [--server <url>] [--app-url <url>] [--no-auto-unlock] [--auto-unlock-ttl <seconds>] [--json]',
+    '  pair [<code>] [--worker] [--transport polling|relay|inbound] [--workdir <path>] [--server <url>] [--app-url <url>] [--json]',
   );
   console.log('                               Pair with Viewport via pairing code');
   console.log('  pair anchor [--json]         Show daemon trust anchor fingerprint');

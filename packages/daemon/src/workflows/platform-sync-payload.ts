@@ -176,7 +176,7 @@ function formatEvent(
       ? redactedContextEventPayload(event)
       : redactedLog
         ? redactedLogPayload(event)
-        : (event.data ?? null),
+        : sanitizeSyncPayload(event.data),
     occurred_at: iso(event.timestamp),
   };
 }
@@ -492,6 +492,9 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
   const receiptProviderResponse = compactProviderResponse(providerResponse);
   const executionGrant =
     recordValue(action?.['execution_grant']) ?? recordValue(action?.['executionGrant']);
+  const providerReconciliation =
+    recordValue(action?.['provider_reconciliation']) ??
+    recordValue(action?.['providerReconciliation']);
   if (!action || !adapter || !actionName) return [];
   const receiptPayload = executionReceiptPayload(action, receiptProviderResponse);
 
@@ -514,20 +517,33 @@ function formatExecutionReceipt(event: WorkflowRunEvent): Array<Record<string, u
         stringValue(providerResponse?.['number']) ??
         stringValue(providerResponse?.['ts']) ??
         stringValue(providerResponse?.['id']),
-      provider_url:
-        stringValue(providerResponse?.['htmlUrl']) ?? stringValue(providerResponse?.['apiUrl']),
+      provider_url: providerUrl(providerResponse, providerReconciliation),
       idempotency_key: stringValue(action?.['idempotencyKey']),
       payload_digest: stringValue(action?.['digest']) ?? payloadDigest(action),
       provider_response_digest: receiptProviderResponse
         ? payloadDigest(receiptProviderResponse)
         : null,
       payload: receiptPayload,
-      provider_reconciliation:
-        recordValue(action?.['provider_reconciliation']) ??
-        recordValue(action?.['providerReconciliation']),
+      provider_reconciliation: providerReconciliation,
       executed_at: iso(event.timestamp),
     },
   ];
+}
+
+function providerUrl(
+  providerResponse: Record<string, unknown> | null,
+  providerReconciliation: Record<string, unknown> | null,
+): string | null {
+  return (
+    stringValue(providerResponse?.['htmlUrl']) ??
+    stringValue(providerResponse?.['apiUrl']) ??
+    stringValue(providerResponse?.['providerUrl']) ??
+    stringValue(providerResponse?.['provider_url']) ??
+    stringValue(providerResponse?.['url']) ??
+    stringValue(providerReconciliation?.['providerUrl']) ??
+    stringValue(providerReconciliation?.['provider_url']) ??
+    stringValue(providerReconciliation?.['url'])
+  );
 }
 
 function compactProviderResponse(
@@ -542,6 +558,9 @@ function compactProviderResponse(
     'ok',
     'htmlUrl',
     'apiUrl',
+    'providerUrl',
+    'provider_url',
+    'url',
     'number',
     'channel',
     'ts',

@@ -202,6 +202,7 @@ export interface WorkflowPromptNode extends WorkflowNodeBase {
 export interface WorkflowAgentNode extends WorkflowNodeBase {
   type: 'agent';
   prompt: string;
+  cwd?: string;
   agent: string;
   provider?: string;
   model?: string;
@@ -248,6 +249,33 @@ export interface WorkflowGitPublishNode extends WorkflowNodeBase {
   push?: boolean;
   credentialMode?: 'runner_local' | 'run_scoped_grant';
   credentialRef?: string;
+  // Policy blast-radius fences (composed from .viewport/policy.yaml repos[].branches/paths).
+  // Tier-1 advisory enforcement: the daemon refuses to publish to a restricted branch.
+  restrictedBranches?: string[];
+  restrictedPaths?: string[];
+  /**
+   * Dynamic completion-review interceptor. Rules are evaluated after the
+   * implementation has produced an actual git diff and before commit/push.
+   * The agent does not decide whether review is required; the daemon evaluates
+   * observable facts such as changed paths and diff size.
+   */
+  prePublishReview?: {
+    rules: WorkflowGitPublishReviewRule[];
+  };
+}
+
+export interface WorkflowGitPublishReviewRule {
+  name: string;
+  when: {
+    changed_paths_any?: string[];
+    diff_lines_gt?: number;
+  };
+  require?: string;
+  reviewers?: {
+    tags?: string[];
+  };
+  timeout?: string;
+  on_timeout?: 'escalate' | 'auto-approve' | 'cancel';
 }
 
 export interface WorkflowApprovalRecipient {
@@ -261,6 +289,10 @@ export interface WorkflowApprovalNode extends WorkflowNodeBase {
   type: 'approval';
   prompt: string;
   recipients?: WorkflowApprovalRecipient[];
+  gate_intent?: 'plan' | 'approval';
+  reviewer_tags?: string[];
+  timeout?: string;
+  on_timeout?: 'escalate' | 'auto-approve' | 'cancel';
   /** When true, the approver's message becomes the node's output. */
   captureResponse?: boolean;
   /**
@@ -453,9 +485,13 @@ export interface WorkflowDefinition {
   name: string;
   title?: string;
   description?: string;
+  scope?: {
+    repos?: string[];
+  };
   inputs?: Record<string, WorkflowInputDefinition>;
   triggers?: WorkflowTriggerDefinition[];
   context?: WorkflowContext | WorkflowContextDefaults;
+  credentials?: Record<string, unknown>;
   requires?: WorkflowRequires;
   executor?: WorkflowExecutorRequirement;
   runner?: WorkflowRunnerRequirementV2;

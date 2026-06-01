@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
+import { checkShellPolicy } from './policy-enforcement.js';
 import type { WorkflowActionNode, WorkflowInputValue, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowAuthorityDenial {
@@ -15,6 +16,7 @@ export interface WorkflowAuthorityDenial {
     | 'context_source_not_allowed'
     | 'shell_policy_required'
     | 'shell_disabled_by_policy'
+    | 'shell_command_not_allowed'
     | 'shell_legacy_command_not_allowed'
     | 'shell_cwd_outside_worktree'
     | 'shell_repository_not_allowed'
@@ -179,6 +181,21 @@ export function shellAuthorityDenial(
     };
   }
 
+  const shellPolicyDecision = checkShellPolicy(renderedCommand, shellCommandPolicy(contract));
+  if (!shellPolicyDecision.allowed) {
+    return {
+      schema: 'viewport.workflow_authority_denial/v1',
+      reason: 'shell_command_not_allowed',
+      runId: run.id,
+      nodeId,
+      command: redactedCommand(renderedCommand),
+      detail:
+        shellPolicyDecision.reason ??
+        'Shell command is not allowed by workflow authority contract.',
+      contractDigest: workflowAuthorityContractDigest(run),
+    };
+  }
+
   if (!isPathWithin(cwd, run.directoryPath)) {
     return {
       schema: 'viewport.workflow_authority_denial/v1',
@@ -261,6 +278,16 @@ function legacyShellCommandAllowed(contract: Record<string, unknown>): boolean {
   if (typeof flat === 'boolean') return flat;
 
   return false;
+}
+
+function shellCommandPolicy(contract: Record<string, unknown>): {
+  allowed: string[];
+  denied: string[];
+} {
+  return {
+    allowed: stringArray(readPath(contract, ['shell', 'allowed'])),
+    denied: stringArray(readPath(contract, ['shell', 'denied'])),
+  };
 }
 
 function allowedSideEffects(contract: Record<string, unknown>): AllowedSideEffect[] {
@@ -376,6 +403,9 @@ function shellProviderSideEffects(command: string): Array<{ provider: string; ac
   }
   if (/\bcurl\b/.test(normalized) && /slack\.com\/api\/chat\.postmessage/.test(normalized)) {
     effects.push({ provider: 'slack', action: 'post-message' });
+  }
+  if (/\b(curl|wget)\b/.test(normalized) && /https?:\/\//.test(normalized)) {
+    effects.push({ provider: 'external-api', action: 'request' });
   }
   return effects;
 }

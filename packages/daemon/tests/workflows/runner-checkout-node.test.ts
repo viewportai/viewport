@@ -11,7 +11,7 @@ import {
 import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
 import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
-import { executeCheckoutNode } from '../../src/workflows/checkout-node.js';
+import { checkoutRemote, executeCheckoutNode } from '../../src/workflows/checkout-node.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
 describe('workflow runner checkout node', () => {
@@ -605,6 +605,24 @@ nodes:
       credentialRef: 'repo/github/payments-api',
     });
     expect(JSON.stringify(completed)).not.toContain('ghs_run_scoped_checkout');
+  });
+
+  it('uses https github remotes when run-scoped credential material is present', () => {
+    expect(
+      checkoutRemote(
+        'viewportai/vp-example-integration',
+        'git@github.com:viewportai/vp-example-integration.git',
+        true,
+      ),
+    ).toBe('https://github.com/viewportai/vp-example-integration.git');
+
+    expect(
+      checkoutRemote(
+        'viewportai/vp-example-integration',
+        'git@github.com:viewportai/vp-example-integration.git',
+        false,
+      ),
+    ).toBe('git@github.com:viewportai/vp-example-integration.git');
   });
 
   it('blocks publishing context update target files into the operating repo when the target is a different repo', async () => {

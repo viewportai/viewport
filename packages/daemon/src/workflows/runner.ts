@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveSessionResourceManifestSync } from '../config-resolution/index.js';
+import type { SessionResourceManifest } from '../config-resolution/types.js';
 import { parseWorkflow, parseWorkflowFile } from './parser.js';
 import { addEvent, normalizeInputs, renderTemplate } from './runtime-helpers.js';
 import { WorkflowRunPlatformSync } from './platform-sync.js';
@@ -134,11 +135,10 @@ export class WorkflowRunner {
     const now = Date.now();
     const resourceId = request.resourceId;
     const runtimeTargetId = request.runtimeTargetId;
-    const resourceManifest =
-      request.resourceManifest ??
-      resolveSessionResourceManifestSync({
-        workingDirectory: directory.path,
-      });
+    const resourceManifest = resolveWorkflowRunResourceManifest(
+      request.resourceManifest,
+      directory.path,
+    );
     const run: WorkflowRunRecord = {
       id: crypto.randomUUID(),
       workflowName: parsed.definition.name,
@@ -387,19 +387,17 @@ export class WorkflowRunner {
       (state.type !== 'approval' &&
         state.type !== 'gate' &&
         state.type !== 'plan' &&
-        state.type !== 'action')
+        state.type !== 'action' &&
+        state.type !== 'git_publish')
     ) {
       throw new Error(`Workflow approval node not found: ${nodeId}`);
     }
     if (run.status !== 'blocked' || state.status !== 'blocked') {
       throw new Error(`Workflow node is not awaiting approval: ${nodeId}`);
     }
-    const currentActionDigest =
-      state.type === 'action' && state.metadata && typeof state.metadata['action'] === 'object'
-        ? (state.metadata['action'] as { digest?: unknown }).digest
-        : undefined;
+    const currentActionDigest = approvalSubjectDigest(state);
     if (
-      state.type === 'action' &&
+      (state.type === 'action' || state.type === 'git_publish') &&
       decision.expectedActionDigest &&
       typeof currentActionDigest === 'string' &&
       currentActionDigest !== decision.expectedActionDigest
@@ -417,6 +415,9 @@ export class WorkflowRunner {
       approved: decision.approved,
       decision: decision.decision ?? (decision.approved ? 'approve' : 'reject'),
       ...(decision.message ? { message: decision.message } : {}),
+      ...(decision.expectedActionDigest
+        ? { expectedActionDigest: decision.expectedActionDigest }
+        : {}),
       ...(decision.actor ? { actor: decision.actor } : {}),
       ...(decision.feedback ? { feedback: decision.feedback } : {}),
       ...(decision.executionGrant ? { executionGrant: decision.executionGrant } : {}),
@@ -501,7 +502,7 @@ export class WorkflowRunner {
 
     const parsed = parseWorkflow(run.yamlSnapshot, run.sourcePath ?? `viewport://runs/${run.id}`);
     const approvalNode = parsed.definition.nodes[nodeId];
-    if (approvalNode?.type === 'action') {
+    if (approvalNode?.type === 'action' || approvalNode?.type === 'git_publish') {
       state.status = 'queued';
       state.completedAt = undefined;
       state.output = decision.message ?? 'Approved';
@@ -576,12 +577,22 @@ export class WorkflowRunner {
     return run;
   }
 
-  async applyRuntimeCommandBody(runId: string, body: unknown): Promise<number> {
+  async applyRuntimeCommandBody(
+    runId: string,
+    body: unknown,
+    options: {
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
+    } = {},
+  ): Promise<number> {
     // Runtime commands are consumed by the worker's active execution loop.
     // Use the durable store directly so command delivery cannot block on
     // prompt-output reconciliation while a local run is awaiting approval.
     const run = await this.store.get(runId);
     if (!run) return 0;
+
+    this.runtimeSecretEnvForRun(runId, options.runtimeSecretEnv);
+    this.runtimeSecretFilesForRun(runId, options.runtimeSecretFiles);
 
     let applied = 0;
     let shouldResume = false;
@@ -598,11 +609,13 @@ export class WorkflowRunner {
       const current = await this.store.get(run.id);
       if (current?.status === 'running' && !this.activeRunIds.has(run.id)) {
         const parsed = parseWorkflow(current.yamlSnapshot, `viewport://workflow/run/${current.id}`);
-        void this.runSchedulerWithRunTimeout(current.id, parsed, { resumed: true }).catch(
-          (error) => {
-            void this.failRun(current.id, error instanceof Error ? error.message : String(error));
-          },
-        );
+        void this.runSchedulerWithRunTimeout(current.id, parsed, {
+          resumed: true,
+          runtimeSecretEnv: options.runtimeSecretEnv,
+          runtimeSecretFiles: options.runtimeSecretFiles,
+        }).catch((error) => {
+          void this.failRun(current.id, error instanceof Error ? error.message : String(error));
+        });
       }
     }
 
@@ -793,6 +806,33 @@ export class WorkflowRunner {
   }
 }
 
+function resolveWorkflowRunResourceManifest(
+  manifest: WorkflowRunRequest['resourceManifest'],
+  workingDirectory: string,
+): SessionResourceManifest {
+  if (isCompleteSessionResourceManifest(manifest)) return manifest;
+
+  return resolveSessionResourceManifestSync({
+    workingDirectory,
+  });
+}
+
+function isCompleteSessionResourceManifest(
+  manifest: WorkflowRunRequest['resourceManifest'],
+): manifest is SessionResourceManifest {
+  return (
+    Boolean(manifest) &&
+    typeof manifest?.manifestDigest === 'string' &&
+    Array.isArray(manifest.configSources) &&
+    Array.isArray(manifest.contract?.contextProviders) &&
+    Array.isArray(manifest.contract?.workflows) &&
+    Array.isArray(manifest.contract?.contextPackages) &&
+    Array.isArray(manifest.contract?.riskyPathRules) &&
+    Array.isArray(manifest.conflicts) &&
+    Array.isArray(manifest.warnings)
+  );
+}
+
 async function assertRunnableWorkflowDirectory(directoryPath: string): Promise<void> {
   let stat;
   try {
@@ -841,6 +881,19 @@ function runtimeSecretRoot(runId: string): string {
     'run-secrets',
     runId,
   );
+}
+
+function approvalSubjectDigest(state: WorkflowNodeRunState): unknown {
+  if (state.type === 'action' && isRecord(state.metadata?.['action'])) {
+    return state.metadata['action']['digest'];
+  }
+
+  if (state.type === 'git_publish' && isRecord(state.metadata?.['pre_publish_review'])) {
+    const facts = state.metadata['pre_publish_review']['facts'];
+    if (isRecord(facts)) return facts['diffDigest'];
+  }
+
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

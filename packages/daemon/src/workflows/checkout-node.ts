@@ -101,7 +101,7 @@ export async function executeCheckoutNode(
   const destination = checkoutDestination(run.directoryPath, run.id, repository, node.path);
   await fs.mkdir(path.dirname(destination), { recursive: true });
 
-  const remote = node.remote ?? `https://github.com/${repository}.git`;
+  const remote = checkoutRemote(repository, node.remote, Boolean(credential?.secret));
   const credentialEnv = credential?.secret
     ? await checkoutCredentialEnv(run.directoryPath, credential.secret)
     : nonInteractiveGitEnv();
@@ -183,6 +183,18 @@ function normalizeRepository(value: string | undefined): string {
     .toLowerCase();
 }
 
+export function checkoutRemote(
+  repository: string,
+  configuredRemote: string | undefined,
+  hasCredentialMaterial: boolean,
+): string {
+  if (hasCredentialMaterial && (!configuredRemote || repositoryFromRemote(configuredRemote))) {
+    return `https://github.com/${normalizeRepository(repository)}.git`;
+  }
+
+  return configuredRemote ?? `https://github.com/${normalizeRepository(repository)}.git`;
+}
+
 function redactedRemote(remote: string): string {
   return remote
     .replace(/(https:\/\/)([^/@]+)@github\.com\//i, '$1[redacted]@github.com/')
@@ -194,9 +206,8 @@ function isPathWithin(candidate: string, root: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-async function checkoutCredentialEnv(root: string, secret: string): Promise<NodeJS.ProcessEnv> {
-  const directory = path.join(root, '.viewport', 'credential-helpers');
-  await fs.mkdir(directory, { recursive: true });
+async function checkoutCredentialEnv(_root: string, secret: string): Promise<NodeJS.ProcessEnv> {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-git-askpass-'));
   const helperPath = path.join(
     directory,
     `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`,

@@ -9,11 +9,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 import {
+  approvalExpectedActionDigest,
   approvalFeedback,
   capabilityPayload,
   localRunToSyncPayload,
 } from '../../src/cli/workflow-managed-worker-format.js';
 import { commandPollSeconds } from '../../src/cli/workflow-managed-worker-util.js';
+import {
+  acquireWorkerProcessLock,
+  workerProcessLockPath,
+} from '../../src/cli/worker-process-lock.js';
 
 const exec = promisify(execFile);
 const anthropicClaudeEnv = envNameForCredentialRef('agent/anthropic/claude-code');
@@ -21,9 +26,19 @@ const githubPrWriterEnv = envNameForCredentialRef('github/pr-writer');
 const githubTokenEnv = envNameForCredentialRef('github/token');
 const repoPaymentsEnv = envNameForCredentialRef('repo/github/payments-api');
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('workflow managed worker CLI', () => {
   const originalArgv = process.argv.slice();
   const originalFetch = global.fetch;
+  const originalViewportHome = process.env['VIEWPORT_HOME'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   beforeEach(() => {
@@ -34,7 +49,88 @@ describe('workflow managed worker CLI', () => {
   afterEach(() => {
     process.argv = originalArgv;
     global.fetch = originalFetch;
+    if (originalViewportHome === undefined) {
+      delete process.env['VIEWPORT_HOME'];
+    } else {
+      process.env['VIEWPORT_HOME'] = originalViewportHome;
+    }
     vi.doUnmock('../../src/cli/daemon-client.js');
+  });
+
+  it('prevents duplicate persistent worker processes for the same executor', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    const options = {
+      server: 'https://api.getviewport.test',
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      runnerProfile: 'default',
+      accessMode: 'polling' as const,
+    };
+
+    const lock = acquireWorkerProcessLock(options);
+    try {
+      expect(lock.filePath).toBe(workerProcessLockPath(options));
+      expect(await pathExists(lock.filePath)).toBe(true);
+      expect(() => acquireWorkerProcessLock(options)).toThrow(/already running/);
+    } finally {
+      lock.release();
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('removes signal cleanup listeners when worker locks are released', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    const beforeSigint = process.listenerCount('SIGINT');
+    const beforeSigterm = process.listenerCount('SIGTERM');
+    const options = {
+      server: 'https://api.getviewport.test',
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      accessMode: 'polling' as const,
+    };
+
+    const lock = acquireWorkerProcessLock(options);
+    expect(process.listenerCount('SIGINT')).toBe(beforeSigint + 1);
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm + 1);
+
+    lock.release();
+
+    expect(process.listenerCount('SIGINT')).toBe(beforeSigint);
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
+    expect(await pathExists(lock.filePath)).toBe(false);
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
+  it('auto-heals stale persistent worker lock files', async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-lock-'));
+    process.env['VIEWPORT_HOME'] = tempHome;
+    const options = {
+      server: 'https://api.getviewport.test',
+      workspaceId: 'workspace_1',
+      executorId: 'executor_1',
+      accessMode: 'polling' as const,
+    };
+    const filePath = workerProcessLockPath(options);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        schema: 'viewport.worker_process_lock/v1',
+        pid: 987654321,
+        signature: 'stale',
+        startedAt: '2026-05-30T00:00:00.000Z',
+      }),
+    );
+
+    const lock = acquireWorkerProcessLock(options);
+    try {
+      expect(JSON.parse(await fs.readFile(filePath, 'utf8')).pid).toBe(process.pid);
+    } finally {
+      lock.release();
+      await fs.rm(tempHome, { recursive: true, force: true });
+    }
   });
 
   it('keeps approval command polling faster than idle assignment polling by default', () => {
@@ -93,7 +189,25 @@ describe('workflow managed worker CLI', () => {
     });
   });
 
+  it('carries snake-case approval digests from platform runtime commands', () => {
+    expect(
+      approvalExpectedActionDigest({
+        node_key: 'publish',
+        type: 'plan',
+        status: 'blocked',
+        metadata: {
+          approval: {
+            expected_action_digest: 'sha256:current-diff',
+          },
+        },
+      }),
+    ).toBe('sha256:current-diff');
+  });
+
   it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {
+    const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-managed-worker-'));
+    const workdir = path.join(workdirParent, 'workspace');
+
     process.argv = [
       'node',
       'vpd',
@@ -108,7 +222,7 @@ describe('workflow managed worker CLI', () => {
       '--credential',
       'vpexec_secret',
       '--workdir',
-      '/repo',
+      workdir,
       '--agents',
       'codex',
       '--models',
@@ -154,7 +268,7 @@ describe('workflow managed worker CLI', () => {
             assignment_claim_token: 'vpclaim_run_platform_1',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
             source_ref: 'viewport://workflow/proof',
-            directory_path: '/repo',
+            directory_path: workdir,
             input_snapshot: { issue: 'PAY-1842' },
             schema_versions: { route: 'viewport.route/v1' },
             route_snapshot: { key: 'payments-bugs' },
@@ -328,6 +442,7 @@ describe('workflow managed worker CLI', () => {
 
     expect(process.env[githubPrWriterEnv]).toBeUndefined();
     expect(process.env[repoPaymentsEnv]).toBeUndefined();
+    await expect(pathExists(workdir)).resolves.toBe(true);
 
     expect(platformRequests.map((request) => request.url)).toEqual([
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
@@ -662,6 +777,9 @@ describe('workflow managed worker CLI', () => {
   });
 
   it('materializes selected run credentials into transient daemon env only', async () => {
+    const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-credential-material-'));
+    const workdir = path.join(workdirParent, 'workspace');
+
     process.argv = [
       'node',
       'vpd',
@@ -676,7 +794,7 @@ describe('workflow managed worker CLI', () => {
       '--credential',
       'vpexec_secret',
       '--workdir',
-      '/repo',
+      workdir,
       '--once',
       '--json',
     ];
@@ -723,7 +841,7 @@ nodes:
               },
             },
             source_ref: 'viewport://workflow/proof',
-            directory_path: '/repo',
+            directory_path: workdir,
             execution_profile_snapshot: {
               key: 'payments-prod',
               credentials: {
@@ -1750,6 +1868,72 @@ nodes:
     await workflow();
   });
 
+  it('infers worker agent capabilities from the daemon model catalog', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_auto_agents',
+      '--executor',
+      'executor_auto_agents',
+      '--credential',
+      'vpexec_auto_agents',
+      '--doctor',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) {
+        expect(body).toMatchObject({
+          capabilities: {
+            agents: {
+              claude: expect.objectContaining({
+                models: ['default', 'sonnet'],
+                default_model: 'default',
+              }),
+              codex: expect.objectContaining({
+                models: ['gpt-5.4'],
+                default_model: 'gpt-5.4',
+              }),
+            },
+            models: ['default', 'sonnet', 'gpt-5.4'],
+          },
+        });
+        return jsonResponse({ data: { id: 'executor_auto_agents' } });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/models') {
+        return jsonResponse({
+          models: [
+            { agentId: 'claude', value: 'default' },
+            { agentId: 'claude', value: 'sonnet' },
+            { agentId: 'codex', value: 'gpt-5.4' },
+          ],
+        });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+  });
+
   it('accepts generated equals-style registration profile flags', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-equals-'));
     const profilePath = path.join(dir, 'runner.json');
@@ -1832,6 +2016,7 @@ nodes:
 
   it('advertises profile agent capabilities and claims matching work without manual flags', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-runner-profile-claim-'));
+    const workdir = path.join(dir, 'workspace');
     const profilePath = path.join(dir, 'runner.json');
     await fs.writeFile(
       profilePath,
@@ -1860,7 +2045,7 @@ nodes:
       '--registration-profile',
       profilePath,
       '--workdir',
-      '/repo',
+      workdir,
       '--once',
       '--json',
     ];
@@ -1897,7 +2082,7 @@ nodes:
             assignment_claim_token: 'vpclaim_profile_claim',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: profile-claim\nnodes: {}\n',
             source_ref: 'viewport://workflow/profile-claim',
-            directory_path: '/repo',
+            directory_path: workdir,
             input_snapshot: { issue: 'VIE-30' },
             runner_workspace_snapshot: { runner_pool: 'payments-profile' },
           },
@@ -2214,6 +2399,232 @@ nodes:
 
     expect(platformSyncStatuses).toEqual(['completed']);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"blocked": 0');
+  });
+
+  it('cancels a blocked local run when the platform assignment is canceled', async () => {
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      '/repo',
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    let assignmentPolls = 0;
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_canceled_gate',
+            assignment_claim_token: 'vpclaim_canceled_gate',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: cancel-gated\nnodes: {}\n',
+            directory_path: '/repo',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_canceled_gate') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_canceled_gate',
+        );
+        assignmentPolls += 1;
+        return jsonResponse({
+          data: {
+            id: 'run_platform_canceled_gate',
+            status: 'canceled',
+            nodes: [
+              {
+                node_key: 'approve',
+                type: 'approval',
+                status: 'blocked',
+              },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_canceled_gate/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_canceled_gate',
+        );
+        platformSyncStatuses.push(String(body.status));
+        if (body.status === 'canceled') {
+          expect(body).toMatchObject({
+            runtime_run_id: 'local_run_canceled_gate',
+            status: 'canceled',
+            nodes: [
+              expect.objectContaining({
+                node_key: 'approve',
+                status: 'canceled',
+              }),
+            ],
+            events: [
+              expect.objectContaining({
+                type: 'run-canceled',
+                message: 'Managed workflow assignment was canceled from Viewport.',
+              }),
+            ],
+          });
+        }
+        return jsonResponse({ data: { id: 'run_platform_canceled_gate', status: body.status } });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let cancelCalled = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: '/repo' }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_canceled_gate' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_canceled_gate') {
+        return jsonResponse({ run: blockedLocalRun('local_run_canceled_gate') });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_canceled_gate/cancel') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        });
+        cancelCalled = true;
+        return jsonResponse({ run: canceledLocalRun('local_run_canceled_gate') });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_canceled_gate/approvals/approve') {
+        throw new Error('Canceled assignments must not approve or resume the local gate.');
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(cancelCalled).toBe(true);
+    expect(assignmentPolls).toBeGreaterThanOrEqual(1);
+    expect(platformSyncStatuses).toEqual(['blocked', 'canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+  });
+
+  it('does not start a local run for an assignment canceled before execution', async () => {
+    const tempWorkdir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-canceled-'));
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      tempWorkdir,
+      '--sleep',
+      '1',
+      '--max-runs',
+      '1',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_pre_start_cancel',
+            status: 'canceled',
+            assignment_claim_token: 'vpclaim_pre_start_cancel',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: pre-start-cancel\nnodes: {}\n',
+            directory_path: tempWorkdir,
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_pre_start_cancel/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_pre_start_cancel',
+        );
+        platformSyncStatuses.push(String(body.status));
+        expect(body).toMatchObject({
+          runtime_run_id: 'assignment-canceled-before-start-run_platform_pre_start_cancel',
+          status: 'canceled',
+          events: [
+            expect.objectContaining({
+              type: 'run-canceled',
+              message: 'Managed workflow assignment was canceled before local execution started.',
+              payload: expect.objectContaining({
+                recovery_policy: 'skip_local_execution_for_canceled_assignment',
+              }),
+            }),
+          ],
+        });
+        return jsonResponse({
+          data: { id: 'run_platform_pre_start_cancel', status: body.status },
+        });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string) => {
+      if (urlPath === '/api/models') {
+        return jsonResponse({
+          models: [{ agentId: 'claude', value: 'default', displayName: 'Default' }],
+        });
+      }
+      throw new Error(
+        `Canceled assignments must not start, resume, or cancel local daemon work: ${urlPath}`,
+      );
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(daemonFetch).toHaveBeenCalledTimes(1);
+    expect(daemonFetch).toHaveBeenCalledWith('/api/models', {
+      method: 'GET',
+      timeoutMs: 30000,
+    });
+    expect(platformSyncStatuses).toEqual(['canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+
+    await fs.rm(tempWorkdir, { recursive: true, force: true });
   });
 
   it('uses the local workflow snapshot to rematerialize provider credentials after approval', async () => {
@@ -3516,6 +3927,17 @@ nodes:
         platformSyncStatuses.push(String(body.status));
         return jsonResponse({ data: { id: 'run_platform_3', status: body.status } });
       }
+      if (url.endsWith('/workflow-runs/run_platform_3') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_3',
+        );
+        return jsonResponse({
+          data: {
+            id: 'run_platform_3',
+            status: 'running',
+          },
+        });
+      }
 
       return jsonResponse({ message: 'not found' }, 404);
     }) as typeof fetch;
@@ -3549,6 +3971,295 @@ nodes:
     await workflow();
 
     expect(platformSyncStatuses).toEqual(['running', 'completed']);
+  });
+
+  it('cancels a running local run when the platform assignment is canceled', async () => {
+    const tempWorkdir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-running-cancel-'));
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      tempWorkdir,
+      '--lease',
+      '2',
+      '--once',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_running_cancel',
+            assignment_claim_token: 'vpclaim_running_cancel',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: running-cancel\nnodes: {}\n',
+            directory_path: tempWorkdir,
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_running_cancel/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_running_cancel',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({
+          data: { id: 'run_platform_running_cancel', status: body.status },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_running_cancel') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_running_cancel',
+        );
+        return jsonResponse({
+          data: {
+            id: 'run_platform_running_cancel',
+            status: 'canceled',
+          },
+        });
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let localPollCount = 0;
+    let cancelCalled = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: tempWorkdir }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_running_cancel' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_running_cancel') {
+        localPollCount += 1;
+        return jsonResponse({ run: runningLocalRun({ id: 'local_run_running_cancel' }) });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_running_cancel/cancel') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        });
+        cancelCalled = true;
+        return jsonResponse({ run: canceledLocalRun('local_run_running_cancel') });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(cancelCalled).toBe(true);
+    expect(localPollCount).toBe(1);
+    expect(platformSyncStatuses).toEqual(['running', 'canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+
+    await fs.rm(tempWorkdir, { recursive: true, force: true });
+  });
+
+  it('cancels a running local run when platform access is revoked mid-run', async () => {
+    const tempWorkdir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-revoked-'));
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      tempWorkdir,
+      '--lease',
+      '2',
+      '--once',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_revoked_mid_run',
+            assignment_claim_token: 'vpclaim_revoked_mid_run',
+            yaml_snapshot: 'schema: viewport.workflow/v1\nname: revoked-mid-run\nnodes: {}\n',
+            directory_path: tempWorkdir,
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_revoked_mid_run/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_revoked_mid_run',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ ok: false, reason: 'RUNNER_REVOKED' }, 403);
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let localPollCount = 0;
+    let cancelCalled = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: tempWorkdir }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_revoked_mid_run' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_revoked_mid_run') {
+        localPollCount += 1;
+        return jsonResponse({ run: runningLocalRun({ id: 'local_run_revoked_mid_run' }) });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_revoked_mid_run/cancel') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        });
+        cancelCalled = true;
+        return jsonResponse({ run: canceledLocalRun('local_run_revoked_mid_run') });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(cancelCalled).toBe(true);
+    expect(localPollCount).toBe(1);
+    expect(platformSyncStatuses).toEqual(['running', 'canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+
+    await fs.rm(tempWorkdir, { recursive: true, force: true });
+  });
+
+  it('cancels a running local run when billing is suspended mid-run', async () => {
+    const tempWorkdir = await fs.mkdtemp(path.join(os.tmpdir(), 'vpd-worker-billing-'));
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      tempWorkdir,
+      '--lease',
+      '2',
+      '--once',
+      '--json',
+    ];
+
+    const platformSyncStatuses: string[] = [];
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_billing_suspended_mid_run',
+            assignment_claim_token: 'vpclaim_billing_suspended_mid_run',
+            yaml_snapshot:
+              'schema: viewport.workflow/v1\nname: billing-suspended-mid-run\nnodes: {}\n',
+            directory_path: tempWorkdir,
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_billing_suspended_mid_run/sync')) {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_billing_suspended_mid_run',
+        );
+        platformSyncStatuses.push(String(body.status));
+        return jsonResponse({ ok: false, reason: 'BILLING_SUSPENDED' }, 402);
+      }
+
+      return jsonResponse({ message: 'not found' }, 404);
+    }) as typeof fetch;
+
+    let localPollCount = 0;
+    let cancelCalled = false;
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([{ id: 'dir_1', path: tempWorkdir }]);
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        return jsonResponse({ run: { id: 'local_run_billing_suspended_mid_run' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_billing_suspended_mid_run') {
+        localPollCount += 1;
+        return jsonResponse({
+          run: runningLocalRun({ id: 'local_run_billing_suspended_mid_run' }),
+        });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_billing_suspended_mid_run/cancel') {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toEqual({
+          message: 'Managed workflow assignment was canceled from Viewport.',
+          actor: { name: 'Viewport', source: 'managed-executor' },
+        });
+        cancelCalled = true;
+        return jsonResponse({ run: canceledLocalRun('local_run_billing_suspended_mid_run') });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
+
+    expect(cancelCalled).toBe(true);
+    expect(localPollCount).toBe(1);
+    expect(platformSyncStatuses).toEqual(['running', 'canceled']);
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"failed": 1');
+
+    await fs.rm(tempWorkdir, { recursive: true, force: true });
   });
 
   it('runs through real CLI HTTP boundaries against platform and daemon endpoints', async () => {
@@ -4130,6 +4841,34 @@ function blockedLocalRun(id = 'local_run_2'): WorkflowRunRecord {
     ],
     createdAt: now - 2000,
     startedAt: now - 1000,
+    updatedAt: now,
+  };
+}
+
+function canceledLocalRun(id = 'local_run_canceled_gate'): WorkflowRunRecord {
+  const now = Date.now();
+  return {
+    ...blockedLocalRun(id),
+    status: 'canceled',
+    nodes: {
+      approve: {
+        id: 'approve',
+        type: 'approval',
+        status: 'canceled',
+        output: 'Managed workflow assignment was canceled from Viewport.',
+        completedAt: now,
+      },
+    },
+    events: [
+      {
+        id: 'evt_canceled',
+        runId: id,
+        timestamp: now,
+        type: 'run-canceled',
+        message: 'Managed workflow assignment was canceled from Viewport.',
+      },
+    ],
+    completedAt: now,
     updatedAt: now,
   };
 }

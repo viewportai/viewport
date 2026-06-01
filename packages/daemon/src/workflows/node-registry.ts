@@ -18,13 +18,17 @@ import {
 import { envNameForCredentialRef } from './action-provider-utils.js';
 import { executeSubflowNode } from './subflow-executor.js';
 import { buildExpressionContext, evaluateConditionExpression } from './expression.js';
-import type { WorkflowNodeExecutorContext } from './node-executor.js';
+import type { ApprovalBlockOptions, WorkflowNodeExecutorContext } from './node-executor.js';
 import type { WorkflowNode, WorkflowRunRecord } from './types.js';
 import { sanitizePlanProposalMetadata } from '../hooks/plan-extractor.js';
 import { readPromptNodeOutput } from './prompt-output.js';
 import { shellAuthorityDenial } from './workflow-authority-contract.js';
 import { checkoutAuthorityDenial, executeCheckoutNode } from './checkout-node.js';
-import { executeGitPublishNode, gitPublishAuthorityDenial } from './git-publish-node.js';
+import {
+  evaluateGitPublishPrePublishReview,
+  executeGitPublishNode,
+  gitPublishAuthorityDenial,
+} from './git-publish-node.js';
 
 /**
  * Outcome of a per-type executor handler. The orchestrator in
@@ -73,6 +77,7 @@ export interface BuiltinExecutorHelpers {
     run: WorkflowRunRecord,
     nodeId: string,
     prompt: string,
+    options?: ApprovalBlockOptions,
   ) => Promise<void>;
 }
 
@@ -183,7 +188,7 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
     return { result: 'completed', artifactCwd: result.path };
   },
 
-  git_publish: async (context, run, nodeId, node) => {
+  git_publish: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'git_publish') return { result: 'completed' };
     const state = run.nodes[nodeId];
     const renderedNode = {
@@ -221,6 +226,130 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
             secret: runtimeSecretMaterial(context, envNameForCredentialRef(credentialRef)),
           }
         : undefined;
+    if (renderedNode.prePublishReview) {
+      const decision = await evaluateGitPublishPrePublishReview(renderedNode, input);
+      const previousReview = prePublishReviewMetadata(state?.metadata?.['pre_publish_review']);
+      const previousDigest = prePublishReviewDiffDigest(previousReview);
+      const approved = state?.approval?.approved === true;
+      const approvedDigest = state?.approval?.expectedActionDigest;
+      const priorApprovalInvalidated =
+        previousReview !== null &&
+        prePublishReviewMetadata(previousReview['invalidated_approval']) !== null;
+      const changedAfterApproval =
+        approved && previousDigest !== null && previousDigest !== decision.facts.diffDigest;
+      const missingApprovedDigest = approved && previousDigest === null && decision.required;
+      const missingCurrentDigestAfterInvalidation =
+        approved && priorApprovalInvalidated && approvedDigest !== decision.facts.diffDigest;
+
+      if (
+        approved &&
+        !changedAfterApproval &&
+        !missingApprovedDigest &&
+        !missingCurrentDigestAfterInvalidation
+      ) {
+        if (state) {
+          const verifiedReview = previousReview ? { ...previousReview } : {};
+          delete verifiedReview['invalidated_approval'];
+
+          state.metadata = {
+            ...(state.metadata ?? {}),
+            pre_publish_review: {
+              ...verifiedReview,
+              schema: 'viewport.pre_publish_review/v1',
+              required: previousReview?.['required'] ?? decision.required,
+              facts: previousReview?.['facts'] ?? decision.facts,
+              matched_rules: previousReview?.['matched_rules'] ?? decision.matchedRules,
+              policy: previousReview?.['policy'] ?? renderedNode.prePublishReview,
+              resume_verification: {
+                verified_at: new Date().toISOString(),
+                facts: decision.facts,
+                diff_digest: decision.facts.diffDigest,
+              },
+            },
+          };
+        }
+      } else {
+        const invalidatedApproval =
+          changedAfterApproval || missingApprovedDigest || missingCurrentDigestAfterInvalidation
+            ? {
+                previous_diff_digest: previousDigest,
+                current_diff_digest: decision.facts.diffDigest,
+                previous_approval_resolved_at: state?.approval?.resolvedAt ?? null,
+                reason: changedAfterApproval
+                  ? 'diff_changed_after_approval'
+                  : missingCurrentDigestAfterInvalidation
+                    ? 'current_diff_digest_not_approved'
+                    : 'approved_diff_digest_missing',
+              }
+            : null;
+
+        if (state) {
+          if (invalidatedApproval) {
+            state.approval = undefined;
+          }
+          state.metadata = {
+            ...(state.metadata ?? {}),
+            pre_publish_review: {
+              schema: 'viewport.pre_publish_review/v1',
+              required: decision.required || invalidatedApproval !== null,
+              facts: decision.facts,
+              matched_rules: decision.matchedRules,
+              policy: renderedNode.prePublishReview,
+              ...(invalidatedApproval ? { invalidated_approval: invalidatedApproval } : {}),
+            },
+          };
+        }
+        if (invalidatedApproval) {
+          addEvent(
+            run,
+            'pre-publish-review-invalidated',
+            `Pre-publish approval invalidated because the diff changed for ${renderedNode.repository}`,
+            {
+              facts: decision.facts,
+              matchedRules: decision.matchedRules,
+              invalidatedApproval,
+            },
+            nodeId,
+          );
+        }
+        addEvent(
+          run,
+          decision.required || invalidatedApproval
+            ? 'pre-publish-review-required'
+            : 'pre-publish-review-skipped',
+          decision.required || invalidatedApproval
+            ? `Pre-publish review required for ${renderedNode.repository}`
+            : `Pre-publish review skipped for ${renderedNode.repository}`,
+          {
+            facts: decision.facts,
+            matchedRules: decision.matchedRules,
+            ...(invalidatedApproval ? { invalidatedApproval } : {}),
+          },
+          nodeId,
+        );
+        if (decision.required || invalidatedApproval) {
+          const reviewerTags = [
+            ...new Set(decision.matchedRules.flatMap((rule) => rule.reviewerTags)),
+          ];
+          await helpers.blockForApproval(
+            context,
+            run,
+            nodeId,
+            invalidatedApproval
+              ? `${prePublishReviewPrompt(renderedNode.repository, input.branch, decision)}\n\nThe diff changed after the previous approval. Review the current diff before publishing.`
+              : prePublishReviewPrompt(renderedNode.repository, input.branch, decision),
+            {
+              gateIntent: 'approval',
+              reviewerTags,
+              timeout: decision.matchedRules.find((rule) => rule.timeout)?.timeout ?? undefined,
+              onTimeout:
+                decision.matchedRules.find((rule) => rule.onTimeout)?.onTimeout ?? undefined,
+            },
+          );
+          return { result: 'blocked' };
+        }
+      }
+    }
     const result = await executeGitPublishNode(renderedNode, input, credential);
     if (state) {
       state.output = JSON.stringify(result);
@@ -450,7 +579,12 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
 
   approval: async (context, run, nodeId, node, helpers) => {
     if (node.type !== 'approval') return { result: 'completed' };
-    await helpers.blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run));
+    await helpers.blockForApproval(context, run, nodeId, await renderTemplate(node.prompt, run), {
+      gateIntent: node.gate_intent,
+      reviewerTags: node.reviewer_tags,
+      timeout: node.timeout,
+      onTimeout: node.on_timeout,
+    });
     return { result: 'blocked' };
   },
 
@@ -747,6 +881,34 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
   },
 };
 
+function prePublishReviewPrompt(
+  repository: string,
+  branch: string,
+  decision: Awaited<ReturnType<typeof evaluateGitPublishPrePublishReview>>,
+): string {
+  const paths = decision.facts.changedPaths.slice(0, 20).join(', ');
+  const rules = decision.matchedRules.map((rule) => rule.name).join(', ');
+
+  return [
+    `Approve publishing ${repository} to ${branch}?`,
+    `Matched review rule(s): ${rules}.`,
+    `Changed paths: ${paths || '(none)'}.`,
+    `Diff size: ${decision.facts.diffLines} line(s).`,
+  ].join('\n');
+}
+
+function prePublishReviewMetadata(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function prePublishReviewDiffDigest(review: Record<string, unknown> | null): string | null {
+  const facts = prePublishReviewMetadata(review?.['facts']);
+  const digest = facts?.['diffDigest'] ?? facts?.['diff_digest'];
+  return typeof digest === 'string' && digest.trim() !== '' ? digest : null;
+}
+
 async function backfillPromptDependencyOutputs(
   run: WorkflowRunRecord,
   needs: string[] | undefined,
@@ -942,7 +1104,7 @@ function buildShellExecutionReceipt(input: {
   completedAt?: number;
   status: 'preflight' | 'denied' | 'completed' | 'failed' | 'canceled';
   exitCode?: number | null;
-  denial?: { reason: string; detail: string };
+  denial?: { reason: string; detail: string; provider?: string; action?: string };
 }): Record<string, unknown> {
   const durationMs =
     input.completedAt !== undefined ? Math.max(0, input.completedAt - input.startedAt) : null;
@@ -965,10 +1127,14 @@ function buildShellExecutionReceipt(input: {
     duration_ms: durationMs,
     exit_code: input.exitCode ?? null,
     denial: input.denial
-      ? {
-          reason: input.denial.reason,
-          detail: input.denial.detail,
-        }
+      ? Object.fromEntries(
+          Object.entries({
+            reason: input.denial.reason,
+            detail: input.denial.detail,
+            provider: input.denial.provider,
+            action: input.denial.action,
+          }).filter(([, value]) => value !== undefined),
+        )
       : null,
   };
 }
