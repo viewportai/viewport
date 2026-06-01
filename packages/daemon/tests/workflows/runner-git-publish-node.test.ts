@@ -447,6 +447,105 @@ nodes:
     });
   }, 60_000);
 
+  it('re-materializes run-scoped git publish credentials when a fresh worker applies approval commands', async () => {
+    const daemon = await setup(projectDir);
+    const workflowPath = path.join(projectDir, 'workflow.yaml');
+    await fs.writeFile(
+      workflowPath,
+      `
+schema: viewport.workflow/v1
+name: git-publish-resume-materialized-grant-proof
+nodes:
+  repo:
+    type: checkout
+    repository: acme/payments
+    remote: ${JSON.stringify(remoteDir)}
+  edit:
+    type: shell
+    needs: [repo]
+    cwd: "{{ nodes.repo.outputs.path }}"
+    command: "mkdir -p src/payments && printf 'export const payment = true;\\n' > src/payments/resume-proof.ts"
+  publish:
+    type: git_publish
+    needs: [edit]
+    repository: acme/payments
+    cwd: "{{ nodes.repo.outputs.path }}"
+    branch: viewport/resume-proof
+    message: Publish resume proof update
+    credentialMode: run_scoped_grant
+    credentialRef: repo/github/payments-api
+    prePublishReview:
+      rules:
+        - name: sensitive-path
+          when:
+            changed_paths_any: ["src/payments/**"]
+          require: human(tech-lead)
+`,
+      'utf8',
+    );
+
+    const run = await daemon.workflowRunner.startRun({
+      workflowPath,
+      directoryId: DirectoryManager.idFromPath(projectDir),
+      initiation: 'cli',
+      workflowAuthorityContract: {
+        schema_version: 'viewport.workflow_execution_authority/v1',
+        digest: 'sha256:authority',
+        repos: { allowed: ['acme/payments'], runner_pool_owns_repo_scope: false },
+        shell: { policy: 'constrained', allow_legacy_command: true },
+      },
+    });
+
+    await waitForTerminalRun(daemon, run.id);
+    const blocked = await daemon.workflowRunner.getRun(run.id);
+    const diffDigest = prePublishReviewDiffDigest(blocked?.nodes.publish?.metadata);
+    expect(blocked?.status).toBe('blocked');
+    expect(diffDigest).toMatch(/^sha256:/);
+
+    const freshDaemon = await setup(projectDir);
+    expect(
+      await freshDaemon.workflowRunner.applyRuntimeCommandBody(
+        run.id,
+        {
+          runtime_commands: [
+            {
+              id: 'approval-command-with-rematerialized-secret',
+              type: 'workflow.approval_decision',
+              workflow_run_id: run.id,
+              workflow_node_id: 'publish',
+              approved: true,
+              decision: 'approve',
+              message: 'Approve after fresh worker restart',
+              expected_action_digest: diffDigest,
+              decided_at: new Date().toISOString(),
+              actor: { id: 'user-1', name: 'Tech Lead', source: 'platform' },
+            },
+          ],
+        },
+        {
+          runtimeSecretEnv: {
+            [envNameForCredentialRef('repo/github/payments-api')]: 'ghs_run_scoped_push',
+          },
+        },
+      ),
+    ).toBe(1);
+
+    await waitForTerminalRun(freshDaemon, run.id);
+    const completed = await freshDaemon.workflowRunner.getRun(run.id);
+    const pushedCommit = await runGit(
+      ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/resume-proof'],
+      root,
+    );
+
+    expect(completed?.status, completed?.error).toBe('completed');
+    expect(completed?.nodes.publish?.outputs?.commit).toBe(pushedCommit.trim());
+    expect(completed?.nodes.publish?.metadata?.git_publish).toMatchObject({
+      credentialMode: 'run_scoped_grant',
+      credentialRef: 'repo/github/payments-api',
+    });
+    expect(JSON.stringify(completed)).not.toContain('ghs_run_scoped_push');
+  }, 60_000);
+
   it('blocks dynamic pre-publish review from diff size even when paths are otherwise allowed', async () => {
     const daemon = await setup(projectDir);
     const workflowPath = path.join(projectDir, 'workflow.yaml');

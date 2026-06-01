@@ -176,6 +176,7 @@ function assertGitHubBrokeredCredential(
   runtimeSecretEnvKeys: string[],
 ): asserts token is string {
   if (token && token.startsWith('ghs_')) return;
+  if (token && localGitHubProofTokensAllowed() && isGitHubUserToken(token)) return;
 
   const reason = token
     ? 'github_credential_must_be_installation_token'
@@ -205,6 +206,7 @@ function assertGitHubBrokeredCredential(
         reason,
         required: 'github_app_installation_token',
         acceptedPrefix: 'ghs_',
+        localDevelopmentUserTokenAllowed: localGitHubProofTokensAllowed(),
         credentialRef,
         expectedEnvName,
         runtimeSecretEnvKeys,
@@ -229,6 +231,14 @@ function assertGitHubBrokeredCredential(
     output: `${node.adapter}.${node.action} blocked`,
     metadata,
   });
+}
+
+function localGitHubProofTokensAllowed(): boolean {
+  return process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] === '1';
+}
+
+function isGitHubUserToken(token: string): boolean {
+  return token.startsWith('ghp_') || token.startsWith('github_pat_') || token.startsWith('gho_');
 }
 
 async function existingGitHubPullRequest(

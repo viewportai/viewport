@@ -575,12 +575,22 @@ export class WorkflowRunner {
     return run;
   }
 
-  async applyRuntimeCommandBody(runId: string, body: unknown): Promise<number> {
+  async applyRuntimeCommandBody(
+    runId: string,
+    body: unknown,
+    options: {
+      runtimeSecretEnv?: Record<string, string>;
+      runtimeSecretFiles?: Record<string, string>;
+    } = {},
+  ): Promise<number> {
     // Runtime commands are consumed by the worker's active execution loop.
     // Use the durable store directly so command delivery cannot block on
     // prompt-output reconciliation while a local run is awaiting approval.
     const run = await this.store.get(runId);
     if (!run) return 0;
+
+    this.runtimeSecretEnvForRun(runId, options.runtimeSecretEnv);
+    this.runtimeSecretFilesForRun(runId, options.runtimeSecretFiles);
 
     let applied = 0;
     let shouldResume = false;
@@ -597,11 +607,13 @@ export class WorkflowRunner {
       const current = await this.store.get(run.id);
       if (current?.status === 'running' && !this.activeRunIds.has(run.id)) {
         const parsed = parseWorkflow(current.yamlSnapshot, `viewport://workflow/run/${current.id}`);
-        void this.runSchedulerWithRunTimeout(current.id, parsed, { resumed: true }).catch(
-          (error) => {
-            void this.failRun(current.id, error instanceof Error ? error.message : String(error));
-          },
-        );
+        void this.runSchedulerWithRunTimeout(current.id, parsed, {
+          resumed: true,
+          runtimeSecretEnv: options.runtimeSecretEnv,
+          runtimeSecretFiles: options.runtimeSecretFiles,
+        }).catch((error) => {
+          void this.failRun(current.id, error instanceof Error ? error.message : String(error));
+        });
       }
     }
 

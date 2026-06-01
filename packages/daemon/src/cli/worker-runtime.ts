@@ -669,7 +669,10 @@ async function executeHostedWorkflowClaim(
     if (existing) {
       if (existing.status === 'blocked') {
         const body = await fetchHostedAssignment(profile, lease);
-        const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body);
+        const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+        const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body, {
+          runtimeSecretEnv,
+        });
         if (applied > 0) {
           const completed = await waitForWorkflowRun(daemon, existing.id);
           return {
@@ -940,7 +943,10 @@ async function resumeBlockedHostedExecution(
       }
       return execution;
     }
-    const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body);
+    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+    const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body, {
+      runtimeSecretEnv,
+    });
     if (applied > 0) {
       const completed = await waitForWorkflowRun(daemon, workflowRunId);
       if (completed.status === 'blocked') {

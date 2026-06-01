@@ -1013,6 +1013,73 @@ nodes:
     }
   });
 
+  it('allows GitHub user tokens only behind the explicit local proof escape hatch', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          html_url: 'https://github.com/acme/payments/issues/1842#issuecomment-1842',
+          url: 'https://api.github.com/repos/acme/payments/issues/comments/1842',
+        }),
+        { status: 201 },
+      ),
+    );
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env[githubTokenEnv];
+    const originalProofFlag = process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+    process.env[githubTokenEnv] = 'ghp_local_proof_token';
+    process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = '1';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-local-proof-token-proof
+nodes:
+  comment_issue:
+    type: action
+    adapter: github
+    action: comment_issue
+    with:
+      owner: acme
+      repo: payments
+      issue_number: "1842"
+      body: "Local proof only."
+      credential_ref: github/token
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(completed?.status).toBe('completed');
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments/issues/1842/comments',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer ghp_local_proof_token',
+          }),
+        }),
+      );
+      expect(JSON.stringify(completed)).not.toContain('ghp_local_proof_token');
+    } finally {
+      if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
+      else process.env[githubTokenEnv] = originalCredentialRefToken;
+      if (originalProofFlag === undefined) delete process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+      else process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = originalProofFlag;
+    }
+  });
+
   it('executes native GitHub issue comments with runner-local credentials', async () => {
     const fetchMock = vi
       .fn()
