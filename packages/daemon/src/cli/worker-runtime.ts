@@ -252,7 +252,12 @@ export async function runStandaloneWorker(
           execution.run
         ) {
           await workerTransport.sync(lease, execution);
-          execution = await resumeBlockedHostedExecution(profile, workerTransport, lease, execution);
+          execution = await resumeBlockedHostedExecution(
+            profile,
+            workerTransport,
+            lease,
+            execution,
+          );
           if (execution.status !== 'blocked') {
             await workerTransport.sync(lease, execution);
           }
