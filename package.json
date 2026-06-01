@@ -4,6 +4,7 @@
   "workspaces": [
     "packages/*",
     "services/relay",
+    "services/managed-runner",
     "integration"
   ],
   "scripts": {
