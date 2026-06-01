@@ -5,7 +5,7 @@
  * daemon CLI validator aligned with the protocol, platform API, and web suites
  * until the daemon imports @viewportai/protocol directly.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
@@ -23,10 +23,33 @@ type Corpus = {
   fixtures: Fixture[];
 };
 
-const corpusPath = path.resolve(
-  process.cwd(),
-  '../../../protocol/fixtures/policy-conformance-corpus.json',
-);
+function findProtocolCorpusPath(startDir: string): string {
+  let current = startDir;
+
+  while (true) {
+    const candidate = path.join(
+      current,
+      'node_modules',
+      '@viewportai',
+      'protocol',
+      'fixtures',
+      'policy-conformance-corpus.json',
+    );
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error(
+        'Could not find @viewportai/protocol policy conformance corpus in node_modules',
+      );
+    }
+    current = parent;
+  }
+}
+
+const corpusPath = findProtocolCorpusPath(process.cwd());
 const corpus = JSON.parse(readFileSync(corpusPath, 'utf8')) as Corpus;
 
 describe('daemon PolicyDocumentSchema conformance', () => {
