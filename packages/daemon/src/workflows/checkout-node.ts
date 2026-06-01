@@ -101,7 +101,7 @@ export async function executeCheckoutNode(
   const destination = checkoutDestination(run.directoryPath, run.id, repository, node.path);
   await fs.mkdir(path.dirname(destination), { recursive: true });
 
-  const remote = node.remote ?? `https://github.com/${repository}.git`;
+  const remote = checkoutRemote(repository, node.remote, Boolean(credential?.secret));
   const credentialEnv = credential?.secret
     ? await checkoutCredentialEnv(run.directoryPath, credential.secret)
     : nonInteractiveGitEnv();
@@ -181,6 +181,18 @@ function normalizeRepository(value: string | undefined): string {
     .replace(/^github\.com\//i, '')
     .replace(/\.git$/i, '')
     .toLowerCase();
+}
+
+export function checkoutRemote(
+  repository: string,
+  configuredRemote: string | undefined,
+  hasCredentialMaterial: boolean,
+): string {
+  if (hasCredentialMaterial && (!configuredRemote || repositoryFromRemote(configuredRemote))) {
+    return `https://github.com/${normalizeRepository(repository)}.git`;
+  }
+
+  return configuredRemote ?? `https://github.com/${normalizeRepository(repository)}.git`;
 }
 
 function redactedRemote(remote: string): string {
