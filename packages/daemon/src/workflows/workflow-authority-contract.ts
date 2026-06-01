@@ -189,7 +189,9 @@ export function shellAuthorityDenial(
       runId: run.id,
       nodeId,
       command: redactedCommand(renderedCommand),
-      detail: shellPolicyDecision.reason ?? 'Shell command is not allowed by workflow authority contract.',
+      detail:
+        shellPolicyDecision.reason ??
+        'Shell command is not allowed by workflow authority contract.',
       contractDigest: workflowAuthorityContractDigest(run),
     };
   }
@@ -278,7 +280,10 @@ function legacyShellCommandAllowed(contract: Record<string, unknown>): boolean {
   return false;
 }
 
-function shellCommandPolicy(contract: Record<string, unknown>): { allowed: string[]; denied: string[] } {
+function shellCommandPolicy(contract: Record<string, unknown>): {
+  allowed: string[];
+  denied: string[];
+} {
   return {
     allowed: stringArray(readPath(contract, ['shell', 'allowed'])),
     denied: stringArray(readPath(contract, ['shell', 'denied'])),

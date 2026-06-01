@@ -1075,7 +1075,8 @@ nodes:
     } finally {
       if (originalCredentialRefToken === undefined) delete process.env[githubTokenEnv];
       else process.env[githubTokenEnv] = originalCredentialRefToken;
-      if (originalProofFlag === undefined) delete process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+      if (originalProofFlag === undefined)
+        delete process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
       else process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = originalProofFlag;
     }
   });

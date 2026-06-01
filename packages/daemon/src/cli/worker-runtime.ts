@@ -294,9 +294,7 @@ async function executeClaim(
   return executeHostedWorkflowClaim(profile, lease);
 }
 
-async function loadWorkerRuntimeBootstrap(
-  bootstrapPath?: string,
-): Promise<WorkerRuntimeBootstrap> {
+async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
   if (bootstrapPath) {
     return loadSandboxBootstrap(bootstrapPath);
   }
@@ -348,7 +346,10 @@ async function loadSandboxBootstrap(bootstrapPath: string): Promise<WorkerRuntim
   if (raw['schema'] !== 'viewport.sandbox_bootstrap/v1') {
     throw new Error('Sandbox bootstrap file must use schema viewport.sandbox_bootstrap/v1.');
   }
-  const workspaceRoot = requiredString(raw['workspace_root'] ?? raw['workspaceRoot'], 'workspace_root');
+  const workspaceRoot = requiredString(
+    raw['workspace_root'] ?? raw['workspaceRoot'],
+    'workspace_root',
+  );
   const identity = recordValue(raw['identity']);
   const identityFile = await materializeBootstrapIdentity(identity, workspaceRoot);
   const profile: WorkerRuntimeProfile = {
@@ -376,15 +377,22 @@ async function loadSandboxBootstrap(bootstrapPath: string): Promise<WorkerRuntim
   };
 }
 
-function claimedLeaseFromBootstrap(rawLease: Record<string, unknown> | undefined): ClaimedLease | undefined {
+function claimedLeaseFromBootstrap(
+  rawLease: Record<string, unknown> | undefined,
+): ClaimedLease | undefined {
   if (!rawLease) return undefined;
-  const id = requiredString(rawLease['id'] ?? rawLease['lease_id'] ?? rawLease['leaseId'], 'lease.id');
+  const id = requiredString(
+    rawLease['id'] ?? rawLease['lease_id'] ?? rawLease['leaseId'],
+    'lease.id',
+  );
   return {
     id,
     runId: stringValue(rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId']),
     runtimeRunId: stringValue(rawLease['runtime_run_id'] ?? rawLease['runtimeRunId']),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
-    assignmentClaimToken: stringValue(rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken']),
+    assignmentClaimToken: stringValue(
+      rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken'],
+    ),
     yamlSnapshot: stringValue(rawLease['yaml_snapshot'] ?? rawLease['yamlSnapshot']),
     sourceRef: stringValue(rawLease['source_ref'] ?? rawLease['sourceRef']),
     directoryPath: stringValue(rawLease['directory_path'] ?? rawLease['directoryPath']),
@@ -413,8 +421,14 @@ async function materializeBootstrapIdentity(
   if (!identity) {
     throw new Error('Sandbox bootstrap file is missing identity.');
   }
-  const publicKey = requiredString(identity['public_key'] ?? identity['publicKey'], 'identity.public_key');
-  const privateKey = requiredString(identity['private_key'] ?? identity['privateKey'], 'identity.private_key');
+  const publicKey = requiredString(
+    identity['public_key'] ?? identity['publicKey'],
+    'identity.public_key',
+  );
+  const privateKey = requiredString(
+    identity['private_key'] ?? identity['privateKey'],
+    'identity.private_key',
+  );
   const publicKeyFingerprint = requiredString(
     identity['public_key_fingerprint'] ?? identity['publicKeyFingerprint'],
     'identity.public_key_fingerprint',

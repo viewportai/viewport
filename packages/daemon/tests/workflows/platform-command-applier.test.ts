@@ -253,10 +253,13 @@ describe('WorkflowRuntimeCommandApplier', () => {
     delete run.nodes.review;
 
     const decisions: WorkflowApprovalDecision[] = [];
-    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), async (_runId, _nodeId, decision) => {
-      decisions.push(decision);
-      return run;
-    });
+    const applier = new WorkflowRuntimeCommandApplier(
+      storeWith([run]),
+      async (_runId, _nodeId, decision) => {
+        decisions.push(decision);
+        return run;
+      },
+    );
 
     const applied = await applier.apply({
       id: 'approval-decision:same-digest-after-reblock',
@@ -373,10 +376,13 @@ describe('WorkflowRuntimeCommandApplier', () => {
     delete run.nodes.review;
 
     const decisions: WorkflowApprovalDecision[] = [];
-    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), async (_runId, _nodeId, decision) => {
-      decisions.push(decision);
-      return run;
-    });
+    const applier = new WorkflowRuntimeCommandApplier(
+      storeWith([run]),
+      async (_runId, _nodeId, decision) => {
+        decisions.push(decision);
+        return run;
+      },
+    );
 
     const applied = await applier.apply({
       id: 'approval-decision:same-digest-request-churn',
@@ -407,14 +413,17 @@ describe('WorkflowRuntimeCommandApplier', () => {
       markDecisionStarted = resolve;
     });
     const decisions: WorkflowApprovalDecision[] = [];
-    const applier = new WorkflowRuntimeCommandApplier(storeWith([run]), async (_runId, _nodeId, decision) => {
-      decisions.push(decision);
-      markDecisionStarted?.();
-      await new Promise<WorkflowRunRecord>((resolve) => {
-        resolveDecision = resolve;
-      });
-      return run;
-    });
+    const applier = new WorkflowRuntimeCommandApplier(
+      storeWith([run]),
+      async (_runId, _nodeId, decision) => {
+        decisions.push(decision);
+        markDecisionStarted?.();
+        await new Promise<WorkflowRunRecord>((resolve) => {
+          resolveDecision = resolve;
+        });
+        return run;
+      },
+    );
 
     const command = {
       id: 'approval-decision:concurrent',

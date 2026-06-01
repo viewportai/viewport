@@ -117,7 +117,10 @@ export const WorkflowPolicyDefinitionSchema = z
       .optional(),
     escalation: z
       .object({
-        whenStuck: z.string().regex(/^human\([a-zA-Z0-9_, -]+\)$/).optional(),
+        whenStuck: z
+          .string()
+          .regex(/^human\([a-zA-Z0-9_, -]+\)$/)
+          .optional(),
         reviewerTags: z.array(z.string().trim().min(1)).optional(),
         channel: z.string().trim().min(1).optional(),
       })

@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -211,7 +210,10 @@ describe('check-command', () => {
   it('reports route validation errors', async () => {
     await fs.mkdir(path.join(tmpDir, '.viewport', 'routes'));
     await fs.writeFile(path.join(tmpDir, '.viewport', 'policy.yaml'), VALID_POLICY);
-    await fs.writeFile(path.join(tmpDir, '.viewport', 'routes', 'bad.yaml'), INVALID_ROUTE_BAD_NAME);
+    await fs.writeFile(
+      path.join(tmpDir, '.viewport', 'routes', 'bad.yaml'),
+      INVALID_ROUTE_BAD_NAME,
+    );
     await runCheck([tmpDir]);
 
     expect(exitCode).toBe(1);

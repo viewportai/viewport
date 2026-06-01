@@ -51,7 +51,9 @@ export async function check(): Promise<void> {
   const routesDir = path.join(viewportDir, 'routes');
   if (fs.existsSync(routesDir) && fs.statSync(routesDir).isDirectory()) {
     for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.yaml'))) {
-      results.push(checkFile(path.join(routesDir, file), `routes/${file}`, RouteConfigDocumentSchema));
+      results.push(
+        checkFile(path.join(routesDir, file), `routes/${file}`, RouteConfigDocumentSchema),
+      );
     }
   }
 
@@ -195,6 +197,8 @@ function printHumanOutput(output: CheckOutput, resolvedPath: string): void {
   if (output.valid) {
     process.stdout.write(`✓ ${output.results.length} file(s) valid.\n`);
   } else {
-    process.stdout.write(`✗ ${output.errorCount} file(s) with errors. Fix before deploying to Viewport.\n`);
+    process.stdout.write(
+      `✗ ${output.errorCount} file(s) with errors. Fix before deploying to Viewport.\n`,
+    );
   }
 }

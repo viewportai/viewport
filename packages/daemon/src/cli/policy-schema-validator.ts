@@ -74,7 +74,10 @@ const PolicyReviewRuleSchema = z
       })
       .strict(),
     require: z.string().min(1).optional(),
-    reviewers: z.object({ tags: z.array(z.string()).min(1) }).strict().optional(),
+    reviewers: z
+      .object({ tags: z.array(z.string()).min(1) })
+      .strict()
+      .optional(),
     timeout: z.string().optional(),
     on_timeout: z.enum(['escalate', 'auto-approve', 'cancel']).optional(),
   })

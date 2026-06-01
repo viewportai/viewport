@@ -748,11 +748,7 @@ async function executeJsonApiAction(
   let response = await fetch(request.url, requestInit);
   let attempts = 1;
   const retry = request.retry;
-  while (
-    retry &&
-    attempts < retry.attempts &&
-    retry.statuses.includes(response.status)
-  ) {
+  while (retry && attempts < retry.attempts && retry.statuses.includes(response.status)) {
     await sleep(retry.delayMs);
     attempts += 1;
     response = await fetch(request.url, requestInit);
@@ -844,7 +840,11 @@ async function executeJsonApiAction(
   };
 }
 
-function githubPullRequestCreateRetryPolicy(): { statuses: number[]; attempts: number; delayMs: number } {
+function githubPullRequestCreateRetryPolicy(): {
+  statuses: number[];
+  attempts: number;
+  delayMs: number;
+} {
   const delayMs = Number.parseInt(process.env['VIEWPORT_GITHUB_PR_RETRY_DELAY_MS'] ?? '', 10);
 
   return {

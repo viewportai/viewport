@@ -233,14 +233,13 @@ const BUILTIN_NODE_EXECUTORS: Record<WorkflowNode['type'], BuiltinNodeExecutor> 
       const approved = state?.approval?.approved === true;
       const approvedDigest = state?.approval?.expectedActionDigest;
       const priorApprovalInvalidated =
-        previousReview !== null && prePublishReviewMetadata(previousReview['invalidated_approval']) !== null;
+        previousReview !== null &&
+        prePublishReviewMetadata(previousReview['invalidated_approval']) !== null;
       const changedAfterApproval =
         approved && previousDigest !== null && previousDigest !== decision.facts.diffDigest;
       const missingApprovedDigest = approved && previousDigest === null && decision.required;
       const missingCurrentDigestAfterInvalidation =
-        approved &&
-        priorApprovalInvalidated &&
-        approvedDigest !== decision.facts.diffDigest;
+        approved && priorApprovalInvalidated && approvedDigest !== decision.facts.diffDigest;
 
       if (
         approved &&

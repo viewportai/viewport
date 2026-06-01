@@ -118,7 +118,9 @@ describe('worker command', () => {
       home: homeDir,
       baseHome: homeDir,
     });
-    expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
+    expect(payload.supportPacket.docsUrl).toBe(
+      'https://docs.getviewport.com/troubleshooting/support-packet',
+    );
     expect(payload.supportPacket.reviewBeforeSharing).toBe(true);
     expect(payload.supportPacket.omittedSecrets).toContain('lease_tokens');
     expect(payload.supportPacket.omittedSecrets).toContain('worker_private_keys');
@@ -173,7 +175,9 @@ describe('worker command', () => {
     expect(payload.ok).toBe(true);
     expect(payload.runtimeProfile).toBe('managed-executor');
     expect(payload.credentialSource).toBe('profile');
-    expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
+    expect(payload.supportPacket.docsUrl).toBe(
+      'https://docs.getviewport.com/troubleshooting/support-packet',
+    );
     expect(payload.supportPacket.omittedSecrets).toContain('credentials');
     expect(payload.vpdProfile).toEqual({
       name: null,
@@ -182,7 +186,9 @@ describe('worker command', () => {
       baseHome: homeDir,
     });
     expect(payload.missing).toEqual([]);
-    expect(payload.warnings).toContain('workspace root not pinned; pass --workdir for predictable checkouts');
+    expect(payload.warnings).toContain(
+      'workspace root not pinned; pass --workdir for predictable checkouts',
+    );
     expect(payload.capabilities.integrations).toEqual(['github', 'slack']);
     expect(raw).not.toContain('secret-value');
   });
@@ -265,7 +271,9 @@ describe('worker command', () => {
       home: homeDir,
       baseHome: homeDir,
     });
-    expect(payload.supportPacket.docsUrl).toBe('https://docs.getviewport.com/troubleshooting/support-packet');
+    expect(payload.supportPacket.docsUrl).toBe(
+      'https://docs.getviewport.com/troubleshooting/support-packet',
+    );
     expect(payload.supportPacket.omittedSecrets).toContain('claim_tokens');
     expect(payload.missing).toEqual([]);
   });
@@ -577,8 +585,7 @@ describe('worker command', () => {
       await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults, storeWorkerProfile } =
       await import('../../src/cli/worker-profile.js');
-    const { acquireWorkerProcessLock } =
-      await import('../../src/cli/worker-process-lock.js');
+    const { acquireWorkerProcessLock } = await import('../../src/cli/worker-process-lock.js');
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
       detectCapabilities: false,
@@ -657,8 +664,7 @@ describe('worker command', () => {
       await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults, storeWorkerProfile } =
       await import('../../src/cli/worker-profile.js');
-    const { acquireWorkerProcessLock } =
-      await import('../../src/cli/worker-process-lock.js');
+    const { acquireWorkerProcessLock } = await import('../../src/cli/worker-process-lock.js');
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
       detectCapabilities: false,
@@ -698,8 +704,7 @@ describe('worker command', () => {
       await import('../../src/cli/lifecycle-pair-server.js');
     const { resolveWorkerProfileDefaults, storeWorkerProfile } =
       await import('../../src/cli/worker-profile.js');
-    const { acquireWorkerProcessLock } =
-      await import('../../src/cli/worker-process-lock.js');
+    const { acquireWorkerProcessLock } = await import('../../src/cli/worker-process-lock.js');
     const profile = await resolveWorkerProfileDefaults({
       server: await resolvePairingServerTransport(),
       detectCapabilities: false,

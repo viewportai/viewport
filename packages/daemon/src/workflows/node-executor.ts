@@ -562,14 +562,13 @@ function timeoutAtIso(value: unknown, requestedAt: number): string | null {
   const amount = Number.parseInt(match[1] ?? '', 10);
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const unit = (match[2] ?? '').toLowerCase();
-  const multiplier =
-    unit.startsWith('s')
-      ? 1_000
-      : unit.startsWith('m')
-        ? 60_000
-        : unit.startsWith('h')
-          ? 3_600_000
-          : 86_400_000;
+  const multiplier = unit.startsWith('s')
+    ? 1_000
+    : unit.startsWith('m')
+      ? 60_000
+      : unit.startsWith('h')
+        ? 3_600_000
+        : 86_400_000;
 
   return new Date(requestedAt + amount * multiplier).toISOString();
 }

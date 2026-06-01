@@ -40,7 +40,13 @@ export class WorkflowRuntimeCommandApplier {
     if (node.status !== 'blocked') return true;
     this.markCommandConsumedInProcess(command.id);
     const expectedActionDigest = command.expected_action_digest ?? undefined;
-    if (staleApprovalRequestBinding(node, command.approval_requested_at ?? undefined, expectedActionDigest)) {
+    if (
+      staleApprovalRequestBinding(
+        node,
+        command.approval_requested_at ?? undefined,
+        expectedActionDigest,
+      )
+    ) {
       markRuntimeCommandConsumed(node, command.id, {
         ignored: true,
         reason: 'stale_approval_request_binding',
@@ -204,7 +210,10 @@ export class WorkflowRuntimeCommandApplier {
   }
 }
 
-function runtimeCommandConsumed(metadata: Record<string, unknown> | undefined, id: string): boolean {
+function runtimeCommandConsumed(
+  metadata: Record<string, unknown> | undefined,
+  id: string,
+): boolean {
   const runtimeCommands = metadata?.['runtime_commands'];
   if (!isRecord(runtimeCommands)) return false;
   const consumed = runtimeCommands['consumed'];
@@ -225,9 +234,7 @@ function markRuntimeCommandConsumed(
   const previous = Array.isArray(runtimeCommands['consumed'])
     ? runtimeCommands['consumed'].filter(isRecord)
     : [];
-  runtimeCommands['consumed'] = [...previous, { id, consumed_at: consumedAt, ...extra }].slice(
-    -50,
-  );
+  runtimeCommands['consumed'] = [...previous, { id, consumed_at: consumedAt, ...extra }].slice(-50);
   metadata['runtime_commands'] = runtimeCommands;
   node.metadata = metadata;
 }

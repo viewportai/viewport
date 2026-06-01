@@ -414,15 +414,7 @@ describe('standalone worker runtime', () => {
       )}\n`,
       { mode: 0o600 },
     );
-    process.argv = [
-      'node',
-      'vpd',
-      'worker',
-      'run-once',
-      '--bootstrap',
-      bootstrapPath,
-      '--json',
-    ];
+    process.argv = ['node', 'vpd', 'worker', 'run-once', '--bootstrap', bootstrapPath, '--json'];
     vi.resetModules();
     const { worker } = await import('../../src/cli/worker-command.js');
 
@@ -452,7 +444,9 @@ describe('standalone worker runtime', () => {
     });
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpexec_bootstrap');
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpclaim_bootstrap');
-    const bootstrapIdentityFiles = await fs.readdir(path.join(workspaceRoot, '.viewport', 'bootstrap'));
+    const bootstrapIdentityFiles = await fs.readdir(
+      path.join(workspaceRoot, '.viewport', 'bootstrap'),
+    );
     expect(bootstrapIdentityFiles).toEqual([]);
   });
 
