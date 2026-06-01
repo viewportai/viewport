@@ -1,4 +1,4 @@
-import { Sandbox } from 'e2b';
+import { CommandExitError, Sandbox } from 'e2b';
 import type { CommandResult, ManagedSandbox, ManagedSandboxProvider } from './types.js';
 
 class E2bSandbox implements ManagedSandbox {
@@ -13,10 +13,23 @@ class E2bSandbox implements ManagedSandbox {
   }
 
   async run(command: string, options: { env?: Record<string, string>; timeoutMs?: number } = {}): Promise<CommandResult> {
-    const result = await this.sandbox.commands.run(command, {
-      envs: options.env,
-      timeoutMs: options.timeoutMs,
-    });
+    let result;
+    try {
+      result = await this.sandbox.commands.run(command, {
+        envs: options.env,
+        timeoutMs: options.timeoutMs,
+      });
+    } catch (error) {
+      if (error instanceof CommandExitError) {
+        return {
+          stdout: error.stdout,
+          stderr: error.stderr || error.error || error.message,
+          exitCode: error.exitCode,
+        };
+      }
+
+      throw error;
+    }
 
     return {
       stdout: result.stdout,
