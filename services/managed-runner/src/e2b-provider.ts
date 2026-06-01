@@ -33,13 +33,16 @@ class E2bSandbox implements ManagedSandbox {
 export class E2bSandboxProvider implements ManagedSandboxProvider {
   readonly name = 'e2b' as const;
 
+  constructor(private readonly template?: string) {}
+
   async create(env?: Record<string, string>): Promise<ManagedSandbox> {
-    const sandbox = await Sandbox.create({
+    const opts = {
       envs: env,
       metadata: {
         service: 'viewport-managed-runner',
       },
-    });
+    };
+    const sandbox = this.template ? await Sandbox.create(this.template, opts) : await Sandbox.create(opts);
 
     return new E2bSandbox(sandbox);
   }
