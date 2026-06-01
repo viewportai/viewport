@@ -847,6 +847,10 @@ nodes:
       ['--git-dir', remoteDir, 'rev-parse', 'refs/heads/viewport/proof'],
       root,
     );
+    const pushedFiles = await runGit(
+      ['--git-dir', remoteDir, 'ls-tree', '-r', '--name-only', 'refs/heads/viewport/proof'],
+      root,
+    );
 
     expect(completed?.nodes.publish?.metadata?.git_publish).toMatchObject({
       schema: 'viewport.git_publish_receipt/v1',
@@ -857,6 +861,7 @@ nodes:
     });
     expect(completed?.nodes.publish?.outputs?.commit).toBe(pushedCommit.trim());
     expect(JSON.stringify(completed)).not.toContain('ghs_run_scoped_push');
+    expect(pushedFiles).not.toContain('.viewport/credential-helpers');
   }, 60_000);
 });
 

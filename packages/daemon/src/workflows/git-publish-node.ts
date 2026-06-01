@@ -289,9 +289,8 @@ function reviewerTagsForRule(rule: PrePublishReviewRule): string[] {
     .filter(Boolean);
 }
 
-async function gitCredentialEnv(root: string, secret: string): Promise<NodeJS.ProcessEnv> {
-  const directory = path.join(root, '.viewport', 'credential-helpers');
-  await fs.mkdir(directory, { recursive: true });
+async function gitCredentialEnv(_root: string, secret: string): Promise<NodeJS.ProcessEnv> {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-git-askpass-'));
   const helperPath = path.join(
     directory,
     `git-askpass-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`,
