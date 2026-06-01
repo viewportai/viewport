@@ -15,6 +15,8 @@ const StartSchema = z.object({
   serverUrl: z.string().url(),
   vpdInstallCommand: z.string().min(1),
   workerCommand: z.string().min(1).optional(),
+  bootstrap: z.record(z.string(), z.unknown()).optional(),
+  bootstrapPath: z.string().min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   secrets: z.array(SecretSchema).optional(),
   timeoutMs: z.number().int().positive().optional(),

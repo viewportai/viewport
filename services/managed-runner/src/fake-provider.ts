@@ -4,7 +4,15 @@ import type { CommandResult, ManagedSandbox, ManagedSandboxProvider } from './ty
 export class FakeSandbox implements ManagedSandbox {
   readonly id = `fake-${randomUUID()}`;
   readonly commands: Array<{ command: string; env?: Record<string, string> }> = [];
+  readonly files = new Map<string, string>();
   killed = false;
+
+  async writeFile(path: string, data: string): Promise<void> {
+    if (this.killed) {
+      throw new Error('sandbox_destroyed');
+    }
+    this.files.set(path, data);
+  }
 
   async run(command: string, options: { env?: Record<string, string> } = {}): Promise<CommandResult> {
     if (this.killed) {

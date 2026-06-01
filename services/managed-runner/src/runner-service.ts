@@ -32,6 +32,7 @@ export class ManagedRunnerService {
     this.records.set(id, record);
 
     try {
+      await this.writeBootstrap(sandbox, request);
       await sandbox.run(request.vpdInstallCommand, {
         timeoutMs: request.timeoutMs,
       });
@@ -100,12 +101,27 @@ export class ManagedRunnerService {
   private workerCommand(request: ManagedRunStartRequest): string {
     return (
       request.workerCommand ??
-      'vpd worker start --mode ephemeral --transport polling --run-once --lease "$VIEWPORT_RUN_LEASE_TOKEN"'
+      (request.bootstrap
+        ? `vpd worker run-once --bootstrap ${this.bootstrapPath(request)} --json`
+        : 'vpd worker start --mode ephemeral --transport polling --run-once --lease "$VIEWPORT_RUN_LEASE_TOKEN"')
     );
   }
 
   private redactCommand(command: string, secrets: EphemeralSecret[] = []): string {
     return redact(command, secrets) ?? command;
+  }
+
+  private async writeBootstrap(sandbox: Awaited<ReturnType<ManagedSandboxProvider['create']>>, request: ManagedRunStartRequest): Promise<void> {
+    if (!request.bootstrap) return;
+    if (!sandbox.writeFile) {
+      throw new Error('sandbox_provider_does_not_support_file_write');
+    }
+    await sandbox.writeFile(this.bootstrapPath(request), `${JSON.stringify(request.bootstrap, null, 2)}\n`);
+  }
+
+  private bootstrapPath(request: ManagedRunStartRequest): string {
+    const path = request.bootstrapPath?.trim();
+    return path && path.startsWith('/') ? path : '/tmp/viewport/bootstrap.json';
   }
 }
 

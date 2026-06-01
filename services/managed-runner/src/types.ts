@@ -13,6 +13,8 @@ export type ManagedRunStartRequest = {
   serverUrl: string;
   vpdInstallCommand: string;
   workerCommand?: string;
+  bootstrap?: Record<string, unknown>;
+  bootstrapPath?: string;
   env?: Record<string, string>;
   secrets?: EphemeralSecret[];
   timeoutMs?: number;
@@ -42,6 +44,7 @@ export type CommandResult = {
 
 export interface ManagedSandbox {
   id: string;
+  writeFile?(path: string, data: string): Promise<void>;
   run(command: string, options?: { env?: Record<string, string>; timeoutMs?: number }): Promise<CommandResult>;
   kill(): Promise<void>;
 }

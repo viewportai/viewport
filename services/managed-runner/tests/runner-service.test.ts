@@ -35,4 +35,36 @@ describe('ManagedRunnerService', () => {
     });
     expect(sandbox.killed).toBe(true);
   });
+
+  it('writes sandbox bootstrap before running vpd run-once', async () => {
+    const provider = new FakeSandboxProvider();
+    const service = new ManagedRunnerService(provider);
+
+    const record = await service.start({
+      runId: 'run-bootstrap',
+      workspaceId: 'workspace-bootstrap',
+      serverUrl: 'https://api.getviewport.test',
+      leaseToken: 'lease-secret',
+      vpdInstallCommand: 'true',
+      bootstrapPath: '/viewport/bootstrap/bootstrap.json',
+      bootstrap: {
+        schema: 'viewport.sandbox_bootstrap/v1',
+        credential: 'vpexec_secret',
+        lease: {
+          lease_token: 'lease-secret',
+        },
+      },
+    });
+
+    expect(record.status).toBe('completed');
+    expect(JSON.stringify(record)).not.toContain('vpexec_secret');
+    expect(JSON.stringify(record)).not.toContain('lease-secret');
+
+    const sandbox = provider.sandboxes[0];
+    expect(sandbox.files.get('/viewport/bootstrap/bootstrap.json')).toContain('viewport.sandbox_bootstrap/v1');
+    expect(sandbox.commands.map((command) => command.command)).toEqual([
+      'true',
+      'vpd worker run-once --bootstrap /viewport/bootstrap/bootstrap.json --json',
+    ]);
+  });
 });
