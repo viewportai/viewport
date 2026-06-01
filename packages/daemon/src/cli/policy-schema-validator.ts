@@ -59,6 +59,8 @@ const PolicyGateSchema = z
     approval_required_above_usd: z.number().optional(),
     approval_required_above_tokens: z.number().int().positive().optional(),
     on_exceed: z.enum(['cancel', 'escalate']).optional(),
+    min_approvals: z.number().int().min(1).max(10).optional(),
+    separation_of_duty: z.boolean().optional(),
   })
   .strict();
 
