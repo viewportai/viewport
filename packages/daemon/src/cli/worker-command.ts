@@ -63,7 +63,7 @@ function workerHelpText(): string {
     '',
     'Commands:',
     '  start --mode persistent --transport polling|relay|inbound [--lease <seconds>]',
-    '  run-once --lease <lease-token> --transport polling|relay|inbound',
+    '  run-once (--lease <lease-token>|--bootstrap <file>) --transport polling|relay|inbound',
     '  stop [--json]',
     '  doctor [--json] [--registration-profile <path>]',
     '  reset [--json] [--force]',
@@ -581,16 +581,18 @@ function positiveIntFlag(value: string | undefined): number | undefined {
 async function workerRunOnce(): Promise<void> {
   const asJson = isJsonMode();
   const lease = getFlag('lease');
-  if (!lease || lease.trim() === '') {
+  const bootstrap = getFlag('bootstrap');
+  if ((!lease || lease.trim() === '') && (!bootstrap || bootstrap.trim() === '')) {
     throw new Error(
-      'Usage: vpd worker run-once --lease <lease-token> [--transport polling|relay|inbound]',
+      'Usage: vpd worker run-once (--lease <lease-token>|--bootstrap <file>) [--transport polling|relay|inbound]',
     );
   }
   const result = await runStandaloneWorker({
     lifecycle: 'ephemeral',
     transport: normalizeWorkerTransport(getFlag('transport')),
     once: true,
-    leaseToken: lease.trim(),
+    leaseToken: lease?.trim(),
+    bootstrapPath: bootstrap?.trim(),
   });
   if (asJson) {
     printJson({ command: 'worker run-once', ok: true, ...result });

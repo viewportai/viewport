@@ -366,6 +366,96 @@ describe('standalone worker runtime', () => {
     ]);
   });
 
+  it('runs a sandbox bootstrap lease once without polling for idle work or persisting identity', async () => {
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests);
+    const workspaceRoot = await fs.mkdtemp(path.join(homeDir, 'bootstrap-workspace-'));
+    const identity = createWorkerIdentity();
+    const bootstrapPath = path.join(homeDir, 'sandbox-bootstrap.json');
+    await fs.writeFile(
+      bootstrapPath,
+      `${JSON.stringify(
+        {
+          schema: 'viewport.sandbox_bootstrap/v1',
+          server_url: serverUrl(server),
+          server_id: 'sha256:server_1',
+          workspace_id: 'workspace_1',
+          executor_id: 'executor_1',
+          credential: 'vpexec_bootstrap',
+          workspace_root: workspaceRoot,
+          transport: 'polling',
+          capabilities: {
+            agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
+          },
+          identity: {
+            public_key: identity.publicKey,
+            private_key: identity.privateKey,
+            public_key_fingerprint: identity.publicKeyFingerprint,
+          },
+          lease: {
+            id: 'workflow_run:run_1',
+            workflow_run_id: 'run_1',
+            lease_token: 'vplease_bootstrap',
+            assignment_claim_token: 'vpclaim_bootstrap',
+            yaml_snapshot: [
+              'schema: viewport.workflow/v1',
+              'name: bootstrap-proof',
+              'nodes:',
+              '  proof:',
+              '    type: shell',
+              '    command: "printf bootstrapped"',
+              '',
+            ].join('\n'),
+            directory_path: workspaceRoot,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'run-once',
+      '--bootstrap',
+      bootstrapPath,
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+      cleanup: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
+    expect(requests.map((request) => request.url)).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(requests.some((request) => request.url.endsWith('/claim'))).toBe(false);
+    expect(requests[1]?.headers['x-viewport-run-lease']).toBe('vplease_bootstrap');
+    expect(requests[1]?.body).toMatchObject({
+      status: 'completed',
+      output_snapshot: expect.objectContaining({
+        nodes: expect.objectContaining({
+          proof: expect.objectContaining({ output: 'bootstrapped' }),
+        }),
+      }),
+    });
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpexec_bootstrap');
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpclaim_bootstrap');
+    const bootstrapIdentityFiles = await fs.readdir(path.join(workspaceRoot, '.viewport', 'bootstrap'));
+    expect(bootstrapIdentityFiles).toEqual([]);
+  });
+
   it('keeps persistent polling workers online while idle until stopped', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, { claimAlwaysEmpty: true });
@@ -1729,6 +1819,22 @@ function closeServer(server: http.Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+}
+
+function createWorkerIdentity(): {
+  publicKey: string;
+  privateKey: string;
+  publicKeyFingerprint: string;
+} {
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const publicKey = pair.publicKey.export({ format: 'pem', type: 'spki' }).toString();
+  const privateKey = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const publicKeyDer = pair.publicKey.export({ format: 'der', type: 'spki' });
+  return {
+    publicKey,
+    privateKey,
+    publicKeyFingerprint: crypto.createHash('sha256').update(publicKeyDer).digest('hex'),
+  };
 }
 
 async function readBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {

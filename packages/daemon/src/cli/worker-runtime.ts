@@ -30,6 +30,7 @@ export interface StandaloneWorkerOptions {
   transport: WorkerTransport;
   once: boolean;
   leaseToken?: string;
+  bootstrapPath?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
@@ -62,6 +63,12 @@ interface WorkerRuntimeProfile {
   identityKeyPath: string;
   publicKeyFingerprint: string;
   capabilities: Record<string, unknown>;
+}
+
+interface WorkerRuntimeBootstrap {
+  profile: WorkerRuntimeProfile;
+  lease?: ClaimedLease;
+  cleanup?: () => Promise<void>;
 }
 
 interface WorkerIdentityFile {
@@ -113,27 +120,29 @@ const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
-  const profile = await loadWorkerRuntimeProfile();
-  await validateWorkerWorkspaceRoot(profile.workspaceRoot);
-  const transport = options.transport ?? profile.transport;
-  if (transport === 'inbound') {
-    validateInboundWorkerGate(profile);
-  }
-  if (transport === 'relay') {
-    throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
-  }
-  const processLock =
-    options.lifecycle === 'persistent' && !options.once
-      ? acquireWorkerProcessLock({
-          server: profile.serverUrl,
-          workspaceId: profile.workspaceId ?? profile.publicKeyFingerprint,
-          executorId: profile.managedExecutorId ?? profile.publicKeyFingerprint,
-          runnerProfile: runnerPoolFromCapabilities(profile.capabilities),
-          accessMode: transport,
-        })
-      : null;
+  const bootstrap = await loadWorkerRuntimeBootstrap(options.bootstrapPath);
+  const profile = bootstrap.profile;
+  let processLock: ReturnType<typeof acquireWorkerProcessLock> | null = null;
 
   try {
+    await validateWorkerWorkspaceRoot(profile.workspaceRoot);
+    const transport = options.transport ?? profile.transport;
+    if (transport === 'inbound') {
+      validateInboundWorkerGate(profile);
+    }
+    if (transport === 'relay') {
+      throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
+    }
+    processLock =
+      options.lifecycle === 'persistent' && !options.once
+        ? acquireWorkerProcessLock({
+            server: profile.serverUrl,
+            workspaceId: profile.workspaceId ?? profile.publicKeyFingerprint,
+            executorId: profile.managedExecutorId ?? profile.publicKeyFingerprint,
+            runnerProfile: runnerPoolFromCapabilities(profile.capabilities),
+            accessMode: transport,
+          })
+        : null;
     let lastHeartbeatAt = Date.now();
     await heartbeat(profile, {
       status: 'online',
@@ -141,6 +150,17 @@ export async function runStandaloneWorker(
       lifecycle: options.lifecycle,
       transport,
     });
+
+    if (bootstrap.lease) {
+      const result = await executeBootstrapLease(profile, bootstrap.lease);
+      await heartbeat(profile, {
+        status: 'offline',
+        healthStatus: 'offline',
+        lifecycle: options.lifecycle,
+        transport,
+      });
+      return result;
+    }
 
     if (options.leaseToken) {
       const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
@@ -217,7 +237,26 @@ export async function runStandaloneWorker(
     return result;
   } finally {
     processLock?.release();
+    await bootstrap.cleanup?.();
   }
+}
+
+async function executeBootstrapLease(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<StandaloneWorkerResult> {
+  const execution = await executeClaim(profile, lease);
+  await syncLease(profile, lease, execution);
+  await cleanupLease(profile, lease);
+
+  return {
+    claimed: 1,
+    completed: execution.status === 'completed' ? 1 : 0,
+    blocked: execution.status === 'blocked' ? 1 : 0,
+    failed: execution.status === 'failed' || execution.status === 'canceled' ? 1 : 0,
+    cleanup: 1,
+    denied: 0,
+  };
 }
 
 function runnerPoolFromCapabilities(capabilities: Record<string, unknown>): string | undefined {
@@ -253,6 +292,16 @@ async function executeClaim(
     return { status: 'completed' };
   }
   return executeHostedWorkflowClaim(profile, lease);
+}
+
+async function loadWorkerRuntimeBootstrap(
+  bootstrapPath?: string,
+): Promise<WorkerRuntimeBootstrap> {
+  if (bootstrapPath) {
+    return loadSandboxBootstrap(bootstrapPath);
+  }
+
+  return { profile: await loadWorkerRuntimeProfile() };
 }
 
 async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
@@ -292,6 +341,105 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
     capabilities: worker!.capabilities ?? {},
   };
+}
+
+async function loadSandboxBootstrap(bootstrapPath: string): Promise<WorkerRuntimeBootstrap> {
+  const raw = JSON.parse(await fs.readFile(bootstrapPath, 'utf8')) as Record<string, unknown>;
+  if (raw['schema'] !== 'viewport.sandbox_bootstrap/v1') {
+    throw new Error('Sandbox bootstrap file must use schema viewport.sandbox_bootstrap/v1.');
+  }
+  const workspaceRoot = requiredString(raw['workspace_root'] ?? raw['workspaceRoot'], 'workspace_root');
+  const identity = recordValue(raw['identity']);
+  const identityFile = await materializeBootstrapIdentity(identity, workspaceRoot);
+  const profile: WorkerRuntimeProfile = {
+    serverUrl: requiredString(raw['server_url'] ?? raw['serverUrl'], 'server_url'),
+    serverId: stringValue(raw['server_id'] ?? raw['serverId']),
+    lifecycle: 'ephemeral',
+    transport: workerTransportValue(raw['transport']) ?? 'polling',
+    workspaceId: requiredString(raw['workspace_id'] ?? raw['workspaceId'], 'workspace_id'),
+    managedExecutorId: requiredString(raw['executor_id'] ?? raw['executorId'], 'executor_id'),
+    credential: requiredString(raw['credential'], 'credential'),
+    workspaceRoot,
+    identityKeyPath: identityFile.path,
+    publicKeyFingerprint: identityFile.publicKeyFingerprint,
+    capabilities: recordValue(raw['capabilities']) ?? {},
+  };
+
+  return {
+    profile,
+    lease: claimedLeaseFromBootstrap(recordValue(raw['lease'])),
+    cleanup: async () => {
+      if (identityFile.ephemeral) {
+        await fs.rm(identityFile.path, { force: true });
+      }
+    },
+  };
+}
+
+function claimedLeaseFromBootstrap(rawLease: Record<string, unknown> | undefined): ClaimedLease | undefined {
+  if (!rawLease) return undefined;
+  const id = requiredString(rawLease['id'] ?? rawLease['lease_id'] ?? rawLease['leaseId'], 'lease.id');
+  return {
+    id,
+    runId: stringValue(rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId']),
+    runtimeRunId: stringValue(rawLease['runtime_run_id'] ?? rawLease['runtimeRunId']),
+    leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
+    assignmentClaimToken: stringValue(rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken']),
+    yamlSnapshot: stringValue(rawLease['yaml_snapshot'] ?? rawLease['yamlSnapshot']),
+    sourceRef: stringValue(rawLease['source_ref'] ?? rawLease['sourceRef']),
+    directoryPath: stringValue(rawLease['directory_path'] ?? rawLease['directoryPath']),
+    inputSnapshot: recordValue(rawLease['input_snapshot'] ?? rawLease['inputSnapshot']) as
+      | Record<string, WorkflowInputValue>
+      | undefined,
+    resourceManifest: recordValue(rawLease['resource_manifest'] ?? rawLease['resourceManifest']),
+    workflowAuthorityContract: recordValue(
+      rawLease['workflow_authority_contract'] ?? rawLease['workflowAuthorityContract'],
+    ),
+    executionProfileSnapshot: recordValue(
+      rawLease['execution_profile_snapshot'] ?? rawLease['executionProfileSnapshot'],
+    ),
+    workflowSnapshot: recordValue(rawLease['workflow_snapshot'] ?? rawLease['workflowSnapshot']),
+    runtimeTargetId: stringValue(rawLease['runtime_target_id'] ?? rawLease['runtimeTargetId']),
+    dataCapturePolicy: dataCapturePolicyValue(
+      rawLease['data_capture_policy'] ?? rawLease['dataCapturePolicy'],
+    ),
+  };
+}
+
+async function materializeBootstrapIdentity(
+  identity: Record<string, unknown> | undefined,
+  workspaceRoot: string,
+): Promise<{ path: string; publicKeyFingerprint: string; ephemeral: boolean }> {
+  if (!identity) {
+    throw new Error('Sandbox bootstrap file is missing identity.');
+  }
+  const publicKey = requiredString(identity['public_key'] ?? identity['publicKey'], 'identity.public_key');
+  const privateKey = requiredString(identity['private_key'] ?? identity['privateKey'], 'identity.private_key');
+  const publicKeyFingerprint = requiredString(
+    identity['public_key_fingerprint'] ?? identity['publicKeyFingerprint'],
+    'identity.public_key_fingerprint',
+  );
+  const dir = path.join(workspaceRoot, '.viewport', 'bootstrap');
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const filePath = path.join(dir, `identity-${crypto.randomUUID()}.json`);
+  await fs.writeFile(
+    filePath,
+    `${JSON.stringify({ publicKey, privateKey, publicKeyFingerprint })}\n`,
+    { mode: 0o600 },
+  );
+  return { path: filePath, publicKeyFingerprint, ephemeral: true };
+}
+
+function workerTransportValue(value: unknown): WorkerTransport | undefined {
+  return value === 'polling' || value === 'relay' || value === 'inbound' ? value : undefined;
+}
+
+function requiredString(value: unknown, label: string): string {
+  const result = stringValue(value);
+  if (!result) {
+    throw new Error(`Sandbox bootstrap file is missing ${label}.`);
+  }
+  return result;
 }
 
 function validateInboundWorkerGate(profile: WorkerRuntimeProfile): never {
