@@ -1,3 +1,10 @@
+# [0.27.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.26.1...@viewportai/daemon@0.27.0) (2026-06-02)
+
+
+### Features
+
+* add swappable gateway shim contracts ([#153](https://github.com/viewportai/viewport/issues/153)) ([3898b0c](https://github.com/viewportai/viewport/commit/3898b0cccee67b5e2b612be263b1ebc451a72f5a))
+
 ## [0.26.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.26.0...@viewportai/daemon@0.26.1) (2026-06-02)
 
 
