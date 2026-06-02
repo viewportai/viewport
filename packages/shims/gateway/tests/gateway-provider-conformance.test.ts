@@ -2,8 +2,8 @@ import { describe, expect } from 'vitest';
 import {
   BifrostGatewayProvider,
   LiteLlmGatewayProvider,
-  runGatewayProviderConformance,
 } from '../src/index.js';
+import { runGatewayProviderConformance } from '../src/conformance/gateway-provider-conformance.js';
 
 describe('reference gateway adapters', () => {
   runGatewayProviderConformance({

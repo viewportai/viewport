@@ -15,8 +15,3 @@ export { LiteLlmGatewayProvider } from './adapters/litellm.js';
 export type { LiteLlmGatewayProviderOptions } from './adapters/litellm.js';
 export { BifrostGatewayProvider } from './adapters/bifrost.js';
 export type { BifrostGatewayProviderOptions } from './adapters/bifrost.js';
-export { runGatewayProviderConformance } from './conformance/gateway-provider-conformance.js';
-export type {
-  CapturedRequest,
-  GatewayProviderConformanceOptions,
-} from './conformance/gateway-provider-conformance.js';
