@@ -50,9 +50,32 @@ export class LiteLlmGatewayProvider implements GatewayProvider {
       max_tokens: request.maxTokens,
       temperature: request.temperature,
       stream: request.stream,
+      metadata: metadata(request),
       api_key: request.providerKey,
     };
   }
+}
+
+function metadata(request: GatewayCompletionRequest): Record<string, unknown> {
+  const existing = request.body?.metadata;
+  const base = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? existing as Record<string, unknown>
+    : {};
+
+  return {
+    ...base,
+    user_api_key_org_id: request.correlation.tenantId,
+    user_api_key_team_id: request.correlation.teamId ?? request.correlation.workspaceId,
+    user_api_key_team_alias: request.correlation.teamId ?? request.correlation.workspaceId,
+    viewport_tenant_id: request.correlation.tenantId,
+    viewport_workspace_id: request.correlation.workspaceId,
+    viewport_team_id: request.correlation.teamId,
+    viewport_agent_id: request.correlation.agentId,
+    viewport_run_id: request.correlation.runId,
+    viewport_lease_id: request.correlation.leaseId,
+    viewport_policy_hash: request.correlation.policyHash,
+    viewport_request_id: request.correlation.requestId,
+  };
 }
 
 async function toGatewayResponse(response: Response): Promise<GatewayCompletionResponse> {
