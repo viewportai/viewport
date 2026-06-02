@@ -1,3 +1,10 @@
+## [0.26.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.26.0...@viewportai/daemon@0.26.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* scope local github proof credentials ([#152](https://github.com/viewportai/viewport/issues/152)) ([24688ba](https://github.com/viewportai/viewport/commit/24688ba6537179aa2f5a213c66c9aecd1548f19b))
+
 # [0.26.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.13...@viewportai/daemon@0.26.0) (2026-06-02)
 
 
