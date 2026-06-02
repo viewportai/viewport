@@ -1081,6 +1081,79 @@ nodes:
     }
   });
 
+  it('allows explicit local-dev GitHub credential refs behind the proof escape hatch', async () => {
+    const localDevEnv = envNameForCredentialRef('github/installation/local-dev');
+    const pullRequestResponse = {
+      html_url: 'https://github.com/acme/payments/pull/1843',
+      url: 'https://api.github.com/repos/acme/payments/pulls/1843',
+      number: 1843,
+      head: { ref: 'agent/local-dev-proof' },
+      base: { ref: 'main' },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(pullRequestResponse), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(pullRequestResponse), { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+    const originalCredentialRefToken = process.env[localDevEnv];
+    const originalProofFlag = process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+    process.env[localDevEnv] = 'github-cli-local-proof-token';
+    process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = '1';
+
+    try {
+      const daemon = await setup();
+      const workflowPath = path.join(projectDir, 'workflow.yaml');
+      await fs.writeFile(
+        workflowPath,
+        `
+schema: viewport.workflow/v1
+name: github-local-dev-token-proof
+nodes:
+  open_pr:
+    type: action
+    adapter: github
+    action: open_pr
+    with:
+      owner: acme
+      repo: payments
+      title: "Local dev proof"
+      head: "agent/local-dev-proof"
+      base: "main"
+      body: "Local proof only."
+      credential_ref: github/installation/local-dev
+`,
+        'utf-8',
+      );
+
+      const run = await daemon.workflowRunner.startRun({
+        workflowPath,
+        directoryId: DirectoryManager.idFromPath(projectDir),
+        initiation: 'cli',
+      });
+
+      await waitForTerminalRun(daemon, run.id);
+      const completed = await daemon.workflowRunner.getRun(run.id);
+
+      expect(completed?.status).toBe('completed');
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments/pulls',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer github-cli-local-proof-token',
+          }),
+        }),
+      );
+      expect(JSON.stringify(completed)).not.toContain('github-cli-local-proof-token');
+    } finally {
+      if (originalCredentialRefToken === undefined) delete process.env[localDevEnv];
+      else process.env[localDevEnv] = originalCredentialRefToken;
+      if (originalProofFlag === undefined)
+        delete process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'];
+      else process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] = originalProofFlag;
+    }
+  });
+
   it('executes native GitHub issue comments with runner-local credentials', async () => {
     const fetchMock = vi
       .fn()

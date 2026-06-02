@@ -177,6 +177,13 @@ function assertGitHubBrokeredCredential(
 ): asserts token is string {
   if (token && token.startsWith('ghs_')) return;
   if (token && localGitHubProofTokensAllowed() && isGitHubUserToken(token)) return;
+  if (
+    token &&
+    localGitHubProofTokensAllowed() &&
+    (isLocalDevelopmentGitHubCredentialRef(actionInput) ||
+      hasLocalDevelopmentGitHubMaterial(runtimeSecretEnvKeys))
+  )
+    return;
 
   const reason = token
     ? 'github_credential_must_be_installation_token'
@@ -235,6 +242,23 @@ function assertGitHubBrokeredCredential(
 
 function localGitHubProofTokensAllowed(): boolean {
   return process.env['VIEWPORT_ALLOW_LOCAL_GITHUB_TOKEN_FOR_PROOF'] === '1';
+}
+
+function isLocalDevelopmentGitHubCredentialRef(
+  actionInput: Record<string, WorkflowInputValue>,
+): boolean {
+  const credentialRef =
+    typeof actionInput['credential_ref'] === 'string'
+      ? actionInput['credential_ref']
+      : typeof actionInput['credentialRef'] === 'string'
+        ? actionInput['credentialRef']
+        : '';
+
+  return /(^|\/)local-dev($|\/|-)/.test(credentialRef.trim());
+}
+
+function hasLocalDevelopmentGitHubMaterial(runtimeSecretEnvKeys: string[]): boolean {
+  return runtimeSecretEnvKeys.includes(envNameForCredentialRef('github/installation/local-dev'));
 }
 
 function isGitHubUserToken(token: string): boolean {
