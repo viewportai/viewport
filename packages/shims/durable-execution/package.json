@@ -1,0 +1,23 @@
+{
+  "name": "@viewportai/shim-durable-execution",
+  "version": "0.1.0",
+  "description": "Viewport DurableExecutionProvider interface.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
