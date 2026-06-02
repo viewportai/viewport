@@ -1,3 +1,10 @@
+# [0.26.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.13...@viewportai/daemon@0.26.0) (2026-06-02)
+
+
+### Features
+
+* add worker transport abstraction ([#151](https://github.com/viewportai/viewport/issues/151)) ([78d76d2](https://github.com/viewportai/viewport/commit/78d76d24cf9ae608ffc4dd088b1d15e124903986))
+
 ## [0.25.13](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.25.12...@viewportai/daemon@0.25.13) (2026-06-01)
 
 
