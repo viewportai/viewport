@@ -403,10 +403,36 @@ describe('standalone worker runtime', () => {
               'nodes:',
               '  proof:',
               '    type: shell',
-              '    command: "printf bootstrapped"',
+              '    env:',
+              '      OPENAI_API_KEY:',
+              '        secret: OPENAI_API_KEY',
+              '      OPENAI_BASE_URL:',
+              '        value: https://gateway.getviewport.test/v1',
+              '      VIEWPORT_LLM_PROVIDER:',
+              '        value: openai',
+              '      VIEWPORT_LLM_MODEL:',
+              '        value: gpt-4o-mini',
+              '      VIEWPORT_LLM_VIRTUAL_KEY:',
+              '        secret: VIEWPORT_LLM_VIRTUAL_KEY',
+              '    command: |',
+              '      case "$OPENAI_API_KEY" in vk_*) ;; *) exit 12;; esac',
+              '      test "$OPENAI_BASE_URL" = "https://gateway.getviewport.test/v1"',
+              '      test "$VIEWPORT_LLM_PROVIDER" = "openai"',
+              '      test "$VIEWPORT_LLM_MODEL" = "gpt-4o-mini"',
+              '      test "$VIEWPORT_LLM_VIRTUAL_KEY" = "$OPENAI_API_KEY"',
+              '      printf gateway-env-ok',
               '',
             ].join('\n'),
             directory_path: workspaceRoot,
+            gateway: {
+              schema: 'viewport.gateway_lease/v1',
+              gateway_base_url: 'https://gateway.getviewport.test',
+              provider: 'openai',
+              model_allow: ['gpt-4o-mini'],
+              virtual_key: {
+                token: 'vk_bootstrap_gateway',
+              },
+            },
           },
         },
         null,
@@ -438,12 +464,15 @@ describe('standalone worker runtime', () => {
       status: 'completed',
       output_snapshot: expect.objectContaining({
         nodes: expect.objectContaining({
-          proof: expect.objectContaining({ output: 'bootstrapped' }),
+          proof: expect.objectContaining({ output: 'gateway-env-ok' }),
         }),
       }),
     });
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpexec_bootstrap');
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpclaim_bootstrap');
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vk_bootstrap_gateway');
+    expect(process.env['OPENAI_API_KEY']).not.toBe('vk_bootstrap_gateway');
+    expect(process.env['VIEWPORT_LLM_VIRTUAL_KEY']).not.toBe('vk_bootstrap_gateway');
     const bootstrapIdentityFiles = await fs.readdir(
       path.join(workspaceRoot, '.viewport', 'bootstrap'),
     );

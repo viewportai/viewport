@@ -83,6 +83,7 @@ interface ClaimedLease {
   runtimeRunId?: string;
   leaseToken?: string;
   assignmentClaimToken?: string;
+  gateway?: GatewayLease;
   yamlSnapshot?: string;
   sourceRef?: string;
   directoryPath?: string;
@@ -93,6 +94,15 @@ interface ClaimedLease {
   workflowSnapshot?: Record<string, unknown>;
   runtimeTargetId?: string;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
+}
+
+interface GatewayLease {
+  gatewayBaseUrl: string;
+  provider: 'anthropic' | 'openai' | 'gemini';
+  modelAllow: string[];
+  virtualKey: {
+    token: string;
+  };
 }
 
 interface HostedClaimExecutionResult {
@@ -342,7 +352,7 @@ async function executeClaim(
   if (!isHostedManagedExecutorProfile(profile)) {
     return { status: 'completed' };
   }
-  return executeHostedWorkflowClaim(profile, transport, lease);
+  return withGatewayLeaseProcessEnv(lease, () => executeHostedWorkflowClaim(profile, transport, lease));
 }
 
 async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
@@ -444,6 +454,7 @@ function claimedLeaseFromBootstrap(
     assignmentClaimToken: stringValue(
       rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken'],
     ),
+    gateway: gatewayLeaseValue(rawLease['gateway'] ?? rawLease['gatewayLease']),
     yamlSnapshot: stringValue(rawLease['yaml_snapshot'] ?? rawLease['yamlSnapshot']),
     sourceRef: stringValue(rawLease['source_ref'] ?? rawLease['sourceRef']),
     directoryPath: stringValue(rawLease['directory_path'] ?? rawLease['directoryPath']),
@@ -463,6 +474,101 @@ function claimedLeaseFromBootstrap(
       rawLease['data_capture_policy'] ?? rawLease['dataCapturePolicy'],
     ),
   };
+}
+
+function gatewayLeaseValue(value: unknown): GatewayLease | undefined {
+  const record = recordValue(value);
+  if (!record) return undefined;
+  const provider = stringValue(record['provider']);
+  if (provider !== 'anthropic' && provider !== 'openai' && provider !== 'gemini') {
+    return undefined;
+  }
+  const gatewayBaseUrl = stringValue(
+    record['gateway_base_url'] ?? record['gatewayBaseUrl'] ?? record['base_url'] ?? record['baseUrl'],
+  );
+  const virtualKey = recordValue(record['virtual_key'] ?? record['virtualKey']);
+  const token = stringValue(virtualKey?.['token']);
+  const modelAllow = arrayOfStrings(record['model_allow'] ?? record['modelAllow']);
+  if (!gatewayBaseUrl || !token || modelAllow.length === 0) {
+    return undefined;
+  }
+
+  return {
+    gatewayBaseUrl: gatewayBaseUrl.replace(/\/+$/, ''),
+    provider,
+    modelAllow,
+    virtualKey: { token },
+  };
+}
+
+async function withGatewayLeaseProcessEnv<T>(
+  lease: ClaimedLease,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const env = gatewayLeaseEnv(lease.gateway);
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(env)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function gatewayLeaseEnv(gateway: GatewayLease | undefined): Record<string, string> {
+  if (!gateway) return {};
+  const model = gateway.modelAllow[0] ?? '';
+  const base = gateway.gatewayBaseUrl.replace(/\/+$/, '');
+  const common = {
+    VIEWPORT_GATEWAY_BASE_URL: base,
+    VIEWPORT_LLM_PROVIDER: gateway.provider,
+    VIEWPORT_LLM_MODEL: model,
+    VIEWPORT_LLM_VIRTUAL_KEY: gateway.virtualKey.token,
+  };
+
+  if (gateway.provider === 'openai') {
+    return {
+      ...common,
+      OPENAI_API_KEY: gateway.virtualKey.token,
+      OPENAI_BASE_URL: `${base}/v1`,
+    };
+  }
+
+  if (gateway.provider === 'anthropic') {
+    return {
+      ...common,
+      ANTHROPIC_API_KEY: gateway.virtualKey.token,
+      ANTHROPIC_BASE_URL: `${base}/anthropic`,
+    };
+  }
+
+  return {
+    ...common,
+    GEMINI_API_KEY: gateway.virtualKey.token,
+    GEMINI_BASE_URL: `${base}/gemini/v1beta/openai`,
+    GOOGLE_GENERATIVE_AI_API_KEY: gateway.virtualKey.token,
+  };
+}
+
+function gatewayLeaseCredentialEnv(gateway: GatewayLease | undefined): Record<string, string> {
+  if (!gateway) return {};
+  const env = gatewayLeaseEnv(gateway);
+  const aliases: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    aliases[envNameForCredentialRef(name)] = value;
+  }
+
+  return aliases;
 }
 
 async function materializeBootstrapIdentity(
@@ -735,7 +841,7 @@ async function executeHostedWorkflowClaim(
     if (existing) {
       if (existing.status === 'blocked') {
         const body = await transport.pollRuntimeCommands(lease);
-        const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+        const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease);
         const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body, {
           runtimeSecretEnv,
         });
@@ -763,7 +869,7 @@ async function executeHostedWorkflowClaim(
     const directoryPath = path.resolve(lease.directoryPath ?? profile.workspaceRoot);
     await fs.mkdir(directoryPath, { recursive: true });
     const directory = await daemon.directoryManager.register(directoryPath);
-    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+    const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease);
     const run = await daemon.workflowRunner.startRun({
       workflowYaml: lease.yamlSnapshot,
       workflowSourceRef:
@@ -842,6 +948,17 @@ async function materializeHostedRunCredentials(
   }
 
   return runtimeSecretEnv;
+}
+
+async function runtimeSecretEnvForHostedRun(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Promise<Record<string, string>> {
+  return {
+    ...(await materializeHostedRunCredentials(profile, lease)),
+    ...gatewayLeaseCredentialEnv(lease.gateway),
+    ...gatewayLeaseEnv(lease.gateway),
+  };
 }
 
 function credentialHandlesFromLease(lease: ClaimedLease): string[] {
@@ -1010,7 +1127,7 @@ async function resumeBlockedHostedExecution(
       }
       return execution;
     }
-    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+    const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease);
     const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body, {
       runtimeSecretEnv,
     });
@@ -1331,6 +1448,12 @@ function positiveInteger(value: unknown): number | undefined {
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+function arrayOfStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+    : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
