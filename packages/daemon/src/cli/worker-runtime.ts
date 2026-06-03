@@ -1307,10 +1307,11 @@ function isHostedManagedExecutorProfile(profile: WorkerRuntimeProfile): boolean 
 function managedExecutorCapabilities(
   capabilities: Record<string, unknown>,
 ): Record<string, unknown> {
+  const { schema: _schema, ...normalized } = capabilities;
   const agents = capabilities['agents'];
-  if (!Array.isArray(agents)) return capabilities;
+  if (!Array.isArray(agents)) return normalized;
   return {
-    ...capabilities,
+    ...normalized,
     agents: Object.fromEntries(
       agents
         .filter((agent) => typeof agent === 'object' && agent !== null && !Array.isArray(agent))

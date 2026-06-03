@@ -385,6 +385,7 @@ describe('standalone worker runtime', () => {
           workspace_root: workspaceRoot,
           transport: 'polling',
           capabilities: {
+            schema: 'viewport.managed_executor_capabilities/v1',
             agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
           },
           identity: {
@@ -458,6 +459,12 @@ describe('standalone worker runtime', () => {
       '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
       '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
+    expect(requests[0]?.body.capabilities).not.toHaveProperty('schema');
+    expect(requests[0]?.body.capabilities).toMatchObject({
+      agents: {
+        codex: expect.objectContaining({ available: true }),
+      },
+    });
     expect(requests.some((request) => request.url.endsWith('/claim'))).toBe(false);
     expect(requests[1]?.headers['x-viewport-run-lease']).toBe('vplease_bootstrap');
     expect(requests[1]?.body).toMatchObject({
