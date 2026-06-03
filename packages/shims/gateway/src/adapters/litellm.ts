@@ -29,7 +29,7 @@ export class LiteLlmGatewayProvider implements GatewayProvider {
       body: JSON.stringify(this.body(request)),
     });
 
-    return toGatewayResponse(response);
+    return toGatewayResponse(response, request.stream === true);
   }
 
   private headers(request: GatewayCompletionRequest): Headers {
@@ -84,7 +84,17 @@ function metadata(request: GatewayCompletionRequest): Record<string, unknown> {
   };
 }
 
-async function toGatewayResponse(response: Response): Promise<GatewayCompletionResponse> {
+async function toGatewayResponse(response: Response, streaming: boolean): Promise<GatewayCompletionResponse> {
+  if (streaming && response.body) {
+    return {
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: null,
+      stream: response.body,
+      costUsd: costFromHeader(response.headers),
+    };
+  }
+
   const text = await response.text();
   const body = text.length > 0 ? safeJson(text) : null;
   return {
