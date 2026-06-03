@@ -3,8 +3,16 @@
 
 export type {
   DurableExecutionProvider,
-  DurableSignal,
-  DurableWorkflowHandle,
-  DurableWorkflowStart,
+  DurableGateSignal,
+  DurableGateWait,
+  DurableGateWaitHandle,
+  DurableRunCompletion,
+  DurableRunHandle,
+  DurableRunSnapshot,
+  DurableRunStart,
+  DurableTimeoutHandle,
+  DurableTimeoutSchedule,
+  DurableWorkflowSignal,
 } from './interface.js';
+export { InMemoryDurableExecutionProvider } from './adapters/in-memory.js';
 export { assertDurableExecutionProviderConformance } from './conformance/index.js';

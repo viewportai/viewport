@@ -1,18 +1,72 @@
 // Copyright 2026 ViewportAI.
 // SPDX-License-Identifier: Apache-2.0
 
-export interface DurableWorkflowStart {
-  workflowName: string;
+export interface DurableRunStart {
+  runType: string;
   idempotencyKey: string;
+  tenantId: string;
+  workspaceId: string;
+  runId: string;
+  policyHash: string;
   input: Record<string, unknown>;
 }
 
-export interface DurableWorkflowHandle {
+export interface DurableRunHandle {
   id: string;
   status: 'started' | 'already_started';
 }
 
-export interface DurableSignal {
+export interface DurableGateWait {
+  workflowId: string;
+  gateId: string;
+  idempotencyKey: string;
+  deadlineAt?: Date;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DurableGateWaitHandle {
+  id: string;
+  status: 'waiting' | 'already_waiting' | 'already_resolved';
+}
+
+export interface DurableGateSignal {
+  workflowId: string;
+  gateId: string;
+  decisionId: string;
+  decision: 'approved' | 'rejected' | 'canceled' | (string & {});
+  payload: Record<string, unknown>;
+}
+
+export interface DurableTimeoutSchedule {
+  workflowId: string;
+  timeoutId: string;
+  fireAt: Date;
+  payload: Record<string, unknown>;
+}
+
+export interface DurableTimeoutHandle {
+  id: string;
+  status: 'scheduled' | 'already_scheduled';
+}
+
+export interface DurableRunCompletion {
+  workflowId: string;
+  idempotencyKey: string;
+  outcome: 'completed' | 'failed' | 'canceled';
+  payload: Record<string, unknown>;
+}
+
+export interface DurableRunSnapshot {
+  id: string;
+  status: 'running' | 'waiting' | 'completed' | 'failed' | 'canceled';
+  runId: string;
+  policyHash: string;
+  waitingGateIds: string[];
+  scheduledTimeoutIds: string[];
+  completedAt?: Date;
+}
+
+export interface DurableWorkflowSignal {
   workflowId: string;
   name: string;
   payload: Record<string, unknown>;
@@ -20,6 +74,11 @@ export interface DurableSignal {
 
 export interface DurableExecutionProvider {
   readonly id: string;
-  start(input: DurableWorkflowStart): Promise<DurableWorkflowHandle>;
-  signal(signal: DurableSignal): Promise<{ accepted: boolean }>;
+  startRun(input: DurableRunStart): Promise<DurableRunHandle>;
+  awaitGate(wait: DurableGateWait): Promise<DurableGateWaitHandle>;
+  signalGate(signal: DurableGateSignal): Promise<{ accepted: boolean }>;
+  scheduleTimeout(timeout: DurableTimeoutSchedule): Promise<DurableTimeoutHandle>;
+  signal(signal: DurableWorkflowSignal): Promise<{ accepted: boolean }>;
+  completeRun(completion: DurableRunCompletion): Promise<{ completed: boolean }>;
+  getRun(workflowId: string): Promise<DurableRunSnapshot | null>;
 }
