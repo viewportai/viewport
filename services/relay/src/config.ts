@@ -7,7 +7,9 @@ import { z } from 'zod';
 
 const BoolishSchema = z.enum(['0', '1', 'false', 'true', 'no', 'yes', 'off', 'on']).optional();
 const TlsModeSchema = z.enum(['auto', '0', '1']);
+const TlsTerminationSchema = z.enum(['self', 'platform']);
 const BackplaneModeSchema = z.enum(['single', 'server', 'redis']);
+const ServerAuthModeSchema = z.enum(['mtls', 'private_network_shared_secret']);
 
 const EnvSchema = z.object({
   HOST: z.string().optional(),
@@ -15,6 +17,7 @@ const EnvSchema = z.object({
   SERVER_URL: z.string().optional(),
   MAX_LOGS: z.string().optional(),
   RELAY_TLS: z.string().optional(),
+  RELAY_TLS_TERMINATION: TlsTerminationSchema.optional(),
   RELAY_TLS_HOST: z.string().optional(),
   RELAY_TLS_CERT_DIR: z.string().optional(),
   RELAY_TLS_CERT_PATH: z.string().optional(),
@@ -28,6 +31,7 @@ const EnvSchema = z.object({
   RELAY_INTERNAL_API_TIMEOUT_MS: z.string().optional(),
   RELAY_INTERNAL_API_MAX_RESPONSE_BYTES: z.string().optional(),
   RELAY_SERVER_TLS_VERIFY: z.enum(['auto', '0', '1']).optional(),
+  RELAY_SERVER_AUTH_MODE: ServerAuthModeSchema.optional(),
   RELAY_SERVER_CA_CERT_PATH: z.string().optional(),
   RELAY_SERVER_MTLS: BoolishSchema,
   RELAY_SERVER_CLIENT_CERT_PATH: z.string().optional(),
@@ -92,6 +96,7 @@ export interface RelayConfig {
   serverUrl: string;
   maxLogs: number;
   tlsEnabled: boolean;
+  tlsTermination: z.infer<typeof TlsTerminationSchema>;
   tlsHost: string;
   tlsCertPath: string;
   tlsKeyPath: string;
@@ -104,6 +109,7 @@ export interface RelayConfig {
   internalApiTimeoutMs: number;
   internalApiMaxResponseBytes: number;
   serverTlsVerify: 'auto' | '0' | '1';
+  serverAuthMode: z.infer<typeof ServerAuthModeSchema>;
   serverCaCertPath?: string;
   serverMtlsEnabled: boolean;
   serverClientCertPath: string;
@@ -255,6 +261,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   const tlsCertPath = parsedEnv.RELAY_TLS_CERT_PATH || path.join(certDir, `${tlsHost}.crt`);
   const tlsKeyPath = parsedEnv.RELAY_TLS_KEY_PATH || path.join(certDir, `${tlsHost}.key`);
   const tlsMode = TlsModeSchema.parse((parsedEnv.RELAY_TLS ?? 'auto').toLowerCase());
+  const tlsTermination = parsedEnv.RELAY_TLS_TERMINATION ?? 'self';
   const tlsEnabled = resolveTlsEnabled(tlsMode, tlsCertPath, tlsKeyPath);
   if (tlsEnabled && !certFilesExist(tlsCertPath, tlsKeyPath)) {
     throw new Error(
@@ -302,6 +309,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   }
 
   const serverTlsVerify = parsedEnv.RELAY_SERVER_TLS_VERIFY ?? 'auto';
+  const serverAuthMode = parsedEnv.RELAY_SERVER_AUTH_MODE ?? 'mtls';
   const relayInternalKey = parsedEnv.RELAY_INTERNAL_KEY?.trim() || undefined;
   const explicitBackplaneMode = parsedEnv.RELAY_BACKPLANE_MODE;
   const inferredBackplaneMode: RelayBackplaneMode =
@@ -349,7 +357,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     );
   }
   if (relayMode === 'prod') {
-    if (!tlsEnabled) {
+    if (!tlsEnabled && tlsTermination !== 'platform') {
       throw new Error('RELAY_TLS must be enabled when RELAY_MODE=prod');
     }
     if (!relayInternalKey || looksLikePlaceholderSecret(relayInternalKey)) {
@@ -357,12 +365,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
         'RELAY_INTERNAL_KEY must be configured with a high-entropy secret when RELAY_MODE=prod',
       );
     }
-    if (!serverMtlsEnabled) {
+    if (serverAuthMode === 'mtls' && !serverMtlsEnabled) {
       throw new Error('RELAY_SERVER_MTLS must be enabled when RELAY_MODE=prod');
     }
-    if (serverTlsVerify !== '1') {
+    if (serverAuthMode === 'mtls' && serverTlsVerify !== '1') {
       throw new Error(
         'RELAY_SERVER_TLS_VERIFY must be 1 when RELAY_MODE=prod to prevent TLS downgrade',
+      );
+    }
+    if (serverAuthMode === 'private_network_shared_secret' && urlLooksLocal(serverUrl)) {
+      throw new Error(
+        'RELAY_SERVER_AUTH_MODE=private_network_shared_secret requires a non-local private service URL in prod',
       );
     }
   }
@@ -375,6 +388,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     serverUrl,
     maxLogs: parsePositiveInt(parsedEnv.MAX_LOGS, 400),
     tlsEnabled,
+    tlsTermination,
     tlsHost,
     tlsCertPath,
     tlsKeyPath,
@@ -396,6 +410,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
       262_144,
     ),
     serverTlsVerify,
+    serverAuthMode,
     serverCaCertPath: parsedEnv.RELAY_SERVER_CA_CERT_PATH?.trim() || undefined,
     serverMtlsEnabled,
     serverClientCertPath,

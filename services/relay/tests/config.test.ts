@@ -155,7 +155,7 @@ describe('relay config', () => {
 
     expect(() =>
       loadConfig({
-        HOST: '0.0.0.0',
+        HOST: '127.0.0.1',
       }),
     ).not.toThrow();
 
@@ -197,6 +197,42 @@ describe('relay config', () => {
     expect(config.serverUrl).toBe('https://api.example.com');
     expect(config.publicWsBaseUrl).toBe('wss://relay.example.com/ws');
     expect(config.relayMode).toBe('prod');
+  });
+
+  it('allows prod relay on a private service URL with shared-secret server auth', () => {
+    const config = loadConfig({
+      HOST: '0.0.0.0',
+      SERVER_URL: 'http://api:8080',
+      RELAY_PUBLIC_WS_BASE_URL: 'wss://vp-quiet-harbor-jjngj.ondigitalocean.app/ws',
+      RELAY_TLS: '0',
+      RELAY_TLS_TERMINATION: 'platform',
+      RELAY_INTERNAL_KEY: 'relay-internal-key-1234567890',
+      RELAY_SERVER_AUTH_MODE: 'private_network_shared_secret',
+      RELAY_SERVER_TLS_VERIFY: 'auto',
+    });
+
+    expect(config.relayMode).toBe('prod');
+    expect(config.tlsTermination).toBe('platform');
+    expect(config.serverAuthMode).toBe('private_network_shared_secret');
+    expect(config.serverMtlsEnabled).toBe(false);
+    expect(config.serverUrl).toBe('http://api:8080');
+  });
+
+  it('rejects prod shared-secret server auth for local service URLs', () => {
+    expect(() =>
+      loadConfig({
+        HOST: '0.0.0.0',
+        RELAY_MODE: 'prod',
+        SERVER_URL: 'http://127.0.0.1:8080',
+        RELAY_PUBLIC_WS_BASE_URL: 'wss://relay.example.com/ws',
+        RELAY_TLS: '0',
+        RELAY_TLS_TERMINATION: 'platform',
+        RELAY_INTERNAL_KEY: 'relay-internal-key-1234567890',
+        RELAY_SERVER_AUTH_MODE: 'private_network_shared_secret',
+      }),
+    ).toThrow(
+      'SERVER_URL and RELAY_PUBLIC_WS_BASE_URL must be set explicitly outside local loopback development',
+    );
   });
 
   it('requires RELAY_BUS_HMAC_KEY whenever bus is enabled', () => {
