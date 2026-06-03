@@ -8,10 +8,11 @@ import { runGatewayProviderConformance } from '../src/conformance/gateway-provid
 describe('reference gateway adapters', () => {
   runGatewayProviderConformance({
     name: 'LiteLLM',
-    createProvider: (baseUrl) => new LiteLlmGatewayProvider({ baseUrl }),
+    createProvider: (baseUrl) => new LiteLlmGatewayProvider({ baseUrl, apiKey: 'litellm-master-key' }),
     assertCapturedRequest: (captured) => {
       expect(captured.path).toBe('/v1/chat/completions');
       expect(captured.body.api_key).toBe('real-provider-key');
+      expect(captured.headers.authorization).toBe('Bearer litellm-master-key');
       expect(captured.body.metadata).toMatchObject({
         user_api_key_org_id: 'tenant_a',
         user_api_key_team_id: 'workspace_a',

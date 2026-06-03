@@ -5,6 +5,7 @@ import type { GatewayCompletionRequest, GatewayCompletionResponse, GatewayProvid
 
 export interface LiteLlmGatewayProviderOptions {
   baseUrl: string;
+  apiKey?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -12,10 +13,12 @@ export class LiteLlmGatewayProvider implements GatewayProvider {
   readonly id = 'litellm' as const;
 
   private readonly baseUrl: string;
+  private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: LiteLlmGatewayProviderOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.apiKey = options.apiKey;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -32,6 +35,9 @@ export class LiteLlmGatewayProvider implements GatewayProvider {
   private headers(request: GatewayCompletionRequest): Headers {
     const headers = new Headers(request.headers);
     headers.set('content-type', 'application/json');
+    if (this.apiKey) {
+      headers.set('authorization', `Bearer ${this.apiKey}`);
+    }
     headers.set('x-viewport-tenant-id', request.correlation.tenantId);
     headers.set('x-viewport-workspace-id', request.correlation.workspaceId);
     headers.set('x-viewport-run-id', request.correlation.runId);
