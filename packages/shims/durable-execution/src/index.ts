@@ -15,4 +15,5 @@ export type {
   DurableWorkflowSignal,
 } from './interface.js';
 export { InMemoryDurableExecutionProvider } from './adapters/in-memory.js';
+export { DbosDurableExecutionProvider } from './adapters/dbos.js';
 export { assertDurableExecutionProviderConformance } from './conformance/index.js';

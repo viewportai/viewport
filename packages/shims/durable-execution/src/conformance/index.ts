@@ -5,21 +5,31 @@ import type { DurableExecutionProvider } from '../interface.js';
 
 export async function assertDurableExecutionProviderConformance(provider: DurableExecutionProvider): Promise<void> {
   if (!provider.id) throw new Error('DurableExecutionProvider.id is required');
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const workflowKey = `wf_${suffix}`;
+  const tenantId = `tenant_${suffix}`;
+  const workspaceId = `workspace_${suffix}`;
+  const runId = `run_${suffix}`;
+  const gateId = `gate_${suffix}`;
+  const gateWaitKey = `gate_wait_${suffix}`;
+  const timeoutId = `timeout_${suffix}`;
+  const decisionId = `decision_${suffix}`;
+  const completeKey = `complete_${suffix}`;
   const first = await provider.startRun({
     runType: 'approval',
-    idempotencyKey: 'wf_a',
-    tenantId: 'tenant_a',
-    workspaceId: 'workspace_a',
-    runId: 'run_a',
+    idempotencyKey: workflowKey,
+    tenantId,
+    workspaceId,
+    runId,
     policyHash: 'sha256:policy_a',
     input: {},
   });
   const second = await provider.startRun({
     runType: 'approval',
-    idempotencyKey: 'wf_a',
-    tenantId: 'tenant_a',
-    workspaceId: 'workspace_a',
-    runId: 'run_a',
+    idempotencyKey: workflowKey,
+    tenantId,
+    workspaceId,
+    runId,
     policyHash: 'sha256:policy_a',
     input: {},
   });
@@ -27,29 +37,29 @@ export async function assertDurableExecutionProviderConformance(provider: Durabl
 
   const wait = await provider.awaitGate({
     workflowId: first.id,
-    gateId: 'gate_a',
-    idempotencyKey: 'gate_wait_a',
+    gateId,
+    idempotencyKey: gateWaitKey,
     deadlineAt: new Date(Date.now() + 60_000),
   });
   if (wait.status !== 'waiting') throw new Error('DurableExecutionProvider.awaitGate must create a gate wait');
 
   const timeout = await provider.scheduleTimeout({
     workflowId: first.id,
-    timeoutId: 'timeout_gate_a',
+    timeoutId,
     fireAt: new Date(Date.now() + 60_000),
-    payload: { gateId: 'gate_a' },
+    payload: { gateId },
   });
   if (timeout.status !== 'scheduled') throw new Error('DurableExecutionProvider.scheduleTimeout must schedule once');
 
   const snapshot = await provider.getRun(first.id);
-  if (!snapshot || snapshot.status !== 'waiting' || !snapshot.waitingGateIds.includes('gate_a')) {
+  if (!snapshot || snapshot.status !== 'waiting' || !snapshot.waitingGateIds.includes(gateId)) {
     throw new Error('DurableExecutionProvider.getRun must expose waiting gates');
   }
 
   const accepted = await provider.signalGate({
     workflowId: first.id,
-    gateId: 'gate_a',
-    decisionId: 'decision_a',
+    gateId,
+    decisionId,
     decision: 'approved',
     payload: {},
   });
@@ -59,7 +69,7 @@ export async function assertDurableExecutionProviderConformance(provider: Durabl
 
   const completed = await provider.completeRun({
     workflowId: first.id,
-    idempotencyKey: 'complete_a',
+    idempotencyKey: completeKey,
     outcome: 'completed',
     payload: {},
   });
@@ -67,7 +77,7 @@ export async function assertDurableExecutionProviderConformance(provider: Durabl
 
   const duplicateCompletion = await provider.completeRun({
     workflowId: first.id,
-    idempotencyKey: 'complete_a',
+    idempotencyKey: completeKey,
     outcome: 'completed',
     payload: {},
   });
