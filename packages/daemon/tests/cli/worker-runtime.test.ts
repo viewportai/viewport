@@ -1646,6 +1646,82 @@ nodes:
     });
   });
 
+  it('treats a relay-routed 204 claim response as no available work', async () => {
+    const requests: RuntimeRequest[] = [];
+    const relayFrames: Array<Record<string, unknown>> = [];
+    server = await startRuntimeServer(requests);
+    const relayServer = http.createServer();
+    const wss = new WebSocketServer({ server: relayServer });
+    await new Promise<void>((resolve, reject) => {
+      relayServer.once('error', reject);
+      relayServer.listen(0, '127.0.0.1', () => {
+        relayServer.off('error', reject);
+        resolve();
+      });
+    });
+    const relayAddress = relayServer.address();
+    if (!relayAddress || typeof relayAddress === 'string') {
+      throw new Error('Missing relay test server address.');
+    }
+    process.env['VIEWPORT_RELAY_WS_BASE_URL'] = `ws://127.0.0.1:${relayAddress.port}/ws`;
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
+        relayFrames.push(frame);
+        const path = String(frame['path']);
+        const requestId = String(frame['requestId']);
+        const status = path.endsWith('/claim') ? 204 : 200;
+        ws.send(
+          JSON.stringify({
+            type: 'viewport.worker_transport.response/v1',
+            requestId,
+            status,
+            headers: { 'content-type': 'application/json' },
+            body: status === 204 ? '' : JSON.stringify({ ok: true }),
+          }),
+        );
+      });
+    });
+
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'relay',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    try {
+      await worker();
+    } finally {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await closeServer(relayServer);
+    }
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+    };
+    expect(payload).toMatchObject({ claimed: 0, completed: 0, failed: 0 });
+    expect(relayFrames.map((frame) => frame['path'])).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+  });
+
   it('denies ephemeral inbound run-once transport before control-plane contact', async () => {
     await writeWorkerProfile('http://127.0.0.1:1');
     process.argv = [

@@ -349,7 +349,8 @@ class RelayWorkerTransport implements WorkerTransport {
     const status = typeof frame['status'] === 'number' ? frame['status'] : 502;
     const headers = recordValue(frame['headers']) as Record<string, string> | undefined;
     const body = typeof frame['body'] === 'string' ? frame['body'] : '';
-    pending.resolve(new Response(body, { status, headers }));
+    const responseBody = status === 204 || status === 205 || status === 304 ? null : body;
+    pending.resolve(new Response(responseBody, { status, headers }));
   }
 }
 
