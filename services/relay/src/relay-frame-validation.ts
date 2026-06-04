@@ -210,6 +210,29 @@ export function isAllowedDaemonFrame(text: string): boolean {
   return isE2eeEnvelope(frame) || isDaemonControlFrame(frame) || isPairingDaemonFrame(frame);
 }
 
+export function isAllowedWorkerTransportRequestFrame(frame: FramePayload): boolean {
+  if (
+    frame['type'] !== 'viewport.worker_transport.request/v1' ||
+    typeof frame['requestId'] !== 'string' ||
+    frame['requestId'].trim().length === 0 ||
+    (frame['method'] !== 'GET' && frame['method'] !== 'POST' && frame['method'] !== 'PATCH') ||
+    typeof frame['path'] !== 'string' ||
+    !frame['path'].startsWith('/api/runtime/workspaces/')
+  ) {
+    return false;
+  }
+  if (
+    frame['headers'] !== undefined &&
+    (!frame['headers'] || typeof frame['headers'] !== 'object' || Array.isArray(frame['headers']))
+  ) {
+    return false;
+  }
+  if (frame['body'] !== undefined && typeof frame['body'] !== 'string') {
+    return false;
+  }
+  return true;
+}
+
 export function extractFrameProfile(frame: FramePayload): 'noise-ik' | 'noise-ikpsk2' | null {
   const profile = frame['profile'];
   if (profile === 'noise-ik' || profile === 'noise-ikpsk2') return profile;

@@ -1,11 +1,12 @@
 import type { WebSocket } from 'ws';
 
-export type RelayRole = 'workspace-daemon' | 'client';
+export type RelayRole = 'workspace-daemon' | 'client' | 'worker';
 
 export interface AdmissionClaims {
   clientId?: string;
   userId?: string;
   installId?: string;
+  managedExecutorId?: string;
   runtimeTargetId?: string;
   machineId?: string;
   role?: RelayRole;

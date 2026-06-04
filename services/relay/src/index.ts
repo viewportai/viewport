@@ -82,7 +82,7 @@ const wsHeartbeatState = new WeakMap<
 >();
 
 const UpgradeQuerySchema = z.object({
-  role: z.enum(['workspace-daemon', 'client']),
+  role: z.enum(['workspace-daemon', 'client', 'worker']),
   workspaceId: z
     .string()
     .min(1)

@@ -1882,4 +1882,112 @@ describe('relay routing', () => {
     expect((clientWs as unknown as FakeWs).sent).toContain(envelope1);
     expect((clientWs as unknown as FakeWs).sent).not.toContain(envelope2);
   });
+
+  it('forwards worker transport frames only to the claimed managed executor path', async () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client' | 'worker'>();
+    const workerWs = new FakeWs() as unknown as WebSocket;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      registerConnection(
+        {
+          config,
+          logger,
+          metrics,
+          registry,
+          backplane,
+          wsIp,
+          wsWorkspace,
+          wsRole,
+          setupHeartbeat: () => undefined,
+          markWsActivity: () => undefined,
+          adjustIpConnectionCount: () => undefined,
+          updateGauges: () => undefined,
+          safeSend: safeSendToFake,
+          closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+            (ws as unknown as FakeWs).close(code, reason),
+        },
+        workerWs,
+        'worker',
+        'workspace_demo',
+        undefined,
+        '127.0.0.1',
+        {
+          role: 'worker',
+          scope: 'runtime',
+          workspaceId: 'workspace_demo',
+          managedExecutorId: 'executor_a',
+        },
+      );
+
+      (workerWs as unknown as FakeWs).emit(
+        'message',
+        Buffer.from(
+          JSON.stringify({
+            type: 'viewport.worker_transport.request/v1',
+            requestId: 'denied-1',
+            method: 'POST',
+            path: '/api/runtime/workspaces/workspace_demo/managed-executors/executor_b/claim',
+            headers: { Authorization: 'Bearer vpexec_a' },
+            body: '{}',
+          }),
+        ),
+      );
+      await Promise.resolve();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.parse((workerWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+        type: 'viewport.worker_transport.response/v1',
+        requestId: 'denied-1',
+        status: 403,
+      });
+
+      (workerWs as unknown as FakeWs).emit(
+        'message',
+        Buffer.from(
+          JSON.stringify({
+            type: 'viewport.worker_transport.request/v1',
+            requestId: 'allowed-1',
+            method: 'POST',
+            path: '/api/runtime/workspaces/workspace_demo/managed-executors/executor_a/claim',
+            headers: { Authorization: 'Bearer vpexec_a', 'x-ignored': 'nope' },
+            body: '{}',
+          }),
+        ),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        'http://127.0.0.1:7780/api/runtime/workspaces/workspace_demo/managed-executors/executor_a/claim',
+      );
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+        method: 'POST',
+        headers: { Authorization: 'Bearer vpexec_a' },
+      });
+      expect(JSON.parse((workerWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+        type: 'viewport.worker_transport.response/v1',
+        requestId: 'allowed-1',
+        status: 200,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

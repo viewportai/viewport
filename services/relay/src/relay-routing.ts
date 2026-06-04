@@ -10,6 +10,7 @@ import {
   extractPairingRequestId,
   isAllowedClientFrame,
   isAllowedDaemonFrame,
+  isAllowedWorkerTransportRequestFrame,
   isE2eeEnvelope,
   isKeyExchangeInitFrame,
   isKeyExchangeResponseFrame,
@@ -242,6 +243,129 @@ function resolveDaemonFrameLimiter(context: RelayRoutingContext): TokenBucketRat
   );
   daemonLimiterCache.set(context, created);
   return created;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+function responseHeaders(headers: Headers): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of headers.entries()) {
+    const normalized = key.toLowerCase();
+    if (
+      normalized === 'authorization' ||
+      normalized === 'set-cookie' ||
+      normalized === 'cookie'
+    ) {
+      continue;
+    }
+    result[normalized] = value;
+  }
+  return result;
+}
+
+function filteredWorkerHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== 'string') continue;
+    const normalized = key.toLowerCase();
+    if (
+      normalized === 'authorization' ||
+      normalized === 'accept' ||
+      normalized === 'content-type' ||
+      normalized === 'x-viewport-run-lease' ||
+      normalized === 'x-viewport-assignment-claim' ||
+      normalized === 'x-viewport-worker-fingerprint' ||
+      normalized === 'x-viewport-worker-timestamp' ||
+      normalized === 'x-viewport-worker-nonce' ||
+      normalized === 'x-viewport-worker-body-sha256' ||
+      normalized === 'x-viewport-worker-signature' ||
+      normalized === 'x-viewport-server-id'
+    ) {
+      result[key] = raw;
+    }
+  }
+  return result;
+}
+
+function workerRequestPathAllowed(
+  path: string,
+  workspaceId: string,
+  managedExecutorId: string,
+): boolean {
+  const prefix = `/api/runtime/workspaces/${encodeURIComponent(
+    workspaceId,
+  )}/managed-executors/${encodeURIComponent(managedExecutorId)}`;
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+async function forwardWorkerTransportRequest(
+  context: RelayRoutingContext,
+  ws: WebSocket,
+  workspaceId: string,
+  claims: AdmissionClaims | undefined,
+  frame: FramePayload,
+): Promise<void> {
+  const requestId = String(frame['requestId']);
+  const method = frame['method'] as 'GET' | 'POST' | 'PATCH';
+  const requestPath = String(frame['path']);
+  const managedExecutorId = stringValue(claims?.managedExecutorId);
+  if (!managedExecutorId || !workerRequestPathAllowed(requestPath, workspaceId, managedExecutorId)) {
+    context.metrics.increment('relay_worker_transport_rejected_total');
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.worker_transport.response/v1',
+        requestId,
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok: false, reason: 'WORKER_TRANSPORT_PATH_DENIED' }),
+      }),
+    );
+    return;
+  }
+
+  const url = new URL(requestPath, context.config.serverUrl);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: filteredWorkerHeaders(frame['headers']),
+      ...(method === 'GET' ? {} : { body: String(frame['body'] ?? '') }),
+    });
+    const body = await response.text();
+    context.metrics.increment('relay_worker_transport_forwarded_total');
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.worker_transport.response/v1',
+        requestId,
+        status: response.status,
+        headers: responseHeaders(response.headers),
+        body,
+      }),
+    );
+  } catch (error) {
+    context.metrics.increment('relay_worker_transport_forward_failed_total');
+    context.logger.warn('worker_transport_forward_failed', {
+      workspaceId,
+      managedExecutorId,
+      method,
+      path: requestPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.worker_transport.response/v1',
+        requestId,
+        status: 502,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ok: false, reason: 'WORKER_TRANSPORT_FORWARD_FAILED' }),
+      }),
+    );
+  }
 }
 
 function routeKeyExchangeResponse(
@@ -527,6 +651,61 @@ export function registerConnection(
   pruneStalePairingRequests(state);
   pruneStaleKeyExchangeRequests(state);
   pruneStaleSessionOwners(state);
+
+  if (role === 'worker') {
+    const workerFrameLimiter = resolveDaemonFrameLimiter(context);
+    wsIp.set(ws, ip);
+    wsWorkspace.set(ws, workspaceId);
+    wsRole.set(ws, role);
+    adjustIpConnectionCount(ip, 1);
+    setupHeartbeat(ws);
+    metrics.increment('relay_ws_connections_opened_total');
+    logger.info('worker_connected', {
+      workspaceId,
+      managedExecutorId: claims?.managedExecutorId,
+      ip,
+    });
+    updateGauges();
+
+    ws.on('message', (raw) => {
+      markWsActivity(ws);
+      const text = raw.toString('utf8');
+      const size = Buffer.byteLength(text);
+      if (!workerFrameLimiter.allow(workspaceId)) {
+        metrics.increment('relay_frames_daemon_rate_limited_total');
+        logger.warn('worker_frame_rate_limited', { workspaceId, ip });
+        closeWithReason(ws, 4008, 'worker rate limit exceeded');
+        return;
+      }
+      if (size > config.maxFrameBytes) {
+        metrics.increment('relay_ws_frame_too_large_total');
+        closeWithReason(ws, 1009, 'frame too large');
+        return;
+      }
+      const parsed = parseFramePayload(text);
+      if (!parsed || !isAllowedWorkerTransportRequestFrame(parsed)) {
+        metrics.increment('relay_frames_daemon_rejected_total');
+        logger.warn('worker_frame_rejected', {
+          workspaceId,
+          reason: 'invalid_worker_transport_frame',
+        });
+        return;
+      }
+      void forwardWorkerTransportRequest(context, ws, workspaceId, claims, parsed);
+    });
+
+    ws.on('close', () => {
+      adjustIpConnectionCount(ip, -1);
+      metrics.increment('relay_ws_connections_closed_total');
+      logger.info('worker_disconnected', {
+        workspaceId,
+        managedExecutorId: claims?.managedExecutorId,
+        ip,
+      });
+      updateGauges();
+    });
+    return;
+  }
 
   if (role === 'workspace-daemon') {
     const daemonExpectedProfile = claims?.e2eeProfile;

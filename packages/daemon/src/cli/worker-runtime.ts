@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { WebSocket } from 'ws';
 import YAML from 'yaml';
 import { ConfigManager } from '../core/config.js';
 import { Daemon } from '../core/daemon.js';
@@ -59,6 +60,7 @@ interface WorkerRuntimeProfile {
   workspaceId?: string;
   managedExecutorId?: string;
   credential?: string;
+  relayWsBaseUrl?: string;
   workspaceRoot: string;
   identityKeyPath: string;
   publicKeyFingerprint: string;
@@ -125,6 +127,17 @@ interface HostedAssignmentCommandPoll {
   _viewport_worker_retry?: boolean;
 }
 
+interface HostedManagedExecutorRequest {
+  method: 'GET' | 'POST' | 'PATCH';
+  path: string;
+  requestPath: string;
+  url: string;
+  serialized: string;
+  headers: Record<string, string>;
+}
+
+type HostedManagedExecutorDispatcher = (request: HostedManagedExecutorRequest) => Promise<Response>;
+
 export interface WorkerTransport {
   readonly mode: WorkerTransportMode;
   claim(body: Record<string, unknown>): Promise<ClaimedLease | null>;
@@ -172,6 +185,174 @@ class HttpPollingTransport implements WorkerTransport {
   }
 }
 
+class RelayWorkerTransport implements WorkerTransport {
+  public readonly mode: WorkerTransportMode = 'relay';
+  private ws: WebSocket | null = null;
+  private pending = new Map<
+    string,
+    {
+      resolve: (response: Response) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+
+  constructor(private readonly profile: WorkerRuntimeProfile) {}
+
+  async claim(body: Record<string, unknown>): Promise<ClaimedLease | null> {
+    return claimLeaseHttp(this.profile, body, (request) =>
+      this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async heartbeat(options: {
+    status: 'online' | 'offline';
+    healthStatus: 'idle' | 'offline';
+    lifecycle: WorkerLifecycle;
+  }): Promise<void> {
+    return heartbeatHttp(
+      this.profile,
+      {
+        ...options,
+        transport: 'relay',
+      },
+      (request) => this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async sync(lease: ClaimedLease, execution: HostedClaimExecutionResult): Promise<void> {
+    return syncLeaseHttp(this.profile, lease, execution, (request) =>
+      this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async cleanup(lease: ClaimedLease): Promise<void> {
+    return cleanupLeaseHttp(this.profile, lease);
+  }
+
+  async pollRuntimeCommands(lease: ClaimedLease): Promise<HostedAssignmentCommandPoll> {
+    return fetchHostedAssignmentHttp(this.profile, lease, (request) =>
+      this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async dispatchHostedManagedExecutorRequest(
+    request: HostedManagedExecutorRequest,
+  ): Promise<Response> {
+    const ws = await this.connection();
+    const requestId = crypto.randomUUID();
+    const frame = {
+      type: 'viewport.worker_transport.request/v1',
+      requestId,
+      method: request.method,
+      path: request.requestPath,
+      headers: request.headers,
+      body: request.serialized,
+    };
+    return new Promise<Response>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error(`Relay worker transport request ${request.path} timed out.`));
+      }, relayWorkerRequestTimeoutMs());
+      this.pending.set(requestId, { resolve, reject, timeout });
+      ws.send(JSON.stringify(frame), (error) => {
+        if (error) {
+          clearTimeout(timeout);
+          this.pending.delete(requestId);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  private async connection(): Promise<WebSocket> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return this.ws;
+    }
+    if (!isHostedManagedExecutorProfile(this.profile)) {
+      throw new Error('Relay worker transport requires a hosted managed executor profile.');
+    }
+    const tokenResponse = await hostedManagedExecutorFetch(this.profile, 'POST', 'relay-token', {
+      credential: this.profile.credential,
+      ttl_seconds: 3600,
+    });
+    const tokenPayload = (await tokenResponse.json()) as Record<string, unknown>;
+    const token = stringValue(tokenPayload['relayToken']);
+    const claims = recordValue(tokenPayload['claims']);
+    const claimRelayWsBaseUrl = stringValue(claims?.['relayWsBaseUrl']);
+    if (!token) {
+      throw new Error('Relay worker transport token response did not include a relay token.');
+    }
+    const relayWsBaseUrl =
+      this.profile.relayWsBaseUrl ??
+      process.env['VIEWPORT_RELAY_WS_BASE_URL'] ??
+      process.env['VPD_RELAY_WS_BASE_URL'] ??
+      claimRelayWsBaseUrl ??
+      relayWsBaseUrlFromServerUrl(this.profile.serverUrl);
+    const url = new URL(relayWsBaseUrl);
+    url.searchParams.set('role', 'worker');
+    url.searchParams.set('workspaceId', this.profile.workspaceId!);
+
+    const ws = new WebSocket(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Relay worker transport connection timed out.')),
+        relayWorkerConnectionTimeoutMs(),
+      );
+      ws.once('open', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      ws.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+
+    ws.on('message', (raw) => {
+      this.handleMessage(raw.toString('utf8'));
+    });
+    ws.on('close', () => {
+      for (const [requestId, pending] of this.pending.entries()) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Relay worker transport connection closed.'));
+        this.pending.delete(requestId);
+      }
+      this.ws = null;
+    });
+
+    this.ws = ws;
+    return ws;
+  }
+
+  private handleMessage(text: string): void {
+    let frame: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      frame = parsed as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (frame['type'] !== 'viewport.worker_transport.response/v1') return;
+    const requestId = stringValue(frame['requestId']);
+    if (!requestId) return;
+    const pending = this.pending.get(requestId);
+    if (!pending) return;
+    this.pending.delete(requestId);
+    clearTimeout(pending.timeout);
+    const status = typeof frame['status'] === 'number' ? frame['status'] : 502;
+    const headers = recordValue(frame['headers']) as Record<string, string> | undefined;
+    const body = typeof frame['body'] === 'string' ? frame['body'] : '';
+    pending.resolve(new Response(body, { status, headers }));
+  }
+}
+
 const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 
 export async function runStandaloneWorker(
@@ -187,10 +368,10 @@ export async function runStandaloneWorker(
     if (transport === 'inbound') {
       validateInboundWorkerGate(profile);
     }
-    if (transport === 'relay') {
-      throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
-    }
-    const workerTransport = new HttpPollingTransport(profile, transport);
+    const workerTransport =
+      transport === 'relay'
+        ? new RelayWorkerTransport(profile)
+        : new HttpPollingTransport(profile, transport);
     processLock =
       options.lifecycle === 'persistent' && !options.once
         ? acquireWorkerProcessLock({
@@ -352,7 +533,9 @@ async function executeClaim(
   if (!isHostedManagedExecutorProfile(profile)) {
     return { status: 'completed' };
   }
-  return withGatewayLeaseProcessEnv(lease, () => executeHostedWorkflowClaim(profile, transport, lease));
+  return withGatewayLeaseProcessEnv(lease, () =>
+    executeHostedWorkflowClaim(profile, transport, lease),
+  );
 }
 
 async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
@@ -395,6 +578,8 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
       worker!.credential ??
       process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
       process.env['VPD_MANAGED_EXECUTOR_TOKEN'],
+    relayWsBaseUrl:
+      process.env['VIEWPORT_RELAY_WS_BASE_URL'] ?? process.env['VPD_RELAY_WS_BASE_URL'],
     workspaceRoot: worker!.workspaceRoot!,
     identityKeyPath: worker!.identityKeyPath!,
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
@@ -421,6 +606,9 @@ async function loadSandboxBootstrap(bootstrapPath: string): Promise<WorkerRuntim
     workspaceId: requiredString(raw['workspace_id'] ?? raw['workspaceId'], 'workspace_id'),
     managedExecutorId: requiredString(raw['executor_id'] ?? raw['executorId'], 'executor_id'),
     credential: requiredString(raw['credential'], 'credential'),
+    relayWsBaseUrl: stringValue(
+      raw['relay_ws_base_url'] ?? raw['relayWsBaseUrl'] ?? raw['relay_url'] ?? raw['relayUrl'],
+    ),
     workspaceRoot,
     identityKeyPath: identityFile.path,
     publicKeyFingerprint: identityFile.publicKeyFingerprint,
@@ -484,7 +672,10 @@ function gatewayLeaseValue(value: unknown): GatewayLease | undefined {
     return undefined;
   }
   const gatewayBaseUrl = stringValue(
-    record['gateway_base_url'] ?? record['gatewayBaseUrl'] ?? record['base_url'] ?? record['baseUrl'],
+    record['gateway_base_url'] ??
+      record['gatewayBaseUrl'] ??
+      record['base_url'] ??
+      record['baseUrl'],
   );
   const virtualKey = recordValue(record['virtual_key'] ?? record['virtualKey']);
   const token = stringValue(virtualKey?.['token']);
@@ -638,13 +829,23 @@ function validateInboundWorkerGate(profile: WorkerRuntimeProfile): never {
 async function claimLeaseHttp(
   profile: WorkerRuntimeProfile,
   body: Record<string, unknown>,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<ClaimedLease | null> {
   const leaseSeconds = positiveInteger(body['leaseSeconds']) ?? DEFAULT_HOSTED_LEASE_SECONDS;
   const response = isHostedManagedExecutorProfile(profile)
-    ? await hostedManagedExecutorFetch(profile, 'POST', 'claim', {
-        credential: profile.credential,
-        lease_seconds: leaseSeconds,
-      })
+    ? await hostedManagedExecutorFetch(
+        profile,
+        'POST',
+        'claim',
+        {
+          credential: profile.credential,
+          lease_seconds: leaseSeconds,
+        },
+        undefined,
+        undefined,
+        [],
+        dispatcher,
+      )
     : await workerFetch(profile, 'workers/claim', body);
   if (response.status === 204) return null;
   const parsed = (await response.json()) as Record<string, unknown>;
@@ -699,31 +900,43 @@ async function heartbeatHttp(
     lifecycle: WorkerLifecycle;
     transport: WorkerTransportMode;
   },
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<void> {
   const capabilityPayload = managedExecutorCapabilities(profile.capabilities);
   if (isHostedManagedExecutorProfile(profile)) {
-    await hostedManagedExecutorFetch(profile, 'POST', 'heartbeat', {
-      credential: profile.credential,
-      status: options.status,
-      health_status: options.healthStatus,
-      access_mode: options.transport,
-      runner_mode: options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'self_hosted',
-      runner_provider: options.lifecycle === 'ephemeral' ? 'viewport_cloud' : 'local',
-      context_execution_mode:
-        options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'customer_managed_context_worker',
-      credential_mode: options.lifecycle === 'ephemeral' ? 'run_scoped_grant' : 'runner_local',
-      runner_profile:
-        stringValue(capabilityPayload['runner_pool']) ??
-        stringValue(capabilityPayload['runnerPool']) ??
-        null,
-      runner_posture: {
-        transport: { mode: options.transport },
-        execution: {
-          kind: options.lifecycle === 'ephemeral' ? 'ephemeral-worker' : 'persistent-worker',
+    await hostedManagedExecutorFetch(
+      profile,
+      'POST',
+      'heartbeat',
+      {
+        credential: profile.credential,
+        status: options.status,
+        health_status: options.healthStatus,
+        access_mode: options.transport,
+        runner_mode: options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'self_hosted',
+        runner_provider: options.lifecycle === 'ephemeral' ? 'viewport_cloud' : 'local',
+        context_execution_mode:
+          options.lifecycle === 'ephemeral'
+            ? 'viewport_managed'
+            : 'customer_managed_context_worker',
+        credential_mode: options.lifecycle === 'ephemeral' ? 'run_scoped_grant' : 'runner_local',
+        runner_profile:
+          stringValue(capabilityPayload['runner_pool']) ??
+          stringValue(capabilityPayload['runnerPool']) ??
+          null,
+        runner_posture: {
+          transport: { mode: options.transport },
+          execution: {
+            kind: options.lifecycle === 'ephemeral' ? 'ephemeral-worker' : 'persistent-worker',
+          },
         },
+        capabilities: capabilityPayload,
       },
-      capabilities: capabilityPayload,
-    });
+      undefined,
+      undefined,
+      [],
+      dispatcher,
+    );
     return;
   }
   await workerRequest(profile, 'workers/heartbeat', {
@@ -741,6 +954,7 @@ async function syncLeaseHttp(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
   execution: HostedClaimExecutionResult,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<void> {
   const status = execution.status;
   if (isHostedManagedExecutorProfile(profile)) {
@@ -804,6 +1018,8 @@ async function syncLeaseHttp(
       },
       lease.assignmentClaimToken,
       lease.leaseToken,
+      [],
+      dispatcher,
     );
     return;
   }
@@ -841,7 +1057,7 @@ async function executeHostedWorkflowClaim(
     if (existing) {
       if (existing.status === 'blocked') {
         const body = await transport.pollRuntimeCommands(lease);
-        const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease);
+        const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease, transport);
         const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body, {
           runtimeSecretEnv,
         });
@@ -869,7 +1085,7 @@ async function executeHostedWorkflowClaim(
     const directoryPath = path.resolve(lease.directoryPath ?? profile.workspaceRoot);
     await fs.mkdir(directoryPath, { recursive: true });
     const directory = await daemon.directoryManager.register(directoryPath);
-    const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease);
+    const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease, transport);
     const run = await daemon.workflowRunner.startRun({
       workflowYaml: lease.yamlSnapshot,
       workflowSourceRef:
@@ -911,6 +1127,7 @@ async function executeHostedWorkflowClaim(
 async function materializeHostedRunCredentials(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<Record<string, string>> {
   if (!lease.runId) {
     throw new Error(
@@ -935,6 +1152,8 @@ async function materializeHostedRunCredentials(
       },
       lease.assignmentClaimToken,
       lease.leaseToken,
+      [],
+      dispatcher,
     );
     const parsed = (await response.json()) as Record<string, unknown>;
     const data =
@@ -953,9 +1172,15 @@ async function materializeHostedRunCredentials(
 async function runtimeSecretEnvForHostedRun(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
+  transport?: WorkerTransport,
 ): Promise<Record<string, string>> {
+  const dispatcher =
+    transport instanceof RelayWorkerTransport
+      ? (request: HostedManagedExecutorRequest) =>
+          transport.dispatchHostedManagedExecutorRequest(request)
+      : undefined;
   return {
-    ...(await materializeHostedRunCredentials(profile, lease)),
+    ...(await materializeHostedRunCredentials(profile, lease, dispatcher)),
     ...gatewayLeaseCredentialEnv(lease.gateway),
     ...gatewayLeaseEnv(lease.gateway),
   };
@@ -1161,6 +1386,7 @@ async function resumeBlockedHostedExecution(
 async function fetchHostedAssignmentHttp(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<HostedAssignmentCommandPoll> {
   if (!lease.runId) {
     throw new Error('Hosted managed executor assignment polling requires a workflow run id.');
@@ -1173,6 +1399,7 @@ async function fetchHostedAssignmentHttp(
     lease.assignmentClaimToken,
     lease.leaseToken,
     [429],
+    dispatcher,
   );
   if (response.status === 429) {
     await sleep(retryAfterMs(response));
@@ -1333,6 +1560,7 @@ async function hostedManagedExecutorFetch(
   assignmentClaimToken?: string,
   runLeaseToken?: string,
   allowedStatuses: number[] = [],
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<Response> {
   if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
     throw new Error(
@@ -1349,26 +1577,37 @@ async function hostedManagedExecutorFetch(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const signed = await signWorkerRequest(profile, method, requestPath, serialized);
-    const response = await transportFetch(url, {
+    const headers = {
+      Authorization: `Bearer ${profile.credential}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(runLeaseToken
+        ? { 'X-Viewport-Run-Lease': runLeaseToken }
+        : assignmentClaimToken
+          ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken }
+          : {}),
+      'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+      'X-Viewport-Worker-Timestamp': signed.timestamp,
+      'X-Viewport-Worker-Nonce': signed.nonce,
+      'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+      'X-Viewport-Worker-Signature': signed.signature,
+      ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
+    };
+    const request = {
       method,
-      headers: {
-        Authorization: `Bearer ${profile.credential}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(runLeaseToken
-          ? { 'X-Viewport-Run-Lease': runLeaseToken }
-          : assignmentClaimToken
-            ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken }
-            : {}),
-        'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
-        'X-Viewport-Worker-Timestamp': signed.timestamp,
-        'X-Viewport-Worker-Nonce': signed.nonce,
-        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
-        'X-Viewport-Worker-Signature': signed.signature,
-        ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
-      },
-      ...(method === 'GET' ? {} : { body: serialized }),
-    });
+      path,
+      requestPath,
+      url,
+      serialized,
+      headers,
+    };
+    const response = dispatcher
+      ? await dispatcher(request)
+      : await transportFetch(url, {
+          method,
+          headers,
+          ...(method === 'GET' ? {} : { body: serialized }),
+        });
     if (response.ok || allowedStatuses.includes(response.status)) {
       return response;
     }
@@ -1415,6 +1654,30 @@ function retryAfterMs(response: Response): number {
     return Math.min(seconds * 1_000, 30_000);
   }
   return 5_000;
+}
+
+function relayWorkerConnectionTimeoutMs(): number {
+  return positiveIntegerFromEnv('VIEWPORT_RELAY_WORKER_CONNECT_TIMEOUT_MS') ?? 10_000;
+}
+
+function relayWorkerRequestTimeoutMs(): number {
+  return positiveIntegerFromEnv('VIEWPORT_RELAY_WORKER_REQUEST_TIMEOUT_MS') ?? 60_000;
+}
+
+function positiveIntegerFromEnv(name: string): number | undefined {
+  const value = process.env[name];
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function relayWsBaseUrlFromServerUrl(serverUrl: string): string {
+  const parsed = new URL(serverUrl);
+  const protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+  const hostname = parsed.hostname.startsWith('api.')
+    ? `relay.${parsed.hostname.slice(4)}`
+    : parsed.hostname;
+  return `${protocol}//${hostname}${parsed.port ? `:${parsed.port}` : ''}/ws`;
 }
 
 function sleep(ms: number): Promise<void> {

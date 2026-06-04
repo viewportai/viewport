@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { WebSocketServer } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { acquireWorkerProcessLock } from '../../src/cli/worker-process-lock.js';
 
@@ -10,6 +11,7 @@ describe('standalone worker runtime', () => {
   const originalArgv = process.argv.slice();
   const originalHome = process.env['VIEWPORT_HOME'];
   const originalInboundExperimental = process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+  const originalRelayWsBaseUrl = process.env['VIEWPORT_RELAY_WS_BASE_URL'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let homeDir = '';
   let server: http.Server | null = null;
@@ -20,6 +22,7 @@ describe('standalone worker runtime', () => {
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-worker-runtime-'));
     process.env['VIEWPORT_HOME'] = homeDir;
     delete process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+    delete process.env['VIEWPORT_RELAY_WS_BASE_URL'];
     delete process.env['VIEWPORT_PROFILE'];
   });
 
@@ -31,6 +34,11 @@ describe('standalone worker runtime', () => {
       process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'] = originalInboundExperimental;
     } else {
       delete process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+    }
+    if (originalRelayWsBaseUrl) {
+      process.env['VIEWPORT_RELAY_WS_BASE_URL'] = originalRelayWsBaseUrl;
+    } else {
+      delete process.env['VIEWPORT_RELAY_WS_BASE_URL'];
     }
     if (server) {
       await closeServer(server);
@@ -1537,8 +1545,61 @@ nodes:
     await expect(worker()).rejects.toThrow('Inbound worker transport listener is not implemented');
   });
 
-  it('reports relay as unsupported until relay worker runtime lands', async () => {
-    await writeWorkerProfile('http://127.0.0.1:1');
+  it('routes hosted managed executor requests through relay worker transport', async () => {
+    const requests: RuntimeRequest[] = [];
+    const relayFrames: Array<Record<string, unknown>> = [];
+    server = await startRuntimeServer(requests);
+    const relayServer = http.createServer();
+    const wss = new WebSocketServer({ server: relayServer });
+    await new Promise<void>((resolve, reject) => {
+      relayServer.once('error', reject);
+      relayServer.listen(0, '127.0.0.1', () => {
+        relayServer.off('error', reject);
+        resolve();
+      });
+    });
+    const relayAddress = relayServer.address();
+    if (!relayAddress || typeof relayAddress === 'string') {
+      throw new Error('Missing relay test server address.');
+    }
+    process.env['VIEWPORT_RELAY_WS_BASE_URL'] = `ws://127.0.0.1:${relayAddress.port}/ws`;
+    wss.on('connection', (ws, request) => {
+      expect(request.url).toContain('role=worker');
+      expect(request.url).toContain('workspaceId=workspace_1');
+      expect(request.headers.authorization).toBe('Bearer relay_worker_token');
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
+        relayFrames.push(frame);
+        const path = String(frame['path']);
+        const requestId = String(frame['requestId']);
+        const status =
+          path.endsWith('/claim') || path.includes('/workflow-runs/run_1/sync') ? 200 : 200;
+        const body = path.endsWith('/claim')
+          ? JSON.stringify({
+              data: {
+                id: 'run_1',
+                assignment_claim_token: 'vpclaim_run_1',
+                run_lease: {
+                  lease_id: 'workflow_run:run_1',
+                  lease_token: 'vplease_run_1',
+                  workflow_run_id: 'run_1',
+                },
+              },
+            })
+          : JSON.stringify({ ok: true });
+        ws.send(
+          JSON.stringify({
+            type: 'viewport.worker_transport.response/v1',
+            requestId,
+            status,
+            headers: { 'content-type': 'application/json' },
+            body,
+          }),
+        );
+      });
+    });
+
+    await writeHostedWorkerProfile(serverUrl(server));
     process.argv = [
       'node',
       'vpd',
@@ -1549,34 +1610,57 @@ nodes:
       '--transport',
       'relay',
       '--once',
+      '--json',
     ];
     vi.resetModules();
     const { worker } = await import('../../src/cli/worker-command.js');
 
-    await expect(worker()).rejects.toThrow('Relay worker transport is not supported');
+    try {
+      await worker();
+    } finally {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await closeServer(relayServer);
+    }
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      failed: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, failed: 1 });
+    expect(requests.map((request) => request.url)).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/relay-token',
+    ]);
+    expect(relayFrames.map((frame) => frame['path'])).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(relayFrames[0]?.['headers']).toMatchObject({
+      Authorization: 'Bearer vpexec_hosted',
+      'X-Viewport-Worker-Fingerprint': expect.any(String),
+      'X-Viewport-Worker-Signature': expect.any(String),
+    });
   });
 
-  it('denies ephemeral inbound and relay run-once transports before control-plane contact', async () => {
+  it('denies ephemeral inbound run-once transport before control-plane contact', async () => {
     await writeWorkerProfile('http://127.0.0.1:1');
-    for (const transport of ['inbound', 'relay']) {
-      process.argv = [
-        'node',
-        'vpd',
-        'worker',
-        'run-once',
-        '--lease',
-        `lease_${transport}`,
-        '--transport',
-        transport,
-      ];
-      vi.resetModules();
-      const { worker } = await import('../../src/cli/worker-command.js');
-      await expect(worker()).rejects.toThrow(
-        transport === 'inbound'
-          ? 'Inbound worker transport is disabled by default'
-          : 'Relay worker transport',
-      );
-    }
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'run-once',
+      '--lease',
+      'lease_inbound',
+      '--transport',
+      'inbound',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await expect(worker()).rejects.toThrow('Inbound worker transport is disabled by default');
   });
 
   async function writeWorkerProfile(serverUrl: string): Promise<void> {
@@ -1675,6 +1759,25 @@ async function startRuntimeServer(
       }
       response.end(
         JSON.stringify({ lease: { id: `lease_${claimCount}`, run_id: `run_${claimCount}` } }),
+      );
+      return;
+    }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/relay-token' &&
+      request.method === 'POST'
+    ) {
+      response.end(
+        JSON.stringify({
+          ok: true,
+          relayToken: 'relay_worker_token',
+          claims: {
+            role: 'worker',
+            workspaceId: 'workspace_1',
+            managedExecutorId: 'executor_1',
+            relayWsBaseUrl: process.env['VIEWPORT_RELAY_WS_BASE_URL'],
+          },
+        }),
       );
       return;
     }

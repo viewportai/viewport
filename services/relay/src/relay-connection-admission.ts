@@ -97,7 +97,10 @@ export function resolveConnectionAdmission(
     };
   }
 
-  if ((role === 'workspace-daemon' || clientScopeClaim === 'runtime') && !runtimeTargetId) {
+  if (
+    (role === 'workspace-daemon' || (role === 'client' && clientScopeClaim === 'runtime')) &&
+    !runtimeTargetId
+  ) {
     return {
       ok: false,
       logEvent: 'connection_rejected',
