@@ -56,6 +56,37 @@ export interface DurableRunCompletion {
   payload: Record<string, unknown>;
 }
 
+export interface DurableSideEffectClaim {
+  workflowId: string;
+  sideEffectId: string;
+  idempotencyKey: string;
+  kind: string;
+  externalKey?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface DurableSideEffectClaimHandle {
+  id: string;
+  status: 'claimed' | 'already_claimed' | 'already_completed';
+  result?: Record<string, unknown>;
+}
+
+export interface DurableSideEffectCompletion {
+  workflowId: string;
+  sideEffectId: string;
+  idempotencyKey: string;
+  result: Record<string, unknown>;
+}
+
+export interface DurableSideEffectSnapshot {
+  id: string;
+  kind: string;
+  externalKey?: string;
+  status: 'claimed' | 'completed';
+  result?: Record<string, unknown>;
+  completedAt?: Date;
+}
+
 export interface DurableRunSnapshot {
   id: string;
   status: 'running' | 'waiting' | 'completed' | 'failed' | 'canceled';
@@ -63,6 +94,7 @@ export interface DurableRunSnapshot {
   policyHash: string;
   waitingGateIds: string[];
   scheduledTimeoutIds: string[];
+  sideEffects: DurableSideEffectSnapshot[];
   completedAt?: Date;
 }
 
@@ -78,6 +110,8 @@ export interface DurableExecutionProvider {
   awaitGate(wait: DurableGateWait): Promise<DurableGateWaitHandle>;
   signalGate(signal: DurableGateSignal): Promise<{ accepted: boolean }>;
   scheduleTimeout(timeout: DurableTimeoutSchedule): Promise<DurableTimeoutHandle>;
+  claimSideEffect(claim: DurableSideEffectClaim): Promise<DurableSideEffectClaimHandle>;
+  completeSideEffect(completion: DurableSideEffectCompletion): Promise<{ completed: boolean; result: Record<string, unknown> }>;
   signal(signal: DurableWorkflowSignal): Promise<{ accepted: boolean }>;
   completeRun(completion: DurableRunCompletion): Promise<{ completed: boolean }>;
   getRun(workflowId: string): Promise<DurableRunSnapshot | null>;

@@ -12,6 +12,10 @@ import type {
   DurableRunHandle,
   DurableRunSnapshot,
   DurableRunStart,
+  DurableSideEffectClaim,
+  DurableSideEffectClaimHandle,
+  DurableSideEffectCompletion,
+  DurableSideEffectSnapshot,
   DurableTimeoutHandle,
   DurableTimeoutSchedule,
   DurableWorkflowSignal,
@@ -33,6 +37,7 @@ interface DurableRunState {
   gateSignalIds: string[];
   gateDeadlines: Record<string, number | undefined>;
   completionKeys: string[];
+  sideEffects: Record<string, DurableSideEffectSnapshot & { claimKey: string; completionKeys: string[] }>;
   completedAt?: string;
 }
 
@@ -63,6 +68,20 @@ type DurableRunCommand =
       payload: Record<string, unknown>;
     }
   | {
+      type: 'claim_side_effect';
+      sideEffectId: string;
+      idempotencyKey: string;
+      kind: string;
+      externalKey?: string;
+      payload: Record<string, unknown>;
+    }
+  | {
+      type: 'complete_side_effect';
+      sideEffectId: string;
+      idempotencyKey: string;
+      result: Record<string, unknown>;
+    }
+  | {
       type: 'complete';
       idempotencyKey: string;
       outcome: DurableRunCompletion['outcome'];
@@ -85,6 +104,7 @@ const viewportDurableRunWorkflow = DBOS.registerWorkflow(
       gateSignalIds: [],
       gateDeadlines: {},
       completionKeys: [],
+      sideEffects: {},
     };
 
     await persistSnapshot(state);
@@ -130,6 +150,34 @@ const viewportDurableRunWorkflow = DBOS.registerWorkflow(
           state.waitingGateIds = state.waitingGateIds.filter((gateId) => gateId !== command.gateId);
           delete state.gateDeadlines[command.gateId];
           state.status = state.waitingGateIds.length > 0 ? 'waiting' : 'running';
+        }
+        await persistSnapshot(state);
+        continue;
+      }
+
+      if (command.type === 'claim_side_effect') {
+        const existing = state.sideEffects[command.sideEffectId];
+        if (!existing) {
+          state.sideEffects[command.sideEffectId] = {
+            id: command.sideEffectId,
+            kind: command.kind,
+            externalKey: command.externalKey,
+            status: 'claimed',
+            claimKey: command.idempotencyKey,
+            completionKeys: [],
+          };
+        }
+        await persistSnapshot(state);
+        continue;
+      }
+
+      if (command.type === 'complete_side_effect') {
+        const sideEffect = state.sideEffects[command.sideEffectId];
+        if (sideEffect && !sideEffect.completionKeys.includes(command.idempotencyKey)) {
+          sideEffect.completionKeys.push(command.idempotencyKey);
+          sideEffect.status = 'completed';
+          sideEffect.result = command.result;
+          sideEffect.completedAt = new Date();
         }
         await persistSnapshot(state);
         continue;
@@ -212,6 +260,50 @@ export class DbosDurableExecutionProvider implements DurableExecutionProvider {
       return { id: timeout.timeoutId, status: 'scheduled' };
     }
     return { id: timeout.timeoutId, status: 'already_scheduled' };
+  }
+
+  async claimSideEffect(claim: DurableSideEffectClaim): Promise<DurableSideEffectClaimHandle> {
+    await this.launch();
+    const snapshot = await this.getRun(claim.workflowId);
+    if (!snapshot) throw new Error(`Unknown durable workflow: ${claim.workflowId}`);
+    const existing = snapshot.sideEffects.find((sideEffect) => sideEffect.id === claim.sideEffectId);
+    if (existing?.status === 'completed') {
+      return { id: claim.sideEffectId, status: 'already_completed', result: existing.result };
+    }
+    if (existing) {
+      return { id: claim.sideEffectId, status: 'already_claimed' };
+    }
+
+    await DBOS.send(claim.workflowId, commandForSideEffectClaim(claim), COMMAND_TOPIC, claim.idempotencyKey);
+    const updated = await this.waitUntil(
+      claim.workflowId,
+      (next) => next.sideEffects.some((sideEffect) => sideEffect.id === claim.sideEffectId),
+    );
+    const sideEffect = updated.sideEffects.find((entry) => entry.id === claim.sideEffectId);
+    if (sideEffect?.status === 'completed') {
+      return { id: claim.sideEffectId, status: 'already_completed', result: sideEffect.result };
+    }
+
+    return { id: claim.sideEffectId, status: 'claimed' };
+  }
+
+  async completeSideEffect(completion: DurableSideEffectCompletion): Promise<{ completed: boolean; result: Record<string, unknown> }> {
+    await this.launch();
+    const snapshot = await this.getRun(completion.workflowId);
+    if (!snapshot) throw new Error(`Unknown durable workflow: ${completion.workflowId}`);
+    const existing = snapshot.sideEffects.find((sideEffect) => sideEffect.id === completion.sideEffectId);
+    if (!existing) throw new Error(`Unknown durable side effect: ${completion.sideEffectId}`);
+    if (existing.status === 'completed') {
+      return { completed: false, result: existing.result ?? {} };
+    }
+
+    await DBOS.send(completion.workflowId, commandForSideEffectCompletion(completion), COMMAND_TOPIC, completion.idempotencyKey);
+    const updated = await this.waitUntil(
+      completion.workflowId,
+      (next) => next.sideEffects.some((sideEffect) => sideEffect.id === completion.sideEffectId && sideEffect.status === 'completed'),
+    );
+    const sideEffect = updated.sideEffects.find((entry) => entry.id === completion.sideEffectId);
+    return { completed: true, result: sideEffect?.result ?? completion.result };
   }
 
   async signal(signal: DurableWorkflowSignal): Promise<{ accepted: boolean }> {
@@ -302,6 +394,26 @@ function commandForTimeout(timeout: DurableTimeoutSchedule): DurableRunCommand {
   };
 }
 
+function commandForSideEffectClaim(claim: DurableSideEffectClaim): DurableRunCommand {
+  return {
+    type: 'claim_side_effect',
+    sideEffectId: claim.sideEffectId,
+    idempotencyKey: claim.idempotencyKey,
+    kind: claim.kind,
+    externalKey: claim.externalKey,
+    payload: claim.payload,
+  };
+}
+
+function commandForSideEffectCompletion(completion: DurableSideEffectCompletion): DurableRunCommand {
+  return {
+    type: 'complete_side_effect',
+    sideEffectId: completion.sideEffectId,
+    idempotencyKey: completion.idempotencyKey,
+    result: completion.result,
+  };
+}
+
 function commandForCompletion(completion: DurableRunCompletion): DurableRunCommand {
   return {
     type: 'complete',
@@ -323,6 +435,14 @@ function snapshotFromState(state: DurableRunState): DurableRunSnapshot {
     policyHash: state.policyHash,
     waitingGateIds: [...state.waitingGateIds],
     scheduledTimeoutIds: [...state.scheduledTimeoutIds],
+    sideEffects: Object.values(state.sideEffects).map((sideEffect) => ({
+      id: sideEffect.id,
+      kind: sideEffect.kind,
+      externalKey: sideEffect.externalKey,
+      status: sideEffect.status,
+      result: sideEffect.result,
+      completedAt: sideEffect.completedAt,
+    })),
     completedAt: state.completedAt ? new Date(state.completedAt) : undefined,
   };
 }

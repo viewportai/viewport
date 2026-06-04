@@ -13,6 +13,7 @@ export async function assertDurableExecutionProviderConformance(provider: Durabl
   const gateId = `gate_${suffix}`;
   const gateWaitKey = `gate_wait_${suffix}`;
   const timeoutId = `timeout_${suffix}`;
+  const sideEffectId = `side_effect_${suffix}`;
   const decisionId = `decision_${suffix}`;
   const completeKey = `complete_${suffix}`;
   const first = await provider.startRun({
@@ -54,6 +55,50 @@ export async function assertDurableExecutionProviderConformance(provider: Durabl
   const snapshot = await provider.getRun(first.id);
   if (!snapshot || snapshot.status !== 'waiting' || !snapshot.waitingGateIds.includes(gateId)) {
     throw new Error('DurableExecutionProvider.getRun must expose waiting gates');
+  }
+
+  const claim = await provider.claimSideEffect({
+    workflowId: first.id,
+    sideEffectId,
+    idempotencyKey: `claim_${suffix}`,
+    kind: 'github.pull_request.create',
+    externalKey: 'repo:branch',
+    payload: {},
+  });
+  if (claim.status !== 'claimed') throw new Error('DurableExecutionProvider.claimSideEffect must claim once');
+
+  const duplicateClaim = await provider.claimSideEffect({
+    workflowId: first.id,
+    sideEffectId,
+    idempotencyKey: `claim_${suffix}`,
+    kind: 'github.pull_request.create',
+    externalKey: 'repo:branch',
+    payload: {},
+  });
+  if (duplicateClaim.status !== 'already_claimed') {
+    throw new Error('DurableExecutionProvider.claimSideEffect must be idempotent before completion');
+  }
+
+  const sideEffectCompletion = await provider.completeSideEffect({
+    workflowId: first.id,
+    sideEffectId,
+    idempotencyKey: `side_effect_complete_${suffix}`,
+    result: { externalUrl: 'https://example.test/pr/1' },
+  });
+  if (!sideEffectCompletion.completed) {
+    throw new Error('DurableExecutionProvider.completeSideEffect must complete the first side effect result');
+  }
+
+  const completedClaim = await provider.claimSideEffect({
+    workflowId: first.id,
+    sideEffectId,
+    idempotencyKey: `claim_${suffix}`,
+    kind: 'github.pull_request.create',
+    externalKey: 'repo:branch',
+    payload: {},
+  });
+  if (completedClaim.status !== 'already_completed' || completedClaim.result?.['externalUrl'] !== 'https://example.test/pr/1') {
+    throw new Error('DurableExecutionProvider.claimSideEffect must return completed side effect results');
   }
 
   const accepted = await provider.signalGate({
