@@ -41,6 +41,16 @@ export interface PlatformSessionMemoryRetrieval {
   retrieval?: Record<string, unknown> | null;
 }
 
+export interface PlatformSessionCollaborationMailboxRetrieval {
+  schema: 'viewport.agent_session_collaboration_mailbox_retrieval/v1';
+  agent_session_id?: string;
+  workflow_run_id?: string;
+  recipient?: Record<string, unknown> | null;
+  mailboxes?: Array<Record<string, unknown>>;
+  source?: Record<string, unknown> | null;
+  redaction?: Record<string, unknown> | null;
+}
+
 export class WorkflowPlatformContextClient {
   constructor(
     private readonly configManager: ConfigManager,
@@ -250,7 +260,9 @@ export class WorkflowPlatformContextClient {
       throw new Error(`session memory retrieval failed: HTTP ${res.status}`);
     }
 
-    const body = (await readResponseJson(res)) as { data?: Partial<PlatformSessionMemoryRetrieval> } | null;
+    const body = (await readResponseJson(res)) as {
+      data?: Partial<PlatformSessionMemoryRetrieval>;
+    } | null;
     const data = body?.data;
     if (!data || data.schema !== 'viewport.agent_session_memory_retrieval/v1') return null;
 
@@ -258,6 +270,60 @@ export class WorkflowPlatformContextClient {
       schema: data.schema,
       receipt: objectValue(data.receipt),
       retrieval: objectValue(data.retrieval),
+    };
+  }
+
+  async retrieveSessionMailbox(input: {
+    run: WorkflowRunRecord;
+    agentId: string;
+  }): Promise<PlatformSessionCollaborationMailboxRetrieval | null> {
+    const target = this.workspaceTargetFor(input.run);
+    const agentSessionId = agentSessionIdForRun(input.run);
+    if (!target || !input.run.platformRunId || !agentSessionId) return null;
+
+    const res = await this.fetcher(
+      `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/collaboration-mailbox`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          credential: target.issueToken,
+          runtime_target_id: target.runtimeTargetId,
+          recipient_actor_type: 'agent',
+          recipient_actor_id: input.agentId,
+        }),
+        timeoutMs: 5_000,
+        tlsVerify: target.tlsVerify,
+        caCertPath: target.caCertPath,
+        tlsPins: target.tlsPins,
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`session collaboration mailbox retrieval failed: HTTP ${res.status}`);
+    }
+
+    const body = (await readResponseJson(res)) as {
+      data?: Partial<PlatformSessionCollaborationMailboxRetrieval>;
+    } | null;
+    const data = body?.data;
+    if (!data || data.schema !== 'viewport.agent_session_collaboration_mailbox_retrieval/v1') {
+      return null;
+    }
+
+    return {
+      schema: data.schema,
+      agent_session_id: stringValue(data.agent_session_id),
+      workflow_run_id: stringValue(data.workflow_run_id),
+      recipient: objectValue(data.recipient),
+      mailboxes: Array.isArray(data.mailboxes)
+        ? data.mailboxes.filter(
+            (mailbox): mailbox is Record<string, unknown> =>
+              !!mailbox && typeof mailbox === 'object' && !Array.isArray(mailbox),
+          )
+        : [],
+      source: objectValue(data.source),
+      redaction: objectValue(data.redaction),
     };
   }
 
@@ -371,7 +437,9 @@ function stringValue(value: unknown): string | undefined {
 
 function agentSessionIdForRun(run: WorkflowRunRecord): string | null {
   return (
-    stringValue(pathValue(run.inputs, ['viewport', 'workflow', 'product20_policy_pin', 'agent_session_id'])) ??
+    stringValue(
+      pathValue(run.inputs, ['viewport', 'workflow', 'product20_policy_pin', 'agent_session_id']),
+    ) ??
     stringValue(pathValue(run.inputs, ['viewport', 'agentSessionId'])) ??
     null
   );

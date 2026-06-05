@@ -371,6 +371,7 @@ async function executePromptNode(
     workflowContext: parsed.definition.context,
     nodeContext: node.context,
     prompt: renderedPrompt,
+    agentId: node.agent ?? 'default',
     platformContextClient: context.platformContextClient,
   });
   if (selectedContext.basis.mode !== 'none') {

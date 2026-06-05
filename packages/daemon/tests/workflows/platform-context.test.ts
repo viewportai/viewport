@@ -10,6 +10,7 @@ import {
 } from '../../src/context-providers/registry.js';
 import {
   WorkflowPlatformContextClient,
+  type PlatformSessionCollaborationMailboxRetrieval,
   type PlatformSessionMemoryRetrieval,
 } from '../../src/workflows/platform-context-client.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
@@ -532,7 +533,9 @@ describe('platform-governed customer-managed context', () => {
       expect(selected.promptBlock).toContain('Payments rollback rule');
       expect(selected.promptBlock).toContain('Memory digest: sha256:');
       expect(selected.promptBlock).toContain('Raw memory plaintext was not returned');
-      expect(selected.promptBlock).not.toContain('RAW_PAYMENT_MEMORY_SHOULD_NOT_ENTER_DAEMON_PROMPT');
+      expect(selected.promptBlock).not.toContain(
+        'RAW_PAYMENT_MEMORY_SHOULD_NOT_ENTER_DAEMON_PROMPT',
+      );
       expect(selected.basis.selectedItems).toEqual([
         expect.objectContaining({
           provider: 'session-memory',
@@ -568,6 +571,143 @@ describe('platform-governed customer-managed context', () => {
       expect(JSON.stringify(run.events)).not.toContain(
         'RAW_PAYMENT_MEMORY_SHOULD_NOT_ENTER_DAEMON_PROMPT',
       );
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('injects addressed Product20 session mailbox content for the selected agent runtime', async () => {
+    const projectDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'viewport-session-mailbox-context-'),
+    );
+    try {
+      const run = {
+        ...workflowRun(projectDir),
+        resourceId: 'workspace-product20',
+        runtimeTargetId: 'runtime-target-1',
+        platformRunId: 'workflow-run-1',
+        inputs: {
+          viewport: {
+            workflow: {
+              product20_policy_pin: {
+                agent_session_id: 'agent-session-1',
+              },
+            },
+          },
+        },
+      };
+      const mailboxCalls: Array<{ run: WorkflowRunRecord; agentId: string }> = [];
+      const platformContextClient = {
+        async resolveNodePolicy() {
+          return null;
+        },
+        async retrieveSessionMailbox(input: { run: WorkflowRunRecord; agentId: string }) {
+          mailboxCalls.push(input);
+
+          return {
+            schema: 'viewport.agent_session_collaboration_mailbox_retrieval/v1',
+            agent_session_id: 'agent-session-1',
+            workflow_run_id: 'workflow-run-1',
+            recipient: {
+              actor_type: 'agent',
+              actor_id: 'codex-reviewer',
+            },
+            mailboxes: [
+              {
+                schema: 'viewport.agent_session_runtime_mailbox/v1',
+                recipient_key: 'agent:codex-reviewer',
+                recipient: {
+                  actor_type: 'agent',
+                  actor_id: 'agent:codex-reviewer',
+                },
+                messages: [
+                  {
+                    schema: 'viewport.agent_session_runtime_mailbox_message/v1',
+                    id: 'mailbox-message-1',
+                    sender: {
+                      actor_type: 'user',
+                      actor_id: '42',
+                    },
+                    subject: 'Before publishing',
+                    body_plaintext: 'RUNTIME_MAILBOX_BODY_FOR_CODEX_ONLY',
+                    body_digest: digest('RUNTIME_MAILBOX_BODY_FOR_CODEX_ONLY'),
+                    event_id: 'session-event-7',
+                    sequence: 7,
+                    sent_at: '2026-06-05T12:00:00.000Z',
+                  },
+                ],
+              },
+            ],
+            source: {
+              authoritative_source: 'session_events',
+              runtime_lease_authorized: true,
+            },
+            redaction: {
+              schema: 'viewport.agent_session_collaboration_mailbox_redaction/v1',
+              raw_provider_keys_included: false,
+              ciphertext_returned: false,
+              body_plaintext_returned_to_recipient_runtime: true,
+            },
+          } satisfies PlatformSessionCollaborationMailboxRetrieval;
+        },
+      } as unknown as WorkflowPlatformContextClient;
+
+      const selected = await resolvePromptNodeContext({
+        run,
+        nodeId: 'review',
+        workflowContext: [],
+        nodeContext: {
+          include: [
+            {
+              source: 'session_mailbox',
+              as: 'agent-mailbox',
+              required: true,
+            },
+          ],
+        },
+        prompt: 'Review before publishing.',
+        agentId: 'codex-reviewer',
+        platformContextClient,
+      });
+
+      expect(mailboxCalls).toEqual([{ run, agentId: 'codex-reviewer' }]);
+      expect(selected.promptBlock).toContain('<viewport_context>');
+      expect(selected.promptBlock).toContain('agent-mailbox (session-mailbox)');
+      expect(selected.promptBlock).toContain('Before publishing');
+      expect(selected.promptBlock).toContain('RUNTIME_MAILBOX_BODY_FOR_CODEX_ONLY');
+      expect(selected.basis.selectedItems).toEqual([
+        expect.objectContaining({
+          provider: 'session-mailbox',
+          provider_id: 'session_mailbox',
+          alias: 'agent-mailbox',
+          digest: expect.stringMatching(/^sha256:/),
+        }),
+      ]);
+      expect(run.contextReceipts).toEqual([
+        expect.objectContaining({
+          provider: 'session-mailbox',
+          requested: 'session_mailbox',
+          digest: expect.stringMatching(/^sha256:/),
+          usedBy: expect.objectContaining({
+            nodeId: 'review',
+            providerId: 'session_mailbox',
+            alias: 'agent-mailbox',
+          }),
+        }),
+      ]);
+      expect(run.events).toContainEqual(
+        expect.objectContaining({
+          type: 'session-mailbox-retrieved',
+          nodeId: 'review',
+          data: expect.objectContaining({
+            agent_id: 'codex-reviewer',
+            message_count: 1,
+            plaintext_returned_to_recipient_runtime: true,
+            raw_provider_keys_included: false,
+          }),
+        }),
+      );
+      expect(JSON.stringify(run.events)).not.toContain('RUNTIME_MAILBOX_BODY_FOR_CODEX_ONLY');
     } finally {
       await fs.rm(projectDir, { recursive: true, force: true });
     }

@@ -60,6 +60,8 @@ export interface WorkflowRunEvent {
     | 'node-context-blocked'
     | 'session-memory-retrieved'
     | 'session-memory-retrieval-failed'
+    | 'session-mailbox-retrieved'
+    | 'session-mailbox-retrieval-failed'
     | 'context-blocked'
     | 'condition-evaluated'
     | 'hook-fired'
