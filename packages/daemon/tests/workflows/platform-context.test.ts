@@ -8,7 +8,10 @@ import {
   contextProviderAdapterFor,
   supportedContextProviderKinds,
 } from '../../src/context-providers/registry.js';
-import type { WorkflowPlatformContextClient } from '../../src/workflows/platform-context-client.js';
+import {
+  WorkflowPlatformContextClient,
+  type PlatformSessionMemoryRetrieval,
+} from '../../src/workflows/platform-context-client.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 import type { SessionContextProviderManifest } from '../../src/config-resolution/index.js';
 
@@ -328,6 +331,111 @@ describe('platform-governed customer-managed context', () => {
     } finally {
       await fs.rm(projectDir, { recursive: true, force: true });
     }
+  });
+
+  it('retrieves Product20 session memory through the runtime lease endpoint', async () => {
+    const run = {
+      ...workflowRun('/workspace/product20'),
+      resourceId: 'workspace-product20',
+      runtimeTargetId: 'runtime-target-1',
+      platformRunId: 'workflow-run-1',
+      inputs: {
+        viewport: {
+          workflow: {
+            product20_policy_pin: {
+              agent_session_id: 'agent-session-1',
+            },
+          },
+        },
+      },
+    };
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const client = new WorkflowPlatformContextClient(
+      {
+        getDaemonConfig() {
+          return {
+            relay: {
+              bindings: [
+                {
+                  workspaceId: 'workspace-product20',
+                  serverUrl: 'https://api.getviewport.test',
+                  issueToken: 'vpdt_runtime_issue_token',
+                  runtimeTargetId: 'runtime-target-1',
+                  enabled: true,
+                },
+              ],
+            },
+          };
+        },
+      } as never,
+      (async (url: string | URL | Request, init?: RequestInit & { body?: string }) => {
+        requests.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        });
+
+        return new Response(
+          JSON.stringify({
+            data: {
+              schema: 'viewport.agent_session_memory_retrieval/v1',
+              receipt: {
+                id: 'receipt-memory-1',
+                receipt_type: 'context.memory_retrieval',
+              },
+              retrieval: {
+                schema: 'viewport.session_memory_retrieval/v1',
+                access_model: {
+                  learned_state_expands_access: false,
+                  raw_memory_plaintext_returned: false,
+                },
+                query: {
+                  digest: digest('payments rollback'),
+                  raw_query_returned: false,
+                },
+                results: [
+                  {
+                    context_source_id: 'ctx_payments',
+                    memory_entry_digest: digest('payments rollback checklist'),
+                    plaintext_returned: false,
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }) as never,
+    );
+
+    const result = (await client.retrieveSessionMemory({
+      run,
+      query: 'payments rollback',
+      limit: 3,
+      contextSourceIds: ['ctx_payments'],
+    })) as PlatformSessionMemoryRetrieval;
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(
+      'https://api.getviewport.test/api/runtime/workspaces/workspace-product20/workflow-runs/workflow-run-1/agent-sessions/agent-session-1/memory-retrieval',
+    );
+    expect(requests[0]?.body).toEqual({
+      credential: 'vpdt_runtime_issue_token',
+      runtime_target_id: 'runtime-target-1',
+      query: 'payments rollback',
+      limit: 3,
+      context_source_ids: ['ctx_payments'],
+    });
+    expect(result.schema).toBe('viewport.agent_session_memory_retrieval/v1');
+    expect(result.receipt).toMatchObject({ receipt_type: 'context.memory_retrieval' });
+    expect(result.retrieval).toMatchObject({
+      schema: 'viewport.session_memory_retrieval/v1',
+      access_model: expect.objectContaining({
+        learned_state_expands_access: false,
+        raw_memory_plaintext_returned: false,
+      }),
+    });
+    expect(JSON.stringify(requests)).not.toContain('payments rollback checklist');
+    expect(JSON.stringify(result)).not.toContain('sk_');
   });
 });
 

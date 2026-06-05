@@ -35,6 +35,12 @@ export interface PlatformContextResolution {
   warnings?: Array<Record<string, unknown>>;
 }
 
+export interface PlatformSessionMemoryRetrieval {
+  schema: 'viewport.agent_session_memory_retrieval/v1';
+  receipt?: Record<string, unknown> | null;
+  retrieval?: Record<string, unknown> | null;
+}
+
 export class WorkflowPlatformContextClient {
   constructor(
     private readonly configManager: ConfigManager,
@@ -211,6 +217,50 @@ export class WorkflowPlatformContextClient {
     };
   }
 
+  async retrieveSessionMemory(input: {
+    run: WorkflowRunRecord;
+    query: string;
+    limit?: number | null;
+    contextSourceIds?: string[] | null;
+  }): Promise<PlatformSessionMemoryRetrieval | null> {
+    const target = this.workspaceTargetFor(input.run);
+    const agentSessionId = agentSessionIdForRun(input.run);
+    if (!target || !input.run.platformRunId || !agentSessionId) return null;
+
+    const res = await this.fetcher(
+      `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/memory-retrieval`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          credential: target.issueToken,
+          runtime_target_id: target.runtimeTargetId,
+          query: input.query,
+          ...(input.limit ? { limit: input.limit } : {}),
+          ...(input.contextSourceIds ? { context_source_ids: input.contextSourceIds } : {}),
+        }),
+        timeoutMs: 5_000,
+        tlsVerify: target.tlsVerify,
+        caCertPath: target.caCertPath,
+        tlsPins: target.tlsPins,
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`session memory retrieval failed: HTTP ${res.status}`);
+    }
+
+    const body = (await readResponseJson(res)) as { data?: Partial<PlatformSessionMemoryRetrieval> } | null;
+    const data = body?.data;
+    if (!data || data.schema !== 'viewport.agent_session_memory_retrieval/v1') return null;
+
+    return {
+      schema: data.schema,
+      receipt: objectValue(data.receipt),
+      retrieval: objectValue(data.retrieval),
+    };
+  }
+
   private targetFor(
     run: WorkflowRunRecord,
     action: 'context/resolve' | 'context/receipts' | 'context/proposals',
@@ -317,4 +367,28 @@ function safeCitationUrl(value: string | null | undefined): string | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function agentSessionIdForRun(run: WorkflowRunRecord): string | null {
+  return (
+    stringValue(pathValue(run.inputs, ['viewport', 'workflow', 'product20_policy_pin', 'agent_session_id'])) ??
+    stringValue(pathValue(run.inputs, ['viewport', 'agentSessionId'])) ??
+    null
+  );
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pathValue(value: unknown, path: string[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
 }
