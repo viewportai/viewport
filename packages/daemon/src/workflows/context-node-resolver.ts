@@ -6,6 +6,7 @@ import type { ContextProviderResult } from '../context-providers/types.js';
 import type { SessionContextProviderManifest } from '../config-resolution/index.js';
 import type {
   PlatformContextSourcePolicy,
+  PlatformSessionMemoryRetrieval,
   WorkflowPlatformContextClient,
 } from './platform-context-client.js';
 import type {
@@ -189,8 +190,11 @@ export async function resolvePromptNodeContext(input: {
     maxSnippets: effective.maxItems,
   });
   const platformPolicies = platformResolution?.source_policies ?? [];
+  const sessionMemoryRefs = effective.refs.filter(isSessionMemoryRef);
   const workflowContextItems = workflowProducedContextItems(effective.refs, input.run);
-  const providerRefs = effective.refs.filter((ref) => !workflowProducedContextRef(ref, input.run));
+  const providerRefs = effective.refs.filter(
+    (ref) => !workflowProducedContextRef(ref, input.run) && !isSessionMemoryRef(ref),
+  );
   const providers =
     platformPolicies.length > 0
       ? platformPolicyProviders(
@@ -246,7 +250,17 @@ export async function resolvePromptNodeContext(input: {
     items.push(...capped.map((item) => ({ ...item, alias })));
   }
 
-  const combinedItems = [...workflowContextItems, ...items];
+  const sessionMemoryItems = await resolveSessionMemoryContext({
+    run: input.run,
+    nodeId: input.nodeId,
+    refs: sessionMemoryRefs,
+    query: query ?? '',
+    maxItems: effective.maxItems,
+    platformContextClient: input.platformContextClient,
+    skipped,
+  });
+
+  const combinedItems = [...workflowContextItems, ...items, ...sessionMemoryItems];
   const selectedItems = combinedItems.slice(0, effective.maxItems ?? combinedItems.length);
   const contextReceipts = buildContextReceipts({
     run: input.run,
@@ -316,6 +330,134 @@ export async function resolvePromptNodeContext(input: {
     basis,
     briefing,
   };
+}
+
+async function resolveSessionMemoryContext(input: {
+  run: WorkflowRunRecord;
+  nodeId: string;
+  refs: NormalizedContextRef[];
+  query: string;
+  maxItems: number | null;
+  platformContextClient?: WorkflowPlatformContextClient;
+  skipped: Array<{ providerId: string; reason: string }>;
+}): Promise<ResolvedContextItem[]> {
+  if (input.refs.length === 0) return [];
+
+  const required = input.refs.some((ref) => ref.required);
+  if (!input.platformContextClient) {
+    input.skipped.push({ providerId: 'session_memory', reason: 'platform_context_unavailable' });
+    if (required) {
+      throw new Error(
+        `Prompt node ${input.nodeId} requires Product20 session memory, but no platform context client is configured.`,
+      );
+    }
+    return [];
+  }
+
+  const limit =
+    positiveInteger(input.refs.map((ref) => ref.maxItems).find((value) => value !== undefined)) ??
+    input.maxItems ??
+    10;
+
+  try {
+    const result = await input.platformContextClient.retrieveSessionMemory({
+      run: input.run,
+      query: input.query,
+      limit,
+    });
+    if (!result?.retrieval) {
+      input.skipped.push({ providerId: 'session_memory', reason: 'no_retrieval_returned' });
+      return [];
+    }
+
+    const items = sessionMemoryRetrievalItems(result, input.refs);
+    const retrieval = result.retrieval;
+    addEvent(
+      input.run,
+      'session-memory-retrieved',
+      `Node ${input.nodeId} retrieved ${items.length} Product20 session memory item${items.length === 1 ? '' : 's'}`,
+      {
+        schema: 'viewport.daemon_session_memory_retrieved/v1',
+        receipt_id: stringValue(pathValue(result.receipt, ['id'])),
+        receipt_digest: stringValue(pathValue(result.receipt, ['digest'])),
+        working_set_receipt_id: stringValue(
+          pathValue(retrieval, ['working_set', 'receipt_id']),
+        ),
+        query_digest: stringValue(pathValue(retrieval, ['query', 'digest'])),
+        result_count: items.length,
+        raw_query_returned: pathValue(retrieval, ['query', 'raw_query_returned']) === true,
+        raw_memory_plaintext_returned:
+          pathValue(retrieval, ['access_model', 'raw_memory_plaintext_returned']) === true,
+        learned_state_expands_access:
+          pathValue(retrieval, ['access_model', 'learned_state_expands_access']) === true,
+      },
+      input.nodeId,
+    );
+
+    return items;
+  } catch (error) {
+    input.skipped.push({ providerId: 'session_memory', reason: 'retrieval_failed' });
+    addEvent(
+      input.run,
+      'session-memory-retrieval-failed',
+      `Node ${input.nodeId} could not retrieve Product20 session memory.`,
+      {
+        schema: 'viewport.daemon_session_memory_retrieval_failed/v1',
+        error: error instanceof Error ? error.message : String(error),
+      },
+      input.nodeId,
+    );
+    if (required) throw error;
+    return [];
+  }
+}
+
+function sessionMemoryRetrievalItems(
+  result: PlatformSessionMemoryRetrieval,
+  refs: NormalizedContextRef[],
+): ResolvedContextItem[] {
+  const retrieval = result.retrieval ?? {};
+  const rows = Array.isArray(retrieval['results']) ? retrieval['results'] : [];
+  const alias = refs.find((ref) => ref.as)?.as;
+
+  return rows
+    .map((row, index): ResolvedContextItem | null => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+      const record = row as Record<string, unknown>;
+      const digest =
+        stringValue(record['memory_entry_digest']) ??
+        stringValue(record['digest']) ??
+        stringValue(record['content_digest']) ??
+        `sha256:${createHash('sha256').update(JSON.stringify(metadataSafeMemoryResult(record))).digest('hex')}`;
+      const sourceId = stringValue(record['context_source_id']) ?? 'session_memory';
+      const title = stringValue(record['title']) ?? `Session memory ${index + 1}`;
+      const team = objectValue(record['retrieved_for_team']);
+      const body = [
+        'Product20 session memory result (metadata only).',
+        `Context source: ${sourceId}`,
+        `Memory digest: ${digest}`,
+        `Title: ${title}`,
+        `Score: ${numberValue(record['score']) ?? 'unknown'}`,
+        team ? `Retrieved for team: ${stringValue(team['name']) ?? stringValue(team['slug']) ?? stringValue(team['id']) ?? 'unknown'}` : null,
+        'Raw memory plaintext was not returned by the platform memory provider.',
+      ]
+        .filter((line): line is string => typeof line === 'string')
+        .join('\n');
+
+      return {
+        id: stringValue(record['id']) ?? `session-memory-${index + 1}`,
+        provider_id: sourceId,
+        provider: 'session-memory',
+        privacy: 'platform_governed_metadata_only',
+        title,
+        body,
+        digest,
+        source: `session-memory:${sourceId}`,
+        ...(numberValue(record['score']) !== null ? { score: numberValue(record['score']) ?? undefined } : {}),
+        alias,
+      };
+    })
+    .filter((item): item is ResolvedContextItem => item !== null);
 }
 
 export function sanitizeContextQueryForReceipt(query: string | null): string | null {
@@ -626,6 +768,16 @@ function normalizeRefs(refs: WorkflowContextNode['refs']): NormalizedContextRef[
       };
     })
     .filter((ref) => ref.ref.trim() !== '');
+}
+
+function isSessionMemoryRef(ref: NormalizedContextRef): boolean {
+  return [
+    'session_memory',
+    'platform://session-memory',
+    'viewport://session-memory',
+    'memory://session',
+    'memory://agent-session',
+  ].includes(ref.ref.trim());
 }
 
 function selectProviders(
@@ -952,4 +1104,39 @@ function safeContextSource(item: ResolvedContextItem): string {
 
 function positiveInteger(value: unknown): number | null {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pathValue(value: unknown, pathSegments: string[]): unknown {
+  let current = value;
+  for (const segment of pathSegments) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function metadataSafeMemoryResult(record: Record<string, unknown>): Record<string, unknown> {
+  return {
+    context_source_id: stringValue(record['context_source_id']) ?? null,
+    memory_entry_digest: stringValue(record['memory_entry_digest']) ?? null,
+    digest: stringValue(record['digest']) ?? null,
+    title: stringValue(record['title']) ?? null,
+    score: numberValue(record['score']),
+  };
 }

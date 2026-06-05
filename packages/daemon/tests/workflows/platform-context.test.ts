@@ -437,6 +437,141 @@ describe('platform-governed customer-managed context', () => {
     expect(JSON.stringify(requests)).not.toContain('payments rollback checklist');
     expect(JSON.stringify(result)).not.toContain('sk_');
   });
+
+  it('injects Product20 session memory metadata into prompt context without raw memory plaintext', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-session-memory-context-'));
+    try {
+      const run = {
+        ...workflowRun(projectDir),
+        resourceId: 'workspace-product20',
+        runtimeTargetId: 'runtime-target-1',
+        platformRunId: 'workflow-run-1',
+        inputs: {
+          viewport: {
+            workflow: {
+              product20_policy_pin: {
+                agent_session_id: 'agent-session-1',
+              },
+            },
+          },
+        },
+      };
+      const retrievalCalls: Array<Record<string, unknown>> = [];
+      const platformContextClient = {
+        async resolveNodePolicy() {
+          return null;
+        },
+        async retrieveSessionMemory(input: Record<string, unknown>) {
+          retrievalCalls.push(input);
+          return {
+            schema: 'viewport.agent_session_memory_retrieval/v1',
+            receipt: {
+              id: 'receipt-memory-1',
+              digest: 'sha256:receipt-memory-1',
+              receipt_type: 'context.memory_retrieval',
+            },
+            retrieval: {
+              schema: 'viewport.session_memory_retrieval/v1',
+              working_set: {
+                receipt_id: 'receipt-working-set-1',
+              },
+              query: {
+                digest: digest('payments rollback'),
+                raw_query_returned: false,
+              },
+              access_model: {
+                learned_state_expands_access: false,
+                raw_memory_plaintext_returned: false,
+              },
+              results: [
+                {
+                  id: 'memory-result-1',
+                  context_source_id: 'ctx_payments',
+                  memory_entry_digest: digest('raw payment memory that must stay server-side'),
+                  title: 'Payments rollback rule',
+                  score: 0.91,
+                  body: 'RAW_PAYMENT_MEMORY_SHOULD_NOT_ENTER_DAEMON_PROMPT',
+                  retrieved_for_team: {
+                    id: 'team-payments',
+                    name: 'Payments',
+                  },
+                },
+              ],
+            },
+          } satisfies PlatformSessionMemoryRetrieval;
+        },
+      } as unknown as WorkflowPlatformContextClient;
+
+      const selected = await resolvePromptNodeContext({
+        run,
+        nodeId: 'review',
+        workflowContext: [],
+        nodeContext: {
+          include: [
+            {
+              source: 'session_memory',
+              as: 'payments-memory',
+              required: true,
+              maxItems: 2,
+            },
+          ],
+          query: 'payments rollback',
+        },
+        prompt: 'Review payments rollback.',
+        platformContextClient,
+      });
+
+      expect(retrievalCalls).toHaveLength(1);
+      expect(retrievalCalls[0]).toMatchObject({
+        run,
+        query: 'payments rollback',
+        limit: 2,
+      });
+      expect(selected.promptBlock).toContain('<viewport_context>');
+      expect(selected.promptBlock).toContain('payments-memory (session-memory)');
+      expect(selected.promptBlock).toContain('Payments rollback rule');
+      expect(selected.promptBlock).toContain('Memory digest: sha256:');
+      expect(selected.promptBlock).toContain('Raw memory plaintext was not returned');
+      expect(selected.promptBlock).not.toContain('RAW_PAYMENT_MEMORY_SHOULD_NOT_ENTER_DAEMON_PROMPT');
+      expect(selected.basis.selectedItems).toEqual([
+        expect.objectContaining({
+          provider: 'session-memory',
+          provider_id: 'ctx_payments',
+          alias: 'payments-memory',
+          digest: expect.stringMatching(/^sha256:/),
+        }),
+      ]);
+      expect(run.contextReceipts).toEqual([
+        expect.objectContaining({
+          provider: 'session-memory',
+          requested: 'ctx_payments',
+          digest: expect.stringMatching(/^sha256:/),
+          usedBy: expect.objectContaining({
+            nodeId: 'review',
+            providerId: 'ctx_payments',
+            alias: 'payments-memory',
+          }),
+        }),
+      ]);
+      expect(run.events).toContainEqual(
+        expect.objectContaining({
+          type: 'session-memory-retrieved',
+          nodeId: 'review',
+          data: expect.objectContaining({
+            receipt_id: 'receipt-memory-1',
+            result_count: 1,
+            raw_memory_plaintext_returned: false,
+            learned_state_expands_access: false,
+          }),
+        }),
+      );
+      expect(JSON.stringify(run.events)).not.toContain(
+        'RAW_PAYMENT_MEMORY_SHOULD_NOT_ENTER_DAEMON_PROMPT',
+      );
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function workflowRun(projectDir: string): WorkflowRunRecord {
