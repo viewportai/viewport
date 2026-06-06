@@ -377,25 +377,68 @@ export class WorkflowPlatformContextClient {
     if (!resourceId || !runtimeTargetId) return null;
 
     const daemonConfig = this.configManager.getDaemonConfig();
-    if (!daemonConfig) return null;
-    const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
-      requestedWorkspaceId: resourceId,
-    });
-    if (!target) return null;
-    if (target.runtimeTargetId && target.runtimeTargetId !== runtimeTargetId) {
-      return null;
+    const target = daemonConfig
+      ? resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
+          requestedWorkspaceId: resourceId,
+        })
+      : null;
+    if (target) {
+      if (target.runtimeTargetId && target.runtimeTargetId !== runtimeTargetId) {
+        return null;
+      }
+
+      return {
+        baseUrl: target.serverUrl.replace(/\/+$/, ''),
+        resourceId,
+        issueToken: target.credential,
+        runtimeTargetId,
+        tlsVerify: target.tlsVerify,
+        caCertPath: target.caCertPath,
+        tlsPins: target.tlsPins,
+      };
     }
 
-    return {
-      baseUrl: target.serverUrl.replace(/\/+$/, ''),
-      resourceId,
-      issueToken: target.credential,
-      runtimeTargetId,
-      tlsVerify: target.tlsVerify,
-      caCertPath: target.caCertPath,
-      tlsPins: target.tlsPins,
-    };
+    return runtimeContextTargetForRun(run, resourceId, runtimeTargetId);
   }
+}
+
+function runtimeContextTargetForRun(
+  run: WorkflowRunRecord,
+  resourceId: string,
+  runtimeTargetId: string,
+): {
+  baseUrl: string;
+  resourceId: string;
+  issueToken: string;
+  runtimeTargetId: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+} | null {
+  const target = objectValue(pathValue(run.inputs, ['viewport', 'runtimeContextTarget']));
+  if (!target) return null;
+
+  const targetResourceId = stringValue(target['workspaceId'] ?? target['workspace_id']);
+  const targetRuntimeId = stringValue(target['runtimeTargetId'] ?? target['runtime_target_id']);
+  const serverUrl = stringValue(target['serverUrl'] ?? target['server_url']);
+  const credential = stringValue(target['credential']);
+  if (!serverUrl || !credential) return null;
+  if (targetResourceId && targetResourceId !== resourceId) return null;
+  if (targetRuntimeId && targetRuntimeId !== runtimeTargetId) return null;
+
+  const tlsPins = Array.isArray(target['tlsPins'])
+    ? target['tlsPins'].filter((value): value is string => typeof value === 'string')
+    : undefined;
+
+  return {
+    baseUrl: serverUrl.replace(/\/+$/, ''),
+    resourceId,
+    issueToken: credential,
+    runtimeTargetId,
+    tlsVerify: stringValue(target['tlsVerify']) as 'auto' | '0' | '1' | undefined,
+    caCertPath: stringValue(target['caCertPath'] ?? target['ca_cert_path']),
+    tlsPins,
+  };
 }
 
 function isPlatformContextSourcePolicy(value: unknown): value is PlatformContextSourcePolicy {

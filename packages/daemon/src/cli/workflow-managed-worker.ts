@@ -1865,12 +1865,28 @@ function assignmentInputs(
     route: assignmentRouteSnapshot(assignment) ?? null,
     executionProfile: assignmentExecutionProfileSnapshot(assignment) ?? null,
     workflow: assignmentWorkflowSnapshot(assignment) ?? null,
+    runtimeContextTarget: assignmentRuntimeContextTarget(options, assignment),
     runnerWorkspace: assignmentRunnerWorkspaceSnapshot(assignment) ?? null,
     contextReceipts: assignmentContextReceiptsSnapshot(assignment) ?? null,
     credentials: material.metadata,
   };
 
   return inputs;
+}
+
+function assignmentRuntimeContextTarget(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+): Record<string, unknown> | null {
+  if (!assignment.assignment_claim_token || !assignment.runtime_target_id) return null;
+
+  return {
+    schema: 'viewport.runtime_context_target/v1',
+    serverUrl: options.server,
+    workspaceId: options.workspaceId,
+    runtimeTargetId: assignment.runtime_target_id,
+    credential: assignment.assignment_claim_token,
+  };
 }
 
 function appUrlFromServer(serverUrl: string): string {

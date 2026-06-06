@@ -282,6 +282,7 @@ describe('workflow managed worker CLI', () => {
             id: 'run_platform_1',
             agent_session_id: 'session_1',
             assignment_claim_token: 'vpclaim_run_platform_1',
+            runtime_target_id: 'runtime-target-1',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
             source_ref: 'viewport://workflow/proof',
             directory_path: workdir,
@@ -532,6 +533,13 @@ describe('workflow managed worker CLI', () => {
             viewport: {
               platformRunId: 'run_platform_1',
               schemaVersions: { route: 'viewport.route/v1' },
+              runtimeContextTarget: {
+                schema: 'viewport.runtime_context_target/v1',
+                serverUrl: 'https://api.getviewport.com',
+                workspaceId: 'workspace_1',
+                runtimeTargetId: 'runtime-target-1',
+                credential: 'vpclaim_run_platform_1',
+              },
               route: { key: 'payments-bugs' },
               executionProfile: { key: 'payments-prod' },
               runnerWorkspace: { runner_pool: 'payments-vps' },

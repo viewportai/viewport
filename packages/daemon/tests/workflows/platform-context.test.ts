@@ -519,6 +519,85 @@ describe('platform-governed customer-managed context', () => {
     expect(result?.schema).toBe('viewport.agent_session_memory_retrieval/v1');
   });
 
+  it('retrieves Product20 session memory through a run-scoped runtime context target', async () => {
+    const run = {
+      ...workflowRun('/workspace/product20'),
+      resourceId: 'workspace-product20',
+      runtimeTargetId: 'runtime-target-1',
+      platformRunId: 'workflow-run-1',
+      agentSessionId: 'agent-session-runtime-target',
+      inputs: {
+        viewport: {
+          runtimeContextTarget: {
+            schema: 'viewport.runtime_context_target/v1',
+            serverUrl: 'https://api.getviewport.test',
+            workspaceId: 'workspace-product20',
+            runtimeTargetId: 'runtime-target-1',
+            credential: 'vpclaim_runtime_context_target',
+          },
+        },
+      },
+    };
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const client = new WorkflowPlatformContextClient(
+      {
+        getDaemonConfig() {
+          return null;
+        },
+      } as never,
+      (async (url: string | URL | Request, init?: RequestInit & { body?: string }) => {
+        requests.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        });
+
+        return new Response(
+          JSON.stringify({
+            data: {
+              schema: 'viewport.agent_session_memory_retrieval/v1',
+              receipt: {
+                id: 'receipt-memory-runtime-target',
+                receipt_type: 'context.memory_retrieval',
+              },
+              retrieval: {
+                schema: 'viewport.session_memory_retrieval/v1',
+                query: {
+                  digest: digest('runtime target context'),
+                  raw_query_returned: false,
+                },
+                access_model: {
+                  raw_memory_plaintext_returned: false,
+                  learned_state_expands_access: false,
+                },
+                results: [],
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }) as never,
+    );
+
+    const result = await client.retrieveSessionMemory({
+      run,
+      query: 'runtime target context',
+      limit: 2,
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(
+      'https://api.getviewport.test/api/runtime/workspaces/workspace-product20/workflow-runs/workflow-run-1/agent-sessions/agent-session-runtime-target/memory-retrieval',
+    );
+    expect(requests[0]?.body).toMatchObject({
+      credential: 'vpclaim_runtime_context_target',
+      runtime_target_id: 'runtime-target-1',
+      query: 'runtime target context',
+      limit: 2,
+    });
+    expect(result?.schema).toBe('viewport.agent_session_memory_retrieval/v1');
+    expect(JSON.stringify(result)).not.toContain('vpclaim_runtime_context_target');
+  });
+
   it('injects Product20 session memory metadata into prompt context without raw memory plaintext', async () => {
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-session-memory-context-'));
     try {
