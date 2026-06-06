@@ -1692,12 +1692,13 @@ async function materializeRunCredentials(
   options: ManagedWorkerOptions,
   assignment: ManagedAssignment,
 ): Promise<CredentialMaterialResult> {
+  const runnerLocalProvider = runnerLocalProviderCredentialMaterial(assignment);
   const handles = collectCredentialHandles(assignment);
-  if (handles.length === 0) return { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] };
+  if (handles.length === 0) return runnerLocalProvider;
 
-  const runtimeSecretEnv: Record<string, string> = {};
+  const runtimeSecretEnv: Record<string, string> = { ...runnerLocalProvider.runtimeSecretEnv };
   const runtimeSecretFiles: Record<string, string> = {};
-  const metadata: CredentialMaterialMetadata[] = [];
+  const metadata: CredentialMaterialMetadata[] = [...runnerLocalProvider.metadata];
   for (const handle of handles) {
     const response = await materializeCredential(options, assignment, handle);
     const envName = envNameForCredentialRef(handle);
@@ -1747,6 +1748,92 @@ async function materializeRunCredentials(
   }
 
   return { runtimeSecretEnv, runtimeSecretFiles, metadata };
+}
+
+function runnerLocalProviderCredentialMaterial(assignment: ManagedAssignment): CredentialMaterialResult {
+  const provider = runnerLocalAgentProvider(assignment);
+  if (!provider) return { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] };
+
+  const envEntries = runnerLocalProviderEnvEntries(provider);
+  const runtimeSecretEnv: Record<string, string> = {};
+  for (const [key, value] of envEntries) {
+    if (typeof value === 'string' && value.trim() !== '') {
+      runtimeSecretEnv[key] = value;
+    }
+  }
+  const hasRuntimeMaterial = Object.keys(runtimeSecretEnv).length > 0;
+
+  return {
+    runtimeSecretEnv,
+    runtimeSecretFiles: {},
+    metadata: [
+      {
+        handle: `agent/${provider}/runner-local`,
+        envName: providerPrimaryEnvName(provider),
+        kind: 'model_provider_secret',
+        storagePosture: 'runner_local',
+        materialAvailable: hasRuntimeMaterial,
+        runtimeSecretAvailable: hasRuntimeMaterial,
+        runnerLocalRequired: true,
+        provider,
+        scopes: ['self_hosted_byok'],
+      },
+    ],
+  };
+}
+
+function runnerLocalAgentProvider(assignment: ManagedAssignment): 'anthropic' | 'openai' | 'gemini' | null {
+  const costMode =
+    stringValue(pathValue(asRecord(assignment.workflow_snapshot), ['agent', 'cost_mode'])) ??
+    stringValue(pathValue(asRecord(assignment.workflowSnapshot), ['agent', 'cost_mode'])) ??
+    stringValue(pathValue(asRecord(assignment.target_snapshot), ['agent', 'cost_mode'])) ??
+    stringValue(pathValue(asRecord(assignment.targetSnapshot), ['agent', 'cost_mode'])) ??
+    stringValue(pathValue(asRecord(assignment.input_snapshot), ['plan', 'agent', 'cost_mode']));
+
+  if (costMode !== 'self_hosted_byok') return null;
+
+  const provider = (
+    stringValue(pathValue(asRecord(assignment.workflow_snapshot), ['agent', 'provider'])) ??
+    stringValue(pathValue(asRecord(assignment.workflowSnapshot), ['agent', 'provider'])) ??
+    stringValue(pathValue(asRecord(assignment.target_snapshot), ['agent', 'provider'])) ??
+    stringValue(pathValue(asRecord(assignment.targetSnapshot), ['agent', 'provider'])) ??
+    stringValue(pathValue(asRecord(assignment.input_snapshot), ['plan', 'agent', 'provider'])) ??
+    ''
+  ).toLowerCase();
+
+  if (provider === 'anthropic' || provider === 'openai' || provider === 'gemini') {
+    return provider;
+  }
+
+  return null;
+}
+
+function runnerLocalProviderEnvEntries(provider: 'anthropic' | 'openai' | 'gemini'): [string, string | undefined][] {
+  if (provider === 'openai') {
+    return [
+      ['OPENAI_API_KEY', process.env['OPENAI_API_KEY']],
+      ['OPENAI_BASE_URL', process.env['OPENAI_BASE_URL']],
+    ];
+  }
+
+  if (provider === 'anthropic') {
+    return [
+      ['ANTHROPIC_API_KEY', process.env['ANTHROPIC_API_KEY']],
+      ['ANTHROPIC_BASE_URL', process.env['ANTHROPIC_BASE_URL']],
+    ];
+  }
+
+  return [
+    ['GEMINI_API_KEY', process.env['GEMINI_API_KEY']],
+    ['GEMINI_BASE_URL', process.env['GEMINI_BASE_URL']],
+    ['GOOGLE_GENERATIVE_AI_API_KEY', process.env['GOOGLE_GENERATIVE_AI_API_KEY']],
+  ];
+}
+
+function providerPrimaryEnvName(provider: 'anthropic' | 'openai' | 'gemini'): string {
+  if (provider === 'openai') return 'OPENAI_API_KEY';
+  if (provider === 'anthropic') return 'ANTHROPIC_API_KEY';
+  return 'GEMINI_API_KEY';
 }
 
 async function writeRunCredentialSecretFile(

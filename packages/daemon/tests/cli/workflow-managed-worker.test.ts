@@ -35,10 +35,21 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}
+
 describe('workflow managed worker CLI', () => {
   const originalArgv = process.argv.slice();
   const originalFetch = global.fetch;
   const originalViewportHome = process.env['VIEWPORT_HOME'];
+  const originalOpenAiApiKey = process.env['OPENAI_API_KEY'];
+  const originalOpenAiBaseUrl = process.env['OPENAI_BASE_URL'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   beforeEach(() => {
@@ -54,6 +65,8 @@ describe('workflow managed worker CLI', () => {
     } else {
       process.env['VIEWPORT_HOME'] = originalViewportHome;
     }
+    restoreEnv('OPENAI_API_KEY', originalOpenAiApiKey);
+    restoreEnv('OPENAI_BASE_URL', originalOpenAiBaseUrl);
     vi.doUnmock('../../src/cli/daemon-client.js');
   });
 
@@ -1002,6 +1015,128 @@ nodes:
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_credential_material/sync',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
+  });
+
+  it('passes self-hosted BYOK model keys from runner-local env only', async () => {
+    process.env['OPENAI_API_KEY'] = 'sk-openai-runner-local-proof';
+    process.env['OPENAI_BASE_URL'] = 'https://customer-openai-proxy.example/v1';
+
+    const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-selfhosted-byok-'));
+    const workdir = path.join(workdirParent, 'workspace');
+
+    process.argv = [
+      'node',
+      'vpd',
+      'workflow',
+      'worker',
+      '--server',
+      'https://api.getviewport.com',
+      '--workspace',
+      'workspace_1',
+      '--executor',
+      'executor_1',
+      '--credential',
+      'vpexec_secret',
+      '--workdir',
+      workdir,
+      '--once',
+      '--json',
+    ];
+
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/heartbeat')) return jsonResponse({ data: { id: 'executor_1' } });
+      if (url.endsWith('/claim')) {
+        return jsonResponse({
+          data: {
+            id: 'run_platform_selfhosted_byok_openai',
+            assignment_claim_token: 'vpclaim_selfhosted_byok_openai',
+            yaml_snapshot: `
+schema: viewport.workflow/v1
+name: self-hosted-byok-openai
+nodes:
+  customer_side_provider_call:
+    type: shell
+    command: node -e "process.exit(process.env.OPENAI_API_KEY ? 0 : 1)"
+`,
+            source_ref: 'viewport://workflow/self-hosted-byok-openai',
+            directory_path: workdir,
+            workflow_snapshot: {
+              agent: {
+                provider: 'openai',
+                model: 'gpt-4o-mini',
+                cost_mode: 'self_hosted_byok',
+              },
+            },
+            target_snapshot: {
+              agent: {
+                provider: 'openai',
+                cost_mode: 'self_hosted_byok',
+              },
+            },
+            data_capture_policy: {
+              transcripts: 'none',
+              logs: 'metadata',
+              artifacts: 'metadata',
+            },
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_selfhosted_byok_openai/sync')) {
+        return jsonResponse({
+          data: { id: 'run_platform_selfhosted_byok_openai', status: 'completed' },
+        });
+      }
+
+      return jsonResponse({ message: `unexpected ${url}` }, 500);
+    }) as typeof fetch;
+
+    const daemonFetch = vi.fn(async (urlPath: string, init?: RequestInit) => {
+      if (urlPath === '/api/agents') return jsonResponse({ agents: [] });
+      if (urlPath === '/api/directories' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse([]);
+      }
+      if (urlPath === '/api/directories' && init?.method === 'POST') {
+        return jsonResponse({ id: 'dir_1' });
+      }
+      if (urlPath === '/api/workflows/runs' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        expect(body.runtimeSecretEnv).toEqual({
+          OPENAI_API_KEY: 'sk-openai-runner-local-proof',
+          OPENAI_BASE_URL: 'https://customer-openai-proxy.example/v1',
+        });
+        expect(body.runtimeSecretFiles).toEqual({});
+        expect(JSON.stringify(body.inputs)).not.toContain('sk-openai-runner-local-proof');
+        expect(JSON.stringify(body.inputs)).not.toContain('customer-openai-proxy');
+        expect(body.inputs.viewport.credentials).toEqual([
+          expect.objectContaining({
+            handle: 'agent/openai/runner-local',
+            envName: 'OPENAI_API_KEY',
+            kind: 'model_provider_secret',
+            storagePosture: 'runner_local',
+            materialAvailable: true,
+            runtimeSecretAvailable: true,
+            runnerLocalRequired: true,
+            provider: 'openai',
+            scopes: ['self_hosted_byok'],
+          }),
+        ]);
+
+        return jsonResponse({ run: { id: 'local_run_selfhosted_byok_openai' } });
+      }
+      if (urlPath === '/api/workflows/runs/local_run_selfhosted_byok_openai') {
+        return jsonResponse({ run: completedLocalRun({ id: 'local_run_selfhosted_byok_openai' }) });
+      }
+      return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
+    });
+
+    vi.doMock('../../src/cli/daemon-client.js', () => ({
+      isDaemonRunning: vi.fn(async () => true),
+      daemonFetch,
+    }));
+
+    const { workflow } = await import('../../src/cli/workflow-commands.js');
+    await workflow();
   });
 
   it('claims provider action replay work only when an action command is configured', async () => {
