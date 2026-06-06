@@ -128,6 +128,33 @@ function hostedRuntimeContextTargetId(profile: WorkerRuntimeProfile, lease: Clai
   );
 }
 
+function hostedWorkflowInputs(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Record<string, WorkflowInputValue> | undefined {
+  const base = { ...(lease.inputSnapshot ?? {}) } as Record<string, WorkflowInputValue>;
+  const runtimeTargetId = hostedRuntimeContextTargetId(profile, lease);
+  if (!profile.serverUrl || !profile.workspaceId || !lease.assignmentClaimToken || !runtimeTargetId) {
+    return Object.keys(base).length > 0 ? base : undefined;
+  }
+
+  const viewport = isWorkflowInputRecord(base['viewport']) ? { ...base['viewport'] } : {};
+  viewport['runtimeContextTarget'] = {
+    schema: 'viewport.runtime_context_target/v1',
+    serverUrl: profile.serverUrl,
+    workspaceId: profile.workspaceId,
+    runtimeTargetId,
+    credential: lease.assignmentClaimToken,
+  };
+  base['viewport'] = viewport;
+
+  return base;
+}
+
+function isWorkflowInputRecord(value: WorkflowInputValue | undefined): value is Record<string, WorkflowInputValue> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
 interface GatewayLease {
   gatewayBaseUrl: string;
   provider: 'anthropic' | 'openai' | 'gemini';
@@ -1140,7 +1167,7 @@ async function executeHostedWorkflowClaim(
       workflowSourceRef:
         lease.sourceRef ?? `viewport://managed-executor/${lease.runId ?? lease.id}`,
       directoryId: directory.id,
-      inputs: lease.inputSnapshot,
+      inputs: hostedWorkflowInputs(profile, lease),
       resourceId: profile.workspaceId,
       runtimeTargetId: hostedRuntimeContextTargetId(profile, lease),
       platformRunId: lease.runId,

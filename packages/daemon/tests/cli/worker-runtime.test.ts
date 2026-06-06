@@ -503,8 +503,20 @@ describe('standalone worker runtime', () => {
       await fs.readFile(path.join(localRunsDir, localRunFile ?? ''), 'utf8'),
     ) as {
       runtimeTargetId?: string;
+      inputs?: {
+        viewport?: {
+          runtimeContextTarget?: Record<string, unknown>;
+        };
+      };
     };
     expect(localRun.runtimeTargetId).toBe('managed_executor:executor_1');
+    expect(localRun.inputs?.viewport?.runtimeContextTarget).toMatchObject({
+      schema: 'viewport.runtime_context_target/v1',
+      serverUrl: serverUrl(server),
+      workspaceId: 'workspace_1',
+      runtimeTargetId: 'managed_executor:executor_1',
+      credential: 'vpclaim_bootstrap',
+    });
   });
 
   it('keeps persistent polling workers online while idle until stopped', async () => {
@@ -1017,9 +1029,21 @@ nodes:
     const localRun = JSON.parse(await fs.readFile(localRunPath, 'utf8')) as {
       agentSessionId?: string;
       runtimeTargetId?: string;
+      inputs?: {
+        viewport?: {
+          runtimeContextTarget?: Record<string, unknown>;
+        };
+      };
     };
     expect(localRun.agentSessionId).toBe('session_1');
     expect(localRun.runtimeTargetId).toBe('managed_executor:executor_1');
+    expect(localRun.inputs?.viewport?.runtimeContextTarget).toMatchObject({
+      schema: 'viewport.runtime_context_target/v1',
+      serverUrl: serverUrl(server),
+      workspaceId: 'workspace_1',
+      runtimeTargetId: 'managed_executor:executor_1',
+      credential: 'vpclaim_run_1',
+    });
     expect(sync?.['nodes']).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
