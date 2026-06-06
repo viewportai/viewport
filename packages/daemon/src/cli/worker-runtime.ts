@@ -105,6 +105,29 @@ interface ClaimedLease {
   dataCapturePolicy?: WorkflowDataCapturePolicy;
 }
 
+function runtimeContextTargetIdValue(
+  primary: Record<string, unknown> | undefined,
+  fallback?: Record<string, unknown> | undefined,
+): string | undefined {
+  return stringValue(
+    primary?.['runtime_context_target_id'] ??
+      primary?.['runtimeContextTargetId'] ??
+      primary?.['runtime_target_id'] ??
+      primary?.['runtimeTargetId'] ??
+      fallback?.['runtime_context_target_id'] ??
+      fallback?.['runtimeContextTargetId'] ??
+      fallback?.['runtime_target_id'] ??
+      fallback?.['runtimeTargetId'],
+  );
+}
+
+function hostedRuntimeContextTargetId(profile: WorkerRuntimeProfile, lease: ClaimedLease): string | undefined {
+  return (
+    lease.runtimeTargetId ??
+    (profile.managedExecutorId ? `managed_executor:${profile.managedExecutorId}` : undefined)
+  );
+}
+
 interface GatewayLease {
   gatewayBaseUrl: string;
   provider: 'anthropic' | 'openai' | 'gemini';
@@ -671,7 +694,7 @@ function claimedLeaseFromBootstrap(
       rawLease['execution_profile_snapshot'] ?? rawLease['executionProfileSnapshot'],
     ),
     workflowSnapshot: recordValue(rawLease['workflow_snapshot'] ?? rawLease['workflowSnapshot']),
-    runtimeTargetId: stringValue(rawLease['runtime_target_id'] ?? rawLease['runtimeTargetId']),
+    runtimeTargetId: runtimeContextTargetIdValue(rawLease),
     dataCapturePolicy: dataCapturePolicyValue(
       rawLease['data_capture_policy'] ?? rawLease['dataCapturePolicy'],
     ),
@@ -911,7 +934,7 @@ async function claimLeaseHttp(
       data['execution_profile_snapshot'] ?? rawLease['execution_profile_snapshot'],
     ),
     workflowSnapshot: recordValue(data['workflow_snapshot'] ?? rawLease['workflow_snapshot']),
-    runtimeTargetId: stringValue(data['runtime_target_id'] ?? rawLease['runtime_target_id']),
+    runtimeTargetId: runtimeContextTargetIdValue(data, rawLease),
     dataCapturePolicy: dataCapturePolicyValue(
       data['data_capture_policy'] ?? rawLease['data_capture_policy'],
     ),
@@ -1119,7 +1142,7 @@ async function executeHostedWorkflowClaim(
       directoryId: directory.id,
       inputs: lease.inputSnapshot,
       resourceId: profile.workspaceId,
-      runtimeTargetId: lease.runtimeTargetId ?? profile.managedExecutorId,
+      runtimeTargetId: hostedRuntimeContextTargetId(profile, lease),
       platformRunId: lease.runId,
       agentSessionId: lease.agentSessionId,
       resourceManifest: lease.resourceManifest as never,

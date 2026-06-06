@@ -408,6 +408,7 @@ describe('standalone worker runtime', () => {
           lease: {
             id: 'workflow_run:run_1',
             workflow_run_id: 'run_1',
+            runtime_context_target_id: 'managed_executor:executor_1',
             lease_token: 'vplease_bootstrap',
             assignment_claim_token: 'vpclaim_bootstrap',
             yaml_snapshot: [
@@ -496,6 +497,14 @@ describe('standalone worker runtime', () => {
       path.join(workspaceRoot, '.viewport', 'bootstrap'),
     );
     expect(bootstrapIdentityFiles).toEqual([]);
+    const localRunsDir = path.join(homeDir, 'runs', 'workflows');
+    const [localRunFile] = (await fs.readdir(localRunsDir)).filter((name) => name.endsWith('.json'));
+    const localRun = JSON.parse(
+      await fs.readFile(path.join(localRunsDir, localRunFile ?? ''), 'utf8'),
+    ) as {
+      runtimeTargetId?: string;
+    };
+    expect(localRun.runtimeTargetId).toBe('managed_executor:executor_1');
   });
 
   it('keeps persistent polling workers online while idle until stopped', async () => {
@@ -1007,8 +1016,10 @@ nodes:
     const localRunPath = path.join(homeDir, 'runs', 'workflows', `${runtimeRunId}.json`);
     const localRun = JSON.parse(await fs.readFile(localRunPath, 'utf8')) as {
       agentSessionId?: string;
+      runtimeTargetId?: string;
     };
     expect(localRun.agentSessionId).toBe('session_1');
+    expect(localRun.runtimeTargetId).toBe('managed_executor:executor_1');
     expect(sync?.['nodes']).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
