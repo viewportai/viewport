@@ -1380,10 +1380,14 @@ function assignmentMayHaveSessionVerification(assignment: ManagedAssignment): bo
   const policyPin = recordChildValue(assignmentWorkflowSnapshot(assignment), 'product20_policy_pin');
 
   return (
-    stringValue(assignment.agent_session_id) !== undefined ||
+    assignmentAgentSessionId(assignment) !== null ||
     stringValue(policyPin?.['agent_session_id']) !== undefined ||
     assignmentSessionVerificationContract(assignment) !== null
   );
+}
+
+function assignmentAgentSessionId(assignment: ManagedAssignment): string | null {
+  return stringValue(assignment.agent_session_id ?? assignment.agentSessionId) ?? null;
 }
 
 function assignmentSessionVerificationContract(
@@ -1580,6 +1584,7 @@ async function runAssignmentLocally(
     resourceId: options.workspaceId,
     runtimeTargetId: assignment.runtime_target_id ?? undefined,
     platformRunId: assignment.id,
+    agentSessionId: assignmentAgentSessionId(assignment) ?? undefined,
     resourceManifest: assignmentResourceManifest(assignment) ?? undefined,
     workflowAuthorityContract:
       assignmentWorkflowAuthorityContract(assignment) ??

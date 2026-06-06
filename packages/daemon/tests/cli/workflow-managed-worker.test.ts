@@ -501,6 +501,7 @@ describe('workflow managed worker CLI', () => {
           directoryId: 'dir_1',
           resourceId: 'workspace_1',
           platformRunId: 'run_platform_1',
+          agentSessionId: 'session_1',
           workflowAuthorityContract: {
             schema_version: 'viewport.workflow_execution_authority/v1',
             digest: 'sha256:authority',
