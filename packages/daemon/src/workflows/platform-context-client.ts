@@ -376,6 +376,9 @@ export class WorkflowPlatformContextClient {
     const runtimeTargetId = run.runtimeTargetId;
     if (!resourceId || !runtimeTargetId) return null;
 
+    const runScopedTarget = runtimeContextTargetForRun(run, resourceId, runtimeTargetId);
+    if (runScopedTarget) return runScopedTarget;
+
     const daemonConfig = this.configManager.getDaemonConfig();
     const target = daemonConfig
       ? resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
@@ -398,7 +401,7 @@ export class WorkflowPlatformContextClient {
       };
     }
 
-    return runtimeContextTargetForRun(run, resourceId, runtimeTargetId);
+    return null;
   }
 }
 
