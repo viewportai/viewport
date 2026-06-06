@@ -18,6 +18,7 @@
  *   vpd guard ...             Check repo-local approval/risk gates
  *   vpd config ...            Resolve repo-local Viewport resources
  *   vpd context ...           Local trusted-edge context commands
+ *   vpd signal ...            Local trusted-edge signal feature extraction commands
  *   vpd unlock <id>           Activate a short-lived hosted-web trusted-edge session
  *   vpd skills ...            Install agent skills that call vpd
  *   vpd watch ...             Personal/local monitor commands
@@ -73,6 +74,7 @@ import {
   watch,
   check,
   diagnostic,
+  signal,
 } from './cli/commands.js';
 import { resolveDisplayVersion } from './core/package-meta.js';
 import { hookCapabilities, hookNotify, showHookHelp } from './cli/hook-command.js';
@@ -134,6 +136,7 @@ const commands: Record<string, () => Promise<void>> = {
   watch,
   check,
   diagnostic,
+  signal,
 };
 
 const command = getCommand();
@@ -224,6 +227,8 @@ if (command === 'hook') {
       handler = worker;
     } else if (command === 'watch') {
       handler = watch;
+    } else if (command === 'signal') {
+      handler = signal;
     }
     if (!handler) {
       if (command !== 'help') {

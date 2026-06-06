@@ -1750,7 +1750,9 @@ async function materializeRunCredentials(
   return { runtimeSecretEnv, runtimeSecretFiles, metadata };
 }
 
-function runnerLocalProviderCredentialMaterial(assignment: ManagedAssignment): CredentialMaterialResult {
+function runnerLocalProviderCredentialMaterial(
+  assignment: ManagedAssignment,
+): CredentialMaterialResult {
   const provider = runnerLocalAgentProvider(assignment);
   if (!provider) return { runtimeSecretEnv: {}, runtimeSecretFiles: {}, metadata: [] };
 
@@ -1782,7 +1784,9 @@ function runnerLocalProviderCredentialMaterial(assignment: ManagedAssignment): C
   };
 }
 
-function runnerLocalAgentProvider(assignment: ManagedAssignment): 'anthropic' | 'openai' | 'gemini' | null {
+function runnerLocalAgentProvider(
+  assignment: ManagedAssignment,
+): 'anthropic' | 'openai' | 'gemini' | null {
   const costMode =
     stringValue(pathValue(asRecord(assignment.workflow_snapshot), ['agent', 'cost_mode'])) ??
     stringValue(pathValue(asRecord(assignment.workflowSnapshot), ['agent', 'cost_mode'])) ??
@@ -1808,7 +1812,9 @@ function runnerLocalAgentProvider(assignment: ManagedAssignment): 'anthropic' | 
   return null;
 }
 
-function runnerLocalProviderEnvEntries(provider: 'anthropic' | 'openai' | 'gemini'): [string, string | undefined][] {
+function runnerLocalProviderEnvEntries(
+  provider: 'anthropic' | 'openai' | 'gemini',
+): [string, string | undefined][] {
   if (provider === 'openai') {
     return [
       ['OPENAI_API_KEY', process.env['OPENAI_API_KEY']],

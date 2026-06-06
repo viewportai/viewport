@@ -31,6 +31,7 @@ describe('grouped CLI command help', () => {
     ['service'],
     ['watch'],
     ['worker'],
+    ['signal'],
     ['session'],
     ['hook'],
     ['daemon', 'service'],
