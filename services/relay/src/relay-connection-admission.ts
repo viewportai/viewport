@@ -82,7 +82,12 @@ export function resolveConnectionAdmission(
 
   const runtimeTargetId = claimedRuntimeTargetId || requestedRuntimeTargetId;
   const machineId = typeof claims?.machineId === 'string' ? claims.machineId.trim() : undefined;
-  if (role === 'client' && clientScopeClaim !== 'runtime' && clientScopeClaim !== 'pairing') {
+  if (
+    role === 'client' &&
+    clientScopeClaim !== 'runtime' &&
+    clientScopeClaim !== 'pairing' &&
+    clientScopeClaim !== 'session-events'
+  ) {
     return {
       ok: false,
       logEvent: 'client_connection_rejected',
@@ -98,7 +103,8 @@ export function resolveConnectionAdmission(
   }
 
   if (
-    (role === 'workspace-daemon' || (role === 'client' && clientScopeClaim === 'runtime')) &&
+    (role === 'workspace-daemon' ||
+      (role === 'client' && (clientScopeClaim === 'runtime' || clientScopeClaim === 'session-events'))) &&
     !runtimeTargetId
   ) {
     return {

@@ -11,7 +11,9 @@ export interface AdmissionClaims {
   machineId?: string;
   role?: RelayRole;
   workspaceId?: string;
-  scope?: 'runtime' | 'pairing';
+  scope?: 'runtime' | 'pairing' | 'session-events';
+  sessionIds?: string[];
+  sessionChannels?: string[];
   e2eeProfile?: 'noise-ik' | 'noise-ikpsk2';
   policyMode?: string;
   daemonPublicKey?: string | null;
@@ -45,6 +47,7 @@ export interface WorkspaceState {
   daemon: WebSocket | null;
   daemonIssueGeneration: number | null;
   clients: Map<WebSocket, ClientConnectionMeta>;
+  sessionEventSubscribers: Map<string, Set<WebSocket>>;
   keyExchangeRequests: Map<
     string,
     {

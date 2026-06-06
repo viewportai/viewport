@@ -18,6 +18,10 @@ import {
   isPairingClientFrame,
   isPairingDaemonFrame,
   parseFramePayload,
+  isSessionEventClientFrame,
+  isSessionEventRelayFrame,
+  isSessionEventSubscribeFrame,
+  isSessionEventUnsubscribeFrame,
   type FramePayload,
 } from './relay-frame-validation.js';
 import {
@@ -174,6 +178,119 @@ function routeSessionOwnedFrame(
 
   metrics.increment('relay_session_frame_dropped_total');
   return false;
+}
+
+function sessionEventChannels(claims: AdmissionClaims | undefined): Set<string> {
+  const channels = Array.isArray(claims?.sessionChannels) ? claims.sessionChannels : [];
+  return new Set(
+    channels
+      .filter((channel): channel is string => typeof channel === 'string')
+      .map((channel) => channel.trim())
+      .filter((channel) => channel.startsWith('agent-session:')),
+  );
+}
+
+function routeSessionEventRelayFrame(
+  context: RelayRoutingContext,
+  workspaceId: string,
+  scopeKey: string,
+  text: string,
+  parsedFrame: FramePayload,
+): boolean {
+  const channel = typeof parsedFrame['channel'] === 'string' ? parsedFrame['channel'].trim() : '';
+  if (!channel) {
+    context.metrics.increment('relay_session_event_frame_dropped_total');
+    return false;
+  }
+
+  const state = context.registry.getOrCreate(scopeKey, { workspaceId });
+  const subscribers = state.sessionEventSubscribers.get(channel);
+  if (!subscribers || subscribers.size === 0) {
+    context.metrics.increment('relay_session_event_frame_dropped_total');
+    return false;
+  }
+
+  let delivered = 0;
+  for (const client of subscribers) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (context.safeSend(client, text)) {
+      delivered += 1;
+    }
+  }
+
+  if (delivered === 0) {
+    context.metrics.increment('relay_session_event_frame_dropped_total');
+    return false;
+  }
+
+  context.metrics.increment('relay_session_event_frame_delivered_total', delivered);
+  return true;
+}
+
+function handleSessionEventClientFrame(
+  context: RelayRoutingContext,
+  ws: WebSocket,
+  workspaceId: string,
+  scopeKey: string,
+  claims: AdmissionClaims | undefined,
+  parsedFrame: FramePayload,
+): void {
+  const channel = typeof parsedFrame['channel'] === 'string' ? parsedFrame['channel'].trim() : '';
+  const allowedChannels = sessionEventChannels(claims);
+  if (!channel || !allowedChannels.has(channel)) {
+    context.metrics.increment('relay_session_event_subscribe_rejected_total');
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.session_events.subscribe_denied/v1',
+        channel,
+        reason: 'CHANNEL_NOT_AUTHORIZED',
+        workspaceId,
+      }),
+    );
+    return;
+  }
+
+  const state = context.registry.getOrCreate(scopeKey, { workspaceId });
+  if (isSessionEventSubscribeFrame(parsedFrame)) {
+    let subscribers = state.sessionEventSubscribers.get(channel);
+    if (!subscribers) {
+      subscribers = new Set<WebSocket>();
+      state.sessionEventSubscribers.set(channel, subscribers);
+    }
+    subscribers.add(ws);
+    context.metrics.increment('relay_session_event_subscribed_total');
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.session_events.subscribed/v1',
+        channel,
+        afterSequence:
+          typeof parsedFrame['afterSequence'] === 'number' && Number.isInteger(parsedFrame['afterSequence'])
+            ? parsedFrame['afterSequence']
+            : 0,
+        authoritativeSource: 'session_events',
+        websocketRequiredForBackfill: false,
+      }),
+    );
+    return;
+  }
+
+  if (isSessionEventUnsubscribeFrame(parsedFrame)) {
+    const subscribers = state.sessionEventSubscribers.get(channel);
+    subscribers?.delete(ws);
+    if (subscribers && subscribers.size === 0) {
+      state.sessionEventSubscribers.delete(channel);
+    }
+    context.metrics.increment('relay_session_event_unsubscribed_total');
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.session_events.unsubscribed/v1',
+        channel,
+      }),
+    );
+  }
 }
 
 function resolveRuntimeLimiters(context: RelayRoutingContext): {
@@ -571,6 +688,14 @@ export function routeBusFrame(context: RelayRoutingContext, frame: RelayBusFrame
     return;
   }
 
+  if (parsed && isSessionEventRelayFrame(parsed)) {
+    const routed = routeSessionEventRelayFrame(context, frame.workspaceId, scopeKey, frame.payload, parsed);
+    if (routed) {
+      metrics.increment('relay_bus_frames_to_clients_total');
+    }
+    return;
+  }
+
   if (parsed && isE2eeEnvelope(parsed) && typeof parsed['sessionId'] === 'string') {
     const routed = routeSessionOwnedFrame(context, frame.workspaceId, scopeKey, parsed['sessionId'], frame.payload);
     if (routed) {
@@ -863,7 +988,8 @@ export function registerConnection(
   }
 
   const clientId = typeof claims?.clientId === 'string' ? claims.clientId : 'client_unknown';
-  const clientScope: 'runtime' | 'pairing' = clientScopeClaim === 'pairing' ? 'pairing' : 'runtime';
+  const clientScope: 'runtime' | 'pairing' | 'session-events' =
+    clientScopeClaim === 'pairing' || clientScopeClaim === 'session-events' ? clientScopeClaim : 'runtime';
   const clientExpectedProfile = claims?.e2eeProfile;
   wsIp.set(ws, ip);
   wsWorkspace.set(ws, workspaceId);
@@ -916,6 +1042,38 @@ export function registerConnection(
     const parsed = parseFramePayload(text);
     if (!parsed) {
       metrics.increment('relay_frames_client_rejected_total');
+      return;
+    }
+    if (clientScope === 'session-events') {
+      if (!isSessionEventClientFrame(parsed)) {
+        metrics.increment('relay_frames_client_rejected_scope_total');
+        logger.warn('client_frame_rejected', {
+          workspaceId,
+          clientId,
+          reason: 'scope_mismatch_session_events_only',
+        });
+        safeSend(
+          ws,
+          JSON.stringify({
+            type: 'relay_status',
+            code: 'SESSION_EVENTS_SCOPE_ONLY',
+            message: 'session-events scoped clients can only subscribe to authorized session event channels',
+            workspaceId,
+          }),
+        );
+        return;
+      }
+      handleSessionEventClientFrame(context, ws, workspaceId, scopeKey, claims, parsed);
+      return;
+    }
+    if (isSessionEventClientFrame(parsed)) {
+      metrics.increment('relay_frames_client_rejected_scope_total');
+      logger.warn('client_frame_rejected', {
+        workspaceId,
+        clientId,
+        reason: 'scope_mismatch_runtime_or_pairing_only',
+      });
+      closeWithReason(ws, 4008, 'session-events scope required');
       return;
     }
     pruneStalePairingRequests(state);

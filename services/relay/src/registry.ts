@@ -16,6 +16,7 @@ export class ConnectionRegistry {
         daemon: null,
         daemonIssueGeneration: null,
         clients: new Map<WebSocket, ClientConnectionMeta>(),
+        sessionEventSubscribers: new Map(),
         keyExchangeRequests: new Map(),
         sessionOwners: new Map(),
         pairingRequests: new Map(),
@@ -77,6 +78,12 @@ export class ConnectionRegistry {
     for (const [sessionId, owner] of state.sessionOwners.entries()) {
       if (owner.clientWs === ws) {
         state.sessionOwners.delete(sessionId);
+      }
+    }
+    for (const [channel, subscribers] of state.sessionEventSubscribers.entries()) {
+      subscribers.delete(ws);
+      if (subscribers.size === 0) {
+        state.sessionEventSubscribers.delete(channel);
       }
     }
     state.lastActivityAt = Date.now();
