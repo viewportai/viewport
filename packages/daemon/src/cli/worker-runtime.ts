@@ -1428,6 +1428,7 @@ async function maybeExecuteHostedSessionVerification(
   if (commands.length === 0) return;
 
   const runDirectoryPath = execution.run.directoryPath ?? lease.directoryPath ?? profile.workspaceRoot;
+  const defaultCommandDirectory = verificationDefaultCommandDirectory(execution.run);
   const commandResults: Array<Record<string, unknown>> = [];
   const artifactRefs: string[] = [];
 
@@ -1437,7 +1438,7 @@ async function maybeExecuteHostedSessionVerification(
     let result: ShellCommandResult;
     let executionError: string | undefined;
     try {
-      const cwd = verificationCommandCwd(runDirectoryPath, command);
+      const cwd = verificationCommandCwd(runDirectoryPath, command, defaultCommandDirectory);
       result = await runShellCommand(commandText, '', cwd);
     } catch (error) {
       executionError = errorMessage(error);
@@ -1463,7 +1464,9 @@ async function maybeExecuteHostedSessionVerification(
       stderr_sha256: stderrDigest,
       stdout_bytes: Buffer.byteLength(result.stdout, 'utf8'),
       stderr_bytes: Buffer.byteLength(result.stderr, 'utf8'),
-      working_directory: verificationCommandWorkingDirectory(command) ?? '.',
+      working_directory:
+        verificationCommandWorkingDirectory(command) ??
+        verificationDisplayWorkingDirectory(runDirectoryPath, defaultCommandDirectory),
       raw_output_included: false,
       ...(executionError ? { error: executionError } : {}),
     });
@@ -1585,15 +1588,43 @@ function verificationCommandWorkingDirectory(
 function verificationCommandCwd(
   runDirectoryPath: string,
   command: ManagedSessionVerificationCommand,
+  defaultDirectoryPath?: string,
 ): string {
   const workingDirectory = verificationCommandWorkingDirectory(command);
   const root = path.resolve(runDirectoryPath);
-  const resolved = workingDirectory ? path.resolve(root, workingDirectory) : root;
+  const resolved = workingDirectory
+    ? path.resolve(root, workingDirectory)
+    : path.resolve(defaultDirectoryPath ?? root);
   const relative = path.relative(root, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error('Verification command working_directory must stay inside the run directory.');
   }
   return resolved;
+}
+
+function verificationDefaultCommandDirectory(run: WorkflowRunRecord): string {
+  const root = path.resolve(run.directoryPath);
+  for (const node of Object.values(run.nodes ?? {})) {
+    if (node.type !== 'checkout') continue;
+    const candidate = typeof node.outputs?.['path'] === 'string' ? node.outputs['path'] : null;
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    const relative = path.relative(root, resolved);
+    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return resolved;
+    }
+  }
+
+  return root;
+}
+
+function verificationDisplayWorkingDirectory(runDirectoryPath: string, directoryPath: string): string {
+  const root = path.resolve(runDirectoryPath);
+  const resolved = path.resolve(directoryPath);
+  const relative = path.relative(root, resolved);
+  if (relative === '') return '.';
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return '.';
+  return relative;
 }
 
 function verificationRequiredArtifacts(contract: ManagedSessionVerificationContract): string[] {

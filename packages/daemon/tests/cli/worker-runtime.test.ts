@@ -1,11 +1,15 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { acquireWorkerProcessLock } from '../../src/cli/worker-process-lock.js';
+
+const exec = promisify(execFile);
 
 describe('standalone worker runtime', () => {
   const originalArgv = process.argv.slice();
@@ -1106,6 +1110,87 @@ nodes:
       }),
     });
     expect(JSON.stringify(verification?.body)).not.toContain('verification-ok');
+    await expectSignedRequest(verification, homeDir);
+  });
+
+  it('defaults hosted session verification commands to the primary checkout directory', async () => {
+    const projectDir = path.join(homeDir, 'hosted-verification-checkout-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const { remoteUrl } = await createLocalGitRemoteWithPackageJson(homeDir);
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        agent_session_id: 'session_1',
+        session_verification_contract: {
+          schema: 'viewport.workflow_run_session_verification_contract/v1',
+          agent_session_id: 'session_1',
+          workflow_run_id: 'run_1',
+          status: 'resolved',
+          policy_hash: 'sha256:hosted-verification-policy',
+          commands: [
+            {
+              name: 'package-present',
+              command: 'test -f package.json',
+              required: true,
+            },
+          ],
+          runtime_tool: {
+            runtime_endpoint:
+              '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts',
+          },
+          access_model: {
+            runner_may_execute_commands: true,
+          },
+        },
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-verification-checkout-proof
+nodes:
+  checkout:
+    type: checkout
+    repository: acme/project
+    remote: ${remoteUrl}
+`,
+        source_ref: 'viewport://test/hosted-worker-verification-checkout-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const verification = requests.find((request) =>
+      request.url.endsWith('/agent-sessions/session_1/verification-attempts'),
+    );
+    expect(verification?.body).toMatchObject({
+      status: 'passed',
+      summary: '1/1 verification commands passed.',
+      verification_pack: expect.objectContaining({
+        command_results: [
+          expect.objectContaining({
+            name: 'package-present',
+            status: 'passed',
+            working_directory: expect.stringContaining('acme__project'),
+            raw_output_included: false,
+          }),
+        ],
+      }),
+    });
+    expect(JSON.stringify(verification?.body)).not.toContain('"scripts"');
     await expectSignedRequest(verification, homeDir);
   });
 
@@ -2222,6 +2307,24 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
       Buffer.from(signature, 'base64'),
     ),
   ).toBe(true);
+}
+
+async function createLocalGitRemoteWithPackageJson(root: string): Promise<{ remoteUrl: string }> {
+  const source = path.join(root, `checkout-source-${crypto.randomUUID()}`);
+  const bare = path.join(root, `checkout-remote-${crypto.randomUUID()}.git`);
+  await fs.mkdir(source, { recursive: true });
+  await exec('git', ['init', '-b', 'main'], { cwd: source });
+  await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: source });
+  await exec('git', ['config', 'user.name', 'Viewport Test'], { cwd: source });
+  await fs.writeFile(
+    path.join(source, 'package.json'),
+    JSON.stringify({ name: 'checkout-verification-proof', version: '0.0.0' }, null, 2),
+  );
+  await exec('git', ['add', 'package.json'], { cwd: source });
+  await exec('git', ['commit', '-m', 'Initial package'], { cwd: source });
+  await exec('git', ['clone', '--bare', source, bare]);
+
+  return { remoteUrl: `file://${bare}` };
 }
 
 async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
