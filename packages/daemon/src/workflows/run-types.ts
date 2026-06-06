@@ -245,6 +245,7 @@ export interface WorkflowRunRequest {
   resourceId?: string;
   runtimeTargetId?: string;
   platformRunId?: string;
+  agentSessionId?: string;
   rerunOfWorkflowRunId?: string;
   resourceManifest?: SessionResourceManifest;
   executionPolicy?: WorkflowExecutionPolicy;

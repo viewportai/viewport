@@ -1121,6 +1121,7 @@ async function executeHostedWorkflowClaim(
       resourceId: profile.workspaceId,
       runtimeTargetId: lease.runtimeTargetId ?? profile.managedExecutorId,
       platformRunId: lease.runId,
+      agentSessionId: lease.agentSessionId,
       resourceManifest: lease.resourceManifest as never,
       workflowAuthorityContract: lease.workflowAuthorityContract,
       dataCapturePolicy: lease.dataCapturePolicy,

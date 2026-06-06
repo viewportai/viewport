@@ -944,6 +944,7 @@ nodes:
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, {
       hostedAssignment: {
+        agent_session_id: 'session_1',
         yaml_snapshot: `
 schema: viewport.workflow/v1
 name: hosted-worker-shell-proof
@@ -987,6 +988,7 @@ nodes:
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
     const sync = requests[2]?.body;
@@ -1001,6 +1003,12 @@ nodes:
       events: expect.arrayContaining([expect.objectContaining({ type: 'run-completed' })]),
     });
     expect(String(sync?.['runtime_run_id'] ?? '')).not.toBe('vpd-worker-run_1');
+    const runtimeRunId = String(sync?.['runtime_run_id'] ?? '');
+    const localRunPath = path.join(homeDir, 'runs', 'workflows', `${runtimeRunId}.json`);
+    const localRun = JSON.parse(await fs.readFile(localRunPath, 'utf8')) as {
+      agentSessionId?: string;
+    };
+    expect(localRun.agentSessionId).toBe('session_1');
     expect(sync?.['nodes']).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
