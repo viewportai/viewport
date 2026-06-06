@@ -68,7 +68,7 @@ export class WorkflowPlatformContextClient {
 
     const res = await this.fetcher(target.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
@@ -113,7 +113,7 @@ export class WorkflowPlatformContextClient {
     const selectedAt = new Date().toISOString();
     const res = await this.fetcher(target.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
@@ -158,7 +158,7 @@ export class WorkflowPlatformContextClient {
       `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/context-update-proposals/${encodeURIComponent(input.proposalId)}/writeback-receipt`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           credential: target.issueToken,
           runtime_target_id: target.runtimeTargetId,
@@ -193,7 +193,7 @@ export class WorkflowPlatformContextClient {
 
     const res = await this.fetcher(target.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
@@ -245,7 +245,7 @@ export class WorkflowPlatformContextClient {
       `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/memory-retrieval`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           credential: target.issueToken,
           runtime_target_id: target.runtimeTargetId,
@@ -269,7 +269,9 @@ export class WorkflowPlatformContextClient {
     } | null;
     const data = body?.data;
     if (!data || data.schema !== 'viewport.agent_session_memory_retrieval/v1') {
-      throw new Error('session memory retrieval returned an unexpected response schema');
+      throw new Error(
+        `session memory retrieval returned an unexpected response schema: ${describeUnexpectedResponse(body)}`,
+      );
     }
 
     return {
@@ -291,7 +293,7 @@ export class WorkflowPlatformContextClient {
       `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/collaboration-mailbox`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           credential: target.issueToken,
           runtime_target_id: target.runtimeTargetId,
@@ -470,6 +472,32 @@ async function readResponseJson(res: Response): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+function jsonHeaders(): Record<string, string> {
+  return {
+    accept: 'application/json',
+    'content-type': 'application/json',
+  };
+}
+
+function describeUnexpectedResponse(body: unknown): string {
+  const root = objectValue(body);
+  if (!root) return 'body=null';
+  const data = objectValue(root['data']);
+  const parts = [
+    `top_level_keys=${Object.keys(root).sort().join(',') || 'none'}`,
+    `data_keys=${data ? Object.keys(data).sort().join(',') || 'none' : 'none'}`,
+  ];
+
+  const schema = data ? stringValue(data['schema']) : undefined;
+  if (schema) parts.push(`data_schema=${schema}`);
+  const message = stringValue(root['message']);
+  if (message) parts.push(`message=${message.slice(0, 160)}`);
+  const reason = stringValue(root['reason']);
+  if (reason) parts.push(`reason=${reason.slice(0, 120)}`);
+
+  return parts.join(' ');
 }
 
 function digest(value: string): string {

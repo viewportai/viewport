@@ -350,7 +350,7 @@ describe('platform-governed customer-managed context', () => {
         },
       },
     };
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const client = new WorkflowPlatformContextClient(
       {
         getDaemonConfig() {
@@ -373,6 +373,7 @@ describe('platform-governed customer-managed context', () => {
         requests.push({
           url: String(url),
           body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+          headers: new Headers(init?.headers),
         });
 
         return new Response(
@@ -448,7 +449,7 @@ describe('platform-governed customer-managed context', () => {
       agentSessionId: 'agent-session-first-class',
       inputs: {},
     };
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const client = new WorkflowPlatformContextClient(
       {
         getDaemonConfig() {
@@ -471,6 +472,7 @@ describe('platform-governed customer-managed context', () => {
         requests.push({
           url: String(url),
           body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+          headers: new Headers(init?.headers),
         });
 
         return new Response(
@@ -538,7 +540,7 @@ describe('platform-governed customer-managed context', () => {
         },
       },
     };
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const client = new WorkflowPlatformContextClient(
       {
         getDaemonConfig() {
@@ -549,6 +551,7 @@ describe('platform-governed customer-managed context', () => {
         requests.push({
           url: String(url),
           body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+          headers: new Headers(init?.headers),
         });
 
         return new Response(
@@ -617,7 +620,7 @@ describe('platform-governed customer-managed context', () => {
         },
       },
     };
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
     const client = new WorkflowPlatformContextClient(
       {
         getDaemonConfig() {
@@ -628,6 +631,7 @@ describe('platform-governed customer-managed context', () => {
         requests.push({
           url: String(url),
           body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+          headers: new Headers(init?.headers),
         });
 
         return new Response(
@@ -671,7 +675,67 @@ describe('platform-governed customer-managed context', () => {
       credential: 'vpclaim_hosted_context_target',
       runtime_target_id: 'managed_executor:executor-hosted',
     });
+    expect(requests[0]?.headers.get('accept')).toBe('application/json');
+    expect(requests[0]?.headers.get('content-type')).toBe('application/json');
     expect(result?.schema).toBe('viewport.agent_session_memory_retrieval/v1');
+  });
+
+  it('reports unexpected session memory response shape without raw body content', async () => {
+    const run = {
+      ...workflowRun('/workspace/product20'),
+      resourceId: undefined,
+      runtimeTargetId: undefined,
+      platformRunId: 'workflow-run-hosted',
+      agentSessionId: 'agent-session-hosted',
+      inputs: {
+        viewport: {
+          runtimeContextTarget: {
+            schema: 'viewport.runtime_context_target/v1',
+            serverUrl: 'https://api.getviewport.test',
+            workspaceId: 'workspace-hosted',
+            runtimeTargetId: 'managed_executor:executor-hosted',
+            credential: 'vpclaim_hosted_context_target',
+          },
+        },
+      },
+    };
+    const client = new WorkflowPlatformContextClient(
+      {
+        getDaemonConfig() {
+          return null;
+        },
+      } as never,
+      (async () =>
+        new Response(
+          JSON.stringify({
+            message: 'Memory retrieval source ids must be a subset of the session context working set.',
+            data: {
+              schema: 'unexpected.schema/v1',
+              secret_body: 'sk_should_not_appear',
+            },
+            reason: 'VALIDATION_FAILED',
+          }),
+          { status: 200 },
+        )) as never,
+    );
+
+    let error: unknown;
+    try {
+      await client.retrieveSessionMemory({
+        run,
+        query: 'hosted runtime target context',
+        limit: 2,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    const message = error instanceof Error ? error.message : '';
+    expect(message).toMatch(
+      /top_level_keys=data,message,reason data_keys=schema,secret_body data_schema=unexpected\.schema\/v1 message=Memory retrieval source ids must be a subset/,
+    );
+    expect(message).not.toContain('sk_should_not_appear');
   });
 
   it('prefers the run-scoped Product20 context target over stale daemon bindings', async () => {
