@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -18,6 +19,10 @@ import type {
   WorkflowRunStatus,
 } from '../workflows/types.js';
 import { transportFetch } from './network.js';
+import type {
+  ManagedSessionVerificationCommand,
+  ManagedSessionVerificationContract,
+} from './workflow-managed-worker-types.js';
 import { acquireWorkerProcessLock } from './worker-process-lock.js';
 import {
   readWorkerPairingRecord,
@@ -81,10 +86,12 @@ interface WorkerIdentityFile {
 
 interface ClaimedLease {
   id: string;
+  agentSessionId?: string;
   runId?: string;
   runtimeRunId?: string;
   leaseToken?: string;
   assignmentClaimToken?: string;
+  sessionVerificationContract?: ManagedSessionVerificationContract;
   gateway?: GatewayLease;
   yamlSnapshot?: string;
   sourceRef?: string;
@@ -456,6 +463,7 @@ export async function runStandaloneWorker(
         } else {
           await workerTransport.sync(lease, execution);
         }
+        await maybeExecuteHostedSessionVerification(profile, workerTransport, lease, execution);
         if (execution.status === 'completed') {
           result.completed += 1;
         } else if (execution.status === 'blocked') {
@@ -489,6 +497,7 @@ async function executeBootstrapLease(
 ): Promise<StandaloneWorkerResult> {
   const execution = await executeClaim(profile, transport, lease);
   await transport.sync(lease, execution);
+  await maybeExecuteHostedSessionVerification(profile, transport, lease, execution);
   await transport.cleanup(lease);
 
   return {
@@ -637,11 +646,15 @@ function claimedLeaseFromBootstrap(
   );
   return {
     id,
+    agentSessionId: stringValue(rawLease['agent_session_id'] ?? rawLease['agentSessionId']),
     runId: stringValue(rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId']),
     runtimeRunId: stringValue(rawLease['runtime_run_id'] ?? rawLease['runtimeRunId']),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
     assignmentClaimToken: stringValue(
       rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken'],
+    ),
+    sessionVerificationContract: sessionVerificationContractValue(
+      rawLease['session_verification_contract'] ?? rawLease['sessionVerificationContract'],
     ),
     gateway: gatewayLeaseValue(rawLease['gateway'] ?? rawLease['gatewayLease']),
     yamlSnapshot: stringValue(rawLease['yaml_snapshot'] ?? rawLease['yamlSnapshot']),
@@ -866,12 +879,24 @@ async function claimLeaseHttp(
   }
   return {
     id,
+    agentSessionId: stringValue(
+      data['agent_session_id'] ??
+        data['agentSessionId'] ??
+        rawLease['agent_session_id'] ??
+        rawLease['agentSessionId'],
+    ),
     runId: stringValue(
       data['id'] ?? rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId'],
     ),
     runtimeRunId: stringValue(data['runtime_run_id'] ?? rawLease['runtime_run_id']),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
     assignmentClaimToken: stringValue(data['assignment_claim_token']),
+    sessionVerificationContract: sessionVerificationContractValue(
+      data['session_verification_contract'] ??
+        data['sessionVerificationContract'] ??
+        rawLease['session_verification_contract'] ??
+        rawLease['sessionVerificationContract'],
+    ),
     yamlSnapshot: stringValue(data['yaml_snapshot'] ?? rawLease['yaml_snapshot']),
     sourceRef: stringValue(data['source_ref'] ?? rawLease['source_ref']),
     directoryPath: stringValue(data['directory_path'] ?? rawLease['directory_path']),
@@ -1382,6 +1407,307 @@ async function resumeBlockedHostedExecution(
   }
 
   return execution;
+}
+
+async function maybeExecuteHostedSessionVerification(
+  profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
+  lease: ClaimedLease,
+  execution: HostedClaimExecutionResult,
+): Promise<void> {
+  if (!isHostedManagedExecutorProfile(profile)) return;
+  if (execution.status !== 'completed' || !execution.run) return;
+
+  const contract = await executableHostedSessionVerificationContract(transport, lease);
+  if (!contract || !verificationRunnerMayExecute(contract)) return;
+
+  const agentSessionId = verificationAgentSessionId(contract);
+  if (!agentSessionId) return;
+
+  const commands = verificationCommands(contract);
+  if (commands.length === 0) return;
+
+  const runDirectoryPath = execution.run.directoryPath ?? lease.directoryPath ?? profile.workspaceRoot;
+  const commandResults: Array<Record<string, unknown>> = [];
+  const artifactRefs: string[] = [];
+
+  for (const command of commands) {
+    const name = verificationCommandName(command, commandResults.length + 1);
+    const commandText = verificationCommandText(command);
+    let result: ShellCommandResult;
+    let executionError: string | undefined;
+    try {
+      const cwd = verificationCommandCwd(runDirectoryPath, command);
+      result = await runShellCommand(commandText, '', cwd);
+    } catch (error) {
+      executionError = errorMessage(error);
+      result = { exitCode: 1, stdout: '', stderr: '' };
+    }
+
+    const stdoutDigest = sha256Text(result.stdout);
+    const stderrDigest = sha256Text(result.stderr);
+    const status = result.exitCode === 0 ? 'passed' : 'failed';
+    artifactRefs.push(`verification:${name}:stdout:${stdoutDigest}`);
+    if (result.stderr.trim() !== '') {
+      artifactRefs.push(`verification:${name}:stderr:${stderrDigest}`);
+    }
+
+    commandResults.push({
+      schema: 'viewport.verification_command_result/v1',
+      name,
+      status,
+      required: command.required !== false,
+      exit_code: result.exitCode,
+      command_sha256: sha256Text(commandText),
+      stdout_sha256: stdoutDigest,
+      stderr_sha256: stderrDigest,
+      stdout_bytes: Buffer.byteLength(result.stdout, 'utf8'),
+      stderr_bytes: Buffer.byteLength(result.stderr, 'utf8'),
+      working_directory: verificationCommandWorkingDirectory(command) ?? '.',
+      raw_output_included: false,
+      ...(executionError ? { error: executionError } : {}),
+    });
+  }
+
+  const requiredFailures = commandResults.filter(
+    (result) => result['required'] !== false && result['status'] !== 'passed',
+  );
+  const passedCount = commandResults.filter((result) => result['status'] === 'passed').length;
+  const status = requiredFailures.length > 0 ? 'failed' : 'passed';
+  const summary =
+    status === 'passed'
+      ? `${passedCount}/${commandResults.length} verification commands passed.`
+      : `${requiredFailures.length} required verification command(s) failed.`;
+
+  await postHostedSessionVerificationAttempt(profile, transport, lease, contract, agentSessionId, {
+    status,
+    attempt_kind: 'verification',
+    summary,
+    artifact_refs: artifactRefs.slice(0, 50),
+    verification_pack: {
+      schema: 'viewport.verification_pack_result/v1',
+      source_schema: contract.schema ?? null,
+      agent_session_id: agentSessionId,
+      workflow_run_id: lease.runId,
+      policy_hash: typeof contract['policy_hash'] === 'string' ? contract['policy_hash'] : null,
+      command_results: commandResults,
+      required_artifacts: verificationRequiredArtifacts(contract),
+      raw_command_output_included: false,
+      agent_self_assessment_used: false,
+    },
+    repair_recommendation:
+      status === 'passed'
+        ? { action: 'none' }
+        : {
+            action: 'ask_human',
+            failed_commands: requiredFailures.map((result) => result['name']),
+          },
+  });
+}
+
+async function executableHostedSessionVerificationContract(
+  transport: WorkerTransport,
+  lease: ClaimedLease,
+): Promise<ManagedSessionVerificationContract | null> {
+  const contract = lease.sessionVerificationContract;
+  if (contract && verificationRunnerMayExecute(contract)) return contract;
+  if (!leaseMayHaveSessionVerification(lease)) return contract ?? null;
+
+  const refreshed = await transport.pollRuntimeCommands(lease);
+  return sessionVerificationContractFromBody(refreshed) ?? contract ?? null;
+}
+
+function leaseMayHaveSessionVerification(lease: ClaimedLease): boolean {
+  const policyPin = recordValue(lease.workflowSnapshot?.['product20_policy_pin']);
+  return Boolean(
+    lease.agentSessionId ||
+      stringValue(policyPin?.['agent_session_id']) ||
+      lease.sessionVerificationContract,
+  );
+}
+
+function sessionVerificationContractFromBody(
+  body: unknown,
+): ManagedSessionVerificationContract | null {
+  const record = recordValue(body);
+  const data = recordValue(record?.['data']);
+  return sessionVerificationContractValue(
+    data?.['session_verification_contract'] ??
+      data?.['sessionVerificationContract'] ??
+      record?.['session_verification_contract'] ??
+      record?.['sessionVerificationContract'],
+  ) ?? null;
+}
+
+function sessionVerificationContractValue(
+  value: unknown,
+): ManagedSessionVerificationContract | undefined {
+  const record = recordValue(value);
+  if (!record) return undefined;
+  return record as ManagedSessionVerificationContract;
+}
+
+function verificationRunnerMayExecute(contract: ManagedSessionVerificationContract): boolean {
+  const access = contract.access_model ?? contract.accessModel ?? {};
+  return access.runner_may_execute_commands === true || access.runnerMayExecuteCommands === true;
+}
+
+function verificationAgentSessionId(contract: ManagedSessionVerificationContract): string | null {
+  return contract.agent_session_id ?? contract.agentSessionId ?? null;
+}
+
+function verificationCommands(
+  contract: ManagedSessionVerificationContract,
+): ManagedSessionVerificationCommand[] {
+  return (contract.commands ?? []).filter(
+    (command): command is ManagedSessionVerificationCommand =>
+      verificationCommandText(command) !== '',
+  );
+}
+
+function verificationCommandName(
+  command: ManagedSessionVerificationCommand,
+  index: number,
+): string {
+  return command.name?.trim() || `verification-${index}`;
+}
+
+function verificationCommandText(command: ManagedSessionVerificationCommand): string {
+  return command.command?.trim() ?? '';
+}
+
+function verificationCommandWorkingDirectory(
+  command: ManagedSessionVerificationCommand,
+): string | null {
+  return command.working_directory?.trim() || command.workingDirectory?.trim() || null;
+}
+
+function verificationCommandCwd(
+  runDirectoryPath: string,
+  command: ManagedSessionVerificationCommand,
+): string {
+  const workingDirectory = verificationCommandWorkingDirectory(command);
+  const root = path.resolve(runDirectoryPath);
+  const resolved = workingDirectory ? path.resolve(root, workingDirectory) : root;
+  const relative = path.relative(root, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Verification command working_directory must stay inside the run directory.');
+  }
+  return resolved;
+}
+
+function verificationRequiredArtifacts(contract: ManagedSessionVerificationContract): string[] {
+  return contract.required_artifacts ?? contract.requiredArtifacts ?? [];
+}
+
+interface ShellCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runShellCommand(
+  command: string,
+  stdin: string,
+  cwd = process.cwd(),
+): Promise<ShellCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('sh', ['-lc', command], {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
+    child.stdin.end(stdin);
+  });
+}
+
+function sha256Text(value: string): string {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function postHostedSessionVerificationAttempt(
+  profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
+  lease: ClaimedLease,
+  contract: ManagedSessionVerificationContract,
+  agentSessionId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!lease.runId) {
+    throw new Error('Hosted session verification requires a workflow run id.');
+  }
+  const runLeaseToken = lease.assignmentClaimToken ?? lease.leaseToken;
+  if (!runLeaseToken) {
+    throw new Error('Hosted session verification requires a run lease token.');
+  }
+  const suffix =
+    hostedVerificationRuntimePathSuffix(profile, contract, agentSessionId) ??
+    `workflow-runs/${encodeURIComponent(lease.runId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/verification-attempts`;
+  const dispatcher =
+    transport instanceof RelayWorkerTransport
+      ? (request: HostedManagedExecutorRequest) =>
+          transport.dispatchHostedManagedExecutorRequest(request)
+      : undefined;
+
+  await hostedManagedExecutorFetch(
+    profile,
+    'POST',
+    suffix,
+    {
+      credential: profile.credential,
+      ...payload,
+    },
+    undefined,
+    runLeaseToken,
+    [],
+    dispatcher,
+  );
+}
+
+function hostedVerificationRuntimePathSuffix(
+  profile: WorkerRuntimeProfile,
+  contract: ManagedSessionVerificationContract,
+  agentSessionId: string,
+): string | null {
+  const runtimeTool = contract.runtime_tool ?? contract.runtimeTool ?? {};
+  const endpoint = runtimeTool.runtime_endpoint ?? runtimeTool.runtimeEndpoint;
+  if (typeof endpoint !== 'string' || endpoint.trim() === '') return null;
+
+  const normalized = endpoint.trim();
+  const prefix = `/api/runtime/workspaces/${encodeURIComponent(
+    profile.workspaceId ?? '',
+  )}/managed-executors/${encodeURIComponent(profile.managedExecutorId ?? '')}/`;
+  if (normalized.startsWith(prefix)) {
+    return normalized.slice(prefix.length);
+  }
+
+  const fallback = `/workflow-runs/`;
+  const index = normalized.indexOf(fallback);
+  if (index >= 0 && normalized.includes(`/agent-sessions/${encodeURIComponent(agentSessionId)}/`)) {
+    return normalized.slice(index + 1);
+  }
+
+  return null;
 }
 
 async function fetchHostedAssignmentHttp(

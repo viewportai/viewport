@@ -1009,6 +1009,106 @@ nodes:
     await expectSignedRequest(requests[2], homeDir);
   });
 
+  it('executes hosted session verification contracts after completed workflow sync', async () => {
+    const projectDir = path.join(homeDir, 'hosted-verification-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        agent_session_id: 'session_1',
+        session_verification_contract: {
+          schema: 'viewport.workflow_run_session_verification_contract/v1',
+          agent_session_id: 'session_1',
+          workflow_run_id: 'run_1',
+          status: 'resolved',
+          policy_hash: 'sha256:hosted-verification-policy',
+          commands: [
+            {
+              name: 'proof-file',
+              command: 'test -f proof.txt && printf verification-ok',
+              required: true,
+              working_directory: '.',
+            },
+          ],
+          required_artifacts: ['github_pr'],
+          runtime_tool: {
+            runtime_endpoint:
+              '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts',
+          },
+          access_model: {
+            runner_may_execute_commands: true,
+          },
+        },
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-verification-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - sh
+      - -lc
+      - printf hosted-ok > proof.txt
+`,
+        source_ref: 'viewport://test/hosted-worker-verification-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const requestNames = requests.map((request) => `${request.method} ${request.url}`);
+    expect(requestNames).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    const verification = requests[3];
+    expect(verification?.headers['x-viewport-run-lease']).toBe('vpclaim_run_1');
+    expect(verification?.body).toMatchObject({
+      credential: 'vpexec_hosted',
+      attempt_kind: 'verification',
+      status: 'passed',
+      summary: '1/1 verification commands passed.',
+      artifact_refs: [expect.stringMatching(/^verification:proof-file:stdout:sha256:/)],
+      verification_pack: expect.objectContaining({
+        schema: 'viewport.verification_pack_result/v1',
+        agent_session_id: 'session_1',
+        workflow_run_id: 'run_1',
+        policy_hash: 'sha256:hosted-verification-policy',
+        raw_command_output_included: false,
+        agent_self_assessment_used: false,
+        command_results: [
+          expect.objectContaining({
+            name: 'proof-file',
+            status: 'passed',
+            raw_output_included: false,
+            stdout_bytes: 15,
+          }),
+        ],
+      }),
+    });
+    expect(JSON.stringify(verification?.body)).not.toContain('verification-ok');
+    await expectSignedRequest(verification, homeDir);
+  });
+
   it('retries transient hosted managed executor sync failures without losing the lease', async () => {
     const projectDir = path.join(homeDir, 'hosted-transient-sync-workspace');
     await fs.mkdir(projectDir, { recursive: true });
@@ -1914,6 +2014,15 @@ async function startRuntimeServer(
       blockedRuntimeRunId =
         typeof body['runtime_run_id'] === 'string' ? body['runtime_run_id'] : null;
       blockedNodeId = blockedNodeFromSync(body);
+    }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts' &&
+      request.method === 'POST'
+    ) {
+      response.statusCode = 201;
+      response.end(JSON.stringify({ data: { id: 'verification_attempt_1' } }));
+      return;
     }
     if (
       request.url ===
