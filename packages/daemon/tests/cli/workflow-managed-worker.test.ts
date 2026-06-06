@@ -217,7 +217,7 @@ describe('workflow managed worker CLI', () => {
     ).toBe('sha256:current-diff');
   });
 
-  it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {
+  it('claims a managed assignment, refreshes verification contract, and syncs evidence back', async () => {
     const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-managed-worker-'));
     const workdir = path.join(workdirParent, 'workspace');
     await fs.mkdir(workdir, { recursive: true });
@@ -280,6 +280,7 @@ describe('workflow managed worker CLI', () => {
         return jsonResponse({
           data: {
             id: 'run_platform_1',
+            agent_session_id: 'session_1',
             assignment_claim_token: 'vpclaim_run_platform_1',
             yaml_snapshot: 'schema: viewport.workflow/v1\nname: proof\nnodes: {}\n',
             source_ref: 'viewport://workflow/proof',
@@ -369,6 +370,17 @@ describe('workflow managed worker CLI', () => {
             }),
           ],
         });
+        return jsonResponse({
+          data: {
+            id: 'run_platform_1',
+            status: 'completed',
+          },
+        });
+      }
+      if (url.endsWith('/workflow-runs/run_platform_1') && init?.method === 'GET') {
+        expect(headerValue(init?.headers, 'X-Viewport-Assignment-Claim')).toBe(
+          'vpclaim_run_platform_1',
+        );
         return jsonResponse({
           data: {
             id: 'run_platform_1',
@@ -561,6 +573,7 @@ describe('workflow managed worker CLI', () => {
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/agent-sessions/session_1/verification-attempts',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);

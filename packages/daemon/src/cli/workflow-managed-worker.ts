@@ -238,7 +238,14 @@ export async function workflowWorker(): Promise<void> {
       }
       await maybeExecuteSessionVerification(
         options,
-        synced,
+        {
+          ...assignment,
+          ...synced,
+          session_verification_contract:
+            synced.session_verification_contract ?? assignment.session_verification_contract,
+          sessionVerificationContract:
+            synced.sessionVerificationContract ?? assignment.sessionVerificationContract,
+        },
         localRun,
         assignment.assignment_claim_token,
       );
@@ -1250,7 +1257,11 @@ async function maybeExecuteSessionVerification(
   if (run.status !== 'completed') return;
   if (!assignmentClaimToken) return;
 
-  const contract = assignmentSessionVerificationContract(assignment);
+  const contract = await executableSessionVerificationContract(
+    options,
+    assignment,
+    assignmentClaimToken,
+  );
   if (!contract || !verificationRunnerMayExecute(contract)) return;
 
   const agentSessionId = verificationAgentSessionId(contract);
@@ -1341,6 +1352,34 @@ async function maybeExecuteSessionVerification(
               failed_commands: requiredFailures.map((result) => result['name']),
             },
     },
+  );
+}
+
+async function executableSessionVerificationContract(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+  assignmentClaimToken: string,
+): Promise<ManagedSessionVerificationContract | null> {
+  const contract = assignmentSessionVerificationContract(assignment);
+  if (contract && verificationRunnerMayExecute(contract)) return contract;
+  if (!assignmentMayHaveSessionVerification(assignment)) return contract;
+
+  try {
+    const refreshed = await getAssignment(options, assignment.id, assignmentClaimToken);
+    return assignmentSessionVerificationContract(refreshed);
+  } catch (error) {
+    if (error instanceof PlatformRequestError) return contract;
+    throw error;
+  }
+}
+
+function assignmentMayHaveSessionVerification(assignment: ManagedAssignment): boolean {
+  const policyPin = recordChildValue(assignmentWorkflowSnapshot(assignment), 'product20_policy_pin');
+
+  return (
+    stringValue(assignment.agent_session_id) !== undefined ||
+    stringValue(policyPin?.['agent_session_id']) !== undefined ||
+    assignmentSessionVerificationContract(assignment) !== null
   );
 }
 

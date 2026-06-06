@@ -58,6 +58,8 @@ export interface ManagedWorkerCapabilities {
 
 export interface ManagedAssignment {
   id: string;
+  agent_session_id?: string | null;
+  agentSessionId?: string | null;
   assignment_claim_token?: string | null;
   runtime_commands?: Array<Record<string, unknown>> | null;
   session_verification_contract?: ManagedSessionVerificationContract | null;
