@@ -142,6 +142,7 @@ export const WorkflowPolicyDefinitionSchema = z
       })
       .strict()
       .optional(),
+    capabilities: z.record(z.string(), z.unknown()).optional(),
     maxDurationSeconds: z.number().int().positive().max(604_800).optional(),
   })
   .strict();

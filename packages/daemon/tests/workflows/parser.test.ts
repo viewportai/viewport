@@ -508,6 +508,19 @@ policies:
     approvalThresholds:
       tokens: 75000
       costUsd: 10
+  capabilities:
+    schema: viewport.effective_capabilities/v1
+    egress:
+      mode: default_deny
+      allowed_hosts:
+        - gateway.getviewport.com
+        - api.getviewport.com
+      source:
+        merge_rule: intersection_with_required_platform_hosts
+    budget:
+      max_tokens: 100000
+      sources:
+        merge_rule: min_ceiling
 notifications:
   inbox:
     - approval_requested
@@ -583,6 +596,13 @@ nodes:
     expect(parsed.definition.policies?.escalation?.reviewerTags).toEqual(['tech-lead']);
     expect(parsed.definition.policies?.budget?.maxTokens).toBe(100000);
     expect(parsed.definition.policies?.budget?.approvalThresholds?.costUsd).toBe(10);
+    expect(parsed.definition.policies?.capabilities?.schema).toBe(
+      'viewport.effective_capabilities/v1',
+    );
+    expect(
+      (parsed.definition.policies?.capabilities?.egress as { allowed_hosts?: string[] } | undefined)
+        ?.allowed_hosts,
+    ).toContain('gateway.getviewport.com');
     expect(parsed.definition.notifications?.inbox).toContain('approval_requested');
     expect(parsed.definition.dataCapture?.approvalPackets).toBe(true);
     expect(parsed.definition.nodes.investigate?.type).toBe('agent');
