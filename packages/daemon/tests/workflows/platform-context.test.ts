@@ -598,6 +598,82 @@ describe('platform-governed customer-managed context', () => {
     expect(JSON.stringify(result)).not.toContain('vpclaim_runtime_context_target');
   });
 
+  it('retrieves Product20 session memory when hosted run context only exists in inputs', async () => {
+    const run = {
+      ...workflowRun('/workspace/product20'),
+      resourceId: undefined,
+      runtimeTargetId: undefined,
+      platformRunId: 'workflow-run-hosted',
+      agentSessionId: 'agent-session-hosted',
+      inputs: {
+        viewport: {
+          runtimeContextTarget: {
+            schema: 'viewport.runtime_context_target/v1',
+            serverUrl: 'https://api.getviewport.test',
+            workspaceId: 'workspace-hosted',
+            runtimeTargetId: 'managed_executor:executor-hosted',
+            credential: 'vpclaim_hosted_context_target',
+          },
+        },
+      },
+    };
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const client = new WorkflowPlatformContextClient(
+      {
+        getDaemonConfig() {
+          return null;
+        },
+      } as never,
+      (async (url: string | URL | Request, init?: RequestInit & { body?: string }) => {
+        requests.push({
+          url: String(url),
+          body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        });
+
+        return new Response(
+          JSON.stringify({
+            data: {
+              schema: 'viewport.agent_session_memory_retrieval/v1',
+              receipt: {
+                id: 'receipt-memory-hosted',
+                receipt_type: 'context.memory_retrieval',
+              },
+              retrieval: {
+                schema: 'viewport.session_memory_retrieval/v1',
+                query: {
+                  digest: digest('hosted runtime target context'),
+                  raw_query_returned: false,
+                },
+                access_model: {
+                  raw_memory_plaintext_returned: false,
+                  learned_state_expands_access: false,
+                },
+                results: [],
+              },
+            },
+          }),
+          { status: 200 },
+        );
+      }) as never,
+    );
+
+    const result = await client.retrieveSessionMemory({
+      run,
+      query: 'hosted runtime target context',
+      limit: 2,
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(
+      'https://api.getviewport.test/api/runtime/workspaces/workspace-hosted/workflow-runs/workflow-run-hosted/agent-sessions/agent-session-hosted/memory-retrieval',
+    );
+    expect(requests[0]?.body).toMatchObject({
+      credential: 'vpclaim_hosted_context_target',
+      runtime_target_id: 'managed_executor:executor-hosted',
+    });
+    expect(result?.schema).toBe('viewport.agent_session_memory_retrieval/v1');
+  });
+
   it('prefers the run-scoped Product20 context target over stale daemon bindings', async () => {
     const run = {
       ...workflowRun('/workspace/product20'),

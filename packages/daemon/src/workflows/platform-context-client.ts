@@ -372,11 +372,11 @@ export class WorkflowPlatformContextClient {
     caCertPath?: string;
     tlsPins?: string[];
   } | null {
-    const resourceId = run.resourceId;
-    const runtimeTargetId = run.runtimeTargetId;
+    const runScopedTarget = runtimeContextTargetForRun(run, run.resourceId, run.runtimeTargetId);
+    const resourceId = run.resourceId ?? runScopedTarget?.resourceId;
+    const runtimeTargetId = run.runtimeTargetId ?? runScopedTarget?.runtimeTargetId;
     if (!resourceId || !runtimeTargetId) return null;
 
-    const runScopedTarget = runtimeContextTargetForRun(run, resourceId, runtimeTargetId);
     if (runScopedTarget) return runScopedTarget;
 
     const daemonConfig = this.configManager.getDaemonConfig();
@@ -407,8 +407,8 @@ export class WorkflowPlatformContextClient {
 
 function runtimeContextTargetForRun(
   run: WorkflowRunRecord,
-  resourceId: string,
-  runtimeTargetId: string,
+  resourceId?: string,
+  runtimeTargetId?: string,
 ): {
   baseUrl: string;
   resourceId: string;
@@ -426,8 +426,11 @@ function runtimeContextTargetForRun(
   const serverUrl = stringValue(target['serverUrl'] ?? target['server_url']);
   const credential = stringValue(target['credential']);
   if (!serverUrl || !credential) return null;
-  if (targetResourceId && targetResourceId !== resourceId) return null;
-  if (targetRuntimeId && targetRuntimeId !== runtimeTargetId) return null;
+  if (resourceId && targetResourceId && targetResourceId !== resourceId) return null;
+  if (runtimeTargetId && targetRuntimeId && targetRuntimeId !== runtimeTargetId) return null;
+  const effectiveResourceId = resourceId ?? targetResourceId;
+  const effectiveRuntimeTargetId = runtimeTargetId ?? targetRuntimeId;
+  if (!effectiveResourceId || !effectiveRuntimeTargetId) return null;
 
   const tlsPins = Array.isArray(target['tlsPins'])
     ? target['tlsPins'].filter((value): value is string => typeof value === 'string')
@@ -435,9 +438,9 @@ function runtimeContextTargetForRun(
 
   return {
     baseUrl: serverUrl.replace(/\/+$/, ''),
-    resourceId,
+    resourceId: effectiveResourceId,
     issueToken: credential,
-    runtimeTargetId,
+    runtimeTargetId: effectiveRuntimeTargetId,
     tlsVerify: stringValue(target['tlsVerify']) as 'auto' | '0' | '1' | undefined,
     caCertPath: stringValue(target['caCertPath'] ?? target['ca_cert_path']),
     tlsPins,
