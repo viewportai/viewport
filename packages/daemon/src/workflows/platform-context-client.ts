@@ -235,7 +235,11 @@ export class WorkflowPlatformContextClient {
   }): Promise<PlatformSessionMemoryRetrieval | null> {
     const target = this.workspaceTargetFor(input.run);
     const agentSessionId = agentSessionIdForRun(input.run);
-    if (!target || !input.run.platformRunId || !agentSessionId) return null;
+    if (!target || !input.run.platformRunId || !agentSessionId) {
+      throw new Error(
+        `session memory retrieval unavailable: ${missingSessionMemoryPrerequisites(input.run, target, agentSessionId).join(', ')}`,
+      );
+    }
 
     const res = await this.fetcher(
       `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/memory-retrieval`,
@@ -264,7 +268,9 @@ export class WorkflowPlatformContextClient {
       data?: Partial<PlatformSessionMemoryRetrieval>;
     } | null;
     const data = body?.data;
-    if (!data || data.schema !== 'viewport.agent_session_memory_retrieval/v1') return null;
+    if (!data || data.schema !== 'viewport.agent_session_memory_retrieval/v1') {
+      throw new Error('session memory retrieval returned an unexpected response schema');
+    }
 
     return {
       schema: data.schema,
@@ -494,6 +500,18 @@ function agentSessionIdForRun(run: WorkflowRunRecord): string | null {
     stringValue(pathValue(run.inputs, ['viewport', 'agentSessionId'])) ??
     null
   );
+}
+
+function missingSessionMemoryPrerequisites(
+  run: WorkflowRunRecord,
+  target: unknown,
+  agentSessionId: string | null,
+): string[] {
+  const missing: string[] = [];
+  if (!target) missing.push('runtime_context_target');
+  if (!run.platformRunId) missing.push('platform_run_id');
+  if (!agentSessionId) missing.push('agent_session_id');
+  return missing.length > 0 ? missing : ['unknown'];
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
