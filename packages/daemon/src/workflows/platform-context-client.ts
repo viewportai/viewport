@@ -437,6 +437,8 @@ function stringValue(value: unknown): string | undefined {
 
 function agentSessionIdForRun(run: WorkflowRunRecord): string | null {
   return (
+    stringValue(run.agentSessionId) ??
+    stringValue(pathValue(run, ['agent_session_id'])) ??
     stringValue(
       pathValue(run.inputs, ['viewport', 'workflow', 'product20_policy_pin', 'agent_session_id']),
     ) ??

@@ -184,6 +184,7 @@ export interface WorkflowRunRecord {
   runPreparation?: WorkflowRunPreparation;
   runtimeTargetId?: string;
   platformRunId?: string;
+  agentSessionId?: string;
   rerunOfWorkflowRunId?: string;
   machineId: string;
   executionPolicy?: WorkflowExecutionPolicy;
