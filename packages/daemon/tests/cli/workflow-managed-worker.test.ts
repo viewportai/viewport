@@ -220,6 +220,8 @@ describe('workflow managed worker CLI', () => {
   it('claims a managed assignment, runs it locally, and syncs evidence back', async () => {
     const workdirParent = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-managed-worker-'));
     const workdir = path.join(workdirParent, 'workspace');
+    await fs.mkdir(workdir, { recursive: true });
+    await fs.writeFile(path.join(workdir, 'verification-proof.txt'), 'verification fixture\n');
 
     process.argv = [
       'node',
@@ -367,7 +369,104 @@ describe('workflow managed worker CLI', () => {
             }),
           ],
         });
-        return jsonResponse({ data: { id: 'run_platform_1', status: 'completed' } });
+        return jsonResponse({
+          data: {
+            id: 'run_platform_1',
+            status: 'completed',
+            session_verification_contract: {
+              schema: 'viewport.workflow_run_session_verification_contract/v1',
+              agent_session_id: 'session_1',
+              workspace_id: 'workspace_1',
+              workflow_run_id: 'run_platform_1',
+              status: 'resolved',
+              commands: [
+                {
+                  schema: 'viewport.verification_command/v1',
+                  name: 'proof-file-present',
+                  command: 'test -f verification-proof.txt',
+                  required: true,
+                  working_directory: '.',
+                  source: 'gitops_policy',
+                },
+                {
+                  schema: 'viewport.verification_command/v1',
+                  name: 'escape-attempt',
+                  command: 'pwd',
+                  required: false,
+                  working_directory: '..',
+                  source: 'gitops_policy',
+                },
+              ],
+              required_artifacts: ['github_pr'],
+              runtime_tool: {
+                schema: 'viewport.verification_attempt_runtime_tool_contract/v1',
+                name: 'viewport.verification.record_attempt',
+                runtime_endpoint:
+                  '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/agent-sessions/session_1/verification-attempts',
+                method: 'POST',
+              },
+              access_model: {
+                runner_may_execute_commands: true,
+                recording_fenced_to_run: true,
+                run_lease_required: true,
+              },
+            },
+          },
+        });
+      }
+      if (
+        url.endsWith('/workflow-runs/run_platform_1/agent-sessions/session_1/verification-attempts')
+      ) {
+        expect(headerValue(init?.headers, 'X-Viewport-Run-Lease')).toBe('vpclaim_run_platform_1');
+        expect(body).toMatchObject({
+          attempt_kind: 'verification',
+          status: 'passed',
+          summary: '1/2 verification commands passed.',
+          artifact_refs: expect.arrayContaining([
+            expect.stringMatching(/^verification:proof-file-present:stdout:sha256:/),
+            expect.stringMatching(/^verification:escape-attempt:stdout:sha256:/),
+          ]),
+          verification_pack: {
+            schema: 'viewport.verification_pack_result/v1',
+            agent_session_id: 'session_1',
+            workflow_run_id: 'run_platform_1',
+            command_results: [
+              expect.objectContaining({
+                schema: 'viewport.verification_command_result/v1',
+                name: 'proof-file-present',
+                status: 'passed',
+                exit_code: 0,
+                raw_output_included: false,
+                working_directory: '.',
+              }),
+              expect.objectContaining({
+                schema: 'viewport.verification_command_result/v1',
+                name: 'escape-attempt',
+                status: 'failed',
+                exit_code: 1,
+                required: false,
+                raw_output_included: false,
+                working_directory: '..',
+                error: 'Verification command working_directory must stay inside the run directory.',
+              }),
+            ],
+            required_artifacts: ['github_pr'],
+            raw_command_output_included: false,
+            agent_self_assessment_used: false,
+          },
+          repair_recommendation: { action: 'none' },
+        });
+        expect(JSON.stringify(body)).not.toContain('verification fixture');
+        return jsonResponse(
+          {
+            data: {
+              schema: 'viewport.session_verification_attempt_recorded/v1',
+              verification_attempt: { id: 'attempt_1', status: 'passed' },
+              receipt: { id: 'receipt_1', receipt_type: 'verification.attempt' },
+            },
+          },
+          201,
+        );
       }
 
       return jsonResponse({ message: 'not found' }, 404);
@@ -437,7 +536,7 @@ describe('workflow managed worker CLI', () => {
         return jsonResponse({ run: { id: 'local_run_1' } });
       }
       if (urlPath === '/api/workflows/runs/local_run_1') {
-        return jsonResponse({ run: completedLocalRun() });
+        return jsonResponse({ run: completedLocalRun({ directoryPath: workdir }) });
       }
       return jsonResponse({ message: `unexpected ${urlPath}` }, 500);
     });
@@ -462,6 +561,7 @@ describe('workflow managed worker CLI', () => {
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/sync',
+      'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_platform_1/agent-sessions/session_1/verification-attempts',
       'https://api.getviewport.com/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).toContain('"claimed": 1');

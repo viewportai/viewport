@@ -48,6 +48,8 @@ import type {
   DirectoryInfo,
   ManagedAssignment,
   ManagedActionReplayAssignment,
+  ManagedSessionVerificationCommand,
+  ManagedSessionVerificationContract,
   ManagedWorkerAccessMode,
   ManagedWorkerOptions,
   ManagedWorkerRunnerKeyPair,
@@ -234,6 +236,12 @@ export async function workflowWorker(): Promise<void> {
         }
         throw error;
       }
+      await maybeExecuteSessionVerification(
+        options,
+        synced,
+        localRun,
+        assignment.assignment_claim_token,
+      );
       if (synced.status === 'blocked') {
         stats.blocked += 1;
         if (!options.once) {
@@ -1202,10 +1210,14 @@ interface ShellCommandResult {
   stderr: string;
 }
 
-async function runShellCommand(command: string, stdin: string): Promise<ShellCommandResult> {
+async function runShellCommand(
+  command: string,
+  stdin: string,
+  cwd = process.cwd(),
+): Promise<ShellCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('sh', ['-lc', command], {
-      cwd: process.cwd(),
+      cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
     });
@@ -1227,6 +1239,215 @@ async function runShellCommand(command: string, stdin: string): Promise<ShellCom
     });
     child.stdin.end(stdin);
   });
+}
+
+async function maybeExecuteSessionVerification(
+  options: ManagedWorkerOptions,
+  assignment: ManagedAssignment,
+  run: WorkflowRunRecord,
+  assignmentClaimToken?: string | null,
+): Promise<void> {
+  if (run.status !== 'completed') return;
+  if (!assignmentClaimToken) return;
+
+  const contract = assignmentSessionVerificationContract(assignment);
+  if (!contract || !verificationRunnerMayExecute(contract)) return;
+
+  const agentSessionId = verificationAgentSessionId(contract);
+  if (!agentSessionId) return;
+
+  const commands = verificationCommands(contract);
+  if (commands.length === 0) return;
+
+  const commandResults: Array<Record<string, unknown>> = [];
+  const artifactRefs: string[] = [];
+
+  for (const command of commands) {
+    const name = verificationCommandName(command, commandResults.length + 1);
+    const commandText = verificationCommandText(command);
+    let executionError: string | undefined;
+    let cwd = run.directoryPath;
+    let result: ShellCommandResult;
+    try {
+      cwd = verificationCommandCwd(run.directoryPath, command);
+      result = await runShellCommand(commandText, '', cwd);
+    } catch (error) {
+      executionError = errorMessage(error);
+      result = { exitCode: 1, stdout: '', stderr: '' };
+    }
+    const stdoutDigest = sha256Text(result.stdout);
+    const stderrDigest = sha256Text(result.stderr);
+    const status = result.exitCode === 0 ? 'passed' : 'failed';
+
+    artifactRefs.push(`verification:${name}:stdout:${stdoutDigest}`);
+    if (result.stderr.trim() !== '') {
+      artifactRefs.push(`verification:${name}:stderr:${stderrDigest}`);
+    }
+
+    commandResults.push({
+      schema: 'viewport.verification_command_result/v1',
+      name,
+      status,
+      required: command.required !== false,
+      exit_code: result.exitCode,
+      command_sha256: sha256Text(commandText),
+      stdout_sha256: stdoutDigest,
+      stderr_sha256: stderrDigest,
+      stdout_bytes: Buffer.byteLength(result.stdout, 'utf8'),
+      stderr_bytes: Buffer.byteLength(result.stderr, 'utf8'),
+      working_directory: verificationCommandWorkingDirectory(command) ?? '.',
+      raw_output_included: false,
+      ...(executionError ? { error: executionError } : {}),
+    });
+  }
+
+  const requiredFailures = commandResults.filter(
+    (result) => result['required'] !== false && result['status'] !== 'passed',
+  );
+  const passedCount = commandResults.filter((result) => result['status'] === 'passed').length;
+  const status = requiredFailures.length > 0 ? 'failed' : 'passed';
+  const summary =
+    status === 'passed'
+      ? `${passedCount}/${commandResults.length} verification commands passed.`
+      : `${requiredFailures.length} required verification command(s) failed.`;
+
+  await postSessionVerificationAttempt(
+    options,
+    contract,
+    assignment.id,
+    agentSessionId,
+    assignmentClaimToken,
+    {
+      status,
+      attempt_kind: 'verification',
+      summary,
+      artifact_refs: artifactRefs.slice(0, 50),
+      verification_pack: {
+        schema: 'viewport.verification_pack_result/v1',
+        source_schema: contract.schema ?? null,
+        agent_session_id: agentSessionId,
+        workflow_run_id: assignment.id,
+        policy_hash: typeof contract['policy_hash'] === 'string' ? contract['policy_hash'] : null,
+        command_results: commandResults,
+        required_artifacts: verificationRequiredArtifacts(contract),
+        raw_command_output_included: false,
+        agent_self_assessment_used: false,
+      },
+      repair_recommendation:
+        status === 'passed'
+          ? { action: 'none' }
+          : {
+              action: 'ask_human',
+              failed_commands: requiredFailures.map((result) => result['name']),
+            },
+    },
+  );
+}
+
+function assignmentSessionVerificationContract(
+  assignment: ManagedAssignment,
+): ManagedSessionVerificationContract | null {
+  return assignment.session_verification_contract ?? assignment.sessionVerificationContract ?? null;
+}
+
+function verificationRunnerMayExecute(contract: ManagedSessionVerificationContract): boolean {
+  const access = contract.access_model ?? contract.accessModel ?? {};
+  return access.runner_may_execute_commands === true || access.runnerMayExecuteCommands === true;
+}
+
+function verificationAgentSessionId(contract: ManagedSessionVerificationContract): string | null {
+  return contract.agent_session_id ?? contract.agentSessionId ?? null;
+}
+
+function verificationCommands(
+  contract: ManagedSessionVerificationContract,
+): ManagedSessionVerificationCommand[] {
+  return (contract.commands ?? []).filter(
+    (command): command is ManagedSessionVerificationCommand =>
+      verificationCommandText(command) !== '',
+  );
+}
+
+function verificationCommandName(
+  command: ManagedSessionVerificationCommand,
+  index: number,
+): string {
+  return command.name?.trim() || `verification-${index}`;
+}
+
+function verificationCommandText(command: ManagedSessionVerificationCommand): string {
+  return command.command?.trim() ?? '';
+}
+
+function verificationCommandWorkingDirectory(
+  command: ManagedSessionVerificationCommand,
+): string | null {
+  return command.working_directory?.trim() || command.workingDirectory?.trim() || null;
+}
+
+function verificationCommandCwd(
+  runDirectoryPath: string,
+  command: ManagedSessionVerificationCommand,
+): string {
+  const workingDirectory = verificationCommandWorkingDirectory(command);
+  const root = path.resolve(runDirectoryPath);
+  const resolved = workingDirectory ? path.resolve(root, workingDirectory) : root;
+  const relative = path.relative(root, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Verification command working_directory must stay inside the run directory.');
+  }
+  return resolved;
+}
+
+function verificationRequiredArtifacts(contract: ManagedSessionVerificationContract): string[] {
+  return contract.required_artifacts ?? contract.requiredArtifacts ?? [];
+}
+
+function sha256Text(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+async function postSessionVerificationAttempt(
+  options: ManagedWorkerOptions,
+  contract: ManagedSessionVerificationContract,
+  platformRunId: string,
+  agentSessionId: string,
+  assignmentClaimToken: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const suffix =
+    verificationRuntimePathSuffix(options, contract, agentSessionId) ??
+    `workflow-runs/${encodeURIComponent(platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/verification-attempts`;
+
+  await platformJson(options, 'POST', suffix, payload, undefined, {
+    'X-Viewport-Run-Lease': assignmentClaimToken,
+  });
+}
+
+function verificationRuntimePathSuffix(
+  options: ManagedWorkerOptions,
+  contract: ManagedSessionVerificationContract,
+  agentSessionId: string,
+): string | null {
+  const runtimeTool = contract.runtime_tool ?? contract.runtimeTool ?? {};
+  const endpoint = runtimeTool.runtime_endpoint ?? runtimeTool.runtimeEndpoint;
+  if (typeof endpoint !== 'string' || endpoint.trim() === '') return null;
+
+  const normalized = endpoint.trim();
+  const prefix = `/api/runtime/workspaces/${encodeURIComponent(
+    options.workspaceId,
+  )}/managed-executors/${encodeURIComponent(options.executorId)}/`;
+  if (normalized.startsWith(prefix)) {
+    return normalized.slice(prefix.length);
+  }
+
+  const fallback = `/workflow-runs/`;
+  const index = normalized.indexOf(fallback);
+  if (index >= 0 && normalized.includes(`/agent-sessions/${encodeURIComponent(agentSessionId)}/`)) {
+    return normalized.slice(index + 1);
+  }
+
+  return null;
 }
 
 async function runAssignmentLocally(
