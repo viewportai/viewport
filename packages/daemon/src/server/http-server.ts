@@ -247,6 +247,9 @@ export function registerHttpRoutes(
       runtimeSecretFiles?: Record<string, string>;
       resourceId?: string;
       runtimeTargetId?: string;
+      platformRunId?: string;
+      agentSessionId?: string;
+      rerunOfWorkflowRunId?: string;
       executionPolicy?: {
         mode: 'current_tree' | 'isolated_worktree' | 'named_branch';
         branch?: string;
@@ -278,6 +281,7 @@ export function registerHttpRoutes(
         resourceId: parsedBody.data.resourceId,
         runtimeTargetId: parsedBody.data.runtimeTargetId,
         platformRunId: parsedBody.data.platformRunId,
+        agentSessionId: parsedBody.data.agentSessionId,
         rerunOfWorkflowRunId: parsedBody.data.rerunOfWorkflowRunId,
         resourceManifest: parsedBody.data.resourceManifest as SessionResourceManifest | undefined,
         executionPolicy: parsedBody.data.executionPolicy,

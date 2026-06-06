@@ -108,6 +108,7 @@ export const WorkflowRunBodySchema = z
     resourceId: z.string().trim().min(1).optional(),
     runtimeTargetId: z.string().trim().min(1).optional(),
     platformRunId: z.string().trim().min(1).optional(),
+    agentSessionId: z.string().trim().min(1).optional(),
     rerunOfWorkflowRunId: z.string().trim().min(1).optional(),
     resourceManifest: WorkflowResourceManifestBodySchema.optional(),
     executionPolicy: z
