@@ -1582,7 +1582,7 @@ async function runAssignmentLocally(
     runtimeSecretEnv: material.runtimeSecretEnv,
     runtimeSecretFiles: material.runtimeSecretFiles,
     resourceId: options.workspaceId,
-    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    runtimeTargetId: assignmentRuntimeContextTargetId(assignment) ?? undefined,
     platformRunId: assignment.id,
     agentSessionId: assignmentAgentSessionId(assignment) ?? undefined,
     resourceManifest: assignmentResourceManifest(assignment) ?? undefined,
@@ -1663,7 +1663,7 @@ function missingLocalStateRun(assignment: ManagedAssignment): WorkflowRunRecord 
     directoryId: 'managed-assignment-recovery',
     directoryPath: assignment.directory_path ?? process.cwd(),
     resourceId: undefined,
-    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    runtimeTargetId: assignmentRuntimeContextTargetId(assignment) ?? undefined,
     platformRunId: assignment.id,
     machineId: 'managed-executor',
     dataCapturePolicy: {
@@ -1732,7 +1732,7 @@ function assignmentExecutionFailureRun(
     directoryId: 'managed-assignment-start-failure',
     directoryPath: assignment.directory_path ?? process.cwd(),
     resourceId: undefined,
-    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    runtimeTargetId: assignmentRuntimeContextTargetId(assignment) ?? undefined,
     platformRunId: assignment.id,
     machineId: 'managed-executor',
     dataCapturePolicy: {
@@ -1793,7 +1793,7 @@ function assignmentCanceledBeforeStartRun(assignment: ManagedAssignment): Workfl
     directoryId: 'managed-assignment-canceled',
     directoryPath: assignment.directory_path ?? process.cwd(),
     resourceId: undefined,
-    runtimeTargetId: assignment.runtime_target_id ?? undefined,
+    runtimeTargetId: assignmentRuntimeContextTargetId(assignment) ?? undefined,
     platformRunId: assignment.id,
     machineId: 'managed-executor',
     dataCapturePolicy: {
@@ -1878,15 +1878,24 @@ function assignmentRuntimeContextTarget(
   options: ManagedWorkerOptions,
   assignment: ManagedAssignment,
 ): Record<string, unknown> | null {
-  if (!assignment.assignment_claim_token || !assignment.runtime_target_id) return null;
+  const runtimeTargetId = assignmentRuntimeContextTargetId(assignment);
+  if (!assignment.assignment_claim_token || !runtimeTargetId) return null;
 
   return {
     schema: 'viewport.runtime_context_target/v1',
     serverUrl: options.server,
     workspaceId: options.workspaceId,
-    runtimeTargetId: assignment.runtime_target_id,
+    runtimeTargetId,
     credential: assignment.assignment_claim_token,
   };
+}
+
+function assignmentRuntimeContextTargetId(assignment: ManagedAssignment): string | null {
+  return (
+    stringValue(assignment.runtime_context_target_id ?? assignment.runtimeContextTargetId) ??
+    stringValue(assignment.runtime_target_id) ??
+    null
+  );
 }
 
 function appUrlFromServer(serverUrl: string): string {

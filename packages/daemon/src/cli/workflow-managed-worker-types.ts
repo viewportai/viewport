@@ -86,6 +86,8 @@ export interface ManagedAssignment {
   directory_path?: string | null;
   runtime_run_id?: string | null;
   runtime_target_id?: string | null;
+  runtime_context_target_id?: string | null;
+  runtimeContextTargetId?: string | null;
   input_snapshot?: Record<string, WorkflowInputValue> | null;
   data_capture_policy?: {
     transcripts?: 'none' | 'excerpt';
