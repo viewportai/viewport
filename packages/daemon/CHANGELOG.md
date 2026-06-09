@@ -1,3 +1,45 @@
+# [0.28.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.27.0...@viewportai/daemon@0.28.0) (2026-06-09)
+
+
+### Bug Fixes
+
+* authenticate litellm proxy requests ([da41340](https://github.com/viewportai/viewport/commit/da413409e03c09333796be962327f5aa3218e95f))
+* **daemon:** accept Product20 capability policy envelopes ([1de841d](https://github.com/viewportai/viewport/commit/1de841dbbbc11bc4208069e52d46dcbf3f7eb20f))
+* **daemon:** build docker image from workspace ([5bb2bc0](https://github.com/viewportai/viewport/commit/5bb2bc0f0590518d90e4ea1bc8d8c2e028eadd01))
+* **daemon:** inject hosted runtime context target ([d51017d](https://github.com/viewportai/viewport/commit/d51017da583b0344679e8b57673561eba8320575))
+* **daemon:** pass run-scoped context target ([ab4efec](https://github.com/viewportai/viewport/commit/ab4efec166b375ad2f6ea4bcc81717e197f28d64))
+* **daemon:** prefer run-scoped context targets ([13951c3](https://github.com/viewportai/viewport/commit/13951c3722262baea6342319ee4a0fb1098ef607))
+* **daemon:** preserve agent session ids over http ([f2a4cf0](https://github.com/viewportai/viewport/commit/f2a4cf03a0a22823f9667b411a4efe26e42c9f47))
+* **daemon:** preserve hosted bootstrap context target ([7c1e3c4](https://github.com/viewportai/viewport/commit/7c1e3c43e67853f7e6c812c71e9c6708f16be37c))
+* **daemon:** preserve hosted session ids ([a2563e1](https://github.com/viewportai/viewport/commit/a2563e10aca56afde85860faefd4d02231f22e4c))
+* **daemon:** preserve managed worker session ids ([cd7956f](https://github.com/viewportai/viewport/commit/cd7956f3ae26eed5f6117c9faa9de22b2ba1798e))
+* **daemon:** refresh session verification contract ([23d36cc](https://github.com/viewportai/viewport/commit/23d36cc067300a598df76ece77ec80ffeb26dea2))
+* **daemon:** report missing session memory targets ([0cf385b](https://github.com/viewportai/viewport/commit/0cf385bba9a6811aa97728cb39389b9be1f8d24d))
+* **daemon:** request json for runtime context ([f1c71e7](https://github.com/viewportai/viewport/commit/f1c71e72674d2b0b5708e42b160565e3405e441a))
+* **daemon:** resolve hosted run context targets ([e4e1b28](https://github.com/viewportai/viewport/commit/e4e1b28c342237049f07add4cc514785a7348692))
+* **daemon:** resolve product20 session memory ids ([b384885](https://github.com/viewportai/viewport/commit/b384885b89a3c1b6a6817ac3818a953aa3e9f488))
+* **daemon:** use hosted context target ([fdcbc39](https://github.com/viewportai/viewport/commit/fdcbc39c34056edd5a3de0b3217feb8c3a12cbc4))
+* **daemon:** verify sessions from checkout worktree ([3390902](https://github.com/viewportai/viewport/commit/339090252224d80f69ee07d756cfd8d5b1173cb9))
+* normalize managed heartbeat capabilities ([29fd1e2](https://github.com/viewportai/viewport/commit/29fd1e2abb56c934ffc2520592280d18a5ca9e7c))
+* **relay:** handle empty worker responses ([5e9c497](https://github.com/viewportai/viewport/commit/5e9c49749d09b8c4d9b361f698496f2da28aca9f))
+* **shim-gateway:** expose streaming completion responses ([e67f307](https://github.com/viewportai/viewport/commit/e67f307810b697e2e23861e23b5bacbcd92e3157))
+* **worker:** execute hosted session verification ([f3ce11e](https://github.com/viewportai/viewport/commit/f3ce11edc7de5b1912a98816b9119c67178e651e))
+
+
+### Features
+
+* add dbos durable execution adapter ([17a6d7c](https://github.com/viewportai/viewport/commit/17a6d7c68578ffd5f711b287a9161e22dfbc2eff))
+* **daemon:** add tenant-side signal extractor ([5703e0b](https://github.com/viewportai/viewport/commit/5703e0bf74ff2704a6a54120a3fd802c9ff0537a))
+* **daemon:** inject session mailbox context ([345445d](https://github.com/viewportai/viewport/commit/345445da5c2daa673cd91f56304bee6fc87c42fb))
+* **daemon:** pass runner-local BYOK model keys ([57eebb5](https://github.com/viewportai/viewport/commit/57eebb51a9a196502056a0e766121e171d501801))
+* expand durable execution shim ([47acb74](https://github.com/viewportai/viewport/commit/47acb7468940a777929269d207fff762e2cb3d6e))
+* expose gateway leases to managed worker runtime ([9198f09](https://github.com/viewportai/viewport/commit/9198f09942e96e1e58dff18999d8ac2454af4340))
+* **relay:** route managed worker transport ([c910da7](https://github.com/viewportai/viewport/commit/c910da7c009419f4287ced582fcf234d8aa1c9b5))
+* **relay:** route Product20 session event subscriptions ([73e4458](https://github.com/viewportai/viewport/commit/73e4458f4f79b52a4e84daf23dac41c513e5a12e))
+* **relay:** support platform tls termination ([e2e6400](https://github.com/viewportai/viewport/commit/e2e6400915ee2540bdda3432a1c3bcc9935b73b2))
+* **shims:** add durable side effect claims ([3d1b196](https://github.com/viewportai/viewport/commit/3d1b196eec4f31ee7f924a762ab9c53a6e063680))
+* **worker:** execute session verification contracts ([65a8c72](https://github.com/viewportai/viewport/commit/65a8c726af46c0879cb9fbb51d674ea942a14874))
+
 # [0.27.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.26.1...@viewportai/daemon@0.27.0) (2026-06-02)
 
 
