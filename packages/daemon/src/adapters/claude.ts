@@ -77,6 +77,7 @@ export type QueryFn = (params: {
     abortController?: AbortController;
     systemPrompt?: string;
     permissionMode?: string;
+    allowDangerouslySkipPermissions?: boolean;
     persistSession?: boolean;
   };
 }) => SDKQuery;
@@ -604,13 +605,16 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 }
 
-function claudePermissionOptions(options: SessionOptions | undefined): { permissionMode?: string } {
+function claudePermissionOptions(options: SessionOptions | undefined): {
+  permissionMode?: string;
+  allowDangerouslySkipPermissions?: boolean;
+} {
   if (options?.config?.executionMode === 'plan') {
     return { permissionMode: 'plan' };
   }
 
   if (options?.config?.approvalPolicy === 'never') {
-    return { permissionMode: 'bypassPermissions' };
+    return { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true };
   }
 
   return {};

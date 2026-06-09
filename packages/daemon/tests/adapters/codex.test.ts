@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CodexAdapter, resolveCodexPathOverride } from '../../src/adapters/codex.js';
+import { CodexAdapter, resolveCodexApiKey, resolveCodexPathOverride } from '../../src/adapters/codex.js';
 import { DEFAULT_CODEX_MODEL } from '../../src/agents/codex-defaults.js';
 import type { SessionMessage } from '../../src/core/types.js';
 
@@ -9,6 +9,19 @@ describe('CodexAdapter', () => {
     expect(resolveCodexPathOverride({})).toMatch(
       /^(codex|\/Applications\/Codex\.app\/Contents\/Resources\/codex)$/,
     );
+  });
+
+  it('prefers the run-scoped Codex/OpenAI API key over ambient Codex auth', () => {
+    expect(resolveCodexApiKey(undefined, {
+      OPENAI_API_KEY: 'vk_run_scoped',
+    } as NodeJS.ProcessEnv)).toBe('vk_run_scoped');
+    expect(resolveCodexApiKey(undefined, {
+      CODEX_API_KEY: 'vk_codex',
+      OPENAI_API_KEY: 'vk_openai',
+    } as NodeJS.ProcessEnv)).toBe('vk_codex');
+    expect(resolveCodexApiKey('explicit', {
+      CODEX_API_KEY: 'vk_codex',
+    } as NodeJS.ProcessEnv)).toBe('explicit');
   });
 
   it('streams chunks and emits final message for modern runStreamed() result.events', async () => {
@@ -34,7 +47,11 @@ describe('CodexAdapter', () => {
 
     await session.sendPrompt('ship it');
 
-    expect(runStreamed).toHaveBeenCalledWith('ship it');
+    expect(runStreamed).toHaveBeenCalledWith('ship it', {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      skipGitRepoCheck: true,
+    });
     expect(messages.some((m) => m.type === 'user_message' && m.text === 'ship it')).toBe(true);
     expect(
       messages
@@ -43,6 +60,107 @@ describe('CodexAdapter', () => {
         .join(''),
     ).toBe('Hello world');
     expect(messages.some((m) => m.type === 'agent_message' && m.text === 'Hello world')).toBe(true);
+  });
+
+  it('aborts a streamed turn when Codex repeats the same tool call without completing', async () => {
+    const runStreamed = vi.fn().mockResolvedValue({
+      events: (async function* () {
+        for (let i = 0; i < 9; i += 1) {
+          yield {
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              name: 'exec_command',
+              arguments: '{"cmd":"ls"}',
+              call_id: `call_${i}`,
+            },
+          };
+        }
+      })(),
+    });
+
+    const createClient = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockReturnValue({
+        id: 'codex-looping-tools',
+        runStreamed,
+      }),
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    const session = await adapter.startSession('/tmp/project');
+
+    await expect(session.sendPrompt('ship it')).rejects.toThrow(
+      'Codex repeated the same tool call',
+    );
+    expect(session.state).toBe('errored');
+  });
+
+  it('allows repeated tool calls when the arguments change', async () => {
+    const runStreamed = vi.fn().mockResolvedValue({
+      events: (async function* () {
+        for (let i = 0; i < 9; i += 1) {
+          yield {
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              name: 'exec_command',
+              arguments: `{"cmd":"sed -n '${i + 1},${i + 1}p' README.md"}`,
+              call_id: `call_${i}`,
+            },
+          };
+        }
+        yield { type: 'item.completed', item: { type: 'agent_message', text: 'done' } };
+      })(),
+    });
+
+    const createClient = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockReturnValue({
+        id: 'codex-varied-tools',
+        runStreamed,
+      }),
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    const session = await adapter.startSession('/tmp/project');
+
+    await session.sendPrompt('ship it');
+    expect(session.state).toBe('idle');
+  });
+
+  it('aborts a streamed turn when Codex exceeds the total tool-call ceiling', async () => {
+    const runStreamed = vi.fn().mockResolvedValue({
+      events: (async function* () {
+        for (let i = 0; i < 33; i += 1) {
+          yield {
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              name: 'exec_command',
+              arguments: `{"cmd":"ls ${i}"}`,
+              call_id: `call_${i}`,
+            },
+          };
+        }
+      })(),
+    });
+
+    const createClient = vi.fn().mockResolvedValue({
+      startThread: vi.fn().mockReturnValue({
+        id: 'codex-too-many-tools',
+        runStreamed,
+      }),
+      resumeThread: vi.fn(),
+    });
+
+    const adapter = new CodexAdapter(createClient);
+    const session = await adapter.startSession('/tmp/project');
+
+    await expect(session.sendPrompt('ship it')).rejects.toThrow(
+      'Codex exceeded 32 tool calls',
+    );
+    expect(session.state).toBe('errored');
   });
 
   it('uses run fallback and model override when stream API is unavailable', async () => {
@@ -69,7 +187,12 @@ describe('CodexAdapter', () => {
       model: 'gpt-5-codex',
       skipGitRepoCheck: true,
     });
-    expect(run).toHaveBeenCalledWith('initial');
+    expect(run).toHaveBeenCalledWith('initial', {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      model: 'gpt-5-codex',
+      skipGitRepoCheck: true,
+    });
 
     await session.kill();
   });
@@ -138,7 +261,11 @@ describe('CodexAdapter', () => {
       model: DEFAULT_CODEX_MODEL,
       skipGitRepoCheck: true,
     });
-    expect(run).toHaveBeenCalledWith('Continue.');
+    expect(run).toHaveBeenCalledWith('Continue.', {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      skipGitRepoCheck: true,
+    });
   });
 
   it('resumeSession with deferred initial prompt stays idle until a real prompt is sent', async () => {
@@ -165,7 +292,11 @@ describe('CodexAdapter', () => {
       model: DEFAULT_CODEX_MODEL,
       skipGitRepoCheck: true,
     });
-    expect(run).toHaveBeenCalledWith('continue now');
+    expect(run).toHaveBeenCalledWith('continue now', {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      skipGitRepoCheck: true,
+    });
   });
 
   it('resumeSession falls back to getThread when resumeThread is unavailable', async () => {
@@ -180,7 +311,11 @@ describe('CodexAdapter', () => {
     await adapter.resumeSession('codex-resume-2', '/tmp/project');
 
     expect(getThread).toHaveBeenCalledWith('codex-resume-2');
-    expect(run).toHaveBeenCalledWith('Continue.');
+    expect(run).toHaveBeenCalledWith('Continue.', {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      skipGitRepoCheck: true,
+    });
   });
 
   it('falls back to legacy run(params) when run(text) throws argument-shape errors', async () => {
@@ -200,10 +335,18 @@ describe('CodexAdapter', () => {
     const session = await adapter.startSession('/tmp/project');
     await session.sendPrompt('legacy prompt');
 
-    expect(run).toHaveBeenNthCalledWith(1, 'legacy prompt');
+    expect(run).toHaveBeenNthCalledWith(1, 'legacy prompt', {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      skipGitRepoCheck: true,
+    });
     expect(run).toHaveBeenNthCalledWith(2, {
       input: 'legacy prompt',
       cwd: '/tmp/project',
+    }, {
+      workingDirectory: '/tmp/project',
+      cwd: '/tmp/project',
+      skipGitRepoCheck: true,
     });
   });
 

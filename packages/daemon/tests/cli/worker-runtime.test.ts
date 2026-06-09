@@ -1,15 +1,21 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
+import { WebSocketServer } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { acquireWorkerProcessLock } from '../../src/cli/worker-process-lock.js';
+
+const exec = promisify(execFile);
 
 describe('standalone worker runtime', () => {
   const originalArgv = process.argv.slice();
   const originalHome = process.env['VIEWPORT_HOME'];
   const originalInboundExperimental = process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+  const originalRelayWsBaseUrl = process.env['VIEWPORT_RELAY_WS_BASE_URL'];
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let homeDir = '';
   let server: http.Server | null = null;
@@ -20,6 +26,7 @@ describe('standalone worker runtime', () => {
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-worker-runtime-'));
     process.env['VIEWPORT_HOME'] = homeDir;
     delete process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+    delete process.env['VIEWPORT_RELAY_WS_BASE_URL'];
     delete process.env['VIEWPORT_PROFILE'];
   });
 
@@ -31,6 +38,11 @@ describe('standalone worker runtime', () => {
       process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'] = originalInboundExperimental;
     } else {
       delete process.env['VPD_WORKER_INBOUND_EXPERIMENTAL'];
+    }
+    if (originalRelayWsBaseUrl) {
+      process.env['VIEWPORT_RELAY_WS_BASE_URL'] = originalRelayWsBaseUrl;
+    } else {
+      delete process.env['VIEWPORT_RELAY_WS_BASE_URL'];
     }
     if (server) {
       await closeServer(server);
@@ -385,7 +397,8 @@ describe('standalone worker runtime', () => {
           workspace_root: workspaceRoot,
           transport: 'polling',
           capabilities: {
-            agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
+            schema: 'viewport.managed_executor_capabilities/v1',
+            agents: ['codex'],
           },
           identity: {
             public_key: identity.publicKey,
@@ -395,6 +408,7 @@ describe('standalone worker runtime', () => {
           lease: {
             id: 'workflow_run:run_1',
             workflow_run_id: 'run_1',
+            runtime_context_target_id: 'managed_executor:executor_1',
             lease_token: 'vplease_bootstrap',
             assignment_claim_token: 'vpclaim_bootstrap',
             yaml_snapshot: [
@@ -403,10 +417,36 @@ describe('standalone worker runtime', () => {
               'nodes:',
               '  proof:',
               '    type: shell',
-              '    command: "printf bootstrapped"',
+              '    env:',
+              '      OPENAI_API_KEY:',
+              '        secret: OPENAI_API_KEY',
+              '      OPENAI_BASE_URL:',
+              '        value: https://gateway.getviewport.test/openai/v1',
+              '      VIEWPORT_LLM_PROVIDER:',
+              '        value: openai',
+              '      VIEWPORT_LLM_MODEL:',
+              '        value: gpt-4o-mini',
+              '      VIEWPORT_LLM_VIRTUAL_KEY:',
+              '        secret: VIEWPORT_LLM_VIRTUAL_KEY',
+              '    command: |',
+              '      case "$OPENAI_API_KEY" in vk_*) ;; *) exit 12;; esac',
+              '      test "$OPENAI_BASE_URL" = "https://gateway.getviewport.test/openai/v1"',
+              '      test "$VIEWPORT_LLM_PROVIDER" = "openai"',
+              '      test "$VIEWPORT_LLM_MODEL" = "gpt-4o-mini"',
+              '      test "$VIEWPORT_LLM_VIRTUAL_KEY" = "$OPENAI_API_KEY"',
+              '      printf gateway-env-ok',
               '',
             ].join('\n'),
             directory_path: workspaceRoot,
+            gateway: {
+              schema: 'viewport.gateway_lease/v1',
+              gateway_base_url: 'https://gateway.getviewport.test',
+              provider: 'openai',
+              model_allow: ['gpt-4o-mini'],
+              virtual_key: {
+                token: 'vk_bootstrap_gateway',
+              },
+            },
           },
         },
         null,
@@ -432,22 +472,53 @@ describe('standalone worker runtime', () => {
       '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
       '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
+    expect(requests[0]?.body.capabilities).not.toHaveProperty('schema');
+    expect(requests[0]?.body.capabilities).toMatchObject({
+      agents: ['codex'],
+    });
+    expect(requests.at(-1)?.body).toMatchObject({
+      status: 'offline',
+      capabilities: expect.objectContaining({ agents: ['codex'] }),
+    });
     expect(requests.some((request) => request.url.endsWith('/claim'))).toBe(false);
     expect(requests[1]?.headers['x-viewport-run-lease']).toBe('vplease_bootstrap');
     expect(requests[1]?.body).toMatchObject({
       status: 'completed',
       output_snapshot: expect.objectContaining({
         nodes: expect.objectContaining({
-          proof: expect.objectContaining({ output: 'bootstrapped' }),
+          proof: expect.objectContaining({ output: 'gateway-env-ok' }),
         }),
       }),
     });
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpexec_bootstrap');
     expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vpclaim_bootstrap');
+    expect(String(logSpy.mock.calls.at(-1)?.[0] ?? '')).not.toContain('vk_bootstrap_gateway');
+    expect(process.env['OPENAI_API_KEY']).not.toBe('vk_bootstrap_gateway');
+    expect(process.env['VIEWPORT_LLM_VIRTUAL_KEY']).not.toBe('vk_bootstrap_gateway');
     const bootstrapIdentityFiles = await fs.readdir(
       path.join(workspaceRoot, '.viewport', 'bootstrap'),
     );
     expect(bootstrapIdentityFiles).toEqual([]);
+    const localRunsDir = path.join(homeDir, 'runs', 'workflows');
+    const [localRunFile] = (await fs.readdir(localRunsDir)).filter((name) => name.endsWith('.json'));
+    const localRun = JSON.parse(
+      await fs.readFile(path.join(localRunsDir, localRunFile ?? ''), 'utf8'),
+    ) as {
+      runtimeTargetId?: string;
+      inputs?: {
+        viewport?: {
+          runtimeContextTarget?: Record<string, unknown>;
+        };
+      };
+    };
+    expect(localRun.runtimeTargetId).toBe('managed_executor:executor_1');
+    expect(localRun.inputs?.viewport?.runtimeContextTarget).toMatchObject({
+      schema: 'viewport.runtime_context_target/v1',
+      serverUrl: serverUrl(server),
+      workspaceId: 'workspace_1',
+      runtimeTargetId: 'managed_executor:executor_1',
+      credential: 'vpclaim_bootstrap',
+    });
   });
 
   it('keeps persistent polling workers online while idle until stopped', async () => {
@@ -896,6 +967,7 @@ nodes:
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests, {
       hostedAssignment: {
+        agent_session_id: 'session_1',
         yaml_snapshot: `
 schema: viewport.workflow/v1
 name: hosted-worker-shell-proof
@@ -939,6 +1011,7 @@ nodes:
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
       'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'GET /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1',
       'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
     ]);
     const sync = requests[2]?.body;
@@ -953,6 +1026,26 @@ nodes:
       events: expect.arrayContaining([expect.objectContaining({ type: 'run-completed' })]),
     });
     expect(String(sync?.['runtime_run_id'] ?? '')).not.toBe('vpd-worker-run_1');
+    const runtimeRunId = String(sync?.['runtime_run_id'] ?? '');
+    const localRunPath = path.join(homeDir, 'runs', 'workflows', `${runtimeRunId}.json`);
+    const localRun = JSON.parse(await fs.readFile(localRunPath, 'utf8')) as {
+      agentSessionId?: string;
+      runtimeTargetId?: string;
+      inputs?: {
+        viewport?: {
+          runtimeContextTarget?: Record<string, unknown>;
+        };
+      };
+    };
+    expect(localRun.agentSessionId).toBe('session_1');
+    expect(localRun.runtimeTargetId).toBe('managed_executor:executor_1');
+    expect(localRun.inputs?.viewport?.runtimeContextTarget).toMatchObject({
+      schema: 'viewport.runtime_context_target/v1',
+      serverUrl: serverUrl(server),
+      workspaceId: 'workspace_1',
+      runtimeTargetId: 'managed_executor:executor_1',
+      credential: 'vpclaim_run_1',
+    });
     expect(sync?.['nodes']).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -963,6 +1056,187 @@ nodes:
       ]),
     );
     await expectSignedRequest(requests[2], homeDir);
+  });
+
+  it('executes hosted session verification contracts after completed workflow sync', async () => {
+    const projectDir = path.join(homeDir, 'hosted-verification-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        agent_session_id: 'session_1',
+        session_verification_contract: {
+          schema: 'viewport.workflow_run_session_verification_contract/v1',
+          agent_session_id: 'session_1',
+          workflow_run_id: 'run_1',
+          status: 'resolved',
+          policy_hash: 'sha256:hosted-verification-policy',
+          commands: [
+            {
+              name: 'proof-file',
+              command: 'test -f proof.txt && printf verification-ok',
+              required: true,
+              working_directory: '.',
+            },
+          ],
+          required_artifacts: ['github_pr'],
+          runtime_tool: {
+            runtime_endpoint:
+              '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts',
+          },
+          access_model: {
+            runner_may_execute_commands: true,
+          },
+        },
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-verification-proof
+nodes:
+  proof:
+    type: shell
+    argv:
+      - sh
+      - -lc
+      - printf hosted-ok > proof.txt
+`,
+        source_ref: 'viewport://test/hosted-worker-verification-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const requestNames = requests.map((request) => `${request.method} ${request.url}`);
+    expect(requestNames).toEqual([
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      'PATCH /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts',
+      'POST /api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    const verification = requests[3];
+    expect(verification?.headers['x-viewport-run-lease']).toBe('vpclaim_run_1');
+    expect(verification?.body).toMatchObject({
+      credential: 'vpexec_hosted',
+      attempt_kind: 'verification',
+      status: 'passed',
+      summary: '1/1 verification commands passed.',
+      artifact_refs: [expect.stringMatching(/^verification:proof-file:stdout:sha256:/)],
+      verification_pack: expect.objectContaining({
+        schema: 'viewport.verification_pack_result/v1',
+        agent_session_id: 'session_1',
+        workflow_run_id: 'run_1',
+        policy_hash: 'sha256:hosted-verification-policy',
+        raw_command_output_included: false,
+        agent_self_assessment_used: false,
+        command_results: [
+          expect.objectContaining({
+            name: 'proof-file',
+            status: 'passed',
+            raw_output_included: false,
+            stdout_bytes: 15,
+          }),
+        ],
+      }),
+    });
+    expect(JSON.stringify(verification?.body)).not.toContain('verification-ok');
+    await expectSignedRequest(verification, homeDir);
+  });
+
+  it('defaults hosted session verification commands to the primary checkout directory', async () => {
+    const projectDir = path.join(homeDir, 'hosted-verification-checkout-workspace');
+    await fs.mkdir(projectDir, { recursive: true });
+    const { remoteUrl } = await createLocalGitRemoteWithPackageJson(homeDir);
+    const requests: RuntimeRequest[] = [];
+    server = await startRuntimeServer(requests, {
+      hostedAssignment: {
+        agent_session_id: 'session_1',
+        session_verification_contract: {
+          schema: 'viewport.workflow_run_session_verification_contract/v1',
+          agent_session_id: 'session_1',
+          workflow_run_id: 'run_1',
+          status: 'resolved',
+          policy_hash: 'sha256:hosted-verification-policy',
+          commands: [
+            {
+              name: 'package-present',
+              command: 'test -f package.json',
+              required: true,
+            },
+          ],
+          runtime_tool: {
+            runtime_endpoint:
+              '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts',
+          },
+          access_model: {
+            runner_may_execute_commands: true,
+          },
+        },
+        yaml_snapshot: `
+schema: viewport.workflow/v1
+name: hosted-worker-verification-checkout-proof
+nodes:
+  checkout:
+    type: checkout
+    repository: acme/project
+    remote: ${remoteUrl}
+`,
+        source_ref: 'viewport://test/hosted-worker-verification-checkout-proof',
+        directory_path: projectDir,
+      },
+    });
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'polling',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    await worker();
+
+    const verification = requests.find((request) =>
+      request.url.endsWith('/agent-sessions/session_1/verification-attempts'),
+    );
+    expect(verification?.body).toMatchObject({
+      status: 'passed',
+      summary: '1/1 verification commands passed.',
+      verification_pack: expect.objectContaining({
+        command_results: [
+          expect.objectContaining({
+            name: 'package-present',
+            status: 'passed',
+            working_directory: expect.stringContaining('acme__project'),
+            raw_output_included: false,
+          }),
+        ],
+      }),
+    });
+    expect(JSON.stringify(verification?.body)).not.toContain('"scripts"');
+    await expectSignedRequest(verification, homeDir);
   });
 
   it('retries transient hosted managed executor sync failures without losing the lease', async () => {
@@ -1501,8 +1775,61 @@ nodes:
     await expect(worker()).rejects.toThrow('Inbound worker transport listener is not implemented');
   });
 
-  it('reports relay as unsupported until relay worker runtime lands', async () => {
-    await writeWorkerProfile('http://127.0.0.1:1');
+  it('routes hosted managed executor requests through relay worker transport', async () => {
+    const requests: RuntimeRequest[] = [];
+    const relayFrames: Array<Record<string, unknown>> = [];
+    server = await startRuntimeServer(requests);
+    const relayServer = http.createServer();
+    const wss = new WebSocketServer({ server: relayServer });
+    await new Promise<void>((resolve, reject) => {
+      relayServer.once('error', reject);
+      relayServer.listen(0, '127.0.0.1', () => {
+        relayServer.off('error', reject);
+        resolve();
+      });
+    });
+    const relayAddress = relayServer.address();
+    if (!relayAddress || typeof relayAddress === 'string') {
+      throw new Error('Missing relay test server address.');
+    }
+    process.env['VIEWPORT_RELAY_WS_BASE_URL'] = `ws://127.0.0.1:${relayAddress.port}/ws`;
+    wss.on('connection', (ws, request) => {
+      expect(request.url).toContain('role=worker');
+      expect(request.url).toContain('workspaceId=workspace_1');
+      expect(request.headers.authorization).toBe('Bearer relay_worker_token');
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
+        relayFrames.push(frame);
+        const path = String(frame['path']);
+        const requestId = String(frame['requestId']);
+        const status =
+          path.endsWith('/claim') || path.includes('/workflow-runs/run_1/sync') ? 200 : 200;
+        const body = path.endsWith('/claim')
+          ? JSON.stringify({
+              data: {
+                id: 'run_1',
+                assignment_claim_token: 'vpclaim_run_1',
+                run_lease: {
+                  lease_id: 'workflow_run:run_1',
+                  lease_token: 'vplease_run_1',
+                  workflow_run_id: 'run_1',
+                },
+              },
+            })
+          : JSON.stringify({ ok: true });
+        ws.send(
+          JSON.stringify({
+            type: 'viewport.worker_transport.response/v1',
+            requestId,
+            status,
+            headers: { 'content-type': 'application/json' },
+            body,
+          }),
+        );
+      });
+    });
+
+    await writeHostedWorkerProfile(serverUrl(server));
     process.argv = [
       'node',
       'vpd',
@@ -1513,34 +1840,133 @@ nodes:
       '--transport',
       'relay',
       '--once',
+      '--json',
     ];
     vi.resetModules();
     const { worker } = await import('../../src/cli/worker-command.js');
 
-    await expect(worker()).rejects.toThrow('Relay worker transport is not supported');
+    try {
+      await worker();
+    } finally {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await closeServer(relayServer);
+    }
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      failed: number;
+    };
+    expect(payload).toMatchObject({ claimed: 1, failed: 1 });
+    expect(requests.map((request) => request.url)).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/relay-token',
+    ]);
+    expect(relayFrames.map((frame) => frame['path'])).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/sync',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+    expect(relayFrames[0]?.['headers']).toMatchObject({
+      Authorization: 'Bearer vpexec_hosted',
+      'X-Viewport-Worker-Fingerprint': expect.any(String),
+      'X-Viewport-Worker-Signature': expect.any(String),
+    });
   });
 
-  it('denies ephemeral inbound and relay run-once transports before control-plane contact', async () => {
-    await writeWorkerProfile('http://127.0.0.1:1');
-    for (const transport of ['inbound', 'relay']) {
-      process.argv = [
-        'node',
-        'vpd',
-        'worker',
-        'run-once',
-        '--lease',
-        `lease_${transport}`,
-        '--transport',
-        transport,
-      ];
-      vi.resetModules();
-      const { worker } = await import('../../src/cli/worker-command.js');
-      await expect(worker()).rejects.toThrow(
-        transport === 'inbound'
-          ? 'Inbound worker transport is disabled by default'
-          : 'Relay worker transport',
-      );
+  it('treats a relay-routed 204 claim response as no available work', async () => {
+    const requests: RuntimeRequest[] = [];
+    const relayFrames: Array<Record<string, unknown>> = [];
+    server = await startRuntimeServer(requests);
+    const relayServer = http.createServer();
+    const wss = new WebSocketServer({ server: relayServer });
+    await new Promise<void>((resolve, reject) => {
+      relayServer.once('error', reject);
+      relayServer.listen(0, '127.0.0.1', () => {
+        relayServer.off('error', reject);
+        resolve();
+      });
+    });
+    const relayAddress = relayServer.address();
+    if (!relayAddress || typeof relayAddress === 'string') {
+      throw new Error('Missing relay test server address.');
     }
+    process.env['VIEWPORT_RELAY_WS_BASE_URL'] = `ws://127.0.0.1:${relayAddress.port}/ws`;
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
+        relayFrames.push(frame);
+        const path = String(frame['path']);
+        const requestId = String(frame['requestId']);
+        const status = path.endsWith('/claim') ? 204 : 200;
+        ws.send(
+          JSON.stringify({
+            type: 'viewport.worker_transport.response/v1',
+            requestId,
+            status,
+            headers: { 'content-type': 'application/json' },
+            body: status === 204 ? '' : JSON.stringify({ ok: true }),
+          }),
+        );
+      });
+    });
+
+    await writeHostedWorkerProfile(serverUrl(server));
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'start',
+      '--mode',
+      'persistent',
+      '--transport',
+      'relay',
+      '--once',
+      '--json',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+
+    try {
+      await worker();
+    } finally {
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await closeServer(relayServer);
+    }
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
+      claimed: number;
+      completed: number;
+      failed: number;
+    };
+    expect(payload).toMatchObject({ claimed: 0, completed: 0, failed: 0 });
+    expect(relayFrames.map((frame) => frame['path'])).toEqual([
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim',
+      '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/heartbeat',
+    ]);
+  });
+
+  it('denies ephemeral inbound run-once transport before control-plane contact', async () => {
+    await writeWorkerProfile('http://127.0.0.1:1');
+    process.argv = [
+      'node',
+      'vpd',
+      'worker',
+      'run-once',
+      '--lease',
+      'lease_inbound',
+      '--transport',
+      'inbound',
+    ];
+    vi.resetModules();
+    const { worker } = await import('../../src/cli/worker-command.js');
+    await expect(worker()).rejects.toThrow('Inbound worker transport is disabled by default');
   });
 
   async function writeWorkerProfile(serverUrl: string): Promise<void> {
@@ -1642,6 +2068,25 @@ async function startRuntimeServer(
       );
       return;
     }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/relay-token' &&
+      request.method === 'POST'
+    ) {
+      response.end(
+        JSON.stringify({
+          ok: true,
+          relayToken: 'relay_worker_token',
+          claims: {
+            role: 'worker',
+            workspaceId: 'workspace_1',
+            managedExecutorId: 'executor_1',
+            relayWsBaseUrl: process.env['VIEWPORT_RELAY_WS_BASE_URL'],
+          },
+        }),
+      );
+      return;
+    }
     if (request.url === '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/claim') {
       if (transientHostedClaimFailures > 0) {
         transientHostedClaimFailures -= 1;
@@ -1699,6 +2144,15 @@ async function startRuntimeServer(
       blockedRuntimeRunId =
         typeof body['runtime_run_id'] === 'string' ? body['runtime_run_id'] : null;
       blockedNodeId = blockedNodeFromSync(body);
+    }
+    if (
+      request.url ===
+        '/api/runtime/workspaces/workspace_1/managed-executors/executor_1/workflow-runs/run_1/agent-sessions/session_1/verification-attempts' &&
+      request.method === 'POST'
+    ) {
+      response.statusCode = 201;
+      response.end(JSON.stringify({ data: { id: 'verification_attempt_1' } }));
+      return;
     }
     if (
       request.url ===
@@ -1898,6 +2352,24 @@ async function expectSignedRequest(request: RuntimeRequest | undefined, homeDir:
       Buffer.from(signature, 'base64'),
     ),
   ).toBe(true);
+}
+
+async function createLocalGitRemoteWithPackageJson(root: string): Promise<{ remoteUrl: string }> {
+  const source = path.join(root, `checkout-source-${crypto.randomUUID()}`);
+  const bare = path.join(root, `checkout-remote-${crypto.randomUUID()}.git`);
+  await fs.mkdir(source, { recursive: true });
+  await exec('git', ['init', '-b', 'main'], { cwd: source });
+  await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: source });
+  await exec('git', ['config', 'user.name', 'Viewport Test'], { cwd: source });
+  await fs.writeFile(
+    path.join(source, 'package.json'),
+    JSON.stringify({ name: 'checkout-verification-proof', version: '0.0.0' }, null, 2),
+  );
+  await exec('git', ['add', 'package.json'], { cwd: source });
+  await exec('git', ['commit', '-m', 'Initial package'], { cwd: source });
+  await exec('git', ['clone', '--bare', source, bare]);
+
+  return { remoteUrl: `file://${bare}` };
 }
 
 async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {

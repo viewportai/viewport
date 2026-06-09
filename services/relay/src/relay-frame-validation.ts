@@ -201,13 +201,76 @@ export function isKeyUpdateRequiredFrame(frame: FramePayload): boolean {
 export function isAllowedClientFrame(text: string): boolean {
   const frame = parseFramePayload(text);
   if (!frame) return false;
-  return isE2eeEnvelope(frame) || isClientControlFrame(frame) || isPairingClientFrame(frame);
+  return isE2eeEnvelope(frame) || isClientControlFrame(frame) || isPairingClientFrame(frame) || isSessionEventClientFrame(frame);
 }
 
 export function isAllowedDaemonFrame(text: string): boolean {
   const frame = parseFramePayload(text);
   if (!frame) return false;
-  return isE2eeEnvelope(frame) || isDaemonControlFrame(frame) || isPairingDaemonFrame(frame);
+  return (
+    isE2eeEnvelope(frame) ||
+    isDaemonControlFrame(frame) ||
+    isPairingDaemonFrame(frame) ||
+    isSessionEventRelayFrame(frame)
+  );
+}
+
+export function isSessionEventSubscribeFrame(frame: FramePayload): boolean {
+  return (
+    frame['type'] === 'viewport.session_events.subscribe/v1' &&
+    isNonEmptyString(frame['channel']) &&
+    (frame['channel'] as string).startsWith('agent-session:') &&
+    (frame['afterSequence'] === undefined ||
+      (typeof frame['afterSequence'] === 'number' &&
+        Number.isInteger(frame['afterSequence']) &&
+        (frame['afterSequence'] as number) >= 0))
+  );
+}
+
+export function isSessionEventUnsubscribeFrame(frame: FramePayload): boolean {
+  return (
+    frame['type'] === 'viewport.session_events.unsubscribe/v1' &&
+    isNonEmptyString(frame['channel']) &&
+    (frame['channel'] as string).startsWith('agent-session:')
+  );
+}
+
+export function isSessionEventClientFrame(frame: FramePayload): boolean {
+  return isSessionEventSubscribeFrame(frame) || isSessionEventUnsubscribeFrame(frame);
+}
+
+export function isSessionEventRelayFrame(frame: FramePayload): boolean {
+  return (
+    frame['schema'] === 'viewport.session_event_relay_frame/v1' &&
+    isNonEmptyString(frame['channel']) &&
+    (frame['channel'] as string).startsWith('agent-session:') &&
+    frame['event'] !== undefined &&
+    typeof frame['event'] === 'object' &&
+    !Array.isArray(frame['event'])
+  );
+}
+
+export function isAllowedWorkerTransportRequestFrame(frame: FramePayload): boolean {
+  if (
+    frame['type'] !== 'viewport.worker_transport.request/v1' ||
+    typeof frame['requestId'] !== 'string' ||
+    frame['requestId'].trim().length === 0 ||
+    (frame['method'] !== 'GET' && frame['method'] !== 'POST' && frame['method'] !== 'PATCH') ||
+    typeof frame['path'] !== 'string' ||
+    !frame['path'].startsWith('/api/runtime/workspaces/')
+  ) {
+    return false;
+  }
+  if (
+    frame['headers'] !== undefined &&
+    (!frame['headers'] || typeof frame['headers'] !== 'object' || Array.isArray(frame['headers']))
+  ) {
+    return false;
+  }
+  if (frame['body'] !== undefined && typeof frame['body'] !== 'string') {
+    return false;
+  }
+  return true;
 }
 
 export function extractFrameProfile(frame: FramePayload): 'noise-ik' | 'noise-ikpsk2' | null {

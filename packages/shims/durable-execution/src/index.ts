@@ -3,8 +3,21 @@
 
 export type {
   DurableExecutionProvider,
-  DurableSignal,
-  DurableWorkflowHandle,
-  DurableWorkflowStart,
+  DurableGateSignal,
+  DurableGateWait,
+  DurableGateWaitHandle,
+  DurableRunCompletion,
+  DurableRunHandle,
+  DurableRunSnapshot,
+  DurableRunStart,
+  DurableSideEffectClaim,
+  DurableSideEffectClaimHandle,
+  DurableSideEffectCompletion,
+  DurableSideEffectSnapshot,
+  DurableTimeoutHandle,
+  DurableTimeoutSchedule,
+  DurableWorkflowSignal,
 } from './interface.js';
+export { InMemoryDurableExecutionProvider } from './adapters/in-memory.js';
+export { DbosDurableExecutionProvider } from './adapters/dbos.js';
 export { assertDurableExecutionProviderConformance } from './conformance/index.js';

@@ -35,6 +35,22 @@ export interface PlatformContextResolution {
   warnings?: Array<Record<string, unknown>>;
 }
 
+export interface PlatformSessionMemoryRetrieval {
+  schema: 'viewport.agent_session_memory_retrieval/v1';
+  receipt?: Record<string, unknown> | null;
+  retrieval?: Record<string, unknown> | null;
+}
+
+export interface PlatformSessionCollaborationMailboxRetrieval {
+  schema: 'viewport.agent_session_collaboration_mailbox_retrieval/v1';
+  agent_session_id?: string;
+  workflow_run_id?: string;
+  recipient?: Record<string, unknown> | null;
+  mailboxes?: Array<Record<string, unknown>>;
+  source?: Record<string, unknown> | null;
+  redaction?: Record<string, unknown> | null;
+}
+
 export class WorkflowPlatformContextClient {
   constructor(
     private readonly configManager: ConfigManager,
@@ -52,7 +68,7 @@ export class WorkflowPlatformContextClient {
 
     const res = await this.fetcher(target.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
@@ -97,7 +113,7 @@ export class WorkflowPlatformContextClient {
     const selectedAt = new Date().toISOString();
     const res = await this.fetcher(target.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
@@ -142,7 +158,7 @@ export class WorkflowPlatformContextClient {
       `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/context-update-proposals/${encodeURIComponent(input.proposalId)}/writeback-receipt`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           credential: target.issueToken,
           runtime_target_id: target.runtimeTargetId,
@@ -177,7 +193,7 @@ export class WorkflowPlatformContextClient {
 
     const res = await this.fetcher(target.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         credential: target.issueToken,
         runtime_target_id: target.runtimeTargetId,
@@ -208,6 +224,114 @@ export class WorkflowPlatformContextClient {
         inbox && typeof inbox === 'object' && !Array.isArray(inbox)
           ? stringValue((inbox as Record<string, unknown>)['id'])
           : undefined,
+    };
+  }
+
+  async retrieveSessionMemory(input: {
+    run: WorkflowRunRecord;
+    query: string;
+    limit?: number | null;
+    contextSourceIds?: string[] | null;
+  }): Promise<PlatformSessionMemoryRetrieval | null> {
+    const target = this.workspaceTargetFor(input.run);
+    const agentSessionId = agentSessionIdForRun(input.run);
+    if (!target || !input.run.platformRunId || !agentSessionId) {
+      throw new Error(
+        `session memory retrieval unavailable: ${missingSessionMemoryPrerequisites(input.run, target, agentSessionId).join(', ')}`,
+      );
+    }
+
+    const res = await this.fetcher(
+      `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/memory-retrieval`,
+      {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          credential: target.issueToken,
+          runtime_target_id: target.runtimeTargetId,
+          query: input.query,
+          ...(input.limit ? { limit: input.limit } : {}),
+          ...(input.contextSourceIds ? { context_source_ids: input.contextSourceIds } : {}),
+        }),
+        timeoutMs: 5_000,
+        tlsVerify: target.tlsVerify,
+        caCertPath: target.caCertPath,
+        tlsPins: target.tlsPins,
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`session memory retrieval failed: HTTP ${res.status}`);
+    }
+
+    const body = (await readResponseJson(res)) as {
+      data?: Partial<PlatformSessionMemoryRetrieval>;
+    } | null;
+    const data = body?.data;
+    if (!data || data.schema !== 'viewport.agent_session_memory_retrieval/v1') {
+      throw new Error(
+        `session memory retrieval returned an unexpected response schema: ${describeUnexpectedResponse(body)}`,
+      );
+    }
+
+    return {
+      schema: data.schema,
+      receipt: objectValue(data.receipt),
+      retrieval: objectValue(data.retrieval),
+    };
+  }
+
+  async retrieveSessionMailbox(input: {
+    run: WorkflowRunRecord;
+    agentId: string;
+  }): Promise<PlatformSessionCollaborationMailboxRetrieval | null> {
+    const target = this.workspaceTargetFor(input.run);
+    const agentSessionId = agentSessionIdForRun(input.run);
+    if (!target || !input.run.platformRunId || !agentSessionId) return null;
+
+    const res = await this.fetcher(
+      `${target.baseUrl}/api/runtime/workspaces/${encodeURIComponent(target.resourceId)}/workflow-runs/${encodeURIComponent(input.run.platformRunId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/collaboration-mailbox`,
+      {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          credential: target.issueToken,
+          runtime_target_id: target.runtimeTargetId,
+          recipient_actor_type: 'agent',
+          recipient_actor_id: input.agentId,
+        }),
+        timeoutMs: 5_000,
+        tlsVerify: target.tlsVerify,
+        caCertPath: target.caCertPath,
+        tlsPins: target.tlsPins,
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`session collaboration mailbox retrieval failed: HTTP ${res.status}`);
+    }
+
+    const body = (await readResponseJson(res)) as {
+      data?: Partial<PlatformSessionCollaborationMailboxRetrieval>;
+    } | null;
+    const data = body?.data;
+    if (!data || data.schema !== 'viewport.agent_session_collaboration_mailbox_retrieval/v1') {
+      return null;
+    }
+
+    return {
+      schema: data.schema,
+      agent_session_id: stringValue(data.agent_session_id),
+      workflow_run_id: stringValue(data.workflow_run_id),
+      recipient: objectValue(data.recipient),
+      mailboxes: Array.isArray(data.mailboxes)
+        ? data.mailboxes.filter(
+            (mailbox): mailbox is Record<string, unknown> =>
+              !!mailbox && typeof mailbox === 'object' && !Array.isArray(mailbox),
+          )
+        : [],
+      source: objectValue(data.source),
+      redaction: objectValue(data.redaction),
     };
   }
 
@@ -256,30 +380,79 @@ export class WorkflowPlatformContextClient {
     caCertPath?: string;
     tlsPins?: string[];
   } | null {
-    const resourceId = run.resourceId;
-    const runtimeTargetId = run.runtimeTargetId;
+    const runScopedTarget = runtimeContextTargetForRun(run, run.resourceId, run.runtimeTargetId);
+    const resourceId = run.resourceId ?? runScopedTarget?.resourceId;
+    const runtimeTargetId = run.runtimeTargetId ?? runScopedTarget?.runtimeTargetId;
     if (!resourceId || !runtimeTargetId) return null;
 
+    if (runScopedTarget) return runScopedTarget;
+
     const daemonConfig = this.configManager.getDaemonConfig();
-    if (!daemonConfig) return null;
-    const target = resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
-      requestedWorkspaceId: resourceId,
-    });
-    if (!target) return null;
-    if (target.runtimeTargetId && target.runtimeTargetId !== runtimeTargetId) {
-      return null;
+    const target = daemonConfig
+      ? resolveConfiguredWorkspaceSyncTarget(daemonConfig, {
+          requestedWorkspaceId: resourceId,
+        })
+      : null;
+    if (target) {
+      if (target.runtimeTargetId && target.runtimeTargetId !== runtimeTargetId) {
+        return null;
+      }
+
+      return {
+        baseUrl: target.serverUrl.replace(/\/+$/, ''),
+        resourceId,
+        issueToken: target.credential,
+        runtimeTargetId,
+        tlsVerify: target.tlsVerify,
+        caCertPath: target.caCertPath,
+        tlsPins: target.tlsPins,
+      };
     }
 
-    return {
-      baseUrl: target.serverUrl.replace(/\/+$/, ''),
-      resourceId,
-      issueToken: target.credential,
-      runtimeTargetId,
-      tlsVerify: target.tlsVerify,
-      caCertPath: target.caCertPath,
-      tlsPins: target.tlsPins,
-    };
+    return null;
   }
+}
+
+function runtimeContextTargetForRun(
+  run: WorkflowRunRecord,
+  resourceId?: string,
+  runtimeTargetId?: string,
+): {
+  baseUrl: string;
+  resourceId: string;
+  issueToken: string;
+  runtimeTargetId: string;
+  tlsVerify?: 'auto' | '0' | '1';
+  caCertPath?: string;
+  tlsPins?: string[];
+} | null {
+  const target = objectValue(pathValue(run.inputs, ['viewport', 'runtimeContextTarget']));
+  if (!target) return null;
+
+  const targetResourceId = stringValue(target['workspaceId'] ?? target['workspace_id']);
+  const targetRuntimeId = stringValue(target['runtimeTargetId'] ?? target['runtime_target_id']);
+  const serverUrl = stringValue(target['serverUrl'] ?? target['server_url']);
+  const credential = stringValue(target['credential']);
+  if (!serverUrl || !credential) return null;
+  if (resourceId && targetResourceId && targetResourceId !== resourceId) return null;
+  if (runtimeTargetId && targetRuntimeId && targetRuntimeId !== runtimeTargetId) return null;
+  const effectiveResourceId = resourceId ?? targetResourceId;
+  const effectiveRuntimeTargetId = runtimeTargetId ?? targetRuntimeId;
+  if (!effectiveResourceId || !effectiveRuntimeTargetId) return null;
+
+  const tlsPins = Array.isArray(target['tlsPins'])
+    ? target['tlsPins'].filter((value): value is string => typeof value === 'string')
+    : undefined;
+
+  return {
+    baseUrl: serverUrl.replace(/\/+$/, ''),
+    resourceId: effectiveResourceId,
+    issueToken: credential,
+    runtimeTargetId: effectiveRuntimeTargetId,
+    tlsVerify: stringValue(target['tlsVerify']) as 'auto' | '0' | '1' | undefined,
+    caCertPath: stringValue(target['caCertPath'] ?? target['ca_cert_path']),
+    tlsPins,
+  };
 }
 
 function isPlatformContextSourcePolicy(value: unknown): value is PlatformContextSourcePolicy {
@@ -301,6 +474,32 @@ async function readResponseJson(res: Response): Promise<unknown> {
   }
 }
 
+function jsonHeaders(): Record<string, string> {
+  return {
+    accept: 'application/json',
+    'content-type': 'application/json',
+  };
+}
+
+function describeUnexpectedResponse(body: unknown): string {
+  const root = objectValue(body);
+  if (!root) return 'body=null';
+  const data = objectValue(root['data']);
+  const parts = [
+    `top_level_keys=${Object.keys(root).sort().join(',') || 'none'}`,
+    `data_keys=${data ? Object.keys(data).sort().join(',') || 'none' : 'none'}`,
+  ];
+
+  const schema = data ? stringValue(data['schema']) : undefined;
+  if (schema) parts.push(`data_schema=${schema}`);
+  const message = stringValue(root['message']);
+  if (message) parts.push(`message=${message.slice(0, 160)}`);
+  const reason = stringValue(root['reason']);
+  if (reason) parts.push(`reason=${reason.slice(0, 120)}`);
+
+  return parts.join(' ');
+}
+
 function digest(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
@@ -317,4 +516,44 @@ function safeCitationUrl(value: string | null | undefined): string | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function agentSessionIdForRun(run: WorkflowRunRecord): string | null {
+  return (
+    stringValue(run.agentSessionId) ??
+    stringValue(pathValue(run, ['agent_session_id'])) ??
+    stringValue(
+      pathValue(run.inputs, ['viewport', 'workflow', 'product20_policy_pin', 'agent_session_id']),
+    ) ??
+    stringValue(pathValue(run.inputs, ['viewport', 'agentSessionId'])) ??
+    null
+  );
+}
+
+function missingSessionMemoryPrerequisites(
+  run: WorkflowRunRecord,
+  target: unknown,
+  agentSessionId: string | null,
+): string[] {
+  const missing: string[] = [];
+  if (!target) missing.push('runtime_context_target');
+  if (!run.platformRunId) missing.push('platform_run_id');
+  if (!agentSessionId) missing.push('agent_session_id');
+  return missing.length > 0 ? missing : ['unknown'];
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pathValue(value: unknown, path: string[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
 }

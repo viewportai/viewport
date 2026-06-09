@@ -65,6 +65,30 @@ describe('relay connection admission contracts', () => {
     });
   });
 
+  it('accepts session event clients scoped to a runtime target', () => {
+    expect(
+      resolveConnectionAdmission({
+        role: 'client',
+        workspaceId: 'workspace_1',
+        requestedRuntimeTargetId: 'runtime_target_1',
+        ip: '127.0.0.1',
+        claims: {
+          workspaceId: 'workspace_1',
+          scope: 'session-events',
+          runtimeTargetId: 'runtime_target_1',
+          machineId: 'machine_1',
+          sessionIds: ['session_1'],
+          sessionChannels: ['agent-session:session_1'],
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      clientScopeClaim: 'session-events',
+      runtimeTargetId: 'runtime_target_1',
+      machineId: 'machine_1',
+    });
+  });
+
   it('rejects missing workspace claims', () => {
     expect(
       resolveConnectionAdmission({
@@ -130,6 +154,27 @@ describe('relay connection admission contracts', () => {
         claims: {
           workspaceId: 'workspace_1',
           scope: 'runtime',
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: 'missing_runtime_target_claim',
+      closeReason: 'missing runtime target claim',
+      sendMissingRuntimeTarget: true,
+    });
+  });
+
+  it('rejects session event clients without a runtime target', () => {
+    expect(
+      resolveConnectionAdmission({
+        role: 'client',
+        workspaceId: 'workspace_1',
+        ip: '127.0.0.1',
+        claims: {
+          workspaceId: 'workspace_1',
+          scope: 'session-events',
+          sessionIds: ['session_1'],
+          sessionChannels: ['agent-session:session_1'],
         },
       }),
     ).toMatchObject({

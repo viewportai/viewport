@@ -162,6 +162,7 @@ describe('ClaudeAdapter', () => {
         prompt: 'Run without interactive permission prompts',
         options: expect.objectContaining({
           permissionMode: 'bypassPermissions',
+          allowDangerouslySkipPermissions: true,
         }),
       }),
     );
@@ -233,6 +234,7 @@ describe('ClaudeAdapter', () => {
         prompt: 'Review without tools.',
         options: expect.objectContaining({
           permissionMode: 'bypassPermissions',
+          allowDangerouslySkipPermissions: true,
           tools: [],
           allowedTools: [],
         }),
@@ -477,6 +479,7 @@ describe('ClaudeAdapter', () => {
           cwd: '/test/dir',
           model: 'sonnet',
           permissionMode: 'bypassPermissions',
+          allowDangerouslySkipPermissions: true,
         }),
       }),
     );

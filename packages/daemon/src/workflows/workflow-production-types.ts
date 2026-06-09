@@ -90,6 +90,7 @@ export interface WorkflowPolicyDefinition {
       costUsd?: number;
     };
   };
+  capabilities?: Record<string, unknown>;
   maxDurationSeconds?: number;
 }
 

@@ -156,6 +156,7 @@ export class WorkflowRunner {
       workflowAuthorityContract: request.workflowAuthorityContract,
       runtimeTargetId,
       platformRunId: request.platformRunId,
+      agentSessionId: request.agentSessionId,
       rerunOfWorkflowRunId: request.rerunOfWorkflowRunId,
       machineId: this.daemon.configManager.getMachineId(),
       executionPolicy: request.executionPolicy,

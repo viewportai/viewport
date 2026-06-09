@@ -19,6 +19,7 @@ export interface GatewayMessage {
   content: string | Array<Record<string, unknown>>;
   name?: string;
   tool_call_id?: string;
+  tool_calls?: Array<Record<string, unknown>>;
 }
 
 export interface GatewayCompletionRequest {
@@ -44,6 +45,7 @@ export interface GatewayCompletionResponse {
   status: number;
   headers: Record<string, string>;
   body: unknown;
+  stream?: ReadableStream<Uint8Array> | null;
   usage?: GatewayUsage;
   costUsd?: number;
 }

@@ -616,6 +616,295 @@ describe('relay routing', () => {
     });
   });
 
+  it('routes Product20 session event frames only to authorized session-event subscribers', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client' | 'worker'>();
+    const closed: Array<{ code: number; reason: string }> = [];
+
+    const clientWs = new FakeWs() as unknown as WebSocket;
+    registerConnection(
+      {
+        config,
+        logger,
+        metrics,
+        registry,
+        backplane,
+        wsIp,
+        wsWorkspace,
+        wsRole,
+        setupHeartbeat: () => undefined,
+        markWsActivity: () => undefined,
+        adjustIpConnectionCount: () => undefined,
+        updateGauges: () => undefined,
+        safeSend: safeSendToFake,
+        closeWithReason: (ws, code, reason) => {
+          closed.push({ code, reason });
+          (ws as unknown as FakeWs).close(code, reason);
+        },
+      },
+      clientWs,
+      'client',
+      'workspace_demo',
+      'binding_demo',
+      '127.0.0.1',
+      {
+        clientId: 'session_viewer',
+        scope: 'session-events',
+        workspaceId: 'workspace_demo',
+        runtimeTargetId: 'binding_demo',
+        sessionIds: ['session_a'],
+        sessionChannels: ['agent-session:session_a'],
+      },
+    );
+
+    (clientWs as unknown as FakeWs).emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          type: 'viewport.session_events.subscribe/v1',
+          channel: 'agent-session:session_b',
+          afterSequence: 0,
+        }),
+      ),
+    );
+    expect(JSON.parse((clientWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+      type: 'viewport.session_events.subscribe_denied/v1',
+      channel: 'agent-session:session_b',
+      reason: 'CHANNEL_NOT_AUTHORIZED',
+    });
+
+    (clientWs as unknown as FakeWs).emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          type: 'viewport.session_events.subscribe/v1',
+          channel: 'agent-session:session_a',
+          afterSequence: 4,
+        }),
+      ),
+    );
+    expect(JSON.parse((clientWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+      type: 'viewport.session_events.subscribed/v1',
+      channel: 'agent-session:session_a',
+      afterSequence: 4,
+      authoritativeSource: 'session_events',
+      websocketRequiredForBackfill: false,
+    });
+
+    const frameForOtherSession = JSON.stringify({
+      schema: 'viewport.session_event_relay_frame/v1',
+      channel: 'agent-session:session_b',
+      event: { id: 'evt_b', sequence: 1 },
+    });
+    routeBusFrame(
+      {
+        config,
+        logger,
+        metrics,
+        registry,
+        backplane,
+        wsIp,
+        wsWorkspace,
+        wsRole,
+        setupHeartbeat: () => undefined,
+        markWsActivity: () => undefined,
+        adjustIpConnectionCount: () => undefined,
+        updateGauges: () => undefined,
+        safeSend: safeSendToFake,
+        closeWithReason: (ws, code, reason) => {
+          closed.push({ code, reason });
+          (ws as unknown as FakeWs).close(code, reason);
+        },
+      },
+      {
+        id: 1,
+        workspaceId: 'workspace_demo',
+        runtimeTargetId: 'binding_demo',
+        sourceRelayId: 'relay-b',
+        targetRelayId: 'relay-a',
+        direction: 'daemon_to_clients',
+        payload: frameForOtherSession,
+      },
+    );
+    expect((clientWs as unknown as FakeWs).sent).not.toContain(frameForOtherSession);
+
+    const frameForAuthorizedSession = JSON.stringify({
+      schema: 'viewport.session_event_relay_frame/v1',
+      channel: 'agent-session:session_a',
+      event: { id: 'evt_a', sequence: 5 },
+    });
+    routeBusFrame(
+      {
+        config,
+        logger,
+        metrics,
+        registry,
+        backplane,
+        wsIp,
+        wsWorkspace,
+        wsRole,
+        setupHeartbeat: () => undefined,
+        markWsActivity: () => undefined,
+        adjustIpConnectionCount: () => undefined,
+        updateGauges: () => undefined,
+        safeSend: safeSendToFake,
+        closeWithReason: (ws, code, reason) => {
+          closed.push({ code, reason });
+          (ws as unknown as FakeWs).close(code, reason);
+        },
+      },
+      {
+        id: 2,
+        workspaceId: 'workspace_demo',
+        runtimeTargetId: 'binding_demo',
+        sourceRelayId: 'relay-b',
+        targetRelayId: 'relay-a',
+        direction: 'daemon_to_clients',
+        payload: frameForAuthorizedSession,
+      },
+    );
+
+    expect(closed).toHaveLength(0);
+    expect((clientWs as unknown as FakeWs).sent).toContain(frameForAuthorizedSession);
+  });
+
+  it('does not let session-event scoped clients send runtime frames', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client' | 'worker'>();
+    const clientWs = new FakeWs() as unknown as WebSocket;
+    const daemonWs = new FakeWs() as unknown as WebSocket;
+
+    const context = {
+      config,
+      logger,
+      metrics,
+      registry,
+      backplane,
+      wsIp,
+      wsWorkspace,
+      wsRole,
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+        (ws as unknown as FakeWs).close(code, reason),
+    };
+
+    registerConnection(context, daemonWs, 'workspace-daemon', 'workspace_demo', 'binding_demo', '127.0.0.1', {
+      workspaceId: 'workspace_demo',
+      runtimeTargetId: 'binding_demo',
+    });
+    registerConnection(context, clientWs, 'client', 'workspace_demo', 'binding_demo', '127.0.0.1', {
+      clientId: 'session_viewer',
+      scope: 'session-events',
+      workspaceId: 'workspace_demo',
+      runtimeTargetId: 'binding_demo',
+      sessionIds: ['session_a'],
+      sessionChannels: ['agent-session:session_a'],
+    });
+
+    const runtimeFrame = JSON.stringify({
+      type: 'relay_key_exchange_init',
+      version: 3,
+      profile: 'noise-ik',
+      requestId: 'runtime-kex-1',
+      clientEphemeralPublicKey: 'ephemeral',
+      encryptedClientStatic: 'cipher',
+    });
+    (clientWs as unknown as FakeWs).emit('message', Buffer.from(runtimeFrame));
+
+    expect((daemonWs as unknown as FakeWs).sent).not.toContain(runtimeFrame);
+    expect(JSON.parse((clientWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+      type: 'relay_status',
+      code: 'SESSION_EVENTS_SCOPE_ONLY',
+    });
+  });
+
+  it('rejects session-event subscriptions from runtime scoped clients', () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client' | 'worker'>();
+    const closed: Array<{ code: number; reason: string }> = [];
+    const clientWs = new FakeWs() as unknown as WebSocket;
+
+    registerConnection(
+      {
+        config,
+        logger,
+        metrics,
+        registry,
+        backplane,
+        wsIp,
+        wsWorkspace,
+        wsRole,
+        setupHeartbeat: () => undefined,
+        markWsActivity: () => undefined,
+        adjustIpConnectionCount: () => undefined,
+        updateGauges: () => undefined,
+        safeSend: safeSendToFake,
+        closeWithReason: (ws, code, reason) => {
+          closed.push({ code, reason });
+          (ws as unknown as FakeWs).close(code, reason);
+        },
+      },
+      clientWs,
+      'client',
+      'workspace_demo',
+      'binding_demo',
+      '127.0.0.1',
+      {
+        clientId: 'runtime_client',
+        scope: 'runtime',
+        workspaceId: 'workspace_demo',
+        runtimeTargetId: 'binding_demo',
+      },
+    );
+
+    (clientWs as unknown as FakeWs).emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          type: 'viewport.session_events.subscribe/v1',
+          channel: 'agent-session:session_a',
+          afterSequence: 0,
+        }),
+      ),
+    );
+
+    expect(closed).toContainEqual({
+      code: 4008,
+      reason: 'session-events scope required',
+    });
+  });
+
   it('rate-limits daemon frames per workspace', () => {
     const config = loadConfig({
       RELAY_TLS: '0',
@@ -1881,5 +2170,113 @@ describe('relay routing', () => {
 
     expect((clientWs as unknown as FakeWs).sent).toContain(envelope1);
     expect((clientWs as unknown as FakeWs).sent).not.toContain(envelope2);
+  });
+
+  it('forwards worker transport frames only to the claimed managed executor path', async () => {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const logger = new RelayLogger(10);
+    const metrics = new RelayMetrics();
+    const registry = new ConnectionRegistry();
+    const backplane = createTestBackplane();
+    const wsIp = new WeakMap<WebSocket, string>();
+    const wsWorkspace = new WeakMap<WebSocket, string>();
+    const wsRole = new WeakMap<WebSocket, 'workspace-daemon' | 'client' | 'worker'>();
+    const workerWs = new FakeWs() as unknown as WebSocket;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      registerConnection(
+        {
+          config,
+          logger,
+          metrics,
+          registry,
+          backplane,
+          wsIp,
+          wsWorkspace,
+          wsRole,
+          setupHeartbeat: () => undefined,
+          markWsActivity: () => undefined,
+          adjustIpConnectionCount: () => undefined,
+          updateGauges: () => undefined,
+          safeSend: safeSendToFake,
+          closeWithReason: (ws: WebSocket, code: number, reason: string) =>
+            (ws as unknown as FakeWs).close(code, reason),
+        },
+        workerWs,
+        'worker',
+        'workspace_demo',
+        undefined,
+        '127.0.0.1',
+        {
+          role: 'worker',
+          scope: 'runtime',
+          workspaceId: 'workspace_demo',
+          managedExecutorId: 'executor_a',
+        },
+      );
+
+      (workerWs as unknown as FakeWs).emit(
+        'message',
+        Buffer.from(
+          JSON.stringify({
+            type: 'viewport.worker_transport.request/v1',
+            requestId: 'denied-1',
+            method: 'POST',
+            path: '/api/runtime/workspaces/workspace_demo/managed-executors/executor_b/claim',
+            headers: { Authorization: 'Bearer vpexec_a' },
+            body: '{}',
+          }),
+        ),
+      );
+      await Promise.resolve();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.parse((workerWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+        type: 'viewport.worker_transport.response/v1',
+        requestId: 'denied-1',
+        status: 403,
+      });
+
+      (workerWs as unknown as FakeWs).emit(
+        'message',
+        Buffer.from(
+          JSON.stringify({
+            type: 'viewport.worker_transport.request/v1',
+            requestId: 'allowed-1',
+            method: 'POST',
+            path: '/api/runtime/workspaces/workspace_demo/managed-executors/executor_a/claim',
+            headers: { Authorization: 'Bearer vpexec_a', 'x-ignored': 'nope' },
+            body: '{}',
+          }),
+        ),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        'http://127.0.0.1:7780/api/runtime/workspaces/workspace_demo/managed-executors/executor_a/claim',
+      );
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+        method: 'POST',
+        headers: { Authorization: 'Bearer vpexec_a' },
+      });
+      expect(JSON.parse((workerWs as unknown as FakeWs).sent.at(-1) ?? '{}')).toMatchObject({
+        type: 'viewport.worker_transport.response/v1',
+        requestId: 'allowed-1',
+        status: 200,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

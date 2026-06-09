@@ -808,6 +808,42 @@ describe('HTTP Server', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('POST /api/workflows/runs preserves Product20 agent session ids', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/directories',
+      payload: { path: testDir },
+    });
+    const { id } = JSON.parse(createRes.payload);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/workflows/runs',
+      payload: {
+        workflowYaml: `
+schema: viewport.workflow/v1
+name: agent-session-http-proof
+nodes:
+  inspect:
+    type: shell
+    command: "true"
+`,
+        workflowSourceRef: 'viewport://tests/agent-session-http-proof',
+        directoryId: id,
+        resourceId: 'workspace_1',
+        runtimeTargetId: 'runtime-target-1',
+        platformRunId: 'workflow-run-1',
+        agentSessionId: 'agent-session-1',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.payload);
+    expect(body.run.agentSessionId).toBe('agent-session-1');
+    expect(body.run.platformRunId).toBe('workflow-run-1');
+    expect(body.run.runtimeTargetId).toBe('runtime-target-1');
+  });
+
   it('POST /api/workflows/runs/:id/approvals/:nodeId accepts approval feedback', async () => {
     const decideApproval = vi.spyOn(daemon.workflowRunner, 'decideApproval').mockResolvedValue({
       id: 'run-approval-feedback',

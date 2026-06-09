@@ -381,9 +381,23 @@ function fallbackAgentDescriptor(agentId: string) {
 
 function workflowSessionPrompt(
   prompt: string,
-  config: Pick<SessionConfig, 'allowedTools'>,
+  config: Pick<SessionConfig, 'allowedTools' | 'executionMode'>,
 ): string {
-  if (!Array.isArray(config.allowedTools) || config.allowedTools.length > 0) return prompt;
+  if (!Array.isArray(config.allowedTools)) {
+    if (config.executionMode !== 'implement') return prompt;
+    return [
+      '<runtime_guidance>',
+      'You are running inside the governed repository checkout with native agent tools available.',
+      'The concrete customer request is in <workflow_inputs>, especially session_task.title and session_task.summary.',
+      'If the request asks for implementation, make a real reviewable diff in the repository instead of stopping at a plan.',
+      'For small changes, inspect the relevant file once, edit it, run a concise verification or git diff, then stop.',
+      'Do not repeat the same discovery command when the result is already visible; if you are blocked, state the exact blocker.',
+      '</runtime_guidance>',
+      '',
+      prompt,
+    ].join('\n');
+  }
+  if (config.allowedTools.length > 0) return prompt;
   return [
     '<runtime_constraints>',
     'No agent tools are available for this workflow node.',

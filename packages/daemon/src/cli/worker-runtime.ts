@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { WebSocket } from 'ws';
 import YAML from 'yaml';
 import { ConfigManager } from '../core/config.js';
 import { Daemon } from '../core/daemon.js';
@@ -17,6 +20,10 @@ import type {
   WorkflowRunStatus,
 } from '../workflows/types.js';
 import { transportFetch } from './network.js';
+import type {
+  ManagedSessionVerificationCommand,
+  ManagedSessionVerificationContract,
+} from './managed-session-verification-contract.js';
 import { acquireWorkerProcessLock } from './worker-process-lock.js';
 import {
   readWorkerPairingRecord,
@@ -27,10 +34,11 @@ import {
 
 export interface StandaloneWorkerOptions {
   lifecycle: WorkerLifecycle;
-  transport: WorkerTransportMode;
+  transport?: WorkerTransportMode;
   once: boolean;
   leaseToken?: string;
   bootstrapPath?: string;
+  registrationProfilePath?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
@@ -59,6 +67,7 @@ interface WorkerRuntimeProfile {
   workspaceId?: string;
   managedExecutorId?: string;
   credential?: string;
+  relayWsBaseUrl?: string;
   workspaceRoot: string;
   identityKeyPath: string;
   publicKeyFingerprint: string;
@@ -72,17 +81,38 @@ interface WorkerRuntimeBootstrap {
 }
 
 interface WorkerIdentityFile {
+  version?: number;
+  algorithm?: string;
   publicKey: string;
   privateKey: string;
   publicKeyFingerprint: string;
+  createdAt?: string;
+}
+
+interface ManagedExecutorRegistrationProfile {
+  serverUrl?: string;
+  serverId?: string;
+  workspaceId?: string;
+  executorId?: string;
+  credential?: string;
+  credentialFile?: string;
+  accessMode?: string;
+  runnerProfile?: string;
+  runnerPosture?: Record<string, unknown>;
+  workspaceRoot?: string;
+  identityKeyPath?: string;
+  capabilities?: Record<string, unknown>;
 }
 
 interface ClaimedLease {
   id: string;
+  agentSessionId?: string;
   runId?: string;
   runtimeRunId?: string;
   leaseToken?: string;
   assignmentClaimToken?: string;
+  sessionVerificationContract?: ManagedSessionVerificationContract;
+  gateway?: GatewayLease;
   yamlSnapshot?: string;
   sourceRef?: string;
   directoryPath?: string;
@@ -93,6 +123,65 @@ interface ClaimedLease {
   workflowSnapshot?: Record<string, unknown>;
   runtimeTargetId?: string;
   dataCapturePolicy?: WorkflowDataCapturePolicy;
+}
+
+function runtimeContextTargetIdValue(
+  primary: Record<string, unknown> | undefined,
+  fallback?: Record<string, unknown> | undefined,
+): string | undefined {
+  return stringValue(
+    primary?.['runtime_context_target_id'] ??
+      primary?.['runtimeContextTargetId'] ??
+      primary?.['runtime_target_id'] ??
+      primary?.['runtimeTargetId'] ??
+      fallback?.['runtime_context_target_id'] ??
+      fallback?.['runtimeContextTargetId'] ??
+      fallback?.['runtime_target_id'] ??
+      fallback?.['runtimeTargetId'],
+  );
+}
+
+function hostedRuntimeContextTargetId(profile: WorkerRuntimeProfile, lease: ClaimedLease): string | undefined {
+  return (
+    lease.runtimeTargetId ??
+    (profile.managedExecutorId ? `managed_executor:${profile.managedExecutorId}` : undefined)
+  );
+}
+
+function hostedWorkflowInputs(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): Record<string, WorkflowInputValue> | undefined {
+  const base = { ...(lease.inputSnapshot ?? {}) } as Record<string, WorkflowInputValue>;
+  const runtimeTargetId = hostedRuntimeContextTargetId(profile, lease);
+  if (!profile.serverUrl || !profile.workspaceId || !lease.assignmentClaimToken || !runtimeTargetId) {
+    return Object.keys(base).length > 0 ? base : undefined;
+  }
+
+  const viewport = isWorkflowInputRecord(base['viewport']) ? { ...base['viewport'] } : {};
+  viewport['runtimeContextTarget'] = {
+    schema: 'viewport.runtime_context_target/v1',
+    serverUrl: profile.serverUrl,
+    workspaceId: profile.workspaceId,
+    runtimeTargetId,
+    credential: lease.assignmentClaimToken,
+  };
+  base['viewport'] = viewport;
+
+  return base;
+}
+
+function isWorkflowInputRecord(value: WorkflowInputValue | undefined): value is Record<string, WorkflowInputValue> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+interface GatewayLease {
+  gatewayBaseUrl: string;
+  provider: 'anthropic' | 'openai' | 'gemini';
+  modelAllow: string[];
+  virtualKey: {
+    token: string;
+  };
 }
 
 interface HostedClaimExecutionResult {
@@ -114,6 +203,17 @@ interface HostedAssignmentCommandPoll {
   runtime_commands?: unknown;
   _viewport_worker_retry?: boolean;
 }
+
+interface HostedManagedExecutorRequest {
+  method: 'GET' | 'POST' | 'PATCH';
+  path: string;
+  requestPath: string;
+  url: string;
+  serialized: string;
+  headers: Record<string, string>;
+}
+
+type HostedManagedExecutorDispatcher = (request: HostedManagedExecutorRequest) => Promise<Response>;
 
 export interface WorkerTransport {
   readonly mode: WorkerTransportMode;
@@ -162,12 +262,184 @@ class HttpPollingTransport implements WorkerTransport {
   }
 }
 
+class RelayWorkerTransport implements WorkerTransport {
+  public readonly mode: WorkerTransportMode = 'relay';
+  private ws: WebSocket | null = null;
+  private pending = new Map<
+    string,
+    {
+      resolve: (response: Response) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+
+  constructor(private readonly profile: WorkerRuntimeProfile) {}
+
+  async claim(body: Record<string, unknown>): Promise<ClaimedLease | null> {
+    return claimLeaseHttp(this.profile, body, (request) =>
+      this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async heartbeat(options: {
+    status: 'online' | 'offline';
+    healthStatus: 'idle' | 'offline';
+    lifecycle: WorkerLifecycle;
+  }): Promise<void> {
+    return heartbeatHttp(
+      this.profile,
+      {
+        ...options,
+        transport: 'relay',
+      },
+      (request) => this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async sync(lease: ClaimedLease, execution: HostedClaimExecutionResult): Promise<void> {
+    return syncLeaseHttp(this.profile, lease, execution, (request) =>
+      this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async cleanup(lease: ClaimedLease): Promise<void> {
+    return cleanupLeaseHttp(this.profile, lease);
+  }
+
+  async pollRuntimeCommands(lease: ClaimedLease): Promise<HostedAssignmentCommandPoll> {
+    return fetchHostedAssignmentHttp(this.profile, lease, (request) =>
+      this.dispatchHostedManagedExecutorRequest(request),
+    );
+  }
+
+  async dispatchHostedManagedExecutorRequest(
+    request: HostedManagedExecutorRequest,
+  ): Promise<Response> {
+    const ws = await this.connection();
+    const requestId = crypto.randomUUID();
+    const frame = {
+      type: 'viewport.worker_transport.request/v1',
+      requestId,
+      method: request.method,
+      path: request.requestPath,
+      headers: request.headers,
+      body: request.serialized,
+    };
+    return new Promise<Response>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error(`Relay worker transport request ${request.path} timed out.`));
+      }, relayWorkerRequestTimeoutMs());
+      this.pending.set(requestId, { resolve, reject, timeout });
+      ws.send(JSON.stringify(frame), (error) => {
+        if (error) {
+          clearTimeout(timeout);
+          this.pending.delete(requestId);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  private async connection(): Promise<WebSocket> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return this.ws;
+    }
+    if (!isHostedManagedExecutorProfile(this.profile)) {
+      throw new Error('Relay worker transport requires a hosted managed executor profile.');
+    }
+    const tokenResponse = await hostedManagedExecutorFetch(this.profile, 'POST', 'relay-token', {
+      credential: this.profile.credential,
+      ttl_seconds: 3600,
+    });
+    const tokenPayload = (await tokenResponse.json()) as Record<string, unknown>;
+    const token = stringValue(tokenPayload['relayToken']);
+    const claims = recordValue(tokenPayload['claims']);
+    const claimRelayWsBaseUrl = stringValue(claims?.['relayWsBaseUrl']);
+    if (!token) {
+      throw new Error('Relay worker transport token response did not include a relay token.');
+    }
+    const relayWsBaseUrl =
+      this.profile.relayWsBaseUrl ??
+      process.env['VIEWPORT_RELAY_WS_BASE_URL'] ??
+      process.env['VPD_RELAY_WS_BASE_URL'] ??
+      claimRelayWsBaseUrl ??
+      relayWsBaseUrlFromServerUrl(this.profile.serverUrl);
+    const url = new URL(relayWsBaseUrl);
+    url.searchParams.set('role', 'worker');
+    url.searchParams.set('workspaceId', this.profile.workspaceId!);
+
+    const ws = new WebSocket(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Relay worker transport connection timed out.')),
+        relayWorkerConnectionTimeoutMs(),
+      );
+      ws.once('open', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      ws.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+
+    ws.on('message', (raw) => {
+      this.handleMessage(raw.toString('utf8'));
+    });
+    ws.on('close', () => {
+      for (const [requestId, pending] of this.pending.entries()) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Relay worker transport connection closed.'));
+        this.pending.delete(requestId);
+      }
+      this.ws = null;
+    });
+
+    this.ws = ws;
+    return ws;
+  }
+
+  private handleMessage(text: string): void {
+    let frame: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      frame = parsed as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (frame['type'] !== 'viewport.worker_transport.response/v1') return;
+    const requestId = stringValue(frame['requestId']);
+    if (!requestId) return;
+    const pending = this.pending.get(requestId);
+    if (!pending) return;
+    this.pending.delete(requestId);
+    clearTimeout(pending.timeout);
+    const status = typeof frame['status'] === 'number' ? frame['status'] : 502;
+    const headers = recordValue(frame['headers']) as Record<string, string> | undefined;
+    const body = typeof frame['body'] === 'string' ? frame['body'] : '';
+    const responseBody = status === 204 || status === 205 || status === 304 ? null : body;
+    pending.resolve(new Response(responseBody, { status, headers }));
+  }
+}
+
 const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 
 export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
-  const bootstrap = await loadWorkerRuntimeBootstrap(options.bootstrapPath);
+  const bootstrap = await loadWorkerRuntimeBootstrap(
+    options.bootstrapPath,
+    options.registrationProfilePath,
+  );
   const profile = bootstrap.profile;
   let processLock: ReturnType<typeof acquireWorkerProcessLock> | null = null;
 
@@ -177,10 +449,10 @@ export async function runStandaloneWorker(
     if (transport === 'inbound') {
       validateInboundWorkerGate(profile);
     }
-    if (transport === 'relay') {
-      throw new Error('Relay worker transport is not supported by the standalone runtime yet.');
-    }
-    const workerTransport = new HttpPollingTransport(profile, transport);
+    const workerTransport =
+      transport === 'relay'
+        ? new RelayWorkerTransport(profile)
+        : new HttpPollingTransport(profile, transport);
     processLock =
       options.lifecycle === 'persistent' && !options.once
         ? acquireWorkerProcessLock({
@@ -264,6 +536,7 @@ export async function runStandaloneWorker(
         } else {
           await workerTransport.sync(lease, execution);
         }
+        await maybeExecuteHostedSessionVerification(profile, workerTransport, lease, execution);
         if (execution.status === 'completed') {
           result.completed += 1;
         } else if (execution.status === 'blocked') {
@@ -297,6 +570,7 @@ async function executeBootstrapLease(
 ): Promise<StandaloneWorkerResult> {
   const execution = await executeClaim(profile, transport, lease);
   await transport.sync(lease, execution);
+  await maybeExecuteHostedSessionVerification(profile, transport, lease, execution);
   await transport.cleanup(lease);
 
   return {
@@ -342,15 +616,247 @@ async function executeClaim(
   if (!isHostedManagedExecutorProfile(profile)) {
     return { status: 'completed' };
   }
-  return executeHostedWorkflowClaim(profile, transport, lease);
+  return withGatewayLeaseProcessEnv(lease, () =>
+    executeHostedWorkflowClaim(profile, transport, lease),
+  );
 }
 
-async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
+async function loadWorkerRuntimeBootstrap(
+  bootstrapPath?: string,
+  registrationProfilePath?: string,
+): Promise<WorkerRuntimeBootstrap> {
   if (bootstrapPath) {
     return loadSandboxBootstrap(bootstrapPath);
   }
+  if (registrationProfilePath) {
+    return {
+      profile: await loadManagedExecutorRuntimeProfile(registrationProfilePath),
+    };
+  }
 
   return { profile: await loadWorkerRuntimeProfile() };
+}
+
+async function loadManagedExecutorRuntimeProfile(
+  profilePath: string,
+): Promise<WorkerRuntimeProfile> {
+  const profile = await readManagedExecutorRegistrationProfile(profilePath);
+  const credential = await credentialFromManagedExecutorProfile(profile);
+  const missing: string[] = [];
+  if (!profile.serverUrl) missing.push('server URL');
+  if (!profile.workspaceId) missing.push('workspace id');
+  if (!profile.executorId) missing.push('managed executor id');
+  if (!credential) missing.push('managed executor credential');
+  if (missing.length > 0) {
+    throw new Error(`Managed executor registration profile is missing ${missing.join(', ')}.`);
+  }
+
+  const identity = await ensureManagedExecutorIdentity(
+    profile.identityKeyPath ??
+      managedExecutorIdentityPath(profile.workspaceId!, profile.executorId!),
+  );
+  const workspaceRoot = managedExecutorWorkspaceRoot(profile);
+  await fs.mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
+  const runnerPool =
+    stringValue(profile.capabilities?.['runner_pool']) ??
+    stringValue(profile.capabilities?.['runnerPool']) ??
+    profile.runnerProfile;
+  const capabilities = {
+    ...(profile.capabilities ?? {}),
+    ...(runnerPool ? { runner_pool: runnerPool } : {}),
+    ...(profile.runnerPosture ? { runner_posture: profile.runnerPosture } : {}),
+  };
+
+  return {
+    serverUrl: profile.serverUrl!.replace(/\/+$/, ''),
+    serverId: profile.serverId,
+    lifecycle: 'persistent',
+    transport: workerTransportValue(profile.accessMode) ?? 'polling',
+    workspaceId: profile.workspaceId!,
+    managedExecutorId: profile.executorId!,
+    credential: credential!,
+    workspaceRoot,
+    identityKeyPath: identity.path,
+    publicKeyFingerprint: identity.publicKeyFingerprint,
+    capabilities,
+  };
+}
+
+async function readManagedExecutorRegistrationProfile(
+  profilePath: string,
+): Promise<ManagedExecutorRegistrationProfile> {
+  const resolved = resolveProfilePath(profilePath);
+  const parsed = JSON.parse(await fs.readFile(resolved, 'utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Managed executor registration profile is not a JSON object: ${resolved}`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const schema = stringValue(record['schema']);
+  if (schema && schema !== 'viewport.managed_executor_registration/v1') {
+    throw new Error(`Unsupported managed executor registration profile schema: ${schema}`);
+  }
+  const daemon = recordValue(record['daemon']);
+  const worker = recordValue(daemon?.['worker']);
+
+  return {
+    serverUrl:
+      stringValue(record['server_url']) ??
+      stringValue(record['serverUrl']) ??
+      stringValue(worker?.['serverUrl']) ??
+      stringValue(worker?.['server_url']),
+    serverId:
+      stringValue(record['server_id']) ??
+      stringValue(record['serverId']) ??
+      stringValue(record['control_plane_id']) ??
+      stringValue(worker?.['serverId']) ??
+      stringValue(worker?.['server_id']) ??
+      stringValue(worker?.['control_plane_id']),
+    workspaceId:
+      stringValue(record['workspace_id']) ??
+      stringValue(record['workspaceId']) ??
+      stringValue(worker?.['workspaceId']) ??
+      stringValue(worker?.['workspace_id']),
+    executorId:
+      stringValue(record['managed_executor_id']) ??
+      stringValue(record['executor_id']) ??
+      stringValue(record['executorId']) ??
+      stringValue(worker?.['managedExecutorId']) ??
+      stringValue(worker?.['managed_executor_id']),
+    credential: stringValue(record['credential']) ?? stringValue(worker?.['credential']),
+    credentialFile:
+      stringValue(record['credential_file']) ??
+      stringValue(record['credentialFile']) ??
+      stringValue(worker?.['credentialFile']) ??
+      stringValue(worker?.['credential_file']),
+    accessMode:
+      stringValue(record['access_mode']) ??
+      stringValue(record['accessMode']) ??
+      stringValue(worker?.['accessMode']) ??
+      stringValue(worker?.['access_mode']) ??
+      stringValue(worker?.['transport']),
+    runnerProfile:
+      stringValue(record['runner_profile']) ??
+      stringValue(record['runnerProfile']) ??
+      stringValue(worker?.['runnerProfile']) ??
+      stringValue(worker?.['runner_profile']),
+    runnerPosture:
+      recordValue(record['runner_posture']) ??
+      recordValue(record['runnerPosture']) ??
+      recordValue(worker?.['runnerPosture']) ??
+      recordValue(worker?.['runner_posture']) ??
+      undefined,
+    workspaceRoot:
+      stringValue(record['workspace_root']) ??
+      stringValue(record['workspaceRoot']) ??
+      stringValue(record['workdir']) ??
+      stringValue(worker?.['workspaceRoot']) ??
+      stringValue(worker?.['workspace_root']) ??
+      stringValue(worker?.['workdir']),
+    identityKeyPath:
+      stringValue(record['identity_key_path']) ??
+      stringValue(record['identityKeyPath']) ??
+      stringValue(worker?.['identityKeyPath']) ??
+      stringValue(worker?.['identity_key_path']),
+    capabilities: recordValue(record['capabilities']) ?? recordValue(worker?.['capabilities']) ?? undefined,
+  };
+}
+
+async function credentialFromManagedExecutorProfile(
+  profile: ManagedExecutorRegistrationProfile,
+): Promise<string | undefined> {
+  if (profile.credentialFile) {
+    const value = (await fs.readFile(resolveProfilePath(profile.credentialFile), 'utf8')).trim();
+    if (!value) {
+      throw new Error(
+        `Managed executor credential file is empty: ${resolveProfilePath(profile.credentialFile)}`,
+      );
+    }
+    return value;
+  }
+  return (
+    profile.credential ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN']
+  );
+}
+
+function managedExecutorWorkspaceRoot(profile: ManagedExecutorRegistrationProfile): string {
+  if (profile.workspaceRoot) return path.resolve(resolveProfilePath(profile.workspaceRoot));
+  const safeName = `${safeFilename(profile.workspaceId ?? 'workspace')}-${safeFilename(
+    profile.executorId ?? 'executor',
+  )}`;
+  return path.join(os.homedir(), '.viewport', 'managed-executors', 'workspaces', safeName);
+}
+
+function managedExecutorIdentityPath(workspaceId: string, executorId: string): string {
+  const safeName = `${safeFilename(workspaceId)}-${safeFilename(executorId)}.json`;
+  return path.join(os.homedir(), '.viewport', 'managed-executors', 'identities', safeName);
+}
+
+async function ensureManagedExecutorIdentity(identityPath: string): Promise<
+  WorkerIdentityFile & { path: string }
+> {
+  const resolved = resolveProfilePath(identityPath);
+  try {
+    const parsed = JSON.parse(await fs.readFile(resolved, 'utf8')) as Partial<WorkerIdentityFile>;
+    if (
+      parsed.algorithm?.toLowerCase() === 'ed25519' &&
+      typeof parsed.publicKey === 'string' &&
+      typeof parsed.privateKey === 'string'
+    ) {
+      return {
+        publicKey: parsed.publicKey,
+        privateKey: parsed.privateKey,
+        publicKeyFingerprint:
+          normalizeWorkerFingerprint(parsed.publicKeyFingerprint) ??
+          publicKeyFingerprint(parsed.publicKey),
+        path: resolved,
+      };
+    }
+  } catch {
+    // Generate below.
+  }
+
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const publicKey = pair.publicKey.export({ format: 'pem', type: 'spki' }).toString();
+  const privateKey = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const record: WorkerIdentityFile = {
+    version: 1,
+    algorithm: 'ed25519',
+    publicKey,
+    privateKey,
+    publicKeyFingerprint: publicKeyFingerprint(publicKey),
+    createdAt: new Date().toISOString(),
+  };
+  await fs.mkdir(path.dirname(resolved), { recursive: true, mode: 0o700 });
+  await fs.writeFile(resolved, `${JSON.stringify(record, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  await fs.chmod(resolved, 0o600);
+  return { ...record, path: resolved };
+}
+
+function publicKeyFingerprint(publicKeyPem: string): string {
+  const key = crypto.createPublicKey(publicKeyPem);
+  const der = key.export({ format: 'der', type: 'spki' });
+  return crypto.createHash('sha256').update(der).digest('hex');
+}
+
+function normalizeWorkerFingerprint(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase().replace(/^sha256:/, '');
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : undefined;
+}
+
+function resolveProfilePath(profilePath: string): string {
+  if (profilePath === '~') return os.homedir();
+  if (profilePath.startsWith('~/')) return path.join(os.homedir(), profilePath.slice(2));
+  return path.resolve(profilePath);
+}
+
+function safeFilename(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'default';
 }
 
 async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
@@ -385,6 +891,8 @@ async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
       worker!.credential ??
       process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
       process.env['VPD_MANAGED_EXECUTOR_TOKEN'],
+    relayWsBaseUrl:
+      process.env['VIEWPORT_RELAY_WS_BASE_URL'] ?? process.env['VPD_RELAY_WS_BASE_URL'],
     workspaceRoot: worker!.workspaceRoot!,
     identityKeyPath: worker!.identityKeyPath!,
     publicKeyFingerprint: worker!.publicKeyFingerprint!,
@@ -411,6 +919,9 @@ async function loadSandboxBootstrap(bootstrapPath: string): Promise<WorkerRuntim
     workspaceId: requiredString(raw['workspace_id'] ?? raw['workspaceId'], 'workspace_id'),
     managedExecutorId: requiredString(raw['executor_id'] ?? raw['executorId'], 'executor_id'),
     credential: requiredString(raw['credential'], 'credential'),
+    relayWsBaseUrl: stringValue(
+      raw['relay_ws_base_url'] ?? raw['relayWsBaseUrl'] ?? raw['relay_url'] ?? raw['relayUrl'],
+    ),
     workspaceRoot,
     identityKeyPath: identityFile.path,
     publicKeyFingerprint: identityFile.publicKeyFingerprint,
@@ -438,12 +949,17 @@ function claimedLeaseFromBootstrap(
   );
   return {
     id,
+    agentSessionId: stringValue(rawLease['agent_session_id'] ?? rawLease['agentSessionId']),
     runId: stringValue(rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId']),
     runtimeRunId: stringValue(rawLease['runtime_run_id'] ?? rawLease['runtimeRunId']),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
     assignmentClaimToken: stringValue(
       rawLease['assignment_claim_token'] ?? rawLease['assignmentClaimToken'],
     ),
+    sessionVerificationContract: sessionVerificationContractValue(
+      rawLease['session_verification_contract'] ?? rawLease['sessionVerificationContract'],
+    ),
+    gateway: gatewayLeaseValue(rawLease['gateway'] ?? rawLease['gatewayLease']),
     yamlSnapshot: stringValue(rawLease['yaml_snapshot'] ?? rawLease['yamlSnapshot']),
     sourceRef: stringValue(rawLease['source_ref'] ?? rawLease['sourceRef']),
     directoryPath: stringValue(rawLease['directory_path'] ?? rawLease['directoryPath']),
@@ -458,11 +974,110 @@ function claimedLeaseFromBootstrap(
       rawLease['execution_profile_snapshot'] ?? rawLease['executionProfileSnapshot'],
     ),
     workflowSnapshot: recordValue(rawLease['workflow_snapshot'] ?? rawLease['workflowSnapshot']),
-    runtimeTargetId: stringValue(rawLease['runtime_target_id'] ?? rawLease['runtimeTargetId']),
+    runtimeTargetId: runtimeContextTargetIdValue(rawLease),
     dataCapturePolicy: dataCapturePolicyValue(
       rawLease['data_capture_policy'] ?? rawLease['dataCapturePolicy'],
     ),
   };
+}
+
+function gatewayLeaseValue(value: unknown): GatewayLease | undefined {
+  const record = recordValue(value);
+  if (!record) return undefined;
+  const provider = stringValue(record['provider']);
+  if (provider !== 'anthropic' && provider !== 'openai' && provider !== 'gemini') {
+    return undefined;
+  }
+  const gatewayBaseUrl = stringValue(
+    record['gateway_base_url'] ??
+      record['gatewayBaseUrl'] ??
+      record['base_url'] ??
+      record['baseUrl'],
+  );
+  const virtualKey = recordValue(record['virtual_key'] ?? record['virtualKey']);
+  const token = stringValue(virtualKey?.['token']);
+  const modelAllow = arrayOfStrings(record['model_allow'] ?? record['modelAllow']);
+  if (!gatewayBaseUrl || !token || modelAllow.length === 0) {
+    return undefined;
+  }
+
+  return {
+    gatewayBaseUrl: gatewayBaseUrl.replace(/\/+$/, ''),
+    provider,
+    modelAllow,
+    virtualKey: { token },
+  };
+}
+
+async function withGatewayLeaseProcessEnv<T>(
+  lease: ClaimedLease,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const env = gatewayLeaseEnv(lease.gateway);
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(env)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function gatewayLeaseEnv(gateway: GatewayLease | undefined): Record<string, string> {
+  if (!gateway) return {};
+  const model = gateway.modelAllow[0] ?? '';
+  const base = gateway.gatewayBaseUrl.replace(/\/+$/, '');
+  const common = {
+    VIEWPORT_GATEWAY_BASE_URL: base,
+    VIEWPORT_LLM_PROVIDER: gateway.provider,
+    VIEWPORT_LLM_MODEL: model,
+    VIEWPORT_LLM_VIRTUAL_KEY: gateway.virtualKey.token,
+  };
+
+  if (gateway.provider === 'openai') {
+    return {
+      ...common,
+      CODEX_API_KEY: gateway.virtualKey.token,
+      OPENAI_API_KEY: gateway.virtualKey.token,
+      OPENAI_BASE_URL: `${base}/openai/v1`,
+    };
+  }
+
+  if (gateway.provider === 'anthropic') {
+    return {
+      ...common,
+      ANTHROPIC_API_KEY: gateway.virtualKey.token,
+      ANTHROPIC_BASE_URL: `${base}/anthropic`,
+    };
+  }
+
+  return {
+    ...common,
+    GEMINI_API_KEY: gateway.virtualKey.token,
+    GEMINI_BASE_URL: `${base}/gemini/v1beta/openai`,
+    GOOGLE_GENERATIVE_AI_API_KEY: gateway.virtualKey.token,
+  };
+}
+
+function gatewayLeaseCredentialEnv(gateway: GatewayLease | undefined): Record<string, string> {
+  if (!gateway) return {};
+  const env = gatewayLeaseEnv(gateway);
+  const aliases: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    aliases[envNameForCredentialRef(name)] = value;
+  }
+
+  return aliases;
 }
 
 async function materializeBootstrapIdentity(
@@ -532,13 +1147,23 @@ function validateInboundWorkerGate(profile: WorkerRuntimeProfile): never {
 async function claimLeaseHttp(
   profile: WorkerRuntimeProfile,
   body: Record<string, unknown>,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<ClaimedLease | null> {
   const leaseSeconds = positiveInteger(body['leaseSeconds']) ?? DEFAULT_HOSTED_LEASE_SECONDS;
   const response = isHostedManagedExecutorProfile(profile)
-    ? await hostedManagedExecutorFetch(profile, 'POST', 'claim', {
-        credential: profile.credential,
-        lease_seconds: leaseSeconds,
-      })
+    ? await hostedManagedExecutorFetch(
+        profile,
+        'POST',
+        'claim',
+        {
+          credential: profile.credential,
+          lease_seconds: leaseSeconds,
+        },
+        undefined,
+        undefined,
+        [],
+        dispatcher,
+      )
     : await workerFetch(profile, 'workers/claim', body);
   if (response.status === 204) return null;
   const parsed = (await response.json()) as Record<string, unknown>;
@@ -558,12 +1183,24 @@ async function claimLeaseHttp(
   }
   return {
     id,
+    agentSessionId: stringValue(
+      data['agent_session_id'] ??
+        data['agentSessionId'] ??
+        rawLease['agent_session_id'] ??
+        rawLease['agentSessionId'],
+    ),
     runId: stringValue(
       data['id'] ?? rawLease['workflow_run_id'] ?? rawLease['run_id'] ?? rawLease['runId'],
     ),
     runtimeRunId: stringValue(data['runtime_run_id'] ?? rawLease['runtime_run_id']),
     leaseToken: stringValue(rawLease['lease_token'] ?? rawLease['leaseToken']),
     assignmentClaimToken: stringValue(data['assignment_claim_token']),
+    sessionVerificationContract: sessionVerificationContractValue(
+      data['session_verification_contract'] ??
+        data['sessionVerificationContract'] ??
+        rawLease['session_verification_contract'] ??
+        rawLease['sessionVerificationContract'],
+    ),
     yamlSnapshot: stringValue(data['yaml_snapshot'] ?? rawLease['yaml_snapshot']),
     sourceRef: stringValue(data['source_ref'] ?? rawLease['source_ref']),
     directoryPath: stringValue(data['directory_path'] ?? rawLease['directory_path']),
@@ -578,7 +1215,7 @@ async function claimLeaseHttp(
       data['execution_profile_snapshot'] ?? rawLease['execution_profile_snapshot'],
     ),
     workflowSnapshot: recordValue(data['workflow_snapshot'] ?? rawLease['workflow_snapshot']),
-    runtimeTargetId: stringValue(data['runtime_target_id'] ?? rawLease['runtime_target_id']),
+    runtimeTargetId: runtimeContextTargetIdValue(data, rawLease),
     dataCapturePolicy: dataCapturePolicyValue(
       data['data_capture_policy'] ?? rawLease['data_capture_policy'],
     ),
@@ -593,31 +1230,43 @@ async function heartbeatHttp(
     lifecycle: WorkerLifecycle;
     transport: WorkerTransportMode;
   },
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<void> {
   const capabilityPayload = managedExecutorCapabilities(profile.capabilities);
   if (isHostedManagedExecutorProfile(profile)) {
-    await hostedManagedExecutorFetch(profile, 'POST', 'heartbeat', {
-      credential: profile.credential,
-      status: options.status,
-      health_status: options.healthStatus,
-      access_mode: options.transport,
-      runner_mode: options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'self_hosted',
-      runner_provider: options.lifecycle === 'ephemeral' ? 'viewport_cloud' : 'local',
-      context_execution_mode:
-        options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'customer_managed_context_worker',
-      credential_mode: options.lifecycle === 'ephemeral' ? 'run_scoped_grant' : 'runner_local',
-      runner_profile:
-        stringValue(capabilityPayload['runner_pool']) ??
-        stringValue(capabilityPayload['runnerPool']) ??
-        null,
-      runner_posture: {
-        transport: { mode: options.transport },
-        execution: {
-          kind: options.lifecycle === 'ephemeral' ? 'ephemeral-worker' : 'persistent-worker',
+    await hostedManagedExecutorFetch(
+      profile,
+      'POST',
+      'heartbeat',
+      {
+        credential: profile.credential,
+        status: options.status,
+        health_status: options.healthStatus,
+        access_mode: options.transport,
+        runner_mode: options.lifecycle === 'ephemeral' ? 'viewport_managed' : 'self_hosted',
+        runner_provider: options.lifecycle === 'ephemeral' ? 'viewport_cloud' : 'local',
+        context_execution_mode:
+          options.lifecycle === 'ephemeral'
+            ? 'viewport_managed'
+            : 'customer_managed_context_worker',
+        credential_mode: options.lifecycle === 'ephemeral' ? 'run_scoped_grant' : 'runner_local',
+        runner_profile:
+          stringValue(capabilityPayload['runner_pool']) ??
+          stringValue(capabilityPayload['runnerPool']) ??
+          null,
+        runner_posture: {
+          transport: { mode: options.transport },
+          execution: {
+            kind: options.lifecycle === 'ephemeral' ? 'ephemeral-worker' : 'persistent-worker',
+          },
         },
+        capabilities: capabilityPayload,
       },
-      capabilities: capabilityPayload,
-    });
+      undefined,
+      undefined,
+      [],
+      dispatcher,
+    );
     return;
   }
   await workerRequest(profile, 'workers/heartbeat', {
@@ -635,6 +1284,7 @@ async function syncLeaseHttp(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
   execution: HostedClaimExecutionResult,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<void> {
   const status = execution.status;
   if (isHostedManagedExecutorProfile(profile)) {
@@ -698,6 +1348,8 @@ async function syncLeaseHttp(
       },
       lease.assignmentClaimToken,
       lease.leaseToken,
+      [],
+      dispatcher,
     );
     return;
   }
@@ -735,7 +1387,7 @@ async function executeHostedWorkflowClaim(
     if (existing) {
       if (existing.status === 'blocked') {
         const body = await transport.pollRuntimeCommands(lease);
-        const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+        const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease, transport);
         const applied = await daemon.workflowRunner.applyRuntimeCommandBody(existing.id, body, {
           runtimeSecretEnv,
         });
@@ -763,16 +1415,17 @@ async function executeHostedWorkflowClaim(
     const directoryPath = path.resolve(lease.directoryPath ?? profile.workspaceRoot);
     await fs.mkdir(directoryPath, { recursive: true });
     const directory = await daemon.directoryManager.register(directoryPath);
-    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+    const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease, transport);
     const run = await daemon.workflowRunner.startRun({
       workflowYaml: lease.yamlSnapshot,
       workflowSourceRef:
         lease.sourceRef ?? `viewport://managed-executor/${lease.runId ?? lease.id}`,
       directoryId: directory.id,
-      inputs: lease.inputSnapshot,
+      inputs: hostedWorkflowInputs(profile, lease),
       resourceId: profile.workspaceId,
-      runtimeTargetId: lease.runtimeTargetId ?? profile.managedExecutorId,
+      runtimeTargetId: hostedRuntimeContextTargetId(profile, lease),
       platformRunId: lease.runId,
+      agentSessionId: lease.agentSessionId,
       resourceManifest: lease.resourceManifest as never,
       workflowAuthorityContract: lease.workflowAuthorityContract,
       dataCapturePolicy: lease.dataCapturePolicy,
@@ -805,6 +1458,7 @@ async function executeHostedWorkflowClaim(
 async function materializeHostedRunCredentials(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<Record<string, string>> {
   if (!lease.runId) {
     throw new Error(
@@ -829,6 +1483,8 @@ async function materializeHostedRunCredentials(
       },
       lease.assignmentClaimToken,
       lease.leaseToken,
+      [],
+      dispatcher,
     );
     const parsed = (await response.json()) as Record<string, unknown>;
     const data =
@@ -842,6 +1498,23 @@ async function materializeHostedRunCredentials(
   }
 
   return runtimeSecretEnv;
+}
+
+async function runtimeSecretEnvForHostedRun(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+  transport?: WorkerTransport,
+): Promise<Record<string, string>> {
+  const dispatcher =
+    transport instanceof RelayWorkerTransport
+      ? (request: HostedManagedExecutorRequest) =>
+          transport.dispatchHostedManagedExecutorRequest(request)
+      : undefined;
+  return {
+    ...(await materializeHostedRunCredentials(profile, lease, dispatcher)),
+    ...gatewayLeaseCredentialEnv(lease.gateway),
+    ...gatewayLeaseEnv(lease.gateway),
+  };
 }
 
 function credentialHandlesFromLease(lease: ClaimedLease): string[] {
@@ -1010,7 +1683,7 @@ async function resumeBlockedHostedExecution(
       }
       return execution;
     }
-    const runtimeSecretEnv = await materializeHostedRunCredentials(profile, lease);
+    const runtimeSecretEnv = await runtimeSecretEnvForHostedRun(profile, lease);
     const applied = await daemon.workflowRunner.applyRuntimeCommandBody(workflowRunId, body, {
       runtimeSecretEnv,
     });
@@ -1041,9 +1714,342 @@ async function resumeBlockedHostedExecution(
   return execution;
 }
 
+async function maybeExecuteHostedSessionVerification(
+  profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
+  lease: ClaimedLease,
+  execution: HostedClaimExecutionResult,
+): Promise<void> {
+  if (!isHostedManagedExecutorProfile(profile)) return;
+  if (execution.status !== 'completed' || !execution.run) return;
+
+  const contract = await executableHostedSessionVerificationContract(transport, lease);
+  if (!contract || !verificationRunnerMayExecute(contract)) return;
+
+  const agentSessionId = verificationAgentSessionId(contract);
+  if (!agentSessionId) return;
+
+  const commands = verificationCommands(contract);
+  if (commands.length === 0) return;
+
+  const runDirectoryPath = execution.run.directoryPath ?? lease.directoryPath ?? profile.workspaceRoot;
+  const defaultCommandDirectory = verificationDefaultCommandDirectory(execution.run);
+  const commandResults: Array<Record<string, unknown>> = [];
+  const artifactRefs: string[] = [];
+
+  for (const command of commands) {
+    const name = verificationCommandName(command, commandResults.length + 1);
+    const commandText = verificationCommandText(command);
+    let result: ShellCommandResult;
+    let executionError: string | undefined;
+    try {
+      const cwd = verificationCommandCwd(runDirectoryPath, command, defaultCommandDirectory);
+      result = await runShellCommand(commandText, '', cwd);
+    } catch (error) {
+      executionError = errorMessage(error);
+      result = { exitCode: 1, stdout: '', stderr: '' };
+    }
+
+    const stdoutDigest = sha256Text(result.stdout);
+    const stderrDigest = sha256Text(result.stderr);
+    const status = result.exitCode === 0 ? 'passed' : 'failed';
+    artifactRefs.push(`verification:${name}:stdout:${stdoutDigest}`);
+    if (result.stderr.trim() !== '') {
+      artifactRefs.push(`verification:${name}:stderr:${stderrDigest}`);
+    }
+
+    commandResults.push({
+      schema: 'viewport.verification_command_result/v1',
+      name,
+      status,
+      required: command.required !== false,
+      exit_code: result.exitCode,
+      command_sha256: sha256Text(commandText),
+      stdout_sha256: stdoutDigest,
+      stderr_sha256: stderrDigest,
+      stdout_bytes: Buffer.byteLength(result.stdout, 'utf8'),
+      stderr_bytes: Buffer.byteLength(result.stderr, 'utf8'),
+      working_directory:
+        verificationCommandWorkingDirectory(command) ??
+        verificationDisplayWorkingDirectory(runDirectoryPath, defaultCommandDirectory),
+      raw_output_included: false,
+      ...(executionError ? { error: executionError } : {}),
+    });
+  }
+
+  const requiredFailures = commandResults.filter(
+    (result) => result['required'] !== false && result['status'] !== 'passed',
+  );
+  const passedCount = commandResults.filter((result) => result['status'] === 'passed').length;
+  const status = requiredFailures.length > 0 ? 'failed' : 'passed';
+  const summary =
+    status === 'passed'
+      ? `${passedCount}/${commandResults.length} verification commands passed.`
+      : `${requiredFailures.length} required verification command(s) failed.`;
+
+  await postHostedSessionVerificationAttempt(profile, transport, lease, contract, agentSessionId, {
+    status,
+    attempt_kind: 'verification',
+    summary,
+    artifact_refs: artifactRefs.slice(0, 50),
+    verification_pack: {
+      schema: 'viewport.verification_pack_result/v1',
+      source_schema: contract.schema ?? null,
+      agent_session_id: agentSessionId,
+      workflow_run_id: lease.runId,
+      policy_hash: typeof contract['policy_hash'] === 'string' ? contract['policy_hash'] : null,
+      command_results: commandResults,
+      required_artifacts: verificationRequiredArtifacts(contract),
+      raw_command_output_included: false,
+      agent_self_assessment_used: false,
+    },
+    repair_recommendation:
+      status === 'passed'
+        ? { action: 'none' }
+        : {
+            action: 'ask_human',
+            failed_commands: requiredFailures.map((result) => result['name']),
+          },
+  });
+}
+
+async function executableHostedSessionVerificationContract(
+  transport: WorkerTransport,
+  lease: ClaimedLease,
+): Promise<ManagedSessionVerificationContract | null> {
+  const contract = lease.sessionVerificationContract;
+  if (contract && verificationRunnerMayExecute(contract)) return contract;
+  if (!leaseMayHaveSessionVerification(lease)) return contract ?? null;
+
+  const refreshed = await transport.pollRuntimeCommands(lease);
+  return sessionVerificationContractFromBody(refreshed) ?? contract ?? null;
+}
+
+function leaseMayHaveSessionVerification(lease: ClaimedLease): boolean {
+  const policyPin = recordValue(lease.workflowSnapshot?.['product20_policy_pin']);
+  return Boolean(
+    lease.agentSessionId ||
+      stringValue(policyPin?.['agent_session_id']) ||
+      lease.sessionVerificationContract,
+  );
+}
+
+function sessionVerificationContractFromBody(
+  body: unknown,
+): ManagedSessionVerificationContract | null {
+  const record = recordValue(body);
+  const data = recordValue(record?.['data']);
+  return sessionVerificationContractValue(
+    data?.['session_verification_contract'] ??
+      data?.['sessionVerificationContract'] ??
+      record?.['session_verification_contract'] ??
+      record?.['sessionVerificationContract'],
+  ) ?? null;
+}
+
+function sessionVerificationContractValue(
+  value: unknown,
+): ManagedSessionVerificationContract | undefined {
+  const record = recordValue(value);
+  if (!record) return undefined;
+  return record as ManagedSessionVerificationContract;
+}
+
+function verificationRunnerMayExecute(contract: ManagedSessionVerificationContract): boolean {
+  const access = contract.access_model ?? contract.accessModel ?? {};
+  return access.runner_may_execute_commands === true || access.runnerMayExecuteCommands === true;
+}
+
+function verificationAgentSessionId(contract: ManagedSessionVerificationContract): string | null {
+  return contract.agent_session_id ?? contract.agentSessionId ?? null;
+}
+
+function verificationCommands(
+  contract: ManagedSessionVerificationContract,
+): ManagedSessionVerificationCommand[] {
+  return (contract.commands ?? []).filter(
+    (command): command is ManagedSessionVerificationCommand =>
+      verificationCommandText(command) !== '',
+  );
+}
+
+function verificationCommandName(
+  command: ManagedSessionVerificationCommand,
+  index: number,
+): string {
+  return command.name?.trim() || `verification-${index}`;
+}
+
+function verificationCommandText(command: ManagedSessionVerificationCommand): string {
+  return command.command?.trim() ?? '';
+}
+
+function verificationCommandWorkingDirectory(
+  command: ManagedSessionVerificationCommand,
+): string | null {
+  return command.working_directory?.trim() || command.workingDirectory?.trim() || null;
+}
+
+function verificationCommandCwd(
+  runDirectoryPath: string,
+  command: ManagedSessionVerificationCommand,
+  defaultDirectoryPath?: string,
+): string {
+  const workingDirectory = verificationCommandWorkingDirectory(command);
+  const root = path.resolve(runDirectoryPath);
+  const resolved = workingDirectory
+    ? path.resolve(root, workingDirectory)
+    : path.resolve(defaultDirectoryPath ?? root);
+  const relative = path.relative(root, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Verification command working_directory must stay inside the run directory.');
+  }
+  return resolved;
+}
+
+function verificationDefaultCommandDirectory(run: WorkflowRunRecord): string {
+  const root = path.resolve(run.directoryPath);
+  for (const node of Object.values(run.nodes ?? {})) {
+    if (node.type !== 'checkout') continue;
+    const candidate = typeof node.outputs?.['path'] === 'string' ? node.outputs['path'] : null;
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    const relative = path.relative(root, resolved);
+    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return resolved;
+    }
+  }
+
+  return root;
+}
+
+function verificationDisplayWorkingDirectory(runDirectoryPath: string, directoryPath: string): string {
+  const root = path.resolve(runDirectoryPath);
+  const resolved = path.resolve(directoryPath);
+  const relative = path.relative(root, resolved);
+  if (relative === '') return '.';
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return '.';
+  return relative;
+}
+
+function verificationRequiredArtifacts(contract: ManagedSessionVerificationContract): string[] {
+  return contract.required_artifacts ?? contract.requiredArtifacts ?? [];
+}
+
+interface ShellCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runShellCommand(
+  command: string,
+  stdin: string,
+  cwd = process.cwd(),
+): Promise<ShellCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('sh', ['-lc', command], {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
+    child.stdin.end(stdin);
+  });
+}
+
+function sha256Text(value: string): string {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function postHostedSessionVerificationAttempt(
+  profile: WorkerRuntimeProfile,
+  transport: WorkerTransport,
+  lease: ClaimedLease,
+  contract: ManagedSessionVerificationContract,
+  agentSessionId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!lease.runId) {
+    throw new Error('Hosted session verification requires a workflow run id.');
+  }
+  const runLeaseToken = lease.assignmentClaimToken ?? lease.leaseToken;
+  if (!runLeaseToken) {
+    throw new Error('Hosted session verification requires a run lease token.');
+  }
+  const suffix =
+    hostedVerificationRuntimePathSuffix(profile, contract, agentSessionId) ??
+    `workflow-runs/${encodeURIComponent(lease.runId)}/agent-sessions/${encodeURIComponent(agentSessionId)}/verification-attempts`;
+  const dispatcher =
+    transport instanceof RelayWorkerTransport
+      ? (request: HostedManagedExecutorRequest) =>
+          transport.dispatchHostedManagedExecutorRequest(request)
+      : undefined;
+
+  await hostedManagedExecutorFetch(
+    profile,
+    'POST',
+    suffix,
+    {
+      credential: profile.credential,
+      ...payload,
+    },
+    undefined,
+    runLeaseToken,
+    [],
+    dispatcher,
+  );
+}
+
+function hostedVerificationRuntimePathSuffix(
+  profile: WorkerRuntimeProfile,
+  contract: ManagedSessionVerificationContract,
+  agentSessionId: string,
+): string | null {
+  const runtimeTool = contract.runtime_tool ?? contract.runtimeTool ?? {};
+  const endpoint = runtimeTool.runtime_endpoint ?? runtimeTool.runtimeEndpoint;
+  if (typeof endpoint !== 'string' || endpoint.trim() === '') return null;
+
+  const normalized = endpoint.trim();
+  const prefix = `/api/runtime/workspaces/${encodeURIComponent(
+    profile.workspaceId ?? '',
+  )}/managed-executors/${encodeURIComponent(profile.managedExecutorId ?? '')}/`;
+  if (normalized.startsWith(prefix)) {
+    return normalized.slice(prefix.length);
+  }
+
+  const fallback = `/workflow-runs/`;
+  const index = normalized.indexOf(fallback);
+  if (index >= 0 && normalized.includes(`/agent-sessions/${encodeURIComponent(agentSessionId)}/`)) {
+    return normalized.slice(index + 1);
+  }
+
+  return null;
+}
+
 async function fetchHostedAssignmentHttp(
   profile: WorkerRuntimeProfile,
   lease: ClaimedLease,
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<HostedAssignmentCommandPoll> {
   if (!lease.runId) {
     throw new Error('Hosted managed executor assignment polling requires a workflow run id.');
@@ -1056,6 +2062,7 @@ async function fetchHostedAssignmentHttp(
     lease.assignmentClaimToken,
     lease.leaseToken,
     [429],
+    dispatcher,
   );
   if (response.status === 429) {
     await sleep(retryAfterMs(response));
@@ -1190,20 +2197,22 @@ function isHostedManagedExecutorProfile(profile: WorkerRuntimeProfile): boolean 
 function managedExecutorCapabilities(
   capabilities: Record<string, unknown>,
 ): Record<string, unknown> {
+  const { schema: _schema, ...normalized } = capabilities;
   const agents = capabilities['agents'];
-  if (!Array.isArray(agents)) return capabilities;
+  if (!Array.isArray(agents)) return normalized;
+  const objectAgents = agents
+    .filter((agent) => typeof agent === 'object' && agent !== null && !Array.isArray(agent))
+    .map((agent) => {
+      const record = agent as Record<string, unknown>;
+      const id = stringValue(record['id']);
+      return id ? [id, record] : null;
+    })
+    .filter((entry): entry is [string, Record<string, unknown>] => entry !== null);
+  if (objectAgents.length === 0) return normalized;
+
   return {
-    ...capabilities,
-    agents: Object.fromEntries(
-      agents
-        .filter((agent) => typeof agent === 'object' && agent !== null && !Array.isArray(agent))
-        .map((agent) => {
-          const record = agent as Record<string, unknown>;
-          const id = stringValue(record['id']);
-          return id ? [id, record] : null;
-        })
-        .filter((entry): entry is [string, Record<string, unknown>] => entry !== null),
-    ),
+    ...normalized,
+    agents: Object.fromEntries(objectAgents),
   };
 }
 
@@ -1215,6 +2224,7 @@ async function hostedManagedExecutorFetch(
   assignmentClaimToken?: string,
   runLeaseToken?: string,
   allowedStatuses: number[] = [],
+  dispatcher?: HostedManagedExecutorDispatcher,
 ): Promise<Response> {
   if (!profile.workspaceId || !profile.managedExecutorId || !profile.credential) {
     throw new Error(
@@ -1231,26 +2241,37 @@ async function hostedManagedExecutorFetch(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const signed = await signWorkerRequest(profile, method, requestPath, serialized);
-    const response = await transportFetch(url, {
+    const headers = {
+      Authorization: `Bearer ${profile.credential}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(runLeaseToken
+        ? { 'X-Viewport-Run-Lease': runLeaseToken }
+        : assignmentClaimToken
+          ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken }
+          : {}),
+      'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
+      'X-Viewport-Worker-Timestamp': signed.timestamp,
+      'X-Viewport-Worker-Nonce': signed.nonce,
+      'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
+      'X-Viewport-Worker-Signature': signed.signature,
+      ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
+    };
+    const request = {
       method,
-      headers: {
-        Authorization: `Bearer ${profile.credential}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(runLeaseToken
-          ? { 'X-Viewport-Run-Lease': runLeaseToken }
-          : assignmentClaimToken
-            ? { 'X-Viewport-Assignment-Claim': assignmentClaimToken }
-            : {}),
-        'X-Viewport-Worker-Fingerprint': profile.publicKeyFingerprint,
-        'X-Viewport-Worker-Timestamp': signed.timestamp,
-        'X-Viewport-Worker-Nonce': signed.nonce,
-        'X-Viewport-Worker-Body-SHA256': signed.bodySha256,
-        'X-Viewport-Worker-Signature': signed.signature,
-        ...(signed.serverId ? { 'X-Viewport-Server-Id': signed.serverId } : {}),
-      },
-      ...(method === 'GET' ? {} : { body: serialized }),
-    });
+      path,
+      requestPath,
+      url,
+      serialized,
+      headers,
+    };
+    const response = dispatcher
+      ? await dispatcher(request)
+      : await transportFetch(url, {
+          method,
+          headers,
+          ...(method === 'GET' ? {} : { body: serialized }),
+        });
     if (response.ok || allowedStatuses.includes(response.status)) {
       return response;
     }
@@ -1299,6 +2320,30 @@ function retryAfterMs(response: Response): number {
   return 5_000;
 }
 
+function relayWorkerConnectionTimeoutMs(): number {
+  return positiveIntegerFromEnv('VIEWPORT_RELAY_WORKER_CONNECT_TIMEOUT_MS') ?? 10_000;
+}
+
+function relayWorkerRequestTimeoutMs(): number {
+  return positiveIntegerFromEnv('VIEWPORT_RELAY_WORKER_REQUEST_TIMEOUT_MS') ?? 60_000;
+}
+
+function positiveIntegerFromEnv(name: string): number | undefined {
+  const value = process.env[name];
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function relayWsBaseUrlFromServerUrl(serverUrl: string): string {
+  const parsed = new URL(serverUrl);
+  const protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+  const hostname = parsed.hostname.startsWith('api.')
+    ? `relay.${parsed.hostname.slice(4)}`
+    : parsed.hostname;
+  return `${protocol}//${hostname}${parsed.port ? `:${parsed.port}` : ''}/ws`;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1331,6 +2376,12 @@ function positiveInteger(value: unknown): number | undefined {
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+function arrayOfStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+    : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

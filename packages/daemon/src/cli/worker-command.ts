@@ -62,8 +62,8 @@ function workerHelpText(): string {
     'Usage: vpd worker <command>',
     '',
     'Commands:',
-    '  start --mode persistent --transport polling|relay|inbound [--lease <seconds>]',
-    '  run-once (--lease <lease-token>|--bootstrap <file>) --transport polling|relay|inbound',
+    '  start [--registration-profile <path>] [--mode persistent] [--transport polling|relay|inbound] [--lease <seconds>]',
+    '  run-once (--lease <lease-token>|--bootstrap <file>) [--transport polling|relay|inbound]',
     '  stop [--json]',
     '  doctor [--json] [--registration-profile <path>]',
     '  reset [--json] [--force]',
@@ -554,8 +554,10 @@ async function workerStart(): Promise<void> {
   }
   const result = await runStandaloneWorker({
     lifecycle,
-    transport: normalizeWorkerTransport(getFlag('transport')),
+    transport: getFlag('transport') ? normalizeWorkerTransport(getFlag('transport')) : undefined,
     once: getArgs().includes('--once'),
+    registrationProfilePath:
+      getFlag('registration-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE_FILE'],
     leaseSeconds: positiveIntFlag(getFlag('lease')) ?? DEFAULT_WORKER_LEASE_SECONDS,
   });
   if (asJson) {
@@ -589,10 +591,12 @@ async function workerRunOnce(): Promise<void> {
   }
   const result = await runStandaloneWorker({
     lifecycle: 'ephemeral',
-    transport: normalizeWorkerTransport(getFlag('transport')),
+    transport: getFlag('transport') ? normalizeWorkerTransport(getFlag('transport')) : undefined,
     once: true,
     leaseToken: lease?.trim(),
     bootstrapPath: bootstrap?.trim(),
+    registrationProfilePath:
+      getFlag('registration-profile') ?? process.env['VIEWPORT_MANAGED_EXECUTOR_PROFILE_FILE'],
   });
   if (asJson) {
     printJson({ command: 'worker run-once', ok: true, ...result });

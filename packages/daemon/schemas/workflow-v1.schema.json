@@ -234,6 +234,10 @@
             }
           }
         },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": true
+        },
         "maxDurationSeconds": { "type": "integer", "minimum": 1, "maximum": 604800 }
       }
     },

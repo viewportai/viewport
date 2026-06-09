@@ -5,6 +5,7 @@ import type { GatewayCompletionRequest, GatewayCompletionResponse, GatewayProvid
 
 export interface LiteLlmGatewayProviderOptions {
   baseUrl: string;
+  apiKey?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -12,10 +13,12 @@ export class LiteLlmGatewayProvider implements GatewayProvider {
   readonly id = 'litellm' as const;
 
   private readonly baseUrl: string;
+  private readonly apiKey?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: LiteLlmGatewayProviderOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.apiKey = options.apiKey;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -26,12 +29,15 @@ export class LiteLlmGatewayProvider implements GatewayProvider {
       body: JSON.stringify(this.body(request)),
     });
 
-    return toGatewayResponse(response);
+    return toGatewayResponse(response, request.stream === true);
   }
 
   private headers(request: GatewayCompletionRequest): Headers {
     const headers = new Headers(request.headers);
     headers.set('content-type', 'application/json');
+    if (this.apiKey) {
+      headers.set('authorization', `Bearer ${this.apiKey}`);
+    }
     headers.set('x-viewport-tenant-id', request.correlation.tenantId);
     headers.set('x-viewport-workspace-id', request.correlation.workspaceId);
     headers.set('x-viewport-run-id', request.correlation.runId);
@@ -78,7 +84,17 @@ function metadata(request: GatewayCompletionRequest): Record<string, unknown> {
   };
 }
 
-async function toGatewayResponse(response: Response): Promise<GatewayCompletionResponse> {
+async function toGatewayResponse(response: Response, streaming: boolean): Promise<GatewayCompletionResponse> {
+  if (streaming && response.body) {
+    return {
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: null,
+      stream: response.body,
+      costUsd: costFromHeader(response.headers),
+    };
+  }
+
   const text = await response.text();
   const body = text.length > 0 ? safeJson(text) : null;
   return {
