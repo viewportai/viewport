@@ -112,7 +112,9 @@ describe('worker profile defaults', () => {
       expect(typeof agent.available).toBe('boolean');
     }
     expect(profile.capabilities.agents.claude?.models).toEqual(expect.arrayContaining(['sonnet']));
-    expect(profile.capabilities.agents.codex?.models).toEqual(expect.arrayContaining(['gpt-5.4']));
+    expect(profile.capabilities.agents.codex?.models).toEqual(
+      expect.arrayContaining(['gpt-5-codex']),
+    );
     expect(profile.capabilities.integrations).toEqual(
       expect.arrayContaining(['github', 'slack', 'linear']),
     );
