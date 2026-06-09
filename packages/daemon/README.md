@@ -168,19 +168,19 @@ development from accidentally streaming to production after `vpd profile use
 prod`, and it also prevents changing a shell default from silently rerouting a
 running daemon.
 
-Managed workflow runners can also be operated from the daemon CLI:
+Managed workers can also be operated from the daemon CLI:
 
 ```bash
-vpd workflow worker --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool> --doctor --json
-vpd workflow worker --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool>
+vpd worker doctor --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool> --json
+vpd worker start --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool>
 ```
 
 When the Viewport app creates or rotates a runner credential it also returns a
 registration profile. Save that JSON profile locally and start the worker with:
 
 ```bash
-vpd workflow worker --registration-profile="$HOME/.viewport/managed-executors/<runner>.json" --doctor --json
-vpd workflow worker --registration-profile="$HOME/.viewport/managed-executors/<runner>.json"
+vpd worker doctor --registration-profile="$HOME/.viewport/managed-executors/<runner>.json" --json
+vpd worker start --registration-profile="$HOME/.viewport/managed-executors/<runner>.json"
 ```
 
 `--doctor` checks the local daemon agent inventory and proves the platform

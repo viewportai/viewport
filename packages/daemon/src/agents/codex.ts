@@ -5,6 +5,8 @@
 import { codexSessionsDir } from '../discovery/codex.js';
 import type { AgentDefinition } from '../core/agent-registry.js';
 import { importCodexSdkModule, isCodexSdkAvailable } from '../adapters/codex-sdk-loader.js';
+import { resolveCodexPathOverride } from '../adapters/codex.js';
+import { commandExists } from './command-detection.js';
 import { DEFAULT_CODEX_MODEL } from './codex-defaults.js';
 
 export const codexAgent: AgentDefinition = {
@@ -28,8 +30,11 @@ export const codexAgent: AgentDefinition = {
   },
 
   detection: {
-    check: async () => isCodexSdkAvailable(),
-    description: 'Codex SDK (@openai/codex-sdk or @openai/codex)',
+    check: async () => {
+      if (! (await isCodexSdkAvailable())) return false;
+      return commandExists(resolveCodexPathOverride());
+    },
+    description: 'Codex SDK plus executable codex CLI bridge',
   },
 
   createAdapter: async () => {

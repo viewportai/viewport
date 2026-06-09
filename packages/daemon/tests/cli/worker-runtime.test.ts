@@ -398,7 +398,7 @@ describe('standalone worker runtime', () => {
           transport: 'polling',
           capabilities: {
             schema: 'viewport.managed_executor_capabilities/v1',
-            agents: [{ id: 'codex', displayName: 'Codex', tier: 'sdk', available: true }],
+            agents: ['codex'],
           },
           identity: {
             public_key: identity.publicKey,
@@ -421,7 +421,7 @@ describe('standalone worker runtime', () => {
               '      OPENAI_API_KEY:',
               '        secret: OPENAI_API_KEY',
               '      OPENAI_BASE_URL:',
-              '        value: https://gateway.getviewport.test/v1',
+              '        value: https://gateway.getviewport.test/openai/v1',
               '      VIEWPORT_LLM_PROVIDER:',
               '        value: openai',
               '      VIEWPORT_LLM_MODEL:',
@@ -430,7 +430,7 @@ describe('standalone worker runtime', () => {
               '        secret: VIEWPORT_LLM_VIRTUAL_KEY',
               '    command: |',
               '      case "$OPENAI_API_KEY" in vk_*) ;; *) exit 12;; esac',
-              '      test "$OPENAI_BASE_URL" = "https://gateway.getviewport.test/v1"',
+              '      test "$OPENAI_BASE_URL" = "https://gateway.getviewport.test/openai/v1"',
               '      test "$VIEWPORT_LLM_PROVIDER" = "openai"',
               '      test "$VIEWPORT_LLM_MODEL" = "gpt-4o-mini"',
               '      test "$VIEWPORT_LLM_VIRTUAL_KEY" = "$OPENAI_API_KEY"',
@@ -474,9 +474,11 @@ describe('standalone worker runtime', () => {
     ]);
     expect(requests[0]?.body.capabilities).not.toHaveProperty('schema');
     expect(requests[0]?.body.capabilities).toMatchObject({
-      agents: {
-        codex: expect.objectContaining({ available: true }),
-      },
+      agents: ['codex'],
+    });
+    expect(requests.at(-1)?.body).toMatchObject({
+      status: 'offline',
+      capabilities: expect.objectContaining({ agents: ['codex'] }),
     });
     expect(requests.some((request) => request.url.endsWith('/claim'))).toBe(false);
     expect(requests[1]?.headers['x-viewport-run-lease']).toBe('vplease_bootstrap');

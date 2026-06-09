@@ -64,16 +64,11 @@ export async function workflow(): Promise<void> {
     await cancelWorkflowRun();
     return;
   }
-  if (subcommand === 'worker') {
-    const { workflowWorker } = await import('./workflow-managed-worker.js');
-    await workflowWorker();
-    return;
-  }
   throw new Error(workflowUsage());
 }
 
 function workflowUsage(): string {
-  return 'Usage: vpd workflow <validate|run|smoke|agents|runs|show|rerun|approve|cancel|worker> ...';
+  return 'Usage: vpd workflow <validate|run|smoke|agents|runs|show|rerun|approve|cancel> ...';
 }
 
 function showWorkflowHelp(): void {

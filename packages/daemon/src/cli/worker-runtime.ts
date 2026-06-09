@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import YAML from 'yaml';
@@ -22,7 +23,7 @@ import { transportFetch } from './network.js';
 import type {
   ManagedSessionVerificationCommand,
   ManagedSessionVerificationContract,
-} from './workflow-managed-worker-types.js';
+} from './managed-session-verification-contract.js';
 import { acquireWorkerProcessLock } from './worker-process-lock.js';
 import {
   readWorkerPairingRecord,
@@ -33,10 +34,11 @@ import {
 
 export interface StandaloneWorkerOptions {
   lifecycle: WorkerLifecycle;
-  transport: WorkerTransportMode;
+  transport?: WorkerTransportMode;
   once: boolean;
   leaseToken?: string;
   bootstrapPath?: string;
+  registrationProfilePath?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
   abortSignal?: AbortSignal;
@@ -79,9 +81,27 @@ interface WorkerRuntimeBootstrap {
 }
 
 interface WorkerIdentityFile {
+  version?: number;
+  algorithm?: string;
   publicKey: string;
   privateKey: string;
   publicKeyFingerprint: string;
+  createdAt?: string;
+}
+
+interface ManagedExecutorRegistrationProfile {
+  serverUrl?: string;
+  serverId?: string;
+  workspaceId?: string;
+  executorId?: string;
+  credential?: string;
+  credentialFile?: string;
+  accessMode?: string;
+  runnerProfile?: string;
+  runnerPosture?: Record<string, unknown>;
+  workspaceRoot?: string;
+  identityKeyPath?: string;
+  capabilities?: Record<string, unknown>;
 }
 
 interface ClaimedLease {
@@ -416,7 +436,10 @@ const DEFAULT_HOSTED_LEASE_SECONDS = 1_800;
 export async function runStandaloneWorker(
   options: StandaloneWorkerOptions,
 ): Promise<StandaloneWorkerResult> {
-  const bootstrap = await loadWorkerRuntimeBootstrap(options.bootstrapPath);
+  const bootstrap = await loadWorkerRuntimeBootstrap(
+    options.bootstrapPath,
+    options.registrationProfilePath,
+  );
   const profile = bootstrap.profile;
   let processLock: ReturnType<typeof acquireWorkerProcessLock> | null = null;
 
@@ -598,12 +621,242 @@ async function executeClaim(
   );
 }
 
-async function loadWorkerRuntimeBootstrap(bootstrapPath?: string): Promise<WorkerRuntimeBootstrap> {
+async function loadWorkerRuntimeBootstrap(
+  bootstrapPath?: string,
+  registrationProfilePath?: string,
+): Promise<WorkerRuntimeBootstrap> {
   if (bootstrapPath) {
     return loadSandboxBootstrap(bootstrapPath);
   }
+  if (registrationProfilePath) {
+    return {
+      profile: await loadManagedExecutorRuntimeProfile(registrationProfilePath),
+    };
+  }
 
   return { profile: await loadWorkerRuntimeProfile() };
+}
+
+async function loadManagedExecutorRuntimeProfile(
+  profilePath: string,
+): Promise<WorkerRuntimeProfile> {
+  const profile = await readManagedExecutorRegistrationProfile(profilePath);
+  const credential = await credentialFromManagedExecutorProfile(profile);
+  const missing: string[] = [];
+  if (!profile.serverUrl) missing.push('server URL');
+  if (!profile.workspaceId) missing.push('workspace id');
+  if (!profile.executorId) missing.push('managed executor id');
+  if (!credential) missing.push('managed executor credential');
+  if (missing.length > 0) {
+    throw new Error(`Managed executor registration profile is missing ${missing.join(', ')}.`);
+  }
+
+  const identity = await ensureManagedExecutorIdentity(
+    profile.identityKeyPath ??
+      managedExecutorIdentityPath(profile.workspaceId!, profile.executorId!),
+  );
+  const workspaceRoot = managedExecutorWorkspaceRoot(profile);
+  await fs.mkdir(workspaceRoot, { recursive: true, mode: 0o700 });
+  const runnerPool =
+    stringValue(profile.capabilities?.['runner_pool']) ??
+    stringValue(profile.capabilities?.['runnerPool']) ??
+    profile.runnerProfile;
+  const capabilities = {
+    ...(profile.capabilities ?? {}),
+    ...(runnerPool ? { runner_pool: runnerPool } : {}),
+    ...(profile.runnerPosture ? { runner_posture: profile.runnerPosture } : {}),
+  };
+
+  return {
+    serverUrl: profile.serverUrl!.replace(/\/+$/, ''),
+    serverId: profile.serverId,
+    lifecycle: 'persistent',
+    transport: workerTransportValue(profile.accessMode) ?? 'polling',
+    workspaceId: profile.workspaceId!,
+    managedExecutorId: profile.executorId!,
+    credential: credential!,
+    workspaceRoot,
+    identityKeyPath: identity.path,
+    publicKeyFingerprint: identity.publicKeyFingerprint,
+    capabilities,
+  };
+}
+
+async function readManagedExecutorRegistrationProfile(
+  profilePath: string,
+): Promise<ManagedExecutorRegistrationProfile> {
+  const resolved = resolveProfilePath(profilePath);
+  const parsed = JSON.parse(await fs.readFile(resolved, 'utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Managed executor registration profile is not a JSON object: ${resolved}`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const schema = stringValue(record['schema']);
+  if (schema && schema !== 'viewport.managed_executor_registration/v1') {
+    throw new Error(`Unsupported managed executor registration profile schema: ${schema}`);
+  }
+  const daemon = recordValue(record['daemon']);
+  const worker = recordValue(daemon?.['worker']);
+
+  return {
+    serverUrl:
+      stringValue(record['server_url']) ??
+      stringValue(record['serverUrl']) ??
+      stringValue(worker?.['serverUrl']) ??
+      stringValue(worker?.['server_url']),
+    serverId:
+      stringValue(record['server_id']) ??
+      stringValue(record['serverId']) ??
+      stringValue(record['control_plane_id']) ??
+      stringValue(worker?.['serverId']) ??
+      stringValue(worker?.['server_id']) ??
+      stringValue(worker?.['control_plane_id']),
+    workspaceId:
+      stringValue(record['workspace_id']) ??
+      stringValue(record['workspaceId']) ??
+      stringValue(worker?.['workspaceId']) ??
+      stringValue(worker?.['workspace_id']),
+    executorId:
+      stringValue(record['managed_executor_id']) ??
+      stringValue(record['executor_id']) ??
+      stringValue(record['executorId']) ??
+      stringValue(worker?.['managedExecutorId']) ??
+      stringValue(worker?.['managed_executor_id']),
+    credential: stringValue(record['credential']) ?? stringValue(worker?.['credential']),
+    credentialFile:
+      stringValue(record['credential_file']) ??
+      stringValue(record['credentialFile']) ??
+      stringValue(worker?.['credentialFile']) ??
+      stringValue(worker?.['credential_file']),
+    accessMode:
+      stringValue(record['access_mode']) ??
+      stringValue(record['accessMode']) ??
+      stringValue(worker?.['accessMode']) ??
+      stringValue(worker?.['access_mode']) ??
+      stringValue(worker?.['transport']),
+    runnerProfile:
+      stringValue(record['runner_profile']) ??
+      stringValue(record['runnerProfile']) ??
+      stringValue(worker?.['runnerProfile']) ??
+      stringValue(worker?.['runner_profile']),
+    runnerPosture:
+      recordValue(record['runner_posture']) ??
+      recordValue(record['runnerPosture']) ??
+      recordValue(worker?.['runnerPosture']) ??
+      recordValue(worker?.['runner_posture']) ??
+      undefined,
+    workspaceRoot:
+      stringValue(record['workspace_root']) ??
+      stringValue(record['workspaceRoot']) ??
+      stringValue(record['workdir']) ??
+      stringValue(worker?.['workspaceRoot']) ??
+      stringValue(worker?.['workspace_root']) ??
+      stringValue(worker?.['workdir']),
+    identityKeyPath:
+      stringValue(record['identity_key_path']) ??
+      stringValue(record['identityKeyPath']) ??
+      stringValue(worker?.['identityKeyPath']) ??
+      stringValue(worker?.['identity_key_path']),
+    capabilities: recordValue(record['capabilities']) ?? recordValue(worker?.['capabilities']) ?? undefined,
+  };
+}
+
+async function credentialFromManagedExecutorProfile(
+  profile: ManagedExecutorRegistrationProfile,
+): Promise<string | undefined> {
+  if (profile.credentialFile) {
+    const value = (await fs.readFile(resolveProfilePath(profile.credentialFile), 'utf8')).trim();
+    if (!value) {
+      throw new Error(
+        `Managed executor credential file is empty: ${resolveProfilePath(profile.credentialFile)}`,
+      );
+    }
+    return value;
+  }
+  return (
+    profile.credential ??
+    process.env['VIEWPORT_MANAGED_EXECUTOR_TOKEN'] ??
+    process.env['VPD_MANAGED_EXECUTOR_TOKEN']
+  );
+}
+
+function managedExecutorWorkspaceRoot(profile: ManagedExecutorRegistrationProfile): string {
+  if (profile.workspaceRoot) return path.resolve(resolveProfilePath(profile.workspaceRoot));
+  const safeName = `${safeFilename(profile.workspaceId ?? 'workspace')}-${safeFilename(
+    profile.executorId ?? 'executor',
+  )}`;
+  return path.join(os.homedir(), '.viewport', 'managed-executors', 'workspaces', safeName);
+}
+
+function managedExecutorIdentityPath(workspaceId: string, executorId: string): string {
+  const safeName = `${safeFilename(workspaceId)}-${safeFilename(executorId)}.json`;
+  return path.join(os.homedir(), '.viewport', 'managed-executors', 'identities', safeName);
+}
+
+async function ensureManagedExecutorIdentity(identityPath: string): Promise<
+  WorkerIdentityFile & { path: string }
+> {
+  const resolved = resolveProfilePath(identityPath);
+  try {
+    const parsed = JSON.parse(await fs.readFile(resolved, 'utf8')) as Partial<WorkerIdentityFile>;
+    if (
+      parsed.algorithm?.toLowerCase() === 'ed25519' &&
+      typeof parsed.publicKey === 'string' &&
+      typeof parsed.privateKey === 'string'
+    ) {
+      return {
+        publicKey: parsed.publicKey,
+        privateKey: parsed.privateKey,
+        publicKeyFingerprint:
+          normalizeWorkerFingerprint(parsed.publicKeyFingerprint) ??
+          publicKeyFingerprint(parsed.publicKey),
+        path: resolved,
+      };
+    }
+  } catch {
+    // Generate below.
+  }
+
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const publicKey = pair.publicKey.export({ format: 'pem', type: 'spki' }).toString();
+  const privateKey = pair.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const record: WorkerIdentityFile = {
+    version: 1,
+    algorithm: 'ed25519',
+    publicKey,
+    privateKey,
+    publicKeyFingerprint: publicKeyFingerprint(publicKey),
+    createdAt: new Date().toISOString(),
+  };
+  await fs.mkdir(path.dirname(resolved), { recursive: true, mode: 0o700 });
+  await fs.writeFile(resolved, `${JSON.stringify(record, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  await fs.chmod(resolved, 0o600);
+  return { ...record, path: resolved };
+}
+
+function publicKeyFingerprint(publicKeyPem: string): string {
+  const key = crypto.createPublicKey(publicKeyPem);
+  const der = key.export({ format: 'der', type: 'spki' });
+  return crypto.createHash('sha256').update(der).digest('hex');
+}
+
+function normalizeWorkerFingerprint(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase().replace(/^sha256:/, '');
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : undefined;
+}
+
+function resolveProfilePath(profilePath: string): string {
+  if (profilePath === '~') return os.homedir();
+  if (profilePath.startsWith('~/')) return path.join(os.homedir(), profilePath.slice(2));
+  return path.resolve(profilePath);
+}
+
+function safeFilename(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'default';
 }
 
 async function loadWorkerRuntimeProfile(): Promise<WorkerRuntimeProfile> {
@@ -794,8 +1047,9 @@ function gatewayLeaseEnv(gateway: GatewayLease | undefined): Record<string, stri
   if (gateway.provider === 'openai') {
     return {
       ...common,
+      CODEX_API_KEY: gateway.virtualKey.token,
       OPENAI_API_KEY: gateway.virtualKey.token,
-      OPENAI_BASE_URL: `${base}/v1`,
+      OPENAI_BASE_URL: `${base}/openai/v1`,
     };
   }
 
@@ -1946,18 +2200,19 @@ function managedExecutorCapabilities(
   const { schema: _schema, ...normalized } = capabilities;
   const agents = capabilities['agents'];
   if (!Array.isArray(agents)) return normalized;
+  const objectAgents = agents
+    .filter((agent) => typeof agent === 'object' && agent !== null && !Array.isArray(agent))
+    .map((agent) => {
+      const record = agent as Record<string, unknown>;
+      const id = stringValue(record['id']);
+      return id ? [id, record] : null;
+    })
+    .filter((entry): entry is [string, Record<string, unknown>] => entry !== null);
+  if (objectAgents.length === 0) return normalized;
+
   return {
     ...normalized,
-    agents: Object.fromEntries(
-      agents
-        .filter((agent) => typeof agent === 'object' && agent !== null && !Array.isArray(agent))
-        .map((agent) => {
-          const record = agent as Record<string, unknown>;
-          const id = stringValue(record['id']);
-          return id ? [id, record] : null;
-        })
-        .filter((entry): entry is [string, Record<string, unknown>] => entry !== null),
-    ),
+    agents: Object.fromEntries(objectAgents),
   };
 }
 

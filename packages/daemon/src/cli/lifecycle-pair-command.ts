@@ -108,7 +108,7 @@ function pairHelpText(): string {
     '  vpd pair <code>',
     '',
     'Options:',
-    '  --worker                         Pair a workflow worker profile instead of a personal monitor',
+    '  --worker                         Pair a team worker profile instead of a personal monitor',
     '  --transport polling|relay|inbound Worker transport; polling is the hosted default',
     '  --workdir <path>                  Worker workspace root recorded during pairing',
     '  --runner-pool <name>              Optional runner pool advertised by this worker',

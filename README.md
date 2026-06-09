@@ -114,19 +114,19 @@ vpd doctor
 vpd status --json
 ```
 
-Managed workflow runner checks:
+Managed worker checks:
 
 ```bash
-vpd workflow worker --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool> --doctor --json
-vpd workflow worker --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool>
+vpd worker doctor --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool> --json
+vpd worker start --server https://api.getviewport.com --workspace <org-id> --executor <runner-id> --credential <vpexec-token> --runner-pool <pool>
 ```
 
 The web app now issues a portable registration profile when you create or rotate
 a runner credential. Write that profile to the suggested path, then run:
 
 ```bash
-vpd workflow worker --registration-profile="$HOME/.viewport/managed-executors/<runner>.json" --doctor --json
-vpd workflow worker --registration-profile="$HOME/.viewport/managed-executors/<runner>.json"
+vpd worker doctor --registration-profile="$HOME/.viewport/managed-executors/<runner>.json" --json
+vpd worker start --registration-profile="$HOME/.viewport/managed-executors/<runner>.json"
 ```
 
 `--doctor` validates the local daemon adapters and the platform runner
