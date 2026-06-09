@@ -500,7 +500,9 @@ describe('standalone worker runtime', () => {
     );
     expect(bootstrapIdentityFiles).toEqual([]);
     const localRunsDir = path.join(homeDir, 'runs', 'workflows');
-    const [localRunFile] = (await fs.readdir(localRunsDir)).filter((name) => name.endsWith('.json'));
+    const [localRunFile] = (await fs.readdir(localRunsDir)).filter((name) =>
+      name.endsWith('.json'),
+    );
     const localRun = JSON.parse(
       await fs.readFile(path.join(localRunsDir, localRunFile ?? ''), 'utf8'),
     ) as {

@@ -31,7 +31,7 @@ export const codexAgent: AgentDefinition = {
 
   detection: {
     check: async () => {
-      if (! (await isCodexSdkAvailable())) return false;
+      if (!(await isCodexSdkAvailable())) return false;
       return commandExists(resolveCodexPathOverride());
     },
     description: 'Codex SDK plus executable codex CLI bridge',
