@@ -35,7 +35,9 @@ describe('grouped CLI command help', () => {
     ['session'],
     ['hook'],
     ['daemon', 'service'],
-    ['workflow', 'worker', '--help'],
+    // NOTE: `worker` is a top-level command (`vpd worker`), not a `workflow` subcommand
+    // (workflow subcommands are validate/run/smoke/agents/runs/show/rerun/approve/cancel).
+    // The real worker help is `vpd worker --help`, asserted on the next line.
     ['worker', '--help'],
     ['watch', '--help'],
   ];

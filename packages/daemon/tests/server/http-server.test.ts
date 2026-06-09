@@ -816,6 +816,20 @@ describe('HTTP Server', () => {
     });
     const { id } = JSON.parse(createRes.payload);
 
+    // Deterministic: this test verifies the HTTP layer PRESERVES the Product20 ids end-to-end
+    // (request body → runner args → response). We mock startRun so it asserts id pass-through, not
+    // real async workflow execution — executing the shell node for real made this test flaky
+    // (the run record raced). Real execution is covered by the e2e suites.
+    const startRun = vi.spyOn(daemon.workflowRunner, 'startRun').mockImplementation(
+      async (req) =>
+        ({
+          id: 'workflow-run-1',
+          agentSessionId: req.agentSessionId,
+          platformRunId: req.platformRunId,
+          runtimeTargetId: req.runtimeTargetId,
+        }) as unknown as Awaited<ReturnType<typeof daemon.workflowRunner.startRun>>,
+    );
+
     const res = await app.inject({
       method: 'POST',
       url: '/api/workflows/runs',
@@ -842,6 +856,13 @@ nodes:
     expect(body.run.agentSessionId).toBe('agent-session-1');
     expect(body.run.platformRunId).toBe('workflow-run-1');
     expect(body.run.runtimeTargetId).toBe('runtime-target-1');
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentSessionId: 'agent-session-1',
+        platformRunId: 'workflow-run-1',
+        runtimeTargetId: 'runtime-target-1',
+      }),
+    );
   });
 
   it('POST /api/workflows/runs/:id/approvals/:nodeId accepts approval feedback', async () => {

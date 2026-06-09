@@ -252,11 +252,7 @@ export class CodexSession extends EventEmitter implements Session {
       const repeatedToolCalls = new Map<string, number>();
       let totalToolCalls = 0;
       for await (const event of modernEvents) {
-        totalToolCalls = this.assertToolCallIsNotLooping(
-          event,
-          repeatedToolCalls,
-          totalToolCalls,
-        );
+        totalToolCalls = this.assertToolCallIsNotLooping(event, repeatedToolCalls, totalToolCalls);
         const failure = extractStreamError(event);
         if (failure) throw new Error(failure);
         yield event;
@@ -271,11 +267,7 @@ export class CodexSession extends EventEmitter implements Session {
       const repeatedToolCalls = new Map<string, number>();
       let totalToolCalls = 0;
       for await (const event of legacyEvents) {
-        totalToolCalls = this.assertToolCallIsNotLooping(
-          event,
-          repeatedToolCalls,
-          totalToolCalls,
-        );
+        totalToolCalls = this.assertToolCallIsNotLooping(event, repeatedToolCalls, totalToolCalls);
         const failure = extractStreamError(event);
         if (failure) throw new Error(failure);
         yield event;
@@ -422,16 +414,14 @@ function codexSessionLogRoots(env: NodeJS.ProcessEnv = process.env): string[] {
   const explicit = env['CODEX_SESSION_LOG_DIR'];
   if (explicit && explicit.trim()) return [explicit.trim()];
 
-  const home = env['CODEX_HOME'] && env['CODEX_HOME'].trim()
-    ? env['CODEX_HOME'].trim()
-    : path.join(env['HOME'] || '/root', '.codex');
+  const home =
+    env['CODEX_HOME'] && env['CODEX_HOME'].trim()
+      ? env['CODEX_HOME'].trim()
+      : path.join(env['HOME'] || '/root', '.codex');
   return [path.join(home, 'sessions')];
 }
 
-async function primeCodexLogOffsets(
-  roots: string[],
-  offsets: Map<string, number>,
-): Promise<void> {
+async function primeCodexLogOffsets(roots: string[], offsets: Map<string, number>): Promise<void> {
   for (const file of await listCodexJsonlFiles(roots)) {
     try {
       const stat = await fs.stat(file);

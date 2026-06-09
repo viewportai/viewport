@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CodexAdapter, resolveCodexApiKey, resolveCodexPathOverride } from '../../src/adapters/codex.js';
+import {
+  CodexAdapter,
+  resolveCodexApiKey,
+  resolveCodexPathOverride,
+} from '../../src/adapters/codex.js';
 import { DEFAULT_CODEX_MODEL } from '../../src/agents/codex-defaults.js';
 import type { SessionMessage } from '../../src/core/types.js';
 
@@ -12,16 +16,22 @@ describe('CodexAdapter', () => {
   });
 
   it('prefers the run-scoped Codex/OpenAI API key over ambient Codex auth', () => {
-    expect(resolveCodexApiKey(undefined, {
-      OPENAI_API_KEY: 'vk_run_scoped',
-    } as NodeJS.ProcessEnv)).toBe('vk_run_scoped');
-    expect(resolveCodexApiKey(undefined, {
-      CODEX_API_KEY: 'vk_codex',
-      OPENAI_API_KEY: 'vk_openai',
-    } as NodeJS.ProcessEnv)).toBe('vk_codex');
-    expect(resolveCodexApiKey('explicit', {
-      CODEX_API_KEY: 'vk_codex',
-    } as NodeJS.ProcessEnv)).toBe('explicit');
+    expect(
+      resolveCodexApiKey(undefined, {
+        OPENAI_API_KEY: 'vk_run_scoped',
+      } as NodeJS.ProcessEnv),
+    ).toBe('vk_run_scoped');
+    expect(
+      resolveCodexApiKey(undefined, {
+        CODEX_API_KEY: 'vk_codex',
+        OPENAI_API_KEY: 'vk_openai',
+      } as NodeJS.ProcessEnv),
+    ).toBe('vk_codex');
+    expect(
+      resolveCodexApiKey('explicit', {
+        CODEX_API_KEY: 'vk_codex',
+      } as NodeJS.ProcessEnv),
+    ).toBe('explicit');
   });
 
   it('streams chunks and emits final message for modern runStreamed() result.events', async () => {
@@ -157,9 +167,7 @@ describe('CodexAdapter', () => {
     const adapter = new CodexAdapter(createClient);
     const session = await adapter.startSession('/tmp/project');
 
-    await expect(session.sendPrompt('ship it')).rejects.toThrow(
-      'Codex exceeded 32 tool calls',
-    );
+    await expect(session.sendPrompt('ship it')).rejects.toThrow('Codex exceeded 32 tool calls');
     expect(session.state).toBe('errored');
   });
 
@@ -340,14 +348,18 @@ describe('CodexAdapter', () => {
       cwd: '/tmp/project',
       skipGitRepoCheck: true,
     });
-    expect(run).toHaveBeenNthCalledWith(2, {
-      input: 'legacy prompt',
-      cwd: '/tmp/project',
-    }, {
-      workingDirectory: '/tmp/project',
-      cwd: '/tmp/project',
-      skipGitRepoCheck: true,
-    });
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      {
+        input: 'legacy prompt',
+        cwd: '/tmp/project',
+      },
+      {
+        workingDirectory: '/tmp/project',
+        cwd: '/tmp/project',
+        skipGitRepoCheck: true,
+      },
+    );
   });
 
   it('transitions session to errored and emits ended when run fails', async () => {

@@ -708,7 +708,8 @@ describe('platform-governed customer-managed context', () => {
       (async () =>
         new Response(
           JSON.stringify({
-            message: 'Memory retrieval source ids must be a subset of the session context working set.',
+            message:
+              'Memory retrieval source ids must be a subset of the session context working set.',
             data: {
               schema: 'unexpected.schema/v1',
               secret_body: 'sk_should_not_appear',

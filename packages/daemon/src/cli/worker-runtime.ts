@@ -141,7 +141,10 @@ function runtimeContextTargetIdValue(
   );
 }
 
-function hostedRuntimeContextTargetId(profile: WorkerRuntimeProfile, lease: ClaimedLease): string | undefined {
+function hostedRuntimeContextTargetId(
+  profile: WorkerRuntimeProfile,
+  lease: ClaimedLease,
+): string | undefined {
   return (
     lease.runtimeTargetId ??
     (profile.managedExecutorId ? `managed_executor:${profile.managedExecutorId}` : undefined)
@@ -154,7 +157,12 @@ function hostedWorkflowInputs(
 ): Record<string, WorkflowInputValue> | undefined {
   const base = { ...(lease.inputSnapshot ?? {}) } as Record<string, WorkflowInputValue>;
   const runtimeTargetId = hostedRuntimeContextTargetId(profile, lease);
-  if (!profile.serverUrl || !profile.workspaceId || !lease.assignmentClaimToken || !runtimeTargetId) {
+  if (
+    !profile.serverUrl ||
+    !profile.workspaceId ||
+    !lease.assignmentClaimToken ||
+    !runtimeTargetId
+  ) {
     return Object.keys(base).length > 0 ? base : undefined;
   }
 
@@ -171,7 +179,9 @@ function hostedWorkflowInputs(
   return base;
 }
 
-function isWorkflowInputRecord(value: WorkflowInputValue | undefined): value is Record<string, WorkflowInputValue> {
+function isWorkflowInputRecord(
+  value: WorkflowInputValue | undefined,
+): value is Record<string, WorkflowInputValue> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
@@ -757,7 +767,8 @@ async function readManagedExecutorRegistrationProfile(
       stringValue(record['identityKeyPath']) ??
       stringValue(worker?.['identityKeyPath']) ??
       stringValue(worker?.['identity_key_path']),
-    capabilities: recordValue(record['capabilities']) ?? recordValue(worker?.['capabilities']) ?? undefined,
+    capabilities:
+      recordValue(record['capabilities']) ?? recordValue(worker?.['capabilities']) ?? undefined,
   };
 }
 
@@ -793,9 +804,9 @@ function managedExecutorIdentityPath(workspaceId: string, executorId: string): s
   return path.join(os.homedir(), '.viewport', 'managed-executors', 'identities', safeName);
 }
 
-async function ensureManagedExecutorIdentity(identityPath: string): Promise<
-  WorkerIdentityFile & { path: string }
-> {
+async function ensureManagedExecutorIdentity(
+  identityPath: string,
+): Promise<WorkerIdentityFile & { path: string }> {
   const resolved = resolveProfilePath(identityPath);
   try {
     const parsed = JSON.parse(await fs.readFile(resolved, 'utf8')) as Partial<WorkerIdentityFile>;
@@ -845,7 +856,10 @@ function publicKeyFingerprint(publicKeyPem: string): string {
 
 function normalizeWorkerFingerprint(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const normalized = value.trim().toLowerCase().replace(/^sha256:/, '');
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/^sha256:/, '');
   return /^[a-f0-9]{64}$/.test(normalized) ? normalized : undefined;
 }
 
@@ -1732,7 +1746,8 @@ async function maybeExecuteHostedSessionVerification(
   const commands = verificationCommands(contract);
   if (commands.length === 0) return;
 
-  const runDirectoryPath = execution.run.directoryPath ?? lease.directoryPath ?? profile.workspaceRoot;
+  const runDirectoryPath =
+    execution.run.directoryPath ?? lease.directoryPath ?? profile.workspaceRoot;
   const defaultCommandDirectory = verificationDefaultCommandDirectory(execution.run);
   const commandResults: Array<Record<string, unknown>> = [];
   const artifactRefs: string[] = [];
@@ -1829,8 +1844,8 @@ function leaseMayHaveSessionVerification(lease: ClaimedLease): boolean {
   const policyPin = recordValue(lease.workflowSnapshot?.['product20_policy_pin']);
   return Boolean(
     lease.agentSessionId ||
-      stringValue(policyPin?.['agent_session_id']) ||
-      lease.sessionVerificationContract,
+    stringValue(policyPin?.['agent_session_id']) ||
+    lease.sessionVerificationContract,
   );
 }
 
@@ -1839,12 +1854,14 @@ function sessionVerificationContractFromBody(
 ): ManagedSessionVerificationContract | null {
   const record = recordValue(body);
   const data = recordValue(record?.['data']);
-  return sessionVerificationContractValue(
-    data?.['session_verification_contract'] ??
-      data?.['sessionVerificationContract'] ??
-      record?.['session_verification_contract'] ??
-      record?.['sessionVerificationContract'],
-  ) ?? null;
+  return (
+    sessionVerificationContractValue(
+      data?.['session_verification_contract'] ??
+        data?.['sessionVerificationContract'] ??
+        record?.['session_verification_contract'] ??
+        record?.['sessionVerificationContract'],
+    ) ?? null
+  );
 }
 
 function sessionVerificationContractValue(
@@ -1923,7 +1940,10 @@ function verificationDefaultCommandDirectory(run: WorkflowRunRecord): string {
   return root;
 }
 
-function verificationDisplayWorkingDirectory(runDirectoryPath: string, directoryPath: string): string {
+function verificationDisplayWorkingDirectory(
+  runDirectoryPath: string,
+  directoryPath: string,
+): string {
   const root = path.resolve(runDirectoryPath);
   const resolved = path.resolve(directoryPath);
   const relative = path.relative(root, resolved);
