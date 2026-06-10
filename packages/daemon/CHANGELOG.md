@@ -1,3 +1,10 @@
+## [0.29.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.29.0...@viewportai/daemon@0.29.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **test:** deflake root vitest suite via workspace config and cwd-safe fixtures ([#157](https://github.com/viewportai/viewport/issues/157)) ([20f4ff0](https://github.com/viewportai/viewport/commit/20f4ff03c2cea775e4290d62cd36e18fc59966f4))
+
 # [0.29.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.28.0...@viewportai/daemon@0.29.0) (2026-06-10)
 
 
