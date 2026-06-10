@@ -491,10 +491,10 @@ export async function runStandaloneWorker(
     }
 
     if (options.leaseToken) {
-      const lease: ClaimedLease = { id: options.leaseToken, leaseToken: options.leaseToken };
-      await workerTransport.sync(lease, { status: 'completed' });
-      await workerTransport.cleanup(lease);
-      return { claimed: 1, completed: 1, blocked: 0, failed: 0, cleanup: 1, denied: 0 };
+      throw new Error(
+        '`vpd worker run-once --lease` no longer fabricates a completed sync (EXEC-01). ' +
+          'Use `vpd worker run-once --bootstrap <file>` to execute the leased work.',
+      );
     }
 
     const result: StandaloneWorkerResult = {
@@ -1072,6 +1072,9 @@ function gatewayLeaseEnv(gateway: GatewayLease | undefined): Record<string, stri
       ...common,
       ANTHROPIC_API_KEY: gateway.virtualKey.token,
       ANTHROPIC_BASE_URL: `${base}/anthropic`,
+      // Claude Code defaults to its own preferred model; the lease's model
+      // allow-list is the governed truth, so make its head the agent default.
+      ...(model ? { ANTHROPIC_MODEL: model, ANTHROPIC_SMALL_FAST_MODEL: model } : {}),
     };
   }
 
