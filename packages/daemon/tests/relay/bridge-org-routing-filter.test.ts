@@ -6,12 +6,16 @@ import { createOrgRoutingFilter } from '../../src/relay/bridge-org-routing-filte
 
 describe('relay bridge organization routing filter', () => {
   const originalViewportProfile = process.env['VIEWPORT_PROFILE'];
+  const originalHome = process.env['HOME'];
   let allowedDir = '';
+  let isolatedHome = '';
   let blockedDir = '';
   let hintOnlyDir = '';
   let disabledDir = '';
 
   beforeEach(async () => {
+    isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-home-'));
+    process.env['HOME'] = isolatedHome;
     allowedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-allowed-'));
     blockedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-blocked-'));
     hintOnlyDir = await fs.mkdtemp(path.join(os.tmpdir(), 'viewport-filter-hint-only-'));
@@ -39,8 +43,11 @@ describe('relay bridge organization routing filter', () => {
     await fs.rm(blockedDir, { recursive: true, force: true });
     await fs.rm(hintOnlyDir, { recursive: true, force: true });
     await fs.rm(disabledDir, { recursive: true, force: true });
+    if (isolatedHome) await fs.rm(isolatedHome, { recursive: true, force: true });
     if (originalViewportProfile) process.env['VIEWPORT_PROFILE'] = originalViewportProfile;
     else delete process.env['VIEWPORT_PROFILE'];
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
   });
 
   it('filters hello payloads down to directories bound to the active organization', () => {

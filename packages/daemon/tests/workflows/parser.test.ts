@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   parseWorkflow,
   parseWorkflowFile,
@@ -618,7 +619,10 @@ nodes:
   });
 
   it('accepts the shared Jira autofix golden workflow fixture', async () => {
-    const workflowPath = path.resolve('tests/fixtures/workflows/jira-autofix-golden.yaml');
+    const workflowPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../fixtures/workflows/jira-autofix-golden.yaml',
+    );
     const parsed = parseWorkflow(await fs.readFile(workflowPath, 'utf-8'), workflowPath);
 
     expect(parsed.definition.name).toBe('payments/jira-autofix');
