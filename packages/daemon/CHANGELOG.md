@@ -1,3 +1,10 @@
+# [0.29.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.28.0...@viewportai/daemon@0.29.0) (2026-06-10)
+
+
+### Features
+
+* **exec-01:** worker run-once --lease refuses to fabricate completion ([#156](https://github.com/viewportai/viewport/issues/156)) ([3b3af6e](https://github.com/viewportai/viewport/commit/3b3af6ef0f301d084fc5997839ceb0a3a1b7d94d))
+
 # [0.28.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.27.0...@viewportai/daemon@0.28.0) (2026-06-09)
 
 
