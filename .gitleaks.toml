@@ -1,0 +1,38 @@
+# gitleaks configuration for viewportai/viewport
+#
+# SEC-02: secret-scanning CI gate. This file EXTENDS the gitleaks default
+# ruleset (https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml)
+# and adds a TIGHT allowlist for known-safe matches so the gate is green on the
+# clean tree while still failing on real, newly committed secrets.
+#
+# How to verify the gate works (planted-secret test):
+#   1. Add a line to a scratch file, e.g.:
+#        printf 'stripe_live = "sk_%s_%s"\n' live "$(openssl rand -hex 12)" > /tmp/leak-test.txt
+#   2. Run: gitleaks detect --no-git --source /tmp --config .gitleaks.toml -v
+#   3. Observe it FAILS with a finding and a non-zero exit code.
+#   4. Delete the scratch file. Never commit it.
+#
+# When adding a new allowlist entry, keep it specific (path/regex/commit) and
+# document WHY the match is safe. Do NOT blanket-disable rules.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe matches: test fixtures and deterministic protocol vectors"
+
+paths = [
+  # --- Test suites: dummy relay-internal keys and fake signing keys ---
+  # services/relay/tests/* assert behaviour with hard-coded fake keys such as
+  # "relay-internal-key-1234567890" and "relay_internal_prod_secret_*".
+  '''services/relay/tests/.*''',
+  # Daemon relay bridge tests carry "test-relay-signing-key-*" fixtures.
+  '''packages/daemon/tests/.*''',
+
+  # --- Deterministic protocol test vectors (not real secrets) ---
+  # HPKE / key-grant conformance fixtures: high-entropy but deterministic test
+  # vectors used to verify the Noise/HPKE handshake implementation.
+  '''packages/context-engine/fixtures/.*''',
+  # Noise conformance vector docs (deterministic handshake test data).
+  '''packages/daemon/docs/.*conformance-vectors\.json''',
+]
