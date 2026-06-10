@@ -14,7 +14,13 @@ import { envNameForCredentialRef } from '../../src/workflows/action-provider-uti
 import { checkoutRemote, executeCheckoutNode } from '../../src/workflows/checkout-node.js';
 import type { WorkflowRunRecord } from '../../src/workflows/types.js';
 
-describe('workflow runner checkout node', () => {
+// Each case clones a real remote into a governed run worktree via `git`
+// subprocesses. Under the parallel fork pool on slower/loaded CI runners this
+// pushes cases close to the default 15s ceiling (observed ~14s oversubscribed),
+// causing intermittent timeout flakes. 30s matches the other git-heavy suites.
+const CHECKOUT_NODE_TEST_TIMEOUT_MS = 30_000;
+
+describe('workflow runner checkout node', { timeout: CHECKOUT_NODE_TEST_TIMEOUT_MS }, () => {
   let root: string;
   let tempHome: string;
   let projectDir: string;

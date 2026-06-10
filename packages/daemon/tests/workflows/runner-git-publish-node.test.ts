@@ -8,7 +8,14 @@ import { Daemon } from '../../src/core/daemon.js';
 import { DirectoryManager } from '../../src/directories/manager.js';
 import { envNameForCredentialRef } from '../../src/workflows/action-provider-utils.js';
 
-describe('workflow runner git publish node', () => {
+// Each case drives a full governed git publish: bare remote + clone, real `git`
+// commit/push subprocesses, and credential materialization. Under the parallel
+// fork pool on slower/loaded CI runners this contention pushes cases well past
+// the default 15s ceiling (observed ~29s when the pool is oversubscribed),
+// causing intermittent timeout flakes. 45s gives the heaviest case headroom.
+const GIT_PUBLISH_TEST_TIMEOUT_MS = 45_000;
+
+describe('workflow runner git publish node', { timeout: GIT_PUBLISH_TEST_TIMEOUT_MS }, () => {
   let root: string;
   let tempHome: string;
   let projectDir: string;

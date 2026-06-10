@@ -64,6 +64,7 @@ jobs:
       - run: npm audit --audit-level=high || true
       - run: npm run check:file-size -w @viewportai/daemon
       - run: npm run check:protocol-matrix -w @viewportai/daemon
+      - run: npm run check:protocol-pin -w @viewportai/daemon
       - run: npm run typecheck -w @viewportai/daemon
       - run: npm run lint -w @viewportai/daemon
       - run: npm run format:check -w @viewportai/daemon

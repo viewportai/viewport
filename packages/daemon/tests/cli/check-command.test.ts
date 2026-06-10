@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const VALID_POLICY = `
 version: 1
+agent: viewport-default
 repos:
   - repo: acme/backend
     access: read-write
 invoke:
-  agent: claude-code
   notify:
     provider: slack
     credential_ref: slack/support
@@ -19,22 +19,20 @@ invoke:
 
 const INVALID_POLICY_BAD_REPO = `
 version: 1
+agent: viewport-default
 repos:
   - repo: not-valid-format
     access: read-write
-invoke:
-  agent: claude-code
 `.trim();
 
 const INVALID_POLICY_TYPO_STRICT = `
 version: 1
+agent: viewport-default
 repos:
   - repo: acme/backend
     access: read-write
     branches:
       restrcited: [main]
-invoke:
-  agent: claude-code
 `.trim();
 
 const VALID_ROUTE = `

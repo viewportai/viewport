@@ -1,0 +1,5 @@
+{
+  "comment": "Drift gate for the @viewportai/protocol dependency pin. 'expected' is the latest published protocol version this daemon has been reconciled against. When a newer protocol version ships, bump the pin in package.json AND this 'expected' value together, then reconcile src/cli/policy-schema-validator.ts and the conformance corpus. The gate (scripts/check-protocol-pin.mjs + tests/protocol-pin-drift.test.ts) fails if the pin and this value desync, or if either falls behind the published latest.",
+  "package": "@viewportai/protocol",
+  "expected": "1.8.0"
+}
