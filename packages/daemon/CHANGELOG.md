@@ -1,3 +1,10 @@
+# [0.30.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.29.1...@viewportai/daemon@0.30.0) (2026-06-10)
+
+
+### Features
+
+* **ci:** add gitleaks secret-scanning gate (SEC-02) ([#159](https://github.com/viewportai/viewport/issues/159)) ([cd32848](https://github.com/viewportai/viewport/commit/cd328487a786fa8e9926975e2d6532dc5dd089ca))
+
 ## [0.29.1](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.29.0...@viewportai/daemon@0.29.1) (2026-06-10)
 
 
