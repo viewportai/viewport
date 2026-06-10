@@ -60,7 +60,11 @@ async function waitFor<T>(fn: () => Promise<T | null>, timeoutMs = 8_000): Promi
   }
 }
 
-describe('fullstack CLI workflow commands', () => {
+// This e2e boots a real HTTP+WS server and drives full workflow runs against a
+// registered repo, spawning git subprocesses. Under the parallel fork pool on
+// slower/loaded CI runners it approaches the default 15s ceiling, causing
+// intermittent timeout flakes. 60s matches the sibling fullstack e2e budget.
+describe('fullstack CLI workflow commands', { timeout: 60_000 }, () => {
   let harness: FullstackCliHarness | null = null;
   const originalArgv = process.argv.slice();
 

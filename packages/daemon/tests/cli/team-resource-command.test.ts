@@ -5,7 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-describe('team-resource CLI command', () => {
+// The sync cases stand up an HTTP server and drive real `git` clone/commit
+// subprocesses. Under the parallel fork pool on slower/loaded CI runners this
+// contention pushes cases past the default 15s ceiling, causing intermittent
+// timeout flakes. 30s matches the other git-subprocess-heavy suites.
+const TEAM_RESOURCE_TEST_TIMEOUT_MS = 30_000;
+
+describe('team-resource CLI command', { timeout: TEAM_RESOURCE_TEST_TIMEOUT_MS }, () => {
   const originalArgv = process.argv.slice();
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   let tempRoot: string;
