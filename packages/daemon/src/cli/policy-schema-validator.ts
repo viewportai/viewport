@@ -88,6 +88,10 @@ const PolicyReviewRuleSchema = z
     { path: ['when'], message: 'Must define at least one observable review condition' },
   );
 
+const PolicyAgentRefSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9-]*$/, 'Must reference a named agent in kebab-case');
+
 const PolicyInvokeStepSchema = z
   .object({
     name: z.string().min(1),
@@ -158,9 +162,42 @@ const PolicyEscalationSchema = z
     message: 'Escalation must define when_stuck or channel',
   });
 
+const PolicyVerificationCommandSchema = z
+  .object({
+    name: z.string().min(1),
+    command: z.string().min(1),
+    required: z.boolean().default(true),
+    timeout: z.string().optional(),
+    working_directory: z.string().min(1).optional(),
+  })
+  .strict();
+
+const PolicyVerificationSchema = z
+  .object({
+    commands: z.array(PolicyVerificationCommandSchema).min(1),
+    required_artifacts: z.array(z.string().min(1)).default([]),
+    repair: z
+      .object({
+        enabled: z.boolean().default(false),
+        max_attempts: z.number().int().nonnegative().default(0),
+        on_exhausted: z.enum(['ask_human', 'block']).default('ask_human'),
+      })
+      .strict()
+      .optional(),
+    review: z
+      .object({
+        human_review_on_failure: z.boolean().default(true),
+        reviewer_tags: z.array(z.string().min(1)).default([]),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 export const PolicyDocumentSchema = z
   .object({
     version: z.literal(1),
+    agent: PolicyAgentRefSchema,
     repos: z.array(PolicyRepoSchema).min(1),
     context: z
       .object({
@@ -180,16 +217,15 @@ export const PolicyDocumentSchema = z
     review: z.array(PolicyReviewRuleSchema).optional(),
     invoke: z
       .object({
-        agent: z.enum(['claude-code', 'codex']).default('claude-code'),
         role: z.string().optional(),
         steps: z.array(PolicyInvokeStepSchema).optional(),
         workflow: z.string().optional(),
         notify: PolicyNotifySchema.optional(),
       })
-      .strict(),
+      .strict()
+      .optional(),
     publish: PolicyPublishSchema.optional(),
     side_effects: PolicySideEffectsSchema.optional(),
-    escalation: PolicyEscalationSchema.optional(),
     execution: z
       .object({
         shell_policy: z
@@ -202,10 +238,12 @@ export const PolicyDocumentSchema = z
       })
       .strict()
       .optional(),
+    escalation: PolicyEscalationSchema.optional(),
+    verification: PolicyVerificationSchema.optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
-    if (data.invoke.steps && data.gates) {
+    if (data.invoke?.steps && data.gates) {
       const gateNames = new Set(data.gates.map((g) => g.name));
       for (const step of data.invoke.steps) {
         if (step.gate && !gateNames.has(step.gate)) {
@@ -217,7 +255,7 @@ export const PolicyDocumentSchema = z
         }
       }
     }
-    if (data.invoke.workflow && data.invoke.steps) {
+    if (data.invoke?.workflow && data.invoke?.steps) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['invoke'],
