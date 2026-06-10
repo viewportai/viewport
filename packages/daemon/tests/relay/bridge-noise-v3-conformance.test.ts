@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { fromBase64Url, toBase64Url } from '../../src/relay/bridge-crypto.js';
 import {
@@ -34,7 +35,12 @@ type VectorDoc = {
   }>;
 };
 
-const FIXTURE_PATH = path.join(process.cwd(), 'docs', 'test-vectors', 'relay-noise-v3.json');
+const FIXTURE_PATH = path.join(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..'),
+  'docs',
+  'test-vectors',
+  'relay-noise-v3.json',
+);
 
 function loadFixture(): VectorDoc {
   const raw = fs.readFileSync(FIXTURE_PATH, 'utf8');

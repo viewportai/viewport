@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   deriveSessionFromKeyExchange,
@@ -33,7 +34,12 @@ interface RelayConformanceDoc {
   vectors: RelayConformanceVector[];
 }
 
-const FIXTURE_PATH = path.join(process.cwd(), 'docs', 'test-vectors', 'relay-noise-v2.json');
+const FIXTURE_PATH = path.join(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..'),
+  'docs',
+  'test-vectors',
+  'relay-noise-v2.json',
+);
 
 function loadVectors(): RelayConformanceVector[] {
   const raw = fs.readFileSync(FIXTURE_PATH, 'utf8');
