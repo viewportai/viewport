@@ -492,8 +492,8 @@ export async function runStandaloneWorker(
 
     if (options.leaseToken) {
       throw new Error(
-        '`vpd worker run-once --lease` no longer fabricates a completed sync (EXEC-01). '
-          + 'Use `vpd worker run-once --bootstrap <file>` to execute the leased work.',
+        '`vpd worker run-once --lease` no longer fabricates a completed sync (EXEC-01). ' +
+          'Use `vpd worker run-once --bootstrap <file>` to execute the leased work.',
       );
     }
 
