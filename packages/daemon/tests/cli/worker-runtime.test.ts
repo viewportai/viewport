@@ -344,7 +344,7 @@ describe('standalone worker runtime', () => {
     expect(nextWorker?.publicKeyFingerprint).not.toBe(firstFingerprint);
   });
 
-  it('runs an ephemeral lease token through sync and cleanup', async () => {
+  it('refuses to fabricate completion for a bare lease token (EXEC-01)', async () => {
     const requests: RuntimeRequest[] = [];
     server = await startRuntimeServer(requests);
     await writeWorkerProfile(serverUrl(server));
@@ -362,20 +362,11 @@ describe('standalone worker runtime', () => {
     vi.resetModules();
     const { worker } = await import('../../src/cli/worker-command.js');
 
-    await worker();
+    await expect(worker()).rejects.toThrow('no longer fabricates a completed sync');
 
-    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? '')) as {
-      claimed: number;
-      completed: number;
-      failed: number;
-      cleanup: number;
-    };
-    expect(payload).toMatchObject({ claimed: 1, completed: 1, failed: 0, cleanup: 1 });
-    expect(requests.map((request) => request.url)).toEqual([
-      '/api/runtime/workers/heartbeat',
+    expect(requests.map((request) => request.url)).not.toContain(
       '/api/runtime/workers/leases/lease_token_123/sync',
-      '/api/runtime/workers/leases/lease_token_123/cleanup',
-    ]);
+    );
   });
 
   it('runs a sandbox bootstrap lease once without polling for idle work or persisting identity', async () => {
@@ -746,7 +737,7 @@ describe('standalone worker runtime', () => {
       vi.resetModules();
       const { worker } = await import('../../src/cli/worker-command.js');
 
-      await expect(worker()).rejects.toThrow('vpd worker run-once --lease <lease-token>');
+      await expect(worker()).rejects.toThrow('vpd worker run-once --bootstrap <file>');
       expect(requests).toEqual([]);
     } finally {
       lock.release();
