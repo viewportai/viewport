@@ -235,8 +235,32 @@ export function isSessionEventUnsubscribeFrame(frame: FramePayload): boolean {
   );
 }
 
+/**
+ * Viewer presence on a session-event channel (browser→relay→browsers): a
+ * session-events scoped client announces joined/heartbeat/left and the relay
+ * fans the frame to the channel's OTHER subscribers. Transport-only — presence
+ * is ephemeral by design and never persisted.
+ */
+export function isSessionViewerPresenceFrame(frame: FramePayload): boolean {
+  return (
+    frame['type'] === 'viewport.session_viewer_presence/v1' &&
+    isNonEmptyString(frame['channel']) &&
+    (frame['channel'] as string).startsWith('agent-session:') &&
+    (frame['action'] === 'joined' || frame['action'] === 'left' || frame['action'] === 'heartbeat') &&
+    isNonEmptyString(frame['userId']) &&
+    (frame['userId'] as string).length <= 128 &&
+    (frame['displayName'] === undefined ||
+      (typeof frame['displayName'] === 'string' && frame['displayName'].length <= 255)) &&
+    (frame['sentAt'] === undefined || typeof frame['sentAt'] === 'string')
+  );
+}
+
 export function isSessionEventClientFrame(frame: FramePayload): boolean {
-  return isSessionEventSubscribeFrame(frame) || isSessionEventUnsubscribeFrame(frame);
+  return (
+    isSessionEventSubscribeFrame(frame) ||
+    isSessionEventUnsubscribeFrame(frame) ||
+    isSessionViewerPresenceFrame(frame)
+  );
 }
 
 export function isSessionEventRelayFrame(frame: FramePayload): boolean {

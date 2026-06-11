@@ -66,3 +66,45 @@ describe('relay frame validation', () => {
     expect(isAllowedDaemonFrame(frame)).toBe(false);
   });
 });
+
+describe('session viewer presence frames', () => {
+  const presence = (overrides: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: 'viewport.session_viewer_presence/v1',
+      channel: 'agent-session:session_a',
+      action: 'joined',
+      userId: 'user:42',
+      displayName: 'Priya Patel',
+      sentAt: '2026-06-11T00:00:00.000Z',
+      ...overrides,
+    });
+
+  it.each([['joined'], ['heartbeat'], ['left']] as const)(
+    'accepts a %s presence frame as a client frame',
+    (action) => {
+      expect(isAllowedClientFrame(presence({ action }))).toBe(true);
+    },
+  );
+
+  it('accepts presence without the optional displayName/sentAt', () => {
+    expect(isAllowedClientFrame(presence({ displayName: undefined, sentAt: undefined }))).toBe(true);
+  });
+
+  it.each([
+    ['unknown action', { action: 'typing' }],
+    ['missing userId', { userId: undefined }],
+    ['empty userId', { userId: '   ' }],
+    ['oversized userId', { userId: 'u'.repeat(129) }],
+    ['non agent-session channel', { channel: 'workspace:demo' }],
+    ['missing channel', { channel: undefined }],
+    ['non-string displayName', { displayName: 42 }],
+    ['oversized displayName', { displayName: 'x'.repeat(256) }],
+    ['non-string sentAt', { sentAt: 1718000000 }],
+  ] as const)('rejects presence frames with %s', (_label, overrides) => {
+    expect(isAllowedClientFrame(presence(overrides as Record<string, unknown>))).toBe(false);
+  });
+
+  it('never admits presence as a daemon frame', () => {
+    expect(isAllowedDaemonFrame(presence())).toBe(false);
+  });
+});

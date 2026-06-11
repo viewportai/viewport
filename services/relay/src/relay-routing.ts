@@ -22,6 +22,7 @@ import {
   isSessionEventRelayFrame,
   isSessionEventSubscribeFrame,
   isSessionEventUnsubscribeFrame,
+  isSessionViewerPresenceFrame,
   type FramePayload,
 } from './relay-frame-validation.js';
 import {
@@ -225,6 +226,64 @@ function routeSessionEventRelayFrame(
 
   context.metrics.increment('relay_session_event_frame_delivered_total', delivered);
   return true;
+}
+
+/**
+ * Fan a viewer-presence frame (joined | heartbeat | left) to all OTHER local
+ * subscribers of the same session-event channel. Browser→relay→browsers on the
+ * existing per-channel subscriber map — transport-only, nothing persisted, and
+ * the sender never hears its own echo. Channel authorization mirrors the
+ * subscribe gate (the token's sessionChannels claim).
+ */
+function routeSessionViewerPresenceFrame(
+  context: RelayRoutingContext,
+  ws: WebSocket,
+  workspaceId: string,
+  scopeKey: string,
+  claims: AdmissionClaims | undefined,
+  clientId: string,
+  text: string,
+  parsedFrame: FramePayload,
+): void {
+  const channel = typeof parsedFrame['channel'] === 'string' ? parsedFrame['channel'].trim() : '';
+  const allowedChannels = sessionEventChannels(claims);
+  if (!channel || !allowedChannels.has(channel)) {
+    context.metrics.increment('relay_session_viewer_presence_rejected_total');
+    context.safeSend(
+      ws,
+      JSON.stringify({
+        type: 'viewport.session_viewer_presence_denied/v1',
+        channel,
+        reason: 'CHANNEL_NOT_AUTHORIZED',
+        workspaceId,
+      }),
+    );
+    return;
+  }
+
+  const limiters = resolveRuntimeLimiters(context);
+  if (!limiters.byClient.allow(clientId) || !limiters.byWorkspace.allow(workspaceId)) {
+    context.metrics.increment('relay_session_viewer_presence_rate_limited_total');
+    context.closeWithReason(ws, 4008, 'presence rate limit exceeded');
+    return;
+  }
+
+  const state = context.registry.getOrCreate(scopeKey, { workspaceId });
+  const subscribers = state.sessionEventSubscribers.get(channel);
+  let delivered = 0;
+  if (subscribers) {
+    for (const subscriber of subscribers) {
+      if (subscriber === ws || subscriber.readyState !== WebSocket.OPEN) continue;
+      if (context.safeSend(subscriber, text)) {
+        delivered += 1;
+      }
+    }
+  }
+  if (delivered > 0) {
+    context.metrics.increment('relay_session_viewer_presence_fanned_total', delivered);
+  } else {
+    context.metrics.increment('relay_session_viewer_presence_no_peers_total');
+  }
 }
 
 function handleSessionEventClientFrame(
@@ -1061,6 +1120,10 @@ export function registerConnection(
             workspaceId,
           }),
         );
+        return;
+      }
+      if (isSessionViewerPresenceFrame(parsed)) {
+        routeSessionViewerPresenceFrame(context, ws, workspaceId, scopeKey, claims, clientId, text, parsed);
         return;
       }
       handleSessionEventClientFrame(context, ws, workspaceId, scopeKey, claims, parsed);

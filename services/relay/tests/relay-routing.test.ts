@@ -2280,3 +2280,137 @@ describe('relay routing', () => {
     }
   });
 });
+
+describe('session viewer presence routing', () => {
+  function presenceContext() {
+    const config = loadConfig({
+      RELAY_TLS: '0',
+      SERVER_URL: 'http://127.0.0.1:7780',
+    });
+    const closed: Array<{ code: number; reason: string }> = [];
+    const context = {
+      config,
+      logger: new RelayLogger(10),
+      metrics: new RelayMetrics(),
+      registry: new ConnectionRegistry(),
+      backplane: createTestBackplane(),
+      wsIp: new WeakMap<WebSocket, string>(),
+      wsWorkspace: new WeakMap<WebSocket, string>(),
+      wsRole: new WeakMap<WebSocket, 'workspace-daemon' | 'client' | 'worker'>(),
+      setupHeartbeat: () => undefined,
+      markWsActivity: () => undefined,
+      adjustIpConnectionCount: () => undefined,
+      updateGauges: () => undefined,
+      safeSend: safeSendToFake,
+      closeWithReason: (ws: WebSocket, code: number, reason: string) => {
+        closed.push({ code, reason });
+        (ws as unknown as FakeWs).close(code, reason);
+      },
+    };
+    return { context, closed };
+  }
+
+  function admitViewer(
+    context: ReturnType<typeof presenceContext>['context'],
+    clientId: string,
+    channels: string[],
+  ): FakeWs {
+    const ws = new FakeWs() as unknown as WebSocket;
+    registerConnection(context, ws, 'client', 'workspace_demo', 'binding_demo', '127.0.0.1', {
+      clientId,
+      scope: 'session-events',
+      workspaceId: 'workspace_demo',
+      runtimeTargetId: 'binding_demo',
+      sessionIds: channels.map((c) => c.replace('agent-session:', '')),
+      sessionChannels: channels,
+    });
+    return ws as unknown as FakeWs;
+  }
+
+  function subscribe(ws: FakeWs, channel: string): void {
+    ws.emit(
+      'message',
+      Buffer.from(JSON.stringify({ type: 'viewport.session_events.subscribe/v1', channel, afterSequence: 0 })),
+    );
+  }
+
+  const presenceFrame = (userId: string, action = 'joined', channel = 'agent-session:session_a') =>
+    JSON.stringify({
+      type: 'viewport.session_viewer_presence/v1',
+      channel,
+      action,
+      userId,
+      displayName: `Viewer ${userId}`,
+      sentAt: '2026-06-11T00:00:00.000Z',
+    });
+
+  it('fans presence to all OTHER subscribers of the same channel and never echoes the sender', () => {
+    const { context, closed } = presenceContext();
+    const viewerA = admitViewer(context, 'user:1', ['agent-session:session_a']);
+    const viewerB = admitViewer(context, 'user:2', ['agent-session:session_a']);
+    const viewerC = admitViewer(context, 'user:3', ['agent-session:session_a']);
+    subscribe(viewerA, 'agent-session:session_a');
+    subscribe(viewerB, 'agent-session:session_a');
+    subscribe(viewerC, 'agent-session:session_a');
+
+    const frame = presenceFrame('user:1');
+    viewerA.emit('message', Buffer.from(frame));
+
+    expect(viewerB.sent).toContain(frame);
+    expect(viewerC.sent).toContain(frame);
+    expect(viewerA.sent.filter((p) => p === frame)).toHaveLength(0);
+    expect(closed).toHaveLength(0);
+
+    // heartbeat + left fan the same way
+    const left = presenceFrame('user:1', 'left');
+    viewerA.emit('message', Buffer.from(left));
+    expect(viewerB.sent).toContain(left);
+  });
+
+  it('denies presence on channels outside the token sessionChannels claim', () => {
+    const { context } = presenceContext();
+    const viewerA = admitViewer(context, 'user:1', ['agent-session:session_a']);
+    const viewerB = admitViewer(context, 'user:2', ['agent-session:session_b']);
+    subscribe(viewerA, 'agent-session:session_a');
+    subscribe(viewerB, 'agent-session:session_b');
+
+    // viewerB tries to announce presence on session_a (not in its claim) → denied, nothing fanned.
+    const forged = presenceFrame('user:2', 'joined', 'agent-session:session_a');
+    viewerB.emit('message', Buffer.from(forged));
+
+    expect(viewerA.sent).not.toContain(forged);
+    expect(JSON.parse(viewerB.sent.at(-1) ?? '{}')).toMatchObject({
+      type: 'viewport.session_viewer_presence_denied/v1',
+      channel: 'agent-session:session_a',
+      reason: 'CHANNEL_NOT_AUTHORIZED',
+    });
+  });
+
+  it('keeps presence channel-scoped — subscribers of other channels never receive it', () => {
+    const { context } = presenceContext();
+    const viewerA = admitViewer(context, 'user:1', ['agent-session:session_a']);
+    const otherChannelViewer = admitViewer(context, 'user:9', ['agent-session:session_b']);
+    subscribe(viewerA, 'agent-session:session_a');
+    subscribe(otherChannelViewer, 'agent-session:session_b');
+
+    const frame = presenceFrame('user:1');
+    viewerA.emit('message', Buffer.from(frame));
+
+    expect(otherChannelViewer.sent).not.toContain(frame);
+  });
+
+  it('rejects presence frames from runtime scoped clients', () => {
+    const { context, closed } = presenceContext();
+    const runtimeWs = new FakeWs() as unknown as WebSocket;
+    registerConnection(context, runtimeWs, 'client', 'workspace_demo', 'binding_demo', '127.0.0.1', {
+      clientId: 'runtime_client',
+      scope: 'runtime',
+      workspaceId: 'workspace_demo',
+      runtimeTargetId: 'binding_demo',
+    });
+
+    (runtimeWs as unknown as FakeWs).emit('message', Buffer.from(presenceFrame('user:1')));
+
+    expect(closed).toContainEqual({ code: 4008, reason: 'session-events scope required' });
+  });
+});
