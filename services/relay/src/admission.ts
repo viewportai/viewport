@@ -33,7 +33,12 @@ const AdmissionClaimsSchema = z
     role: z.enum(['workspace-daemon', 'client', 'worker']).optional(),
     workspaceId: z.string().min(1).max(128).optional(),
     managedExecutorId: z.string().min(1).max(128).optional(),
-    scope: z.enum(['runtime', 'pairing']).optional(),
+    scope: z.enum(['runtime', 'pairing', 'session-events']).optional(),
+    sessionIds: z.array(z.string().min(1).max(128)).max(64).optional(),
+    sessionChannels: z
+      .array(z.string().max(255).regex(/^agent-session:.+$/))
+      .max(64)
+      .optional(),
     e2eeProfile: z.enum(['noise-ik', 'noise-ikpsk2']).optional(),
     policyMode: z.string().min(1).max(128).optional(),
     daemonPublicKey: z.string().min(1).max(512).nullable().optional(),
