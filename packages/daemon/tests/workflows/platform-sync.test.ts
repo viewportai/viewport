@@ -793,7 +793,14 @@ describe('WorkflowRunPlatformSync', () => {
       },
     });
     expect(payload['evidence_packets']).toEqual([]);
-    expect(payload['context_receipts_snapshot']).toEqual(run.contextReceipts);
+    // The sync seam projects receipts onto the strict viewport.context_receipt/v1
+    // contract: usedBy carries runId + nodeId only.
+    expect(payload['context_receipts_snapshot']).toEqual(
+      run.contextReceipts?.map((receipt) => ({
+        ...receipt,
+        usedBy: { runId: receipt.usedBy.runId, nodeId: receipt.usedBy.nodeId },
+      })),
+    );
   });
 
   it('retries queued sync with the latest run snapshot after a transient failure', async () => {

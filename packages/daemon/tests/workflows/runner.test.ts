@@ -719,7 +719,14 @@ nodes:
     const syncPayload = workflowRunToSyncPayload(completed!, {
       enforceDataCapturePolicy: true,
     });
-    expect(syncPayload['context_receipts_snapshot']).toEqual(completed?.contextReceipts);
+    // The sync seam projects receipts onto the strict viewport.context_receipt/v1
+    // contract: usedBy carries runId + nodeId only.
+    expect(syncPayload['context_receipts_snapshot']).toEqual(
+      completed?.contextReceipts?.map((receipt) => ({
+        ...receipt,
+        usedBy: { runId: receipt.usedBy.runId, nodeId: receipt.usedBy.nodeId },
+      })),
+    );
     expect(JSON.stringify(syncPayload)).not.toContain('PAY-1842');
     expect(JSON.stringify(syncPayload)).not.toContain('checkout runbook');
     expect(JSON.stringify(syncPayload)).not.toContain(projectDir);
