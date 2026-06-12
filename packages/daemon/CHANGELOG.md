@@ -1,3 +1,16 @@
+# [0.31.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.30.0...@viewportai/daemon@0.31.0) (2026-06-12)
+
+
+### Bug Fixes
+
+* **daemon:** pin protocol and add contract drift gate ([#164](https://github.com/viewportai/viewport/issues/164)) ([e9d9653](https://github.com/viewportai/viewport/commit/e9d965373c02de5692561625e02167118ad88267))
+* **relay:** admit client session-events admission claims ([#161](https://github.com/viewportai/viewport/issues/161)) ([e24d3f9](https://github.com/viewportai/viewport/commit/e24d3f9c8d1f079666b17fa2ebcb0b6f71e1d652))
+
+
+### Features
+
+* **relay:** viewer presence frames ([#162](https://github.com/viewportai/viewport/issues/162)) ([781fbfa](https://github.com/viewportai/viewport/commit/781fbfaf3966f5790a8d438d5ac51daa9add09e8))
+
 # [0.30.0](https://github.com/viewportai/viewport/compare/@viewportai/daemon@0.29.1...@viewportai/daemon@0.30.0) (2026-06-10)
 
 
