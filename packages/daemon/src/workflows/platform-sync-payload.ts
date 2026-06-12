@@ -13,6 +13,7 @@ import {
   stringValue,
 } from './platform-sync-format.js';
 import type {
+  WorkflowContextReceiptRecord,
   WorkflowInputValue,
   WorkflowNodeRunState,
   WorkflowRunArtifactRecord,
@@ -72,7 +73,34 @@ export function workflowRunToSyncPayload(
         : Object.values(run.nodes).flatMap(formatApprovalDecision),
     execution_receipts: run.events.flatMap(formatExecutionReceipt),
     audit_receipts: run.events.flatMap(formatAuditReceipt),
-    ...(run.contextReceipts ? { context_receipts_snapshot: run.contextReceipts } : {}),
+    ...(run.contextReceipts
+      ? { context_receipts_snapshot: run.contextReceipts.map(formatContextReceipt) }
+      : {}),
+  };
+}
+
+/**
+ * Projects the daemon's internal context receipt record onto the canonical
+ * `viewport.context_receipt/v1` contract: the protocol's `usedBy` block is
+ * strict (`runId` + optional `nodeId` only), so daemon-internal attribution
+ * fields (providerId, itemId, alias, title) must not cross the sync seam.
+ * The platform ingestor already discards them; emitting the contract shape
+ * keeps the daemon valid against the protocol schema.
+ */
+function formatContextReceipt(receipt: WorkflowContextReceiptRecord): Record<string, unknown> {
+  return {
+    schema: receipt.schema,
+    package: receipt.package,
+    requested: receipt.requested,
+    resolvedVersion: receipt.resolvedVersion,
+    provider: receipt.provider,
+    digest: receipt.digest,
+    freshness: receipt.freshness,
+    usedBy: {
+      runId: receipt.usedBy.runId,
+      ...(receipt.usedBy.nodeId ? { nodeId: receipt.usedBy.nodeId } : {}),
+    },
+    resolvedAt: receipt.resolvedAt,
   };
 }
 

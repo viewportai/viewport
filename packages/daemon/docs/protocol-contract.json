@@ -1,0 +1,20 @@
+{
+  "description": "Committed snapshot of the daemon-facing @viewportai/protocol contract surface. Regenerate with: node packages/daemon/scripts/check-protocol-contracts.mjs --update",
+  "protocolVersion": "1.8.0",
+  "schemas": {
+    "viewport.workflow_run_record/v1": "sha256:ab5c7cd6d1277193fc3b550a326c0a81ee525fc030d1606df9b37cf318786129",
+    "viewport.workflow_runs_message/v1": "sha256:91e8930b53975879fbb5ff42925868d3fbc10a213cd4188c1579997385cd005d",
+    "viewport.workflow_run_started_message/v1": "sha256:533ed124d93889cb66889c3e405083e7a5d85b425189f492d05857594fa2d4c2",
+    "viewport.workflow_run_updated_message/v1": "sha256:199e3c94ceec01c109ce83890c3a24576f211cf05341af908cd310c71403890b",
+    "viewport.workflow_run_detail_message/v1": "sha256:99bbbc29b87930da13cc44f40667bfc78fbc040d7d63a49fb5eb789302da0124",
+    "viewport.run_receipt/v1": "sha256:4ceca087727f1a0818df09cebb702dfe8fad6ba29fcb0d93e3cb6b488eb617cf",
+    "viewport.execution_receipt/v1": "sha256:2a77fa90460214d291075e90f42d6e4bd40358e1261b716fa9956b7b76609ccb",
+    "viewport.audit_receipt/v1": "sha256:88434b769e438b8be806c70a0676d3bca3b278ff3be07adaca0558aa38c166ff",
+    "viewport.context_receipt/v1": "sha256:b7dd400130f0541845f0c96f14d77c77072a833924fc8f20b57250d595fec636",
+    "viewport.runtime.run_sync_payload/v2": "sha256:c3c504b6abc2d7ab52d8639bf0d36a38a967e3b7b5c5c7e38222c0100e6e1bbb"
+  },
+  "conformanceCorpora": {
+    "fixtures/policy-conformance-corpus.json": "sha256:449c220252120806c2948d58996dcf251b0d4544cec5742aaab7623c329aa01d",
+    "fixtures/agent-conformance-corpus.json": "sha256:1f611c5cebce7126c8d9aeb8977b90ea6a216e27e4f5a9e3fe7e0a94b1b159bb"
+  }
+}
